@@ -8,6 +8,7 @@ $(error "Please define RTE_SDK environment variable.")
 endif
 
 RTE_TARGET ?= x86_64-native-linuxapp-gcc
+GATEKEEPER := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
@@ -15,7 +16,21 @@ APP = gatekeeper
 
 SRCS-y := main/main.c
 
-CFLAGS += $(WERROR_FLAGS)
+# Functional blocks.
+SRCS-y += arp/main.c
+SRCS-y += bp/main.c
+SRCS-y += catcher/main.c
+SRCS-y += config/static.c config/dynamic.c
+SRCS-y += cps/main.c
+SRCS-y += ggu/main.c
+SRCS-y += gk/main.c
+SRCS-y += gt/main.c
+SRCS-y += rt/main.c
+
+# Libraries.
+SRCS-y += lib/mailbox.c
+
+CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors
 
 include $(RTE_SDK)/mk/rte.extapp.mk
