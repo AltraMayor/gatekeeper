@@ -23,3 +23,5 @@ sudo echo "uio_pci_generic" | sudo tee -a /etc/modules
 sudo echo "igb_uio" | sudo tee -a /etc/modules
 
 ln -s ${RTE_SDK}/build ${RTE_SDK}/${RTE_TARGET}
+
+cd ..
