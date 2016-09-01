@@ -41,7 +41,7 @@ Once DPDK is compiled, `gatekeeper` can be compiled:
 
 Before `gatekeeper` can be used, the network adapters must be bound to DPDK. For this, you can use the script `dpdk/tools/dpdk_nic_bind.py`. For example:
 
-    $ dpdk/tools/dpdk_nic_bind.py --bind=uio_pci_generic enp131s0f0
+    $ sudo dpdk/tools/dpdk-devbind.py --bind=uio_pci_generic enp131s0f0
 
 This command binds the interface `enp131s0f0` to the `uio_pci_generic` driver so that frames can be passed directly to DPDK instead of the kernel.
 
