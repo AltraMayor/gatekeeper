@@ -31,15 +31,20 @@ While in the `gatekeeper` directory, run the setup script:
 
     $ sudo ./setup.sh
 
-This script compiles DPDK and loads the needed kernel modules.
+This script compiles DPDK and loads the needed kernel modules. It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`. They must be set before `gatekeeper` will compile. After running the setup script, you may want to save the environmental variables in your shell's preferences file. For example, in Bash, you can do:
 
-Once DPDK is compiled, `gatekeeper` can be compiled:
+    $ echo "export RTE_SDK=${RTE_SDK}" >> ${HOME}/.profile
+    $ echo "export RTE_TARGET=${RTE_TARGET}" >> ${HOME}/.profile
+
+Otherwise, each time you login you will need to set these environmental variables again.
+
+Once DPDK is compiled and the variables are set, `gatekeeper` can be compiled:
 
     $ make
 
 ### Configure Network Adapters
 
-Before `gatekeeper` can be used, the network adapters must be bound to DPDK. For this, you can use the script `dpdk/tools/dpdk_nic_bind.py`. For example:
+Before `gatekeeper` can be used, the network adapters must be bound to DPDK. For this, you can use the script `dpdk/tools/dpdk-devbind.py`. For example:
 
     $ sudo dpdk/tools/dpdk-devbind.py --bind=uio_pci_generic enp131s0f0
 

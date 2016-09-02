@@ -41,3 +41,5 @@ sudo echo "igb_uio" | sudo tee -a /etc/modules
 ln -s ${RTE_SDK}/build ${RTE_SDK}/${RTE_TARGET}
 
 cd ..
+
+echo "Environmental variables RTE_SDK and RTE_TARGET have been set, but not saved for future logins. You should save them to your shell's preferences file or set them after every login."
