@@ -19,6 +19,8 @@
 #include <stdio.h>
 
 #include <rte_eal.h>
+#include <rte_log.h>
+#include <rte_common.h>
 
 #include "gatekeeper_arp.h"
 #include "gatekeeper_bp.h"
@@ -30,13 +32,18 @@
 #include "gatekeeper_gt.h"
 #include "gatekeeper_rt.h"
 
+#include "gatekeeper_net.h"
 #include "gatekeeper_mailbox.h"
 
 int
 main(int argc, char **argv)
 {
 	int ret = rte_eal_init(argc, argv);
-	printf("EAL initialization: %d\n", ret);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Error with EAL initialization!\n");
+
+	/* XXX Set the global log level. Change it as needed. */
+	rte_set_log_level(RTE_LOG_DEBUG);
 
 	/*
 	 * TODO Add configuration state that can be written by this
@@ -44,6 +51,10 @@ main(int argc, char **argv)
 	 * functional blocks below.
 	 */
 	ret = get_static_config();
+	if (ret < 0)
+		goto out;
+
+	ret = gatekeeper_init_network();
 	if (ret < 0)
 		goto out;
 
@@ -71,7 +82,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_arp();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore*s* will be assigned to BP and decide
@@ -80,7 +91,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_bp();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore will be assigned to Catcher and decide
@@ -89,7 +100,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_catcher();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore will be assigned to Dynamic Config and
@@ -98,7 +109,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_dynamic_config();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore will be assigned to Control Plane Support
@@ -107,7 +118,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_cps();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore will be assigned to GK-GT Unit and decide
@@ -116,7 +127,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_ggu();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore*s* will be assigned to GK and decide
@@ -125,7 +136,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_gk();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore*s* will be assigned to GT and decide
@@ -134,7 +145,7 @@ main(int argc, char **argv)
 	 */
 	ret = run_gt();
 	if (ret < 0)
-		goto out;
+		goto net;
 
 	/*
 	 * TODO Decide which lcore*s* will be assigned to RT and decide
@@ -143,11 +154,13 @@ main(int argc, char **argv)
 	 */
 	ret = run_rt();
 
-out:
 	/*
 	 * TODO Perform any needed state destruction, stop lcores if one
 	 * of the functions returned with an error, etc.
 	 */
 
+net:
+	gatekeeper_free_network();
+out:
 	return ret;
 }

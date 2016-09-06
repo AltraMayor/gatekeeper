@@ -44,7 +44,7 @@ SRCS-y += gt/main.c
 SRCS-y += rt/main.c
 
 # Libraries.
-SRCS-y += lib/mailbox.c
+SRCS-y += lib/mailbox.c lib/net.c
 
 CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors
