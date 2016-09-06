@@ -17,10 +17,13 @@
  */
 
 #include <stdio.h>
+#include <stdbool.h>
+#include <signal.h>
 
 #include <rte_eal.h>
 #include <rte_log.h>
 #include <rte_common.h>
+#include <rte_launch.h>
 
 #include "gatekeeper_arp.h"
 #include "gatekeeper_bp.h"
@@ -31,9 +34,52 @@
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
 #include "gatekeeper_rt.h"
+#include "gatekeeper_main.h"
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_mailbox.h"
+
+/* Indicates whether the program needs to exit or not. */
+volatile int exiting = false;
+
+static void
+signal_handler(int signum)
+{
+	if (signum == SIGINT)
+		fprintf(stderr, "caught SIGINT\n");
+	else if (signum == SIGTERM)
+		fprintf(stderr, "caught SIGTERM\n");
+	else
+		fprintf(stderr, "caught unknown signal\n");
+	exiting = true;
+}
+
+static int
+run_signal_handler(void)
+{
+	int ret = -1;
+	struct sigaction new_action;
+	struct sigaction old_int_action;
+
+	new_action.sa_handler = signal_handler;
+	sigemptyset(&new_action.sa_mask);
+	new_action.sa_flags = 0;
+	
+	ret = sigaction(SIGINT, &new_action, &old_int_action);
+	if (ret < 0)
+		goto out;
+
+	ret = sigaction(SIGTERM, &new_action, NULL);
+	if (ret < 0)
+		goto int_action;
+
+	goto out;
+
+int_action:
+	sigaction(SIGINT, &old_int_action, NULL);
+out:
+	return ret;
+}
 
 int
 main(int argc, char **argv)
@@ -44,6 +90,11 @@ main(int argc, char **argv)
 
 	/* XXX Set the global log level. Change it as needed. */
 	rte_set_log_level(RTE_LOG_DEBUG);
+
+	/* Given the nature of signal, it's okay to not have a cleanup for them. */
+	ret = run_signal_handler();
+	if (ret < 0)
+		goto out;
 
 	/*
 	 * TODO Add configuration state that can be written by this
@@ -153,6 +204,8 @@ main(int argc, char **argv)
 	 * this functional block.
 	 */
 	ret = run_rt();
+
+	rte_eal_mp_wait_lcore();
 
 	/*
 	 * TODO Perform any needed state destruction, stop lcores if one
