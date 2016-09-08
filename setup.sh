@@ -31,12 +31,20 @@ sudo modprobe uio
 sudo modprobe uio_pci_generic
 sudo insmod ${RTE_SDK}/build/kmod/igb_uio.ko
 
-# Make modules persist across reboots.
+# Make modules persist across reboots. Since multiple
+# users can run this script, don't re-add these modules
+# if someone else already made them persistent.
 sudo ln -s ${RTE_SDK}/build/kmod/igb_uio.ko /lib/modules/`uname -r`
 sudo depmod -a
-sudo echo "uio" | sudo tee -a /etc/modules
-sudo echo "uio_pci_generic" | sudo tee -a /etc/modules
-sudo echo "igb_uio" | sudo tee -a /etc/modules
+if ! grep -q "uio" /etc/modules; then
+  sudo echo "uio" | sudo tee -a /etc/modules
+fi
+if ! grep -q "uio_pci_generic" /etc/modules; then
+  sudo echo "uio_pci_generic" | sudo tee -a /etc/modules
+fi
+if ! grep -q "igb_uio" /etc/modules; then
+  sudo echo "igb_uio" | sudo tee -a /etc/modules
+fi
 
 ln -s ${RTE_SDK}/build ${RTE_SDK}/${RTE_TARGET}
 
