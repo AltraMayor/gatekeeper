@@ -19,6 +19,12 @@
 #ifndef _GATEKEEPER_RT_H_
 #define _GATEKEEPER_RT_H_
 
-int run_rt(void);
+/* Configuration for the RT functional block. */
+struct rt_config {
+	unsigned int	lcore_start_id;
+	unsigned int	lcore_end_id;
+};
+
+int run_rt(const struct rt_config *rt_conf);
 
 #endif /* _GATEKEEPER_RT_H_ */

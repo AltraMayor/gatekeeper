@@ -19,6 +19,12 @@
 #ifndef _GATEKEEPER_BP_H_
 #define _GATEKEEPER_BP_H_
 
-int run_bp(void);
+/* Configuration for the BP functional block. */
+struct bp_config {
+	unsigned int	lcore_start_id;
+	unsigned int	lcore_end_id;
+};
+
+int run_bp(const struct bp_config *bp_conf);
 
 #endif /* _GATEKEEPER_BP_H_ */

@@ -78,7 +78,12 @@
  */
 #define GATEKEEPER_CACHE_SIZE	(512)
 
-int get_static_config(void);
-int run_dynamic_config(void);
+/* Configuration for the Dynamic Config functional block. */
+struct dynamic_config {
+	unsigned int	lcore_id;
+};
+
+int config_and_launch(void);
+int run_dynamic_config(const struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

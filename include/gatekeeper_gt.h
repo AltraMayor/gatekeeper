@@ -19,6 +19,12 @@
 #ifndef _GATEKEEPER_GT_H_
 #define _GATEKEEPER_GT_H_
 
-int run_gt(void);
+/* Configuration for the GT functional block. */
+struct gt_config {
+	unsigned int	lcore_start_id;
+	unsigned int	lcore_end_id;
+};
+
+int run_gt(const struct gt_config *gt_conf);
 
 #endif /* _GATEKEEPER_GT_H_ */

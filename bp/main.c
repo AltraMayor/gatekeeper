@@ -19,7 +19,7 @@
 #include "gatekeeper_bp.h"
 
 int
-run_bp(void)
+run_bp(__attribute__((unused)) const struct bp_config *bp_conf)
 {
 	/* TODO Initialize and run BP functional block. */
 	return 0;

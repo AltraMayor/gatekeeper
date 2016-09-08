@@ -78,20 +78,19 @@ gk_proc(__attribute__((unused)) void *arg)
 }
 
 int
-run_gk(void)
+run_gk(const struct gk_config *gk_conf)
 {
 	/* TODO Initialize and run GK functional block. */
 
-	int i;
-	/*
-	 * XXX Sample configuration for test only.
-	 * The real configuration should come from the configuration step.
-	 */
-	const int lcore_start_id = 1;
-	const int lcore_end_id = 1;
-
-	for (i = lcore_start_id; i <= lcore_end_id; i++)
-		rte_eal_remote_launch(gk_proc, NULL, i);
+	unsigned int i;
+	int ret;
+	for (i = gk_conf->lcore_start_id; i <= gk_conf->lcore_end_id; i++) {
+		ret = rte_eal_remote_launch(gk_proc, NULL, i);
+		if (ret) {
+			RTE_LOG(ERR, EAL, "lcore %u failed to launch GK\n", i);
+			return ret;
+		}
+	}
 
 	return 0;
 }

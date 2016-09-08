@@ -96,15 +96,6 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	/*
-	 * TODO Add configuration state that can be written by this
-	 * function, so its information can be used to call the
-	 * functional blocks below.
-	 */
-	ret = get_static_config();
-	if (ret < 0)
-		goto out;
-
 	ret = gatekeeper_init_network();
 	if (ret < 0)
 		goto out;
@@ -115,104 +106,16 @@ main(int argc, char **argv)
 	 * need it.
 	 */
 
-	/*
-	 * TODO Decide whether this instance of the application is
-	 * running GK or GT and adjust which functional blocks are
-	 * invoked accordingly.
-	 */
-
-	/*
-	 * TODO Each of the calls below to a functional block should
-	 * be spun out of its own lcore (or set of lcores).
-	 */
-
-	/*
-	 * TODO Decide which lcore will be assigned to LLS and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_lls();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to BP and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_bp();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore will be assigned to Catcher and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_catcher();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore will be assigned to Dynamic Config and
-	 * decide what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_dynamic_config();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore will be assigned to Control Plane Support
-	 * and decide what other configuration information should be passed
-	 * to this functional block.
-	 */
-	ret = run_cps();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore will be assigned to GK-GT Unit and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_ggu();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to GK and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_gk();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to GT and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_gt();
-	if (ret < 0)
-		goto net;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to RT and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_rt();
+	ret = config_and_launch();
+	if (ret < 0) {
+		/* Stop all lcores. */
+		exiting = true;
+	}
 
 	rte_eal_mp_wait_lcore();
 
-	/*
-	 * TODO Perform any needed state destruction, stop lcores if one
-	 * of the functions returned with an error, etc.
-	 */
+	/* TODO Perform any needed state destruction. */
 
-net:
 	gatekeeper_free_network();
 out:
 	return ret;

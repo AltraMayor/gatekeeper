@@ -19,7 +19,7 @@
 #include "gatekeeper_cps.h"
 
 int
-run_cps(void)
+run_cps(__attribute__((unused)) const struct cps_config *cps_conf)
 {
 	/* TODO Initialize and run Control Plane Support functional block. */
 	return 0;
