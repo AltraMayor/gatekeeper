@@ -16,11 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "gatekeeper_arp.h"
+#include "gatekeeper_lls.h"
 
 int
-run_arp(void)
+run_lls(void)
 {
-	/* TODO Initialize and run ARP functional block. */
+	/* TODO Initialize and run Link Layer Support functional block. */
 	return 0;
 }

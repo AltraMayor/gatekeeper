@@ -25,7 +25,6 @@
 #include <rte_common.h>
 #include <rte_launch.h>
 
-#include "gatekeeper_arp.h"
 #include "gatekeeper_bp.h"
 #include "gatekeeper_catcher.h"
 #include "gatekeeper_config.h"
@@ -33,6 +32,7 @@
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_rt.h"
 #include "gatekeeper_main.h"
 
@@ -127,11 +127,11 @@ main(int argc, char **argv)
 	 */
 
 	/*
-	 * TODO Decide which lcore will be assigned to ARP and decide
+	 * TODO Decide which lcore will be assigned to LLS and decide
 	 * what other configuration information should be passed to
 	 * this functional block.
 	 */
-	ret = run_arp();
+	ret = run_lls();
 	if (ret < 0)
 		goto net;
 

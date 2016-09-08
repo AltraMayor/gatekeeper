@@ -16,9 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _GATEKEEPER_ARP_H_
-#define _GATEKEEPER_ARP_H_
+#ifndef _GATEKEEPER_LLS_H_
+#define _GATEKEEPER_LLS_H_
 
-int run_arp(void);
+int run_lls(void);
 
-#endif /* _GATEKEEPER_ARP_H_ */
+#endif /* _GATEKEEPER_LLS_H_ */
