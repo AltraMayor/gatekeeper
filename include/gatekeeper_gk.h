@@ -19,6 +19,12 @@
 #ifndef _GATEKEEPER_GK_H_
 #define _GATEKEEPER_GK_H_
 
-int run_gk(void);
+/* Configuration for the GK functional block. */
+struct gk_config {
+	unsigned int	lcore_start_id;
+	unsigned int	lcore_end_id;
+};
+
+int run_gk(const struct gk_config *gk_conf);
 
 #endif /* _GATEKEEPER_GK_H_ */

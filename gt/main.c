@@ -19,7 +19,7 @@
 #include "gatekeeper_gt.h"
 
 int
-run_gt(void)
+run_gt(__attribute__((unused)) const struct gt_config *gt_conf)
 {
 	/* TODO Initialize and run GT functional block. */
 	return 0;

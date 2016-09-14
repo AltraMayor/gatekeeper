@@ -19,6 +19,11 @@
 #ifndef _GATEKEEPER_GGU_H_
 #define _GATEKEEPER_GGU_H_
 
-int run_ggu(void);
+/* Configuration for the GK-GT Unit functional block. */
+struct ggu_config {
+	unsigned int	lcore_id;
+};
+
+int run_ggu(const struct ggu_config *ggu_conf);
 
 #endif /* _GATEKEEPER_GGU_H_ */

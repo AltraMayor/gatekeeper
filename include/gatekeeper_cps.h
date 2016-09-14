@@ -19,6 +19,11 @@
 #ifndef _GATEKEEPER_CPS_H_
 #define _GATEKEEPER_CPS_H_
 
-int run_cps(void);
+/* Configuration for the Control Plane Support functional block. */
+struct cps_config {
+	unsigned int	lcore_id;
+};
+
+int run_cps(const struct cps_config *cps_conf);
 
 #endif /* _GATEKEEPER_CPS_H_ */

@@ -19,7 +19,7 @@
 #include "gatekeeper_config.h"
 
 int
-run_dynamic_config(void)
+run_dynamic_config(__attribute__((unused)) const struct dynamic_config *dy_conf)
 {
 	/* TODO Initialize and run Dynamic Config functional block. */
 	return 0;

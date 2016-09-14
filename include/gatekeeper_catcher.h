@@ -19,6 +19,11 @@
 #ifndef _GATEKEEPER_CATCHER_H_
 #define _GATEKEEPER_CATCHER_H_
 
-int run_catcher(void);
+/* Configuration for the Catcher functional block. */
+struct catcher_config {
+	unsigned int	lcore_id;
+};
+
+int run_catcher(const struct catcher_config *catcher_conf);
 
 #endif /* _GATEKEEPER_CATCHER_H_ */

@@ -19,7 +19,7 @@
 #include "gatekeeper_ggu.h"
 
 int
-run_ggu(void)
+run_ggu(__attribute__((unused)) const struct ggu_config *ggu_conf)
 {
 	/* TODO Initialize and run GK-GT Unit functional block. */
 	return 0;

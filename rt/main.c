@@ -19,7 +19,7 @@
 #include "gatekeeper_rt.h"
 
 int
-run_rt(void)
+run_rt(__attribute__((unused)) const struct rt_config *rt_conf)
 {
 	/* TODO Initialize and run RT functional block. */
 	return 0;

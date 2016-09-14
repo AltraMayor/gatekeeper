@@ -29,7 +29,7 @@ Upon cloning the `gatekeeper` repository, change directory to the `dpdk` submodu
 
 While in the `gatekeeper` directory, run the setup script:
 
-    $ sudo ./setup.sh
+    $ ./setup.sh
 
 This script compiles DPDK and loads the needed kernel modules. It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`. They must be set before `gatekeeper` will compile. After running the setup script, you may want to save the environmental variables in your shell's preferences file. For example, in Bash, you can do:
 

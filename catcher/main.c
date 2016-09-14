@@ -19,7 +19,7 @@
 #include "gatekeeper_catcher.h"
 
 int
-run_catcher(void)
+run_catcher(__attribute__((unused)) const struct catcher_config *catcher_conf)
 {
 	/* TODO Initialize and run Catcher functional block. */
 	return 0;
