@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# All the dependency projects are maintained in this directory.
+cd dependencies
+
+# Setup DPDK.
 cd dpdk
 
 # Path to the build directory.
@@ -48,6 +52,13 @@ fi
 
 ln -s ${RTE_SDK}/build ${RTE_SDK}/${RTE_TARGET}
 
-cd ..
+# Setup LuaJIT.
+cd ../luajit-2.0
+
+# Build and install.
+make
+sudo make install
+
+cd ../../
 
 echo "Environmental variables RTE_SDK and RTE_TARGET have been set, but not saved for future logins. You should save them to your shell's preferences file or set them after every login."
