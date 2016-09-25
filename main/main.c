@@ -25,19 +25,8 @@
 #include <rte_common.h>
 #include <rte_launch.h>
 
-#include "gatekeeper_bp.h"
-#include "gatekeeper_catcher.h"
 #include "gatekeeper_config.h"
-#include "gatekeeper_cps.h"
-#include "gatekeeper_ggu.h"
-#include "gatekeeper_gk.h"
-#include "gatekeeper_gt.h"
-#include "gatekeeper_lls.h"
-#include "gatekeeper_rt.h"
-#include "gatekeeper_main.h"
-
 #include "gatekeeper_net.h"
-#include "gatekeeper_mailbox.h"
 
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;

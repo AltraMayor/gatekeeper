@@ -22,7 +22,6 @@
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
-#include "gatekeeper_config.h"
 
 /*
  * Define the custom log type for GK functional block,
