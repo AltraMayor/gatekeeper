@@ -27,12 +27,7 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
 
-/* 
- * Parameters will be detected automatically. 
- */
-static uint32_t num_ports;
-
-static struct rte_mempool *gatekeeper_pktmbuf_pool[GATEKEEPER_MAX_NUMA_NODES];
+static struct net_config config;
 
 /* TODO Implement the configuration for Flow Director, RSS, and Filters. */
 static struct rte_eth_conf gatekeeper_port_conf = {
@@ -67,9 +62,19 @@ close_num_ports(uint8_t nb_ports)
 	}
 }
 
+struct net_config *
+get_net_conf(void)
+{
+	if (!config.gatekeeper_pktmbuf_pool)
+		config.gatekeeper_pktmbuf_pool = (struct rte_mempool **) \
+			calloc(GATEKEEPER_MAX_NUMA_NODES, sizeof(struct rte_mempool *));
+
+	return &config;
+}
+
 /* Initialize the network. */
 int
-gatekeeper_init_network(void)
+gatekeeper_init_network(struct net_config *net_conf)
 {
 	int i;
 	int ret = -1;
@@ -78,16 +83,13 @@ gatekeeper_init_network(void)
 	uint8_t num_succ_ports = 0;
 	uint32_t num_lcores = 0;
 
-	/* 
- 	 * XXX Sample parameters for test only. 
- 	 */
-	const uint32_t num_rx_queues = 1;
-	const uint32_t num_tx_queues = 1;
+	if (!net_conf)
+		return -1;
 
 	num_lcores = rte_lcore_count();
 	
-	RTE_ASSERT(num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(net_conf->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(net_conf->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 
 	num_numa_nodes = find_num_numa_nodes();
 	RTE_ASSERT(num_numa_nodes <= GATEKEEPER_MAX_NUMA_NODES);
@@ -96,16 +98,18 @@ gatekeeper_init_network(void)
 	for (i = 0; i < num_numa_nodes; i++) {
 		char pool_name[64];
 
-		if (gatekeeper_pktmbuf_pool[i] != NULL)
+		if (net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
 			continue;
 
-		RTE_ASSERT(snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u", i) < sizeof(pool_name));
-		gatekeeper_pktmbuf_pool[i] = rte_pktmbuf_pool_create(pool_name,
+		/* XXX For RTE_ASSERT(), default RTE_LOG_LEVEL=7, so it does nothing. */
+		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u", i);
+		RTE_ASSERT(ret < sizeof(pool_name));
+		net_conf->gatekeeper_pktmbuf_pool[i] = rte_pktmbuf_pool_create(pool_name,
                 		GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
                 		RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
 
 		/* No cleanup for this step, since DPDK doesn't offer a way to deallocate pools. */
-		if (gatekeeper_pktmbuf_pool[i] == NULL) {
+		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
 			RTE_LOG(ERR, MEMPOOL, "Failed to allocate mbuf for numa node %u!\n", i);
 
 			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure!\n");
@@ -122,15 +126,15 @@ gatekeeper_init_network(void)
 	}
 
 	/* Check port limits. */
-	num_ports = rte_eth_dev_count();
-	RTE_ASSERT(num_ports != 0 && num_ports <= GATEKEEPER_MAX_PORTS);
+	net_conf->num_ports = rte_eth_dev_count();
+	RTE_ASSERT(net_conf->num_ports != 0 && net_conf->num_ports <= GATEKEEPER_MAX_PORTS);
 
 	/* Initialize ports. */
-	for (port_id = 0; port_id < num_ports; port_id++) {
+	for (port_id = 0; port_id < net_conf->num_ports; port_id++) {
 		uint32_t lcore;
 		struct rte_eth_link link;
 		
-		ret = rte_eth_dev_configure(port_id, num_rx_queues, num_tx_queues, 
+		ret = rte_eth_dev_configure(port_id, net_conf->num_rx_queues, net_conf->num_tx_queues, 
 				&gatekeeper_port_conf);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT, "Failed to configure port %hhu (err=%d)!\n", port_id, ret);
@@ -144,14 +148,14 @@ gatekeeper_init_network(void)
 			uint16_t queue = (uint16_t)lcore;
 
 			/* XXX In case the number of lcores is greater than number of queues. */
-			if (lcore >= num_rx_queues || lcore >= num_tx_queues)
+			if (lcore >= net_conf->num_rx_queues || lcore >= net_conf->num_tx_queues)
 				break;
 
 			numa_node = rte_lcore_to_socket_id(lcore);
 
 			ret = rte_eth_rx_queue_setup(port_id, queue, GATEKEEPER_NUM_RX_DESC, 
 					(unsigned int)numa_node, NULL, 
-					gatekeeper_pktmbuf_pool[numa_node]);
+					net_conf->gatekeeper_pktmbuf_pool[numa_node]);
 			if (ret < 0) {
 				RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",\
 					 port_id, queue, ret);
@@ -201,5 +205,5 @@ out:
 void
 gatekeeper_free_network(void)
 {
-	close_num_ports(num_ports);
+	close_num_ports(config.num_ports);
 }

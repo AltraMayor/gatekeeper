@@ -85,10 +85,6 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	ret = gatekeeper_init_network();
-	if (ret < 0)
-		goto out;
-
 	/*
 	 * TODO Set up shared state (such as mailboxes) and figure out
 	 * how to pass that information to the functional blocks that
