@@ -4,6 +4,7 @@ local gatekeeperc = require("gatekeeperc")
 -- TODO Add configuration for other functional blocks.
 local block_names = {
 	"net",
+	"gk",
 }
 
 function gatekeeper_init()
