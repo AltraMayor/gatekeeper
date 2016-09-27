@@ -97,8 +97,7 @@ main(int argc, char **argv)
 
 	ret = config_and_launch();
 	if (ret < 0) {
-		/* Stop all lcores. */
-		exiting = true;
+		rte_exit(EXIT_FAILURE, "Fail to initialize Gatekeeper!\n");
 	}
 
 	rte_eal_mp_wait_lcore();
