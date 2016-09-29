@@ -25,7 +25,6 @@
  */
 #define GATEKEEPER_MAX_PORTS	(2)
 #define GATEKEEPER_MAX_QUEUES	(4)
-#define GATEKEEPER_MAX_NUMA_NODES (2)
 
 /*
  * XXX Sample parameters for test only.

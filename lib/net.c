@@ -34,17 +34,16 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 	.rxmode = { .max_rx_pkt_len = ETHER_MAX_LEN, },
 };
 
-static int
+static uint32_t
 find_num_numa_nodes(void)
 {
 	int i;
-	int nb_numa_nodes = 0;
+	uint32_t nb_numa_nodes = 0;
 	int nb_lcores = rte_lcore_count();
 
 	for (i = 0; i < nb_lcores; i++) {
-		uint32_t socket_id;
-		socket_id = rte_lcore_to_socket_id(i);
-		if ((uint32_t)nb_numa_nodes <= socket_id)
+		uint32_t socket_id = rte_lcore_to_socket_id(i);
+		if (nb_numa_nodes <= socket_id)
 			nb_numa_nodes = socket_id + 1;
 	}
 	
@@ -65,11 +64,6 @@ close_num_ports(uint8_t nb_ports)
 struct net_config *
 get_net_conf(void)
 {
-	if (!config.gatekeeper_pktmbuf_pool)
-		config.gatekeeper_pktmbuf_pool =
-			calloc(GATEKEEPER_MAX_NUMA_NODES,
-				sizeof(struct rte_mempool *));
-
 	return &config;
 }
 
@@ -80,23 +74,29 @@ gatekeeper_init_network(struct net_config *net_conf)
 	int i;
 	int ret = -1;
 	uint8_t port_id;
-	int num_numa_nodes = 0;
 	uint8_t num_succ_ports = 0;
 	uint32_t num_lcores = 0;
 
 	if (!net_conf)
 		return -1;
 
+	if (!config.gatekeeper_pktmbuf_pool) {
+		config.numa_nodes = find_num_numa_nodes();
+		config.gatekeeper_pktmbuf_pool =
+			calloc(config.numa_nodes, sizeof(struct rte_mempool *));
+		if (!config.gatekeeper_pktmbuf_pool) {
+			RTE_LOG(ERR, EAL, "%s: Out of memory\n", __func__);
+			return -1;
+		}
+	}
+
 	num_lcores = rte_lcore_count();
 	
 	RTE_ASSERT(net_conf->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
 	RTE_ASSERT(net_conf->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 
-	num_numa_nodes = find_num_numa_nodes();
-	RTE_ASSERT(num_numa_nodes <= GATEKEEPER_MAX_NUMA_NODES);
-
 	/* Initialize pktmbuf on each numa node. */
-	for (i = 0; i < num_numa_nodes; i++) {
+	for (i = 0; (uint32_t)i < net_conf->numa_nodes; i++) {
 		char pool_name[64];
 
 		if (net_conf->gatekeeper_pktmbuf_pool[i] != NULL)

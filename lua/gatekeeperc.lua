@@ -12,6 +12,7 @@ struct net_config {
 	 * Configuration files should not refer to them.
 	 */
 	uint32_t		num_ports;
+	uint32_t		numa_nodes;
 	struct rte_mempool 	**gatekeeper_pktmbuf_pool;
 };
 
