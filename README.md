@@ -17,18 +17,9 @@ Once the software dependencies have been installed and the hugepages have been c
 
 ### Obtain Source
 
-Upon cloning the `gatekeeper` repository, change directory to `dependencies`.
+Upon cloning the `gatekeeper` repository, you need to obtain the sources of
+the dependencies:
 
-First, change directory to the `dpdk` submodule and initialize it:
-
-    $ cd dpdk
-    $ git submodule init
-    $ git submodule update
-    $ cd ..
-
-Second, change directory to the `luajit-2.0` submodule and initialize it:
-
-    $ cd luajit-2.0
     $ git submodule init
     $ git submodule update
 
@@ -40,7 +31,12 @@ While in the `gatekeeper` directory, run the setup script:
 
     $ ./setup.sh
 
-This script compiles DPDK and loads the needed kernel modules. It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`. They must be set before `gatekeeper` will compile. After running the setup script, you may want to save the environmental variables in your shell's preferences file. For example, in Bash, you can do:
+This script compiles DPDK and LuaJIT, and loads the needed kernel modules.
+It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`.
+They must be set before `gatekeeper` will compile.
+After running the setup script, you may want to save
+the environmental variables in your shell's preferences file.
+For example, in Bash, you can do:
 
     $ echo "export RTE_SDK=${RTE_SDK}" >> ${HOME}/.profile
     $ echo "export RTE_TARGET=${RTE_TARGET}" >> ${HOME}/.profile

@@ -83,10 +83,11 @@ config_and_launch(void)
 	 * Calls a function in protected mode.
 	 * int lua_pcall (lua_State *L, int nargs, int nresults, int errfunc);
 	 * @nargs: the number of arguments that you pushed onto the stack.
-	 * @nresults: the number of results that the funtion will push onto the stack.
-	 * @errfunc: if "0", it represents the error message returned on the stack is 
-	 * exactly the original error message. Otherwise, it presents the index of the
-	 * error handling function.
+	 * @nresults: the number of results that the funtion will push onto
+	 * the stack.
+	 * @errfunc: if "0", it represents the error message returned on
+	 * the stack is exactly the original error message.
+	 * Otherwise, it presents the index of the error handling function.
 	 */
 	ret = lua_pcall(lua_state, 0, 0, 0);
 	if (ret != 0) {
@@ -105,12 +106,11 @@ config_and_launch(void)
 	}
 
 	ret = luaL_checkinteger(lua_state, -1);
-	if (ret < 0) {
-		RTE_LOG(ERR, CONFIG, "gatekeeper_init() return value is %d!\n", ret);
-	}
+	if (ret < 0)
+		RTE_LOG(ERR, CONFIG, "gatekeeper_init() return value is %d!\n",
+			ret);
 
 out:
 	lua_close(lua_state);
-
 	return ret;
 }

@@ -66,8 +66,9 @@ struct net_config *
 get_net_conf(void)
 {
 	if (!config.gatekeeper_pktmbuf_pool)
-		config.gatekeeper_pktmbuf_pool = (struct rte_mempool **) \
-			calloc(GATEKEEPER_MAX_NUMA_NODES, sizeof(struct rte_mempool *));
+		config.gatekeeper_pktmbuf_pool =
+			calloc(GATEKEEPER_MAX_NUMA_NODES,
+				sizeof(struct rte_mempool *));
 
 	return &config;
 }

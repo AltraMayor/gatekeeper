@@ -8,13 +8,11 @@ local block_names = {
 }
 
 function gatekeeper_init()
-	local ret = 0
-
-	for key, value in ipairs(block_names) do
-		block = require(value)
-        	ret = block.setup_block()
+	for _, value in ipairs(block_names) do
+		local block = require(value)
+		local ret = block.setup_block()
 		if ret < 0 then return ret end
 	end
 
-	return ret
+	return 0
 end
