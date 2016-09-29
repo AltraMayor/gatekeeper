@@ -25,19 +25,8 @@
 #include <rte_common.h>
 #include <rte_launch.h>
 
-#include "gatekeeper_bp.h"
-#include "gatekeeper_catcher.h"
 #include "gatekeeper_config.h"
-#include "gatekeeper_cps.h"
-#include "gatekeeper_ggu.h"
-#include "gatekeeper_gk.h"
-#include "gatekeeper_gt.h"
-#include "gatekeeper_lls.h"
-#include "gatekeeper_rt.h"
-#include "gatekeeper_main.h"
-
 #include "gatekeeper_net.h"
-#include "gatekeeper_mailbox.h"
 
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;
@@ -96,10 +85,6 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	ret = gatekeeper_init_network();
-	if (ret < 0)
-		goto out;
-
 	/*
 	 * TODO Set up shared state (such as mailboxes) and figure out
 	 * how to pass that information to the functional blocks that
@@ -108,8 +93,7 @@ main(int argc, char **argv)
 
 	ret = config_and_launch();
 	if (ret < 0) {
-		/* Stop all lcores. */
-		exiting = true;
+		rte_exit(EXIT_FAILURE, "Fail to initialize Gatekeeper!\n");
 	}
 
 	rte_eal_mp_wait_lcore();

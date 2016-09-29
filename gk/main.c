@@ -22,7 +22,6 @@
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
-#include "gatekeeper_config.h"
 
 /*
  * Define the custom log type for GK functional block,
@@ -33,13 +32,16 @@
 #define GATEKEEPER_MAX_PKT_BURST (32)
 
 static int
-gk_proc(__attribute__((unused)) void *arg)
+gk_proc(void *arg)
 {
 	/* TODO Implement the basic algorithm of a GK block. */
 
 	uint32_t lcore = rte_lcore_id();
+	struct gk_config *gk_conf = (struct gk_config *)arg;
 
 	RTE_LOG(NOTICE, GK, "The GK block is running at lcore = %u\n", lcore);
+	
+	rte_atomic32_inc(&gk_conf->ref_cnt);
 
 	while (likely(!exiting)) {
 		/* 
@@ -74,22 +76,46 @@ gk_proc(__attribute__((unused)) void *arg)
 
 	RTE_LOG(NOTICE, GK, "The GK block at lcore = %u is exiting\n", lcore);
 
-	return 0;
+	return cleanup_gk(gk_conf);
+}
+
+struct gk_config *
+alloc_gk_conf(void)
+{
+	return calloc(1, sizeof(struct gk_config));
 }
 
 int
-run_gk(const struct gk_config *gk_conf)
+run_gk(struct gk_config *gk_conf)
 {
 	/* TODO Initialize and run GK functional block. */
 
 	unsigned int i;
 	int ret;
+
+	if (!gk_conf)
+		return -1;
+
 	for (i = gk_conf->lcore_start_id; i <= gk_conf->lcore_end_id; i++) {
-		ret = rte_eal_remote_launch(gk_proc, NULL, i);
+		ret = rte_eal_remote_launch(gk_proc, gk_conf, i);
 		if (ret) {
 			RTE_LOG(ERR, EAL, "lcore %u failed to launch GK\n", i);
 			return ret;
 		}
+	}
+
+	return 0;
+}
+
+int
+cleanup_gk(struct gk_config *gk_conf)
+{
+	/*
+	 * Atomically decrements the atomic counter (v) by one and returns true 
+	 * if the result is 0, or false in all other cases.
+	 */
+	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt)) {
+		free(gk_conf);
 	}
 
 	return 0;

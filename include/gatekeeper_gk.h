@@ -19,12 +19,21 @@
 #ifndef _GATEKEEPER_GK_H_
 #define _GATEKEEPER_GK_H_
 
+#include <rte_atomic.h>
+
 /* Configuration for the GK functional block. */
 struct gk_config {
 	unsigned int	lcore_start_id;
 	unsigned int	lcore_end_id;
+	/*
+	 * The fields below are for internal use.
+	 * Configuration files should not refer to them.
+	 */
+	rte_atomic32_t	ref_cnt;
 };
 
-int run_gk(const struct gk_config *gk_conf);
+struct gk_config *alloc_gk_conf(void);
+int run_gk(struct gk_config *gk_conf);
+int cleanup_gk(struct gk_config *gk_conf);
 
 #endif /* _GATEKEEPER_GK_H_ */

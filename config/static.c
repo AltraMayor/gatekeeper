@@ -16,113 +16,101 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "gatekeeper_bp.h"
-#include "gatekeeper_catcher.h"
+#include <stdio.h>
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+
+#include <rte_log.h>
+#include <rte_debug.h>
+
 #include "gatekeeper_config.h"
-#include "gatekeeper_cps.h"
-#include "gatekeeper_ggu.h"
-#include "gatekeeper_gk.h"
-#include "gatekeeper_gt.h"
-#include "gatekeeper_lls.h"
-#include "gatekeeper_rt.h"
+
+#define RTE_LOGTYPE_CONFIG RTE_LOGTYPE_USER2
+
+/* TODO Get the install-path via Makefile. */
+#define LUA_BASE_DIR               "./lua"
+#define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
+
+static int
+set_lua_path(lua_State *l, const char *path)
+{
+	int ret;
+	char new_path[1024];
+
+	lua_getglobal(l, "package");
+	lua_getfield(l, -1, "path");
+
+	ret = snprintf(new_path, sizeof(new_path), "%s;%s/?.lua", lua_tostring(l, -1), path);
+	RTE_ASSERT(ret < sizeof(new_path));
+
+	lua_pop(l, 1);
+	lua_pushstring(l, new_path);
+	lua_setfield(l, -2, "path");
+	lua_pop(l, 1);
+
+	return ret;
+}
 
 int
 config_and_launch(void)
 {
-	struct bp_config bp_conf;
-	struct catcher_config catcher_conf;
-	struct dynamic_config dy_conf;
-	struct cps_config cps_conf;
-	struct ggu_config ggu_conf;
-	struct gk_config gk_conf;
-	struct gt_config gt_conf;
-	struct rt_config rt_conf;
 	int ret;
+	char lua_entry_path[128];
+	lua_State *lua_state;
+
+
+	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
+			"%s/%s", LUA_BASE_DIR, GATEKEEPER_CONFIG_FILE);
+	RTE_ASSERT(ret < sizeof(lua_entry_path));
+
+	lua_state = luaL_newstate();
+	if (!lua_state) {
+		RTE_LOG(ERR, CONFIG, "Fail to create new Lua state!\n");
+		return -1;
+	}
+
+	luaL_openlibs(lua_state);
+	set_lua_path(lua_state, LUA_BASE_DIR);
+	ret = luaL_loadfile(lua_state, lua_entry_path);
+	if (ret != 0) {
+		RTE_LOG(ERR, CONFIG, "%s!\n", lua_tostring(lua_state, -1));
+		ret = -1;
+		goto out;
+	}
 
 	/*
-	 * TODO Read in configuration file(s) using Lua and create
-	 * config structs for each functional block. Then launch
-	 * all functional blocks (with their config struct) that
-	 * are needed with their own lcore(s).
+	 * Calls a function in protected mode.
+	 * int lua_pcall (lua_State *L, int nargs, int nresults, int errfunc);
+	 * @nargs: the number of arguments that you pushed onto the stack.
+	 * @nresults: the number of results that the funtion will push onto the stack.
+	 * @errfunc: if "0", it represents the error message returned on the stack is 
+	 * exactly the original error message. Otherwise, it presents the index of the
+	 * error handling function.
 	 */
+	ret = lua_pcall(lua_state, 0, 0, 0);
+	if (ret != 0) {
+		RTE_LOG(ERR, CONFIG, "%s!\n", lua_tostring(lua_state, -1));
+		ret = -1;
+		goto out;
+	}
 
-	/*
-	 * TODO Decide which lcore*s* will be assigned to BP and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_bp(&bp_conf);
-	if (ret < 0)
-		return ret;
+	/* Function to be called. */
+	lua_getglobal(lua_state, "gatekeeper_init");
+	ret = lua_pcall(lua_state, 0, 1, 0);
+	if (ret != 0) {
+		RTE_LOG(ERR, CONFIG, "%s!\n", lua_tostring(lua_state, -1));
+		ret = -1;
+		goto out;
+	}
 
-	/*
-	 * TODO Decide which lcore will be assigned to Catcher and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_catcher(&catcher_conf);
-	if (ret < 0)
-		return ret;
+	ret = luaL_checkinteger(lua_state, -1);
+	if (ret < 0) {
+		RTE_LOG(ERR, CONFIG, "gatekeeper_init() return value is %d!\n", ret);
+	}
 
-	/*
-	 * TODO Decide which lcore will be assigned to Dynamic Config and
-	 * decide what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_dynamic_config(&dy_conf);
-	if (ret < 0)
-		return ret;
+out:
+	lua_close(lua_state);
 
-	/*
-	 * TODO Decide which lcore will be assigned to Control Plane Support
-	 * and decide what other configuration information should be passed
-	 * to this functional block.
-	 */
-	ret = run_cps(&cps_conf);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * TODO Decide which lcore will be assigned to GK-GT Unit and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_ggu(&ggu_conf);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to GK and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_gk(&gk_conf);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to GT and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_gt(&gt_conf);
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * TODO Decide which lcore will be assigned to LLS and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_lls();
-	if (ret < 0)
-		return ret;
-
-	/*
-	 * TODO Decide which lcore*s* will be assigned to RT and decide
-	 * what other configuration information should be passed to
-	 * this functional block.
-	 */
-	ret = run_rt(&rt_conf);
 	return ret;
 }

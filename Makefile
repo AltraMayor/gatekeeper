@@ -46,7 +46,8 @@ SRCS-y += rt/main.c
 # Libraries.
 SRCS-y += lib/mailbox.c lib/net.c
 
-CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include
+LDLIBS += $(LDIR) -lm -lluajit-5.1
+CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.0/
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors
 
 include $(RTE_SDK)/mk/rte.extapp.mk

@@ -17,9 +17,18 @@ Once the software dependencies have been installed and the hugepages have been c
 
 ### Obtain Source
 
-Upon cloning the `gatekeeper` repository, change directory to the `dpdk` submodule and initialize it:
+Upon cloning the `gatekeeper` repository, change directory to `dependencies`.
+
+First, change directory to the `dpdk` submodule and initialize it:
 
     $ cd dpdk
+    $ git submodule init
+    $ git submodule update
+    $ cd ..
+
+Second, change directory to the `luajit-2.0` submodule and initialize it:
+
+    $ cd luajit-2.0
     $ git submodule init
     $ git submodule update
 
