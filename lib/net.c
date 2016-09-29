@@ -102,16 +102,24 @@ gatekeeper_init_network(struct net_config *net_conf)
 		if (net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
 			continue;
 
-		/* XXX For RTE_ASSERT(), default RTE_LOG_LEVEL=7, so it does nothing. */
-		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u", i);
+		/* XXX For RTE_ASSERT(), default RTE_LOG_LEVEL=7,
+		 * so it does nothing.
+		 */
+		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u",
+			i);
 		RTE_ASSERT(ret < sizeof(pool_name));
-		net_conf->gatekeeper_pktmbuf_pool[i] = rte_pktmbuf_pool_create(pool_name,
+		net_conf->gatekeeper_pktmbuf_pool[i] =
+			rte_pktmbuf_pool_create(pool_name,
                 		GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
                 		RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
 
-		/* No cleanup for this step, since DPDK doesn't offer a way to deallocate pools. */
+		/* No cleanup for this step,
+		 * since DPDK doesn't offer a way to deallocate pools.
+		 */
 		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
-			RTE_LOG(ERR, MEMPOOL, "Failed to allocate mbuf for numa node %u!\n", i);
+			RTE_LOG(ERR, MEMPOOL,
+				"Failed to allocate mbuf for numa node %u!\n",
+				i);
 
 			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure!\n");
 			else if (rte_errno == E_RTE_SECONDARY) RTE_LOG(ERR, MEMPOOL, "Function was called from a secondary process instance!\n");
@@ -128,45 +136,56 @@ gatekeeper_init_network(struct net_config *net_conf)
 
 	/* Check port limits. */
 	net_conf->num_ports = rte_eth_dev_count();
-	RTE_ASSERT(net_conf->num_ports != 0 && net_conf->num_ports <= GATEKEEPER_MAX_PORTS);
+	RTE_ASSERT(net_conf->num_ports != 0 &&
+		net_conf->num_ports <= GATEKEEPER_MAX_PORTS);
 
 	/* Initialize ports. */
 	for (port_id = 0; port_id < net_conf->num_ports; port_id++) {
 		uint32_t lcore;
 		struct rte_eth_link link;
 		
-		ret = rte_eth_dev_configure(port_id, net_conf->num_rx_queues, net_conf->num_tx_queues, 
-				&gatekeeper_port_conf);
+		ret = rte_eth_dev_configure(port_id, net_conf->num_rx_queues,
+			net_conf->num_tx_queues, &gatekeeper_port_conf);
 		if (ret < 0) {
-			RTE_LOG(ERR, PORT, "Failed to configure port %hhu (err=%d)!\n", port_id, ret);
+			RTE_LOG(ERR, PORT,
+				"Failed to configure port %hhu (err=%d)!\n",
+				port_id, ret);
 			goto port;
 		}
 
 		for (lcore = 0; lcore < num_lcores; lcore++) {
 			size_t numa_node;
 			
-			/* XXX Map queue = lcore, if necessary, change the queues mapping. */
+			/* XXX Map queue = lcore, if necessary,
+			 * change the queues mapping.
+			 */
 			uint16_t queue = (uint16_t)lcore;
 
-			/* XXX In case the number of lcores is greater than number of queues. */
-			if (lcore >= net_conf->num_rx_queues || lcore >= net_conf->num_tx_queues)
+			/* XXX In case the number of lcores is greater than
+			 * the number of queues.
+			 */
+			if (lcore >= net_conf->num_rx_queues ||
+					lcore >= net_conf->num_tx_queues)
 				break;
 
 			numa_node = rte_lcore_to_socket_id(lcore);
 
-			ret = rte_eth_rx_queue_setup(port_id, queue, GATEKEEPER_NUM_RX_DESC, 
+			ret = rte_eth_rx_queue_setup(port_id, queue,
+					GATEKEEPER_NUM_RX_DESC,
 					(unsigned int)numa_node, NULL, 
-					net_conf->gatekeeper_pktmbuf_pool[numa_node]);
+					net_conf->gatekeeper_pktmbuf_pool[
+						numa_node]);
 			if (ret < 0) {
-				RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",\
+				RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",
 					 port_id, queue, ret);
 				goto port;
 			}
 
-			ret = rte_eth_tx_queue_setup(port_id, queue, GATEKEEPER_NUM_TX_DESC, 
+			ret = rte_eth_tx_queue_setup(port_id, queue,
+					GATEKEEPER_NUM_TX_DESC,
 					numa_node, NULL);
 			if (ret < 0) {
-				RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",\
+				RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",
 					 port_id, queue, ret);
 				goto port;
 			}
@@ -175,19 +194,22 @@ gatekeeper_init_network(struct net_config *net_conf)
 		/* Start device. */
 		ret = rte_eth_dev_start(port_id);
 		if (ret < 0) {
-			RTE_LOG(ERR, PORT, "Failed to start port %hhu (err=%d)!\n", port_id, ret);
+			RTE_LOG(ERR, PORT, "Failed to start port %hhu (err=%d)!\n",
+				port_id, ret);
 			goto port;
 		}
 		num_succ_ports++;
 		
 		/*
-		 * The following code ensures that the device is ready for full speed RX/TX.
-		 * When the initialization is done without this, the initial packet 
-		 * transmission may be blocked.
+		 * The following code ensures that the device is ready for
+		 * full speed RX/TX.
+		 * When the initialization is done without this,
+		 * the initial packet transmission may be blocked.
 		 */
 		rte_eth_link_get(port_id, &link);
 		if (!link.link_status) {
-			RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n", port_id);
+			RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
+				port_id);
 			ret = -1;
 			goto port;
 		}
