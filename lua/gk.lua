@@ -1,4 +1,3 @@
-local ffi = require("ffi")
 local gatekeeperc = require("gatekeeperc")
 
 local M = {}
@@ -7,7 +6,7 @@ local M = {}
 function M.setup_block()
 
 	-- Init the GK configuration structure.
-	conf = gatekeeperc.alloc_gk_conf()
+	local conf = gatekeeperc.alloc_gk_conf()
 	conf.lcore_start_id = 1
 	conf.lcore_end_id = 2
 

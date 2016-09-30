@@ -1,4 +1,3 @@
-local ffi = require("ffi")
 local gatekeeperc = require("gatekeeperc")
 
 local M = {}
@@ -7,7 +6,7 @@ local M = {}
 function M.setup_block()
 
 	-- Init the network configuration structure.
-	conf = gatekeeperc.get_net_conf()
+	local conf = gatekeeperc.get_net_conf()
 	conf.num_rx_queues = 1
 	conf.num_tx_queues = 1
 

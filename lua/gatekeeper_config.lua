@@ -1,6 +1,3 @@
-local ffi = require("ffi")
-local gatekeeperc = require("gatekeeperc")
-
 -- TODO Add configuration for other functional blocks.
 local block_names = {
 	"net",
