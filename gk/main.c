@@ -23,12 +23,6 @@
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
 
-/*
- * Define the custom log type for GK functional block,
- * which is used to generate logs for GK block.
- */
-#define RTE_LOGTYPE_GK RTE_LOGTYPE_USER1
-
 #define GATEKEEPER_MAX_PKT_BURST (32)
 
 static int
@@ -39,7 +33,8 @@ gk_proc(void *arg)
 	uint32_t lcore = rte_lcore_id();
 	struct gk_config *gk_conf = (struct gk_config *)arg;
 
-	RTE_LOG(NOTICE, GK, "The GK block is running at lcore = %u\n", lcore);
+	RTE_LOG(NOTICE, GATEKEEPER,
+		"gk: the GK block is running at lcore = %u\n", lcore);
 	
 	rte_atomic32_inc(&gk_conf->ref_cnt);
 
@@ -74,7 +69,8 @@ gk_proc(void *arg)
 		}
 	}
 
-	RTE_LOG(NOTICE, GK, "The GK block at lcore = %u is exiting\n", lcore);
+	RTE_LOG(NOTICE, GATEKEEPER,
+		"gk: the GK block at lcore = %u is exiting\n", lcore);
 
 	return cleanup_gk(gk_conf);
 }
