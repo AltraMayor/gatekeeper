@@ -16,13 +16,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-
 #include <rte_mbuf.h>
 #include <rte_errno.h>
-#include <rte_lcore.h>
-#include <rte_debug.h>
 #include <rte_ethdev.h>
+#include <rte_malloc.h>
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
@@ -83,9 +80,10 @@ gatekeeper_init_network(struct net_config *net_conf)
 	if (!config.gatekeeper_pktmbuf_pool) {
 		config.numa_nodes = find_num_numa_nodes();
 		config.gatekeeper_pktmbuf_pool =
-			calloc(config.numa_nodes, sizeof(struct rte_mempool *));
+			rte_calloc("mbuf_pool", config.numa_nodes,
+				sizeof(struct rte_mempool *), 0);
 		if (!config.gatekeeper_pktmbuf_pool) {
-			RTE_LOG(ERR, EAL, "%s: Out of memory\n", __func__);
+			RTE_LOG(ERR, MALLOC, "%s: Out of memory\n", __func__);
 			return -1;
 		}
 	}

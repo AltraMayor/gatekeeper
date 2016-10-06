@@ -16,9 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <rte_log.h>
-#include <rte_lcore.h>
 #include <rte_ethdev.h>
+#include <rte_malloc.h>
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
@@ -78,7 +77,7 @@ gk_proc(void *arg)
 struct gk_config *
 alloc_gk_conf(void)
 {
-	return calloc(1, sizeof(struct gk_config));
+	return rte_calloc("gk_config", 1, sizeof(struct gk_config), 0);
 }
 
 int
@@ -111,7 +110,7 @@ cleanup_gk(struct gk_config *gk_conf)
 	 * if the result is 0, or false in all other cases.
 	 */
 	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt)) {
-		free(gk_conf);
+		rte_free(gk_conf);
 	}
 
 	return 0;
