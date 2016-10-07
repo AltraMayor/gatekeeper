@@ -25,6 +25,7 @@
 #include <rte_eth_bond.h>
 #include <rte_malloc.h>
 
+#include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
 
@@ -85,6 +86,186 @@ find_num_numa_nodes(void)
 	return nb_numa_nodes;
 }
 
+static int
+configure_queue(uint8_t port_id, uint16_t queue_id, enum queue_type ty,
+	unsigned int numa_node, struct rte_mempool *mp)
+{
+	int ret;
+
+	switch (ty) {
+	case QUEUE_TYPE_RX:
+		ret = rte_eth_rx_queue_setup(port_id, queue_id,
+			GATEKEEPER_NUM_RX_DESC, numa_node, NULL, mp);
+		if (ret < 0) {
+			RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",
+				port_id, queue_id, ret);
+			return ret;
+		}
+		break;
+	case QUEUE_TYPE_TX:
+		ret = rte_eth_tx_queue_setup(port_id, queue_id,
+			GATEKEEPER_NUM_TX_DESC, numa_node, NULL);
+		if (ret < 0) {
+			RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",
+				port_id, queue_id, ret);
+			return ret;
+		}
+		break;
+	default:
+		RTE_LOG(ERR, GATEKEEPER,
+			"Unsupported queue type (%d) passed to %s!\n",
+			ty, __func__);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Get a queue identifier for a given functional block instance (lcore),
+ * using a certain interface for either RX or TX.
+ */
+int
+get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
+	unsigned int lcore)
+{
+	int16_t *queues;
+	int ret;
+	uint8_t port;
+	unsigned int numa_node;
+	struct rte_mempool *mp;
+	int16_t new_queue_id;
+
+	RTE_ASSERT(lcore < RTE_MAX_LCORE);
+	RTE_ASSERT(ty < QUEUE_TYPE_MAX);
+
+	queues = (ty == QUEUE_TYPE_RX) ? iface->rx_queues : iface->tx_queues;
+
+	if (queues[lcore] != GATEKEEPER_QUEUE_UNALLOCATED)
+		goto queue;
+
+	/* Get next queue identifier. */
+	new_queue_id = rte_atomic16_add_return(ty == QUEUE_TYPE_RX ?
+		&iface->rx_queue_id : &iface->tx_queue_id, 1);
+	if (new_queue_id == GATEKEEPER_QUEUE_UNALLOCATED) {
+		RTE_LOG(ERR, GATEKEEPER, "net: exhausted all %s queues for the %s interface; this is likely a bug\n",
+			(ty == QUEUE_TYPE_RX) ? "RX" : "TX", iface->name);
+		return -1;
+	}
+	queues[lcore] = new_queue_id;
+
+	/*
+	 * Configure this queue on all ports of this interface.
+	 *
+	 * Note that if we are using a bonded port, it is not
+	 * sufficient to only configure the queue on that bonded
+	 * port. All slave ports must be configured and started
+	 * before the bonded port can be started.
+	 */
+	numa_node = rte_lcore_to_socket_id(lcore);
+	mp = config.gatekeeper_pktmbuf_pool[numa_node];
+	for (port = 0; port < iface->num_ports; port++) {
+		ret = configure_queue(iface->ports[port],
+			(uint16_t)new_queue_id, ty, numa_node, mp);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* If there's a bonded port, configure it too. */
+	if (iface->num_ports > 1) {
+		ret = configure_queue(iface->id, (uint16_t)new_queue_id,
+			ty, numa_node, mp);
+		if (ret < 0)
+			return ret;
+	}
+
+queue:
+	return queues[lcore];
+}
+
+static void
+stop_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
+{
+	uint8_t i;
+	for (i = 0; i < nb_ports; i++)
+		rte_eth_dev_stop(iface->ports[i]);
+}
+
+static void
+rm_slave_ports(struct gatekeeper_if *iface, uint8_t nb_slave_ports)
+{
+	uint8_t i;
+	for (i = 0; i < nb_slave_ports; i++)
+		rte_eth_bond_slave_remove(iface->id, iface->ports[i]);
+}
+
+static void
+close_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
+{
+	uint8_t i;
+	for (i = 0; i < nb_ports; i++)
+		rte_eth_dev_close(iface->ports[i]);
+}
+
+enum iface_destroy_cmd {
+	/* Destroy only the data allocated by Lua. */
+	IFACE_DESTROY_LUA,
+	/* Destroy the data associated with initializing the ports. */
+	IFACE_DESTROY_PORTS,
+	/* Destroy the data initialized by the first phase of net config. */
+	IFACE_DESTROY_INIT,
+	/* Destroy all data for this interface. */
+	IFACE_DESTROY_ALL,
+};
+
+static void
+destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
+{
+	switch (cmd) {
+	case IFACE_DESTROY_ALL:
+		/* Stop interface ports (bonded port is stopped below). */
+		stop_iface_ports(iface, iface->num_ports);
+		/* FALLTHROUGH */
+	case IFACE_DESTROY_INIT:
+		/* Remove any slave ports added to a bonded port. */
+		if (iface->num_ports > 1)
+			rm_slave_ports(iface, iface->num_ports);
+		/* FALLTHROUGH */
+	case IFACE_DESTROY_PORTS:
+		/* Stop and close bonded port, if needed. */
+		if (iface->num_ports > 1)
+			rte_eth_bond_free(iface->name);
+
+		/* Close and free interface ports. */
+		close_iface_ports(iface, iface->num_ports);
+		rte_free(iface->ports);
+		iface->ports = NULL;
+		/* FALLTHROUGH */
+	case IFACE_DESTROY_LUA: {
+		/* Free PCI addresses. */
+		uint8_t i;
+		for (i = 0; i < iface->num_ports; i++)
+			rte_free(iface->pci_addrs[i]);
+		rte_free(iface->pci_addrs);
+		iface->pci_addrs = NULL;
+
+		/* Free interface name. */
+		rte_free(iface->name);
+		iface->name = NULL;
+		break;
+	}
+	default:
+		RTE_ASSERT(0);
+		break;
+	}
+}
+
+void
+lua_free_iface(struct gatekeeper_if *iface)
+{
+	destroy_iface(iface, IFACE_DESTROY_LUA);
+}
+
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs)
@@ -131,61 +312,6 @@ name:
 	rte_free(iface->name);
 	iface->name = NULL;
 	return -1;
-}
-
-static void
-free_pci_addrs(struct gatekeeper_if *iface)
-{
-	uint8_t i;
-	for (i = 0; i < iface->num_ports; i++)
-		rte_free(iface->pci_addrs[i]);
-	rte_free(iface->pci_addrs);
-	iface->pci_addrs = NULL;
-}
-
-void
-lua_free_iface(struct gatekeeper_if *iface)
-{
-	free_pci_addrs(iface);
-	rte_free(iface->name);
-	iface->name = NULL;
-}
-
-static void
-close_iface_id(struct gatekeeper_if *iface, uint8_t nb_slave_ports)
-{
-	uint8_t i;
-
-	/* If there's only one port, there's no bonded port. */
-	if (iface->num_ports == 1)
-		return;
-
-	for (i = 0; i < nb_slave_ports; i++)
-		rte_eth_bond_slave_remove(iface->id, iface->ports[i]);
-
-	rte_eth_bond_free(iface->name);
-}
-
-static void
-close_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
-{
-	uint8_t i;
-	for (i = 0; i < nb_ports; i++) {
-		rte_eth_dev_stop(iface->ports[i]);
-		rte_eth_dev_close(iface->ports[i]);
-	}
-}
-
-static void
-close_iface(struct gatekeeper_if *iface)
-{
-	close_iface_id(iface, iface->num_ports);
-	close_iface_ports(iface, iface->num_ports);
-	rte_free(iface->ports);
-	iface->ports = NULL;
-	free_pci_addrs(iface);
-	rte_free(iface->name);
-	iface->name = NULL;
 }
 
 struct net_config *
@@ -282,98 +408,19 @@ out:
 }
 
 static int
-init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports,
-	int wait_for_link)
+init_port(struct gatekeeper_if *iface, uint8_t port_id,
+	uint8_t *pnum_succ_ports)
 {
-	unsigned int lcore;
-	struct rte_eth_link link;
-	uint8_t attempts = 0;
-	int ret = rte_eth_dev_configure(port_id,
-		net_conf->num_rx_queues, net_conf->num_tx_queues,
-		&gatekeeper_port_conf);
+	int ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
+		iface->num_tx_queues, &gatekeeper_port_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT,
 			"Failed to configure port %hhu (err=%d)!\n",
 			port_id, ret);
 		return ret;
 	}
-
-	/*
-	 * TODO This initialization assumes that every block wants
-	 * to use the same queue identifier for both RX and TX on
-	 * both interfaces. This is not the case, and should be
-	 * changed in future patches.
-	 */
-	RTE_LCORE_FOREACH_SLAVE(lcore) {
-		unsigned int numa_node = rte_lcore_to_socket_id(lcore);
-		struct rte_mempool *mp = net_conf->
-			gatekeeper_pktmbuf_pool[numa_node];
-		uint16_t queue = (uint16_t)(lcore - 1);
-
-		if (queue < net_conf->num_rx_queues) {
-			ret = rte_eth_rx_queue_setup(port_id, queue,
-				GATEKEEPER_NUM_RX_DESC,
-				numa_node, NULL, mp);
-			if (ret < 0) {
-				RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",
-					port_id, queue, ret);
-				return ret;
-			}
-		}
-
-		if (queue < net_conf->num_tx_queues) {
-			ret = rte_eth_tx_queue_setup(port_id, queue,
-				GATEKEEPER_NUM_TX_DESC, numa_node, NULL);
-			if (ret < 0) {
-				RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",
-					port_id, queue, ret);
-				return ret;
-			}
-		}
-	}
-
-	/* Start device. */
-	ret = rte_eth_dev_start(port_id);
-	if (ret < 0) {
-		RTE_LOG(ERR, PORT, "Failed to start port %hhu (err=%d)!\n",
-			port_id, ret);
-		return ret;
-	}
-	if (num_succ_ports != NULL)
-		num_succ_ports++;
-
-	/*
-	 * The following code ensures that the device is ready for
-	 * full speed RX/TX.
-	 *
-	 * When the initialization is done without this,
-	 * the initial packet transmission may be blocked.
-	 *
-	 * Optionally, we can wait for the link to come up before
-	 * continuing. This is useful for bonded ports where the
-	 * slaves must be activated after starting the bonded
-	 * device in order for the link to come up. The slaves
-	 * are activated on a timer, so this can take some time.
-	 */
-	do {
-		rte_eth_link_get(port_id, &link);
-
-		/* Link is up. */
-		if (link.link_status)
-			break;
-
-		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
-			port_id);
-
-		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
-			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
-			ret = -1;
-			return ret;
-		}
-
-		attempts++;
-		sleep(1);
-	} while (true);
+	if (pnum_succ_ports != NULL)
+		(*pnum_succ_ports)++;
 
 	/* TODO Configure the Flow Director and RSS. */
 
@@ -381,21 +428,31 @@ init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports,
 }
 
 static int
-init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
+init_iface(struct gatekeeper_if *iface)
 {
 	int ret = 0;
 	uint8_t i;
 	uint8_t num_succ_ports = 0;
 	uint8_t num_slaves_added = 0;
 
+	/* Initialize all potential queues on this interface. */
+	for (i = 0; i < RTE_MAX_LCORE; i++) {
+		iface->rx_queues[i] = GATEKEEPER_QUEUE_UNALLOCATED;
+		iface->tx_queues[i] = GATEKEEPER_QUEUE_UNALLOCATED;
+	}
+	rte_atomic16_set(&iface->rx_queue_id, -1);
+	rte_atomic16_set(&iface->tx_queue_id, -1);
+
 	iface->ports = rte_calloc("ports", iface->num_ports,
 		sizeof(*iface->ports), 0);
 	if (iface->ports == NULL) {
 		RTE_LOG(ERR, MALLOC, "%s: Out of memory for %s ports\n",
 			__func__, iface->name);
+		destroy_iface(iface, IFACE_DESTROY_LUA);
 		return -1;
 	}
 
+	/* Initialize all ports on this interface. */
 	for (i = 0; i < iface->num_ports; i++) {
 		struct rte_pci_addr pci_addr;
 		uint8_t port_id;
@@ -405,7 +462,7 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 			RTE_LOG(ERR, PORT,
 				"Failed to parse PCI %s (err=%d)!\n",
 				iface->pci_addrs[i], ret);
-			goto close_ports;
+			goto close_partial;
 		}
 
 		ret = rte_eth_dev_get_port_by_addr(&pci_addr, &port_id);
@@ -413,13 +470,13 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 			RTE_LOG(ERR, PORT,
 				"Failed to map PCI %s to a port (err=%d)!\n",
 				iface->pci_addrs[i], ret);
-			goto close_ports;
+			goto close_partial;
 		}
 		iface->ports[i] = port_id;
 
-		ret = init_port(net_conf, port_id, &num_succ_ports, false);
+		ret = init_port(iface, port_id, &num_succ_ports);
 		if (ret < 0)
-			goto close_ports;
+			goto close_partial;
 	}
 
 	/* Initialize bonded port, if needed. */
@@ -433,7 +490,7 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT, "Failed to create bonded port (err=%d)!\n",
 			ret);
-		goto close_ports;
+		goto close_partial;
 	}
 
 	iface->id = (uint8_t)ret;
@@ -443,23 +500,26 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT, "Failed to add slave port %hhu to bonded port %hhu (err=%d)!\n",
 				iface->ports[i], iface->id, ret);
-			goto close_id;
+			rm_slave_ports(iface, num_slaves_added);
+			goto close_ports;
 		}
 		num_slaves_added++;
 	}
 
-	ret = init_port(net_conf, iface->id, NULL, true);
+	ret = init_port(iface, iface->id, NULL);
 	if (ret < 0)
-		goto close_id;
+		goto close_ports;
 
 	return 0;
 
-close_id:
-	close_iface_id(iface, num_slaves_added);
 close_ports:
+	destroy_iface(iface, IFACE_DESTROY_PORTS);
+	return ret;
+close_partial:
 	close_iface_ports(iface, num_succ_ports);
 	rte_free(iface->ports);
 	iface->ports = NULL;
+	destroy_iface(iface, IFACE_DESTROY_LUA);
 	return ret;
 }
 
@@ -473,6 +533,8 @@ gatekeeper_init_network(struct net_config *net_conf)
 	if (net_conf == NULL)
 		return -1;
 
+	net_conf->configuring = true;
+
 	if (config.gatekeeper_pktmbuf_pool == NULL) {
 		config.numa_nodes = find_num_numa_nodes();
 		config.gatekeeper_pktmbuf_pool =
@@ -484,8 +546,11 @@ gatekeeper_init_network(struct net_config *net_conf)
 		}
 	}
 
-	RTE_ASSERT(net_conf->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	/* Make sure no interface has more queues than permitted. */
+	RTE_ASSERT(net_conf->front->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(net_conf->front->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(net_conf->back->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(net_conf->back->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 
 	/* Initialize pktmbuf on each numa node. */
 	for (i = 0; (uint32_t)i < net_conf->numa_nodes; i++) {
@@ -534,28 +599,123 @@ gatekeeper_init_network(struct net_config *net_conf)
 			(net_conf->front.num_ports + net_conf->back.num_ports));
 
 	/* Initialize interfaces. */
-	ret = init_iface(net_conf, &net_conf->front);
+	ret = init_iface(&net_conf->front);
 	if (ret < 0)
 		goto out;
 
-	ret = init_iface(net_conf, &net_conf->back);
+	ret = init_iface(&net_conf->back);
 	if (ret < 0)
-		goto close_front;
+		goto destroy_front;
 
 	goto out;
 
-close_front:
-	close_iface_id(&net_conf->front, net_conf->front.num_ports);
-	close_iface_ports(&net_conf->front, net_conf->front.num_ports);
-	rte_free(net_conf->front.ports);
-	net_conf->front.ports = NULL;
+destroy_front:
+	destroy_iface(&net_conf->front, IFACE_DESTROY_INIT);
 out:
+	return ret;
+}
+
+static int
+start_port(uint8_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
+{
+	struct rte_eth_link link;
+	uint8_t attempts = 0;
+
+	/* Start device. */
+	int ret = rte_eth_dev_start(port_id);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"Failed to start port %hhu (err=%d)!\n",
+			port_id, ret);
+		return ret;
+	}
+	if (pnum_succ_ports != NULL)
+		(*pnum_succ_ports)++;
+
+	/*
+	 * The following code ensures that the device is ready for
+	 * full speed RX/TX.
+	 *
+	 * When the initialization is done without this,
+	 * the initial packet transmission may be blocked.
+	 *
+	 * Optionally, we can wait for the link to come up before
+	 * continuing. This is useful for bonded ports where the
+	 * slaves must be activated after starting the bonded
+	 * device in order for the link to come up. The slaves
+	 * are activated on a timer, so this can take some time.
+	 */
+	do {
+		rte_eth_link_get(port_id, &link);
+
+		/* Link is up. */
+		if (link.link_status)
+			break;
+
+		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
+			port_id);
+
+		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
+			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
+			ret = -1;
+			return ret;
+		}
+
+		attempts++;
+		sleep(1);
+	} while (true);
+
+	return 0;
+}
+
+static int
+start_iface(struct gatekeeper_if *iface)
+{
+	int ret;
+	uint8_t i;
+	uint8_t num_succ_ports = 0;
+
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = start_port(iface->ports[i], &num_succ_ports, false);
+		if (ret < 0)
+			goto stop_partial;
+	}
+
+	/* If there's no bonded port, we're done. */
+	if (iface->num_ports == 1)
+		return 0;
+
+	ret = start_port(iface->id, NULL, true);
+	if (ret < 0)
+		goto stop_partial;
+
+	return 0;
+
+stop_partial:
+	stop_iface_ports(iface, num_succ_ports);
+	destroy_iface(iface, IFACE_DESTROY_INIT);
+	return ret;
+}
+
+int
+gatekeeper_start_network(void)
+{
+	int ret;
+
+	ret = start_iface(&config.front);
+	if (ret < 0)
+		return ret;
+
+	ret = start_iface(&config.back);
+	if (ret < 0)
+		destroy_iface(&config.front, IFACE_DESTROY_ALL);
+ 
 	return ret;
 }
 
 void
 gatekeeper_free_network(void)
 {
-	close_iface(&config.back);
-	close_iface(&config.front);
+	destroy_iface(&config.back, IFACE_DESTROY_ALL);
+	destroy_iface(&config.front, IFACE_DESTROY_ALL);
 }

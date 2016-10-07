@@ -155,11 +155,19 @@ main(int argc, char **argv)
 
 	ret = config_and_launch();
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"Fail to initialize Gatekeeper!\n");
+		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize Gatekeeper!\n");
+		exiting = true;
+		goto wait;
+	}
+
+	ret = gatekeeper_start_network();
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper!\n");
 		exiting = true;
 	}
 
+wait:
+	get_net_conf()->configuring = false;
 	rte_eal_mp_wait_lcore();
 
 	/* TODO Perform any needed state destruction. */

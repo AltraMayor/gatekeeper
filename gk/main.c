@@ -499,32 +499,25 @@ gk_proc(void *arg)
 	/* TODO Implement the basic algorithm of a GK block. */
 
 	unsigned int lcore = rte_lcore_id();
-	struct gk_instance *instance;
 	struct gk_config *gk_conf = (struct gk_config *)arg;
 	unsigned int block_idx = lcore - gk_conf->lcore_start_id;
+	struct gk_instance *instance = &gk_conf->instances[block_idx];
 
 	uint8_t port_in = get_net_conf()->front.id;
 	uint8_t port_out = get_net_conf()->back.id;
-	uint16_t rx_queue = (uint16_t)lcore;
-	uint16_t tx_queue = (uint16_t)lcore;
+	uint16_t rx_queue = instance->rx_queue_front;
+	uint16_t tx_queue = instance->tx_queue_back;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gk: the GK block is running at lcore = %u\n", lcore);
 
 	rte_atomic32_inc(&gk_conf->ref_cnt);
 
-	instance = &gk_conf->instances[block_idx];
+	/* Wait for network devices to start. */
+	while (gk_conf->net->configuring)
+		;
 
 	while (likely(!exiting)) {
-		/* 
-		 * XXX Sample setting for test only.
-		 * 
-		 * Here, just use one queue (0) for test.
-		 *
-		 * Queue identifiers should be changed 
-		 * according to configuration.
-		 */
-
 		/* Get burst of RX packets, from first port of pair. */
 		int i;
 		int ret = -1;
@@ -656,7 +649,7 @@ alloc_gk_conf(void)
 }
 
 int
-run_gk(struct gk_config *gk_conf)
+run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 {
 	/* TODO Initialize and run GK functional block. */
 
@@ -667,15 +660,45 @@ run_gk(struct gk_config *gk_conf)
 	uint16_t gk_queues[GK_MAX_NUM_LCORES];
 	struct gk_instance *inst_ptr;
 
-	if (gk_conf == NULL) {
+	if (net_conf == NULL || gk_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
 
+	gk_conf->net = net_conf;
+
 	num_lcores = gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;
 	RTE_ASSERT(num_lcores <= GK_MAX_NUM_LCORES);
+
+	gk_conf->instances = (struct gk_instance *)rte_calloc(NULL,
+		num_lcores, sizeof(struct gk_instance), 0);
+	if (gk_conf->instances == NULL) {
+		ret = -1;
+		goto out;
+	}
+
+	/* Set up queue identifiers now for RSS, before instances start. */
 	for (i = 0; i < num_lcores; i++) {
-		gk_queues[i] = i + gk_conf->lcore_start_id;
+		unsigned int lcore = i + gk_conf->lcore_start_id;
+		inst_ptr = &gk_conf->instances[i];
+
+		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the front interface for lcore %u\n",
+				lcore);
+			goto out;
+		}
+		inst_ptr->rx_queue_front = (uint16_t)ret;
+
+		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
+				lcore);
+			goto out;
+		}
+		inst_ptr->tx_queue_back = (uint16_t)ret;
+
+		gk_queues[i] = inst_ptr->rx_queue_front;
 	}
 
 	ret = gatekeeper_setup_rss(port_in, gk_queues, num_lcores);
@@ -686,12 +709,7 @@ run_gk(struct gk_config *gk_conf)
 	rte_convert_rss_key((uint32_t *)&default_rss_key,
 		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
 
-	gk_conf->instances = (struct gk_instance *)rte_calloc(NULL,
-		num_lcores, sizeof(struct gk_instance), 0);
-	if (gk_conf->instances == NULL) {
-		ret = -1;
-		goto out;
-	}
+	rte_atomic32_init(&gk_conf->ref_cnt);
 
 	for (i = gk_conf->lcore_start_id; i <= gk_conf->lcore_end_id; i++) {
 		/* Setup the gk instance for lcore @i. */

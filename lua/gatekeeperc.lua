@@ -5,15 +5,15 @@ local ffi = require("ffi")
 ffi.cdef[[
 
 struct gatekeeper_if {
-	char	**pci_addrs;
-	uint8_t	num_ports;
-	char	*name;
+	char     **pci_addrs;
+	uint8_t  num_ports;
+	char     *name;
+	uint16_t num_rx_queues;
+	uint16_t num_tx_queues;
 	/* This struct has hidden fields. */
 };
 
 struct net_config {
-	uint16_t num_rx_queues;
-	uint16_t num_tx_queues;
 	/* This struct has hidden fields. */
 };
 
@@ -40,7 +40,7 @@ struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);
-int run_gk(struct gk_config *gk_conf);
+int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
 
 ]]
 
