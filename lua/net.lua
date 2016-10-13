@@ -19,10 +19,10 @@ function M.setup_block()
 	local conf = gatekeeperc.get_net_conf()
 
 	-- Change these parameters to configure the network.
-	local front_ports = {"enp131s0f0"}
-	local back_ports = {"enp133s0f0"}
-	conf.num_rx_queues = 2
-	conf.num_tx_queues = 2
+	local front_ports = {"enp133s0f0"}
+	local back_ports = {"enp133s0f1"}
+	conf.num_rx_queues = 3
+	conf.num_tx_queues = 3
 
 	-- Code below this point should not need to be changed.
 	local front_iface = gatekeeperc.get_if_front(conf)

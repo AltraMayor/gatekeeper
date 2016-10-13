@@ -19,6 +19,8 @@
 #ifndef _GATEKEEPER_MAIN_H_
 #define _GATEKEEPER_MAIN_H_
 
+#include <stdint.h>
+
 /*
  * Custom log type for Gatekeeper-related log entries.
  * When using this logtype, the log string should include
@@ -27,5 +29,8 @@
 #define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
 
 extern volatile int exiting;
+
+extern uint64_t cycles_per_sec;
+extern uint64_t picosec_per_cycle;
 
 #endif /* _GATEKEEPER_MAIN_H_ */

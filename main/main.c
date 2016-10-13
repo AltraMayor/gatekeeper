@@ -19,17 +19,71 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <signal.h>
+#include <time.h>
+#include <inttypes.h>
 
 #include <rte_eal.h>
 #include <rte_log.h>
 #include <rte_common.h>
 #include <rte_launch.h>
+#include <rte_cycles.h>
 
+#include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_net.h"
 
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;
+
+/*
+ * These metrics are system dependent, and 
+ * initialized via time_resolution_init() function.
+ */
+uint64_t cycles_per_sec;
+uint64_t picosec_per_cycle;
+
+/* Obtain the system time resolution. */
+static int
+time_resolution_init(void)
+{
+	int ret;
+	uint64_t diff_ns;
+	uint64_t cycles;
+	uint64_t tsc_start;
+	struct timespec tp_start;
+
+	tsc_start = rte_rdtsc();
+	ret = clock_gettime(CLOCK_MONOTONIC_RAW, &tp_start);
+	if (ret < 0)
+		return ret;
+
+	while (1) {
+		uint64_t tsc_now;
+		struct timespec tp_now;
+
+		ret = clock_gettime(CLOCK_MONOTONIC_RAW, &tp_now);
+		tsc_now = rte_rdtsc();
+		if (ret < 0)
+			return ret;
+
+		diff_ns = (uint64_t)(tp_now.tv_sec - tp_start.tv_sec) * 1000000000UL 
+				+ (uint64_t)(tp_now.tv_nsec - tp_start.tv_nsec);
+
+		if (diff_ns >= 1000000000UL) {
+			cycles = tsc_now - tsc_start;
+			break;
+		}
+	}
+
+	cycles_per_sec = cycles * 1000000000UL / diff_ns;
+	picosec_per_cycle = 1000UL * diff_ns / cycles;
+
+	RTE_LOG(NOTICE, TIMER,
+		"cycles/second = %" PRIu64 ", picosec/cycle = %" PRIu64 "!\n",
+		cycles_per_sec, picosec_per_cycle);
+
+	return 0;
+}
 
 static void
 signal_handler(int signum)
@@ -86,6 +140,14 @@ main(int argc, char **argv)
 		goto out;
 
 	/*
+	 * Given the nature of 'clock_gettime()' call, it's okay to not have a 
+	 * cleanup for them.
+	 */
+	ret = time_resolution_init();
+	if (ret < 0)
+		goto out;
+
+	/*
 	 * TODO Set up shared state (such as mailboxes) and figure out
 	 * how to pass that information to the functional blocks that
 	 * need it.
@@ -93,7 +155,9 @@ main(int argc, char **argv)
 
 	ret = config_and_launch();
 	if (ret < 0) {
-		rte_exit(EXIT_FAILURE, "Fail to initialize Gatekeeper!\n");
+		RTE_LOG(ERR, GATEKEEPER,
+			"Fail to initialize Gatekeeper!\n");
+		exiting = true;
 	}
 
 	rte_eal_mp_wait_lcore();

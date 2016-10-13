@@ -21,15 +21,30 @@
 
 #include <rte_atomic.h>
 
+/* Structures for each GK instance. */
+struct gk_instance {
+	struct rte_hash   *ip_flow_hash_table;
+	struct flow_entry *ip_flow_entry_table;
+};
+
 /* Configuration for the GK functional block. */
 struct gk_config {
-	unsigned int	lcore_start_id;
-	unsigned int	lcore_end_id;
+	/*
+  	 * XXX The lcore IDs may not be sequential (e.g. only odd numbers).
+  	 * We need an array of lcores to use.
+  	 */
+	unsigned int	   lcore_start_id;
+	unsigned int	   lcore_end_id;
+
+	/* Specify the size of the flow hash table. */
+	unsigned int	   flow_ht_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
-	rte_atomic32_t	ref_cnt;
+	rte_atomic32_t	   ref_cnt;
+	struct gk_instance *instances;
 };
 
 struct gk_config *alloc_gk_conf(void);

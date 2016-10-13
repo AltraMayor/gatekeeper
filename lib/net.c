@@ -25,11 +25,42 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
 
+/*
+ * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
+ * configure the Redirection Table of the Receive Side Scaling (RSS) feature.
+ * Notice, each "rte_eth_rss_reta_entry64" structure can configure 64 entries 
+ * of the table. To configure more than 64 entries supported by hardware,
+ * an array of this structure is needed.
+ */
+#define GATEKEEPER_RETA_MAX_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+
 static struct net_config config;
+
+/*
+ * XXX The secret key of the RSS hash must be random in order to avoid hackers to know it.
+ */
+uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
+	0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+	0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+	0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+	0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+	0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+};
 
 /* TODO Implement the configuration for Flow Director, RSS, and Filters. */
 static struct rte_eth_conf gatekeeper_port_conf = {
-	.rxmode = { .max_rx_pkt_len = ETHER_MAX_LEN, },
+	.rxmode = {
+		.mq_mode = ETH_MQ_RX_RSS,
+		.max_rx_pkt_len = ETHER_MAX_LEN,
+	},
+
+	.rx_adv_conf = {
+		.rss_conf = {
+			.rss_key = default_rss_key,
+			.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
+			.rss_hf = ETH_RSS_IP,
+		},
+	},
 };
 
 static uint32_t
@@ -167,6 +198,80 @@ struct gatekeeper_if *
 get_if_back(struct net_config *net_conf)
 {
 	return &net_conf->back;
+}
+
+int
+gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues)
+{
+	int ret = 0;
+	uint32_t i;
+	struct rte_eth_dev_info dev_info;
+	struct rte_eth_rss_reta_entry64 reta_conf[GATEKEEPER_RETA_MAX_SIZE];
+
+	/* Get RSS redirection table (RETA) information. */
+	memset(&dev_info, 0, sizeof(dev_info));
+	rte_eth_dev_info_get(portid, &dev_info);
+	if (dev_info.reta_size == 0) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu (invalid RETA size = 0)!\n",
+			portid);
+		ret = -1;
+		goto out;
+	}
+
+	if (dev_info.reta_size > ETH_RSS_RETA_SIZE_512) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu (invalid RETA size = %u)!\n",
+			portid, dev_info.reta_size);
+		ret = -1;
+		goto out;
+	}
+
+	/* Setup RSS RETA contents. */
+	memset(reta_conf, 0, sizeof(reta_conf));
+
+	for (i = 0; i < dev_info.reta_size; i++) {
+		uint32_t idx = i / RTE_RETA_GROUP_SIZE;
+		uint32_t shift = i % RTE_RETA_GROUP_SIZE;
+		uint32_t queue_idx = i % num_queues; 
+
+		/* Select all fields to set. */
+		reta_conf[idx].mask = ~0LL;
+		reta_conf[idx].reta[shift] = (uint16_t)queues[queue_idx];
+	}
+
+	/* RETA update. */
+	ret = rte_eth_dev_rss_reta_update(portid, reta_conf, dev_info.reta_size);
+	if (ret == -ENOTSUP) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu hardware doesn't support.",
+			portid);
+		ret = -1;
+		goto out;
+	} else if (ret == -EINVAL) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu (RETA update with bad redirection table parameter)!\n",
+			portid);
+		ret = -1;
+		goto out;
+	}
+
+	/* RETA query. */
+	ret = rte_eth_dev_rss_reta_query(portid, reta_conf, dev_info.reta_size);
+	if (ret == -ENOTSUP) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu hardware doesn't support.",
+			portid);
+		ret = -1;
+	} else if (ret == -EINVAL) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu (RETA query with bad redirection table parameter)!\n",
+			portid);
+		ret = -1;
+	}
+
+out:
+	return ret;
 }
 
 static int
