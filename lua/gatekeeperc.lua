@@ -5,43 +5,22 @@ local ffi = require("ffi")
 ffi.cdef[[
 
 struct gatekeeper_if {
-	char		**pci_addrs;
-	uint8_t		num_ports;
-	char		*name;
-	/*
-	 * The fields below are for internal use.
-	 * Configuration files should not refer to them.
-	 */
-	uint8_t		*ports;
-	uint8_t         id;
+	char	**pci_addrs;
+	uint8_t	num_ports;
+	char	*name;
+	/* This struct has hidden fields. */
 };
 
 struct net_config {
-	uint16_t		num_rx_queues;
-	uint16_t		num_tx_queues;
-	struct gatekeeper_if	front;
-	struct gatekeeper_if	back;
-	/*
-	 * The fields below are for internal use.
-	 * Configuration files should not refer to them.
-	 */
-	uint32_t		num_ports;
-	uint32_t		numa_nodes;
-	struct rte_mempool 	**gatekeeper_pktmbuf_pool;
+	uint16_t num_rx_queues;
+	uint16_t num_tx_queues;
+	/* This struct has hidden fields. */
 };
 
-typedef struct {
-	volatile int32_t cnt;
-} rte_atomic32_t;
-
 struct gk_config {
-	unsigned int	lcore_start_id;
-	unsigned int	lcore_end_id;
-	/*
-	 * The fields below are for internal use.
-	 * Configuration files should not refer to them.
-	 */
-	rte_atomic32_t	ref_cnt;
+	unsigned int lcore_start_id;
+	unsigned int lcore_end_id;
+	/* This struct has hidden fields. */
 };
 
 ]]
@@ -55,6 +34,8 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
+struct gatekeeper_if *get_if_front(struct net_config *net_conf);
+struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);

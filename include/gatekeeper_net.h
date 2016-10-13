@@ -76,6 +76,8 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
+struct gatekeeper_if *get_if_front(struct net_config *net_conf);
+struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);
 

@@ -157,6 +157,18 @@ get_net_conf(void)
 	return &config;
 }
 
+struct gatekeeper_if *
+get_if_front(struct net_config *net_conf)
+{
+	return &net_conf->front;
+}
+
+struct gatekeeper_if *
+get_if_back(struct net_config *net_conf)
+{
+	return &net_conf->back;
+}
+
 static int
 init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports)
 {
