@@ -4,9 +4,23 @@ local ffi = require("ffi")
 -- TODO Define the C data structures for other functional blocks.
 ffi.cdef[[
 
+struct gatekeeper_if {
+	char		**pci_addrs;
+	uint8_t		num_ports;
+	char		*name;
+	/*
+	 * The fields below are for internal use.
+	 * Configuration files should not refer to them.
+	 */
+	uint8_t		*ports;
+	uint8_t         id;
+};
+
 struct net_config {
 	uint16_t		num_rx_queues;
 	uint16_t		num_tx_queues;
+	struct gatekeeper_if	front;
+	struct gatekeeper_if	back;
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -35,6 +49,10 @@ struct gk_config {
 -- Functions and wrappers
 -- TODO Define the C functions for other functional blocks.
 ffi.cdef[[
+
+int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
+	const char **pci_addrs, uint8_t num_pci_addrs);
+void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
 int gatekeeper_init_network(struct net_config *net_conf);
