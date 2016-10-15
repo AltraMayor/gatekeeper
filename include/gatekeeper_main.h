@@ -19,6 +19,13 @@
 #ifndef _GATEKEEPER_MAIN_H_
 #define _GATEKEEPER_MAIN_H_
 
+/*
+ * Custom log type for Gatekeeper-related log entries.
+ * When using this logtype, the log string should include
+ * the name of the relevant functional block, library, etc.
+ */
+#define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
+
 extern volatile int exiting;
 
 #endif /* _GATEKEEPER_MAIN_H_ */
