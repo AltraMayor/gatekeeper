@@ -19,18 +19,20 @@ function M.setup_block()
 	local conf = gatekeeperc.get_net_conf()
 
 	-- Change these parameters to configure the network.
-	local front_ports = {"enp131s0f0"}
-	local back_ports = {"enp133s0f0"}
-	conf.num_rx_queues = 2
-	conf.num_tx_queues = 2
+	local front_ports = {"enp133s0f0"}
+	local back_ports = {"enp133s0f1"}
+	conf.num_rx_queues = 3
+	conf.num_tx_queues = 3
 
 	-- Code below this point should not need to be changed.
-	local ret = init_iface(conf.front, "front", front_ports)
+	local front_iface = gatekeeperc.get_if_front(conf)
+	local ret = init_iface(front_iface, "front", front_ports)
 	if ret < 0 then
 		return ret
 	end
 
-	ret = init_iface(conf.back, "back", back_ports)
+	local back_iface = gatekeeperc.get_if_back(conf)
+	ret = init_iface(back_iface, "back", back_ports)
 	if ret < 0 then
 		goto front
 	end
@@ -44,9 +46,9 @@ function M.setup_block()
 	do return ret end
 
 ::back::
-	gatekeeperc.lua_free_iface(conf.back)
+	gatekeeperc.lua_free_iface(back_iface)
 ::front::
-	gatekeeperc.lua_free_iface(conf.front)
+	gatekeeperc.lua_free_iface(front_iface)
 	return ret
 end
 

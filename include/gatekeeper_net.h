@@ -21,6 +21,9 @@
 
 #include <stdint.h>
 
+/* Size of the secret key of the RSS hash. */
+#define GATEKEEPER_RSS_KEY_LEN (40)
+
 /*
  * A Gatekeeper interface is specified by a set of PCI addresses
  * that map to DPDK port numbers. If multiple ports are specified,
@@ -71,11 +74,16 @@ struct net_config {
 	struct rte_mempool 	**gatekeeper_pktmbuf_pool;
 };
 
+extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
+
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
+struct gatekeeper_if *get_if_front(struct net_config *net_conf);
+struct gatekeeper_if *get_if_back(struct net_config *net_conf);
+int gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues);
 int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);
 
