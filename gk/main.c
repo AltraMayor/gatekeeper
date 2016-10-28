@@ -460,7 +460,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	ip_flow_hash_params.name = ht_name;
 	ip_flow_hash_params.socket_id = rte_lcore_to_socket_id(lcore_id);
 	instance->ip_flow_hash_table = rte_hash_create(&ip_flow_hash_params);
-	if (!instance->ip_flow_hash_table) {
+	if (instance->ip_flow_hash_table == NULL) {
 		RTE_LOG(ERR, HASH,
 			"The GK block cannot create hash table at lcore %u!\n",
 			lcore_id);
@@ -474,7 +474,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	/* Setup the flow entry table for GK block @block_idx. */
 	instance->ip_flow_entry_table = (struct flow_entry *)rte_calloc(NULL,
 		gk_conf->flow_ht_size, sizeof(struct flow_entry), 0);
-	if (!instance->ip_flow_entry_table) {
+	if (instance->ip_flow_entry_table == NULL) {
 		RTE_LOG(ERR, MALLOC,
 			"The GK block can't create flow entry table at lcore %u!\n",
 			lcore_id);
@@ -498,11 +498,10 @@ gk_proc(void *arg)
 {
 	/* TODO Implement the basic algorithm of a GK block. */
 
-	unsigned int block_idx;
 	unsigned int lcore = rte_lcore_id();
 	struct gk_instance *instance;
-	struct gk_config   *gk_conf = (struct gk_config *)arg;
-	block_idx = lcore - gk_conf->lcore_start_id;
+	struct gk_config *gk_conf = (struct gk_config *)arg;
+	unsigned int block_idx = lcore - gk_conf->lcore_start_id;
 
 	uint8_t port_in = get_net_conf()->front.id;
 	uint8_t port_out = get_net_conf()->back.id;
@@ -557,11 +556,13 @@ gk_proc(void *arg)
 			 * Find the flow entry for the IP pair.
 			 * Create a new flow entry if not found.
 			 */
-			ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
+			ret = rte_hash_lookup_with_hash(
+				instance->ip_flow_hash_table,
 				&packet.flow, pkt->hash.rss);
 			if (ret < 0) {
 				/* Create a new flow entry. */
-				ret = rte_hash_add_key_with_hash(instance->ip_flow_hash_table,
+				ret = rte_hash_add_key_with_hash(
+					instance->ip_flow_hash_table,
  					(void *)&packet.flow, pkt->hash.rss);
 				if (ret < 0) {
 					RTE_LOG(ERR, HASH,
@@ -624,7 +625,8 @@ gk_proc(void *arg)
 		}
 
 		/* Send burst of TX packets, to second port of pair. */
-		num_tx_succ = rte_eth_tx_burst(port_out, tx_queue, tx_bufs, num_tx);
+		num_tx_succ = rte_eth_tx_burst(port_out, tx_queue,
+			tx_bufs, num_tx);
 
 		/* XXX Do something better here! For now, free any unsent packets. */
 		if (unlikely(num_tx_succ < num_tx)) {
@@ -665,7 +667,7 @@ run_gk(struct gk_config *gk_conf)
 	uint16_t gk_queues[GK_MAX_NUM_LCORES];
 	struct gk_instance *inst_ptr;
 
-	if (!gk_conf) {
+	if (gk_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -686,7 +688,7 @@ run_gk(struct gk_config *gk_conf)
 
 	gk_conf->instances = (struct gk_instance *)rte_calloc(NULL,
 		num_lcores, sizeof(struct gk_instance), 0);
-	if (!gk_conf->instances) {
+	if (gk_conf->instances == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -695,7 +697,7 @@ run_gk(struct gk_config *gk_conf)
 		/* Setup the gk instance for lcore @i. */
 		ret = setup_gk_instance(i, gk_conf);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, 
+			RTE_LOG(ERR, GATEKEEPER,
 				"gk: failed to setup gk instances for GK block at %u!\n",
 				i);
 			goto setup;
@@ -724,7 +726,8 @@ setup:
 	/*
 	 * If failed to setup the first gk instance, needs to release
 	 * 'gk_conf->instances' and 'gk_conf'.
-	 * Otherwise, the launched gk instances need to call cleanup_gk() to release.
+	 * Otherwise, the launched gk instances need to call
+	 * cleanup_gk() to release.
 	 */
 	if (i == gk_conf->lcore_start_id) {
 		rte_free(gk_conf->instances);
@@ -741,7 +744,9 @@ int
 cleanup_gk(struct gk_config *gk_conf)
 {
 	unsigned int i;
-	unsigned int num_lcores = gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;
+	unsigned int num_lcores = gk_conf->lcore_end_id -
+		gk_conf->lcore_start_id + 1;
+
 	/*
 	 * Atomically decrements the atomic counter (v) by one and returns true 
 	 * if the result is 0, or false in all other cases.
@@ -749,10 +754,12 @@ cleanup_gk(struct gk_config *gk_conf)
 	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt)) {
 		for (i = 0; i < num_lcores; i++) {
 			if (gk_conf->instances[i].ip_flow_hash_table)
-				rte_hash_free(gk_conf->instances[i].ip_flow_hash_table);
+				rte_hash_free(gk_conf->instances[i].
+					ip_flow_hash_table);
 
 			if (gk_conf->instances[i].ip_flow_entry_table)
-				rte_free(gk_conf->instances[i].ip_flow_entry_table);
+				rte_free(gk_conf->instances[i].
+					ip_flow_entry_table);
 		}
 
 		rte_free(gk_conf->instances);

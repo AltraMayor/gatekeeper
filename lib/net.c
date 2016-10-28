@@ -247,7 +247,8 @@ gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues)
 	}
 
 	/* RETA update. */
-	ret = rte_eth_dev_rss_reta_update(portid, reta_conf, dev_info.reta_size);
+	ret = rte_eth_dev_rss_reta_update(portid, reta_conf,
+		dev_info.reta_size);
 	if (ret == -ENOTSUP) {
 		RTE_LOG(ERR, PORT,
 			"Failed to setup RSS at port %hhu hardware doesn't support.",
@@ -469,15 +470,15 @@ gatekeeper_init_network(struct net_config *net_conf)
 	int i;
 	int ret = -1;
 
-	if (!net_conf)
+	if (net_conf == NULL)
 		return -1;
 
-	if (!config.gatekeeper_pktmbuf_pool) {
+	if (config.gatekeeper_pktmbuf_pool == NULL) {
 		config.numa_nodes = find_num_numa_nodes();
 		config.gatekeeper_pktmbuf_pool =
 			rte_calloc("mbuf_pool", config.numa_nodes,
 				sizeof(struct rte_mempool *), 0);
-		if (!config.gatekeeper_pktmbuf_pool) {
+		if (config.gatekeeper_pktmbuf_pool == NULL) {
 			RTE_LOG(ERR, MALLOC, "%s: Out of memory\n", __func__);
 			return -1;
 		}
