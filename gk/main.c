@@ -168,9 +168,24 @@ gk_softrss_be(const uint32_t *input_tuple, uint32_t input_len,
 		 */
 		uint32_t val = rte_be_to_cpu_32(input_tuple[j]);
 		for (i = 0; i < 32; i++)
-			if (val & (1 << (31 - i)))
+			if (val & (1 << (31 - i))) {
+				/*
+				 * The cast (uint64_t) is needed because when
+				 * @i == 0, the expression requires a 32-bit
+				 * shift of a 32-bit unsigned integer,
+				 * what is undefined.
+				 * The C standard only defines bit shifting
+				 * up to the bit-size of the integer minus one.
+				 * Finally, the cast (uint32_t) avoid promoting
+				 * the expression before the bit-or (i.e. `|`)
+				 * to uint64_t.
+				 */
 				ret ^= ((const uint32_t *)rss_key)[j] << i |
-					((uint64_t)(((const uint32_t *)rss_key)[j + 1]) >> (32 - i));
+					(uint32_t)((uint64_t)
+						(((const uint32_t *)rss_key)
+							[j + 1])
+						>> (32 - i));
+			}
 	}
 
 	return ret;
