@@ -31,7 +31,8 @@ struct gk_config {
 ffi.cdef[[
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs);
+	const char **pci_addrs, uint8_t num_pci_addrs,
+	const char **ip_addrs, uint8_t num_ip_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);

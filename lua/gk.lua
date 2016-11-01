@@ -7,6 +7,8 @@ function M.setup_block(net_conf)
 
 	-- Init the GK configuration structure.
 	local conf = gatekeeperc.alloc_gk_conf()
+	
+	-- Change these parameters to configure the Gatekeeper.
 	conf.lcore_start_id = 1
 	conf.lcore_end_id = 2
 	conf.flow_ht_size = 1024

@@ -22,7 +22,6 @@
 #include <rte_ip.h>
 #include <rte_log.h>
 #include <rte_hash.h>
-#include <rte_thash.h>
 #include <rte_lcore.h>
 #include <rte_ethdev.h>
 #include <rte_memcpy.h>
@@ -32,10 +31,20 @@
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
+#include "gatekeeper_ipip.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
 #define	START_ALLOWANCE		 (8)
+
+/*
+ * Priority used for DSCP field of encapsulated packets:
+ *  0 for legacy packets; 1 for granted packets; 
+ *  2 for capability renew; 3-63 for request packets.
+ */
+#define PRIORITY_GRANTED	 (1)
+#define PRIORITY_RENEW_CAP	 (2)
+#define PRIORITY_MAX		 (63)
 
 /* XXX Sample parameter for test only. */
 #define GK_MAX_NUM_LCORES	 (16)
@@ -47,23 +56,6 @@
  * request, granted, or declined.
  */
 enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
-
-struct ip_flow {
-	/* IPv4 or IPv6. */
-	uint16_t proto;
-
-	union {
-		struct {
-			uint32_t src;
-			uint32_t dst;
-		} v4;
-
-		struct {
-			uint8_t src[16];
-			uint8_t dst[16];
-		} v6;
-	} f;
-};
 
 /* Store information about a packet. */
 struct ipacket {
@@ -137,95 +129,6 @@ struct flow_entry {
 	} u;
 };
 
-/* To support the optimized implementation of generic RSS hash function. */
-static uint8_t rss_key_be[RTE_DIM(default_rss_key)];
-
-/*
- * Optimized generic implementation of RSS hash function.
- * If you want the calculated hash value matches NIC RSS value,
- * you have to use special converted key with rte_convert_rss_key() fn.
- * @param input_tuple
- *   Pointer to input tuple with network order.
- * @param input_len
- *   Length of input_tuple in 4-bytes chunks.
- * @param *rss_key
- *   Pointer to RSS hash key.
- * @return
- *   Calculated hash value.
- */
-static inline uint32_t
-gk_softrss_be(const uint32_t *input_tuple, uint32_t input_len,
-		const uint8_t *rss_key)
-{
-	uint32_t i;
-	uint32_t j;
-	uint32_t ret = 0;
-
-	for (j = 0; j < input_len; j++) {
-		/*
-		 * Need to use little endian,
-		 * since it takes ordering as little endian in both bytes and bits.
-		 */
-		uint32_t val = rte_be_to_cpu_32(input_tuple[j]);
-		for (i = 0; i < 32; i++)
-			if (val & (1 << (31 - i))) {
-				/*
-				 * The cast (uint64_t) is needed because when
-				 * @i == 0, the expression requires a 32-bit
-				 * shift of a 32-bit unsigned integer,
-				 * what is undefined.
-				 * The C standard only defines bit shifting
-				 * up to the bit-size of the integer minus one.
-				 * Finally, the cast (uint32_t) avoid promoting
-				 * the expression before the bit-or (i.e. `|`)
-				 * to uint64_t.
-				 */
-				ret ^= ((const uint32_t *)rss_key)[j] << i |
-					(uint32_t)((uint64_t)
-						(((const uint32_t *)rss_key)
-							[j + 1])
-						>> (32 - i));
-			}
-	}
-
-	return ret;
-}
-
-static uint32_t
-rss_hash_func(const void *data, __attribute__((unused)) uint32_t data_len,
-        __attribute__((unused)) uint32_t init_val)
-{
-	const struct ip_flow *flow = (const struct ip_flow *)data;
-
-	if (flow->proto == ETHER_TYPE_IPv4)
-		return gk_softrss_be((const uint32_t *)&flow->f,
-				(sizeof(flow->f.v4)/sizeof(uint32_t)), rss_key_be);
-	else if (flow->proto == ETHER_TYPE_IPv6)
-		return gk_softrss_be((const uint32_t *)&flow->f,
-				(sizeof(flow->f.v6)/sizeof(uint32_t)), rss_key_be);
-	else
-		RTE_ASSERT(false);
-
-	return 0;
-}
-
-/* Type of function used to compare the hash key. */
-static int
-ip_flow_cmp_eq(const void *key1, const void *key2,
-	__attribute__((unused)) size_t key_len)
-{
-	const struct ip_flow *f1 = (const struct ip_flow *)key1;
-	const struct ip_flow *f2 = (const struct ip_flow *)key2;
-
-	if (f1->proto != f2->proto)
-		return f1->proto == ETHER_TYPE_IPv4 ? -1 : 1;
-
-	if (f1->proto == ETHER_TYPE_IPv4)
-		return memcmp(&f1->f.v4, &f2->f.v4, sizeof(f1->f.v4));
-	else
-		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
-}
-
 /* We should avoid calling integer_log_base_2() with zero. */
 static inline uint8_t
 integer_log_base_2(uint64_t delta_time)
@@ -264,9 +167,10 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	return integer_log_base_2(delta_time);
 }
 
-static void
+static int
 extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 {
+	int ret = 0;
 	uint16_t ether_type;
 	struct ether_hdr *eth_hdr;
 	struct ipv4_hdr  *ip4_hdr;
@@ -301,8 +205,13 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 		RTE_LOG(NOTICE, GATEKEEPER,
 			"gk: unknown network layer protocol %" PRIu16 "!\n",
 			ether_type);
+		ret = -1;
 		break;
 	}
+
+	packet->pkt = pkt;
+
+	return ret;
 }
 
 static inline void
@@ -325,6 +234,8 @@ reinitialize_flow_entry(struct flow_entry *fe, uint64_t now)
 	fe->u.request.last_packet_seen_at = now;
 	fe->u.request.last_priority = START_PRIORITY;
 	fe->u.request.allowance = START_ALLOWANCE - 1;
+	/* TODO Grantor ID comes from LPM lookup. */
+	fe->u.request.grantor_id = 0;
 }
 
 static inline int
@@ -342,12 +253,16 @@ drop_packet(struct rte_mbuf *pkt)
  * (3) put this encapsulated packet in the request queue.
  */
 static int
-gk_process_request(struct flow_entry *fe,
-	 __attribute__((unused)) struct ipacket *packet)
+gk_process_request(struct flow_entry *fe, struct ipacket *packet)
 {
+	int ret;
 	uint64_t now = rte_rdtsc();
 	uint8_t priority = priority_from_delta_time(now,
 			fe->u.request.last_packet_seen_at);
+
+	/* TODO The tunnel information should come from the LPM table. */
+	struct ipip_tunnel_info tunnel;
+	memset(&tunnel, 0, sizeof(tunnel));
 
 	fe->u.request.last_packet_seen_at = now;
 
@@ -371,12 +286,15 @@ gk_process_request(struct flow_entry *fe,
 	 * 2 for capability renew; 3-63 for requests.
 	 */
 	priority += 3;
-	if (unlikely(priority > 63))
-		priority = 63;
+	if (unlikely(priority > PRIORITY_MAX))
+		priority = PRIORITY_MAX;
 
 	/* The assigned priority is @priority. */
-	
-	/* TODO Encapsulate the packet as a request. */
+
+	/* Encapsulate the packet as a request. */
+	ret = encapsulate(packet->pkt, priority, &tunnel);
+	if (ret < 0)
+		return ret;
 
 	/* TODO Put this encapsulated packet in the request queue. */
 
@@ -392,9 +310,15 @@ cycle_from_second(uint64_t time)
 static int
 gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
 {
+	int ret;
 	bool renew_cap;
+	uint8_t priority = PRIORITY_GRANTED;
 	uint64_t now = rte_rdtsc();
 	struct rte_mbuf *pkt = packet->pkt;
+
+	/* TODO The tunnel information should come from the LPM table. */
+	struct ipip_tunnel_info tunnel;
+	memset(&tunnel, 0, sizeof(tunnel));
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
@@ -411,16 +335,22 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
 
 	fe->u.granted.budget_byte -= pkt->data_len;
 	renew_cap = now >= fe->u.granted.send_next_renewal_at;
-	if (renew_cap)
+	if (renew_cap) {
 		fe->u.granted.send_next_renewal_at = now +
 			fe->u.granted.renewal_step_cycle;
+		priority = PRIORITY_RENEW_CAP;
+	}
 
 	/*
-	 * TODO Encapsulate packet as a granted packet,
+	 * Encapsulate packet as a granted packet,
 	 * mark it as a capability renewal request if @renew_cap is true,
-	 * enter destination according to @fe->u.granted.grantor_id,
-	 * and put the encapsulated packet in the granted queue.
+	 * enter destination according to @fe->u.granted.grantor_id.
 	 */
+	ret = encapsulate(packet->pkt, priority, &tunnel);
+	if (ret < 0)
+		return ret;
+
+	/* TODO Put the encapsulated packet in the granted queue. */
 
 	return 0;
 }
@@ -449,7 +379,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	struct rte_hash_parameters ip_flow_hash_params = {
 		.entries = gk_conf->flow_ht_size,
 		.key_len = sizeof(struct ip_flow),
-		.hash_func = rss_hash_func,
+		.hash_func = rss_ip_flow_hf,
 		.hash_func_init_val = 0,
 	};
 
@@ -543,7 +473,12 @@ gk_proc(void *arg)
 			struct flow_entry *fe;
 			struct rte_mbuf *pkt = rx_bufs[i];
 			
-			extract_packet_info(pkt, &packet);
+			ret = extract_packet_info(pkt, &packet);
+			if (ret < 0) {
+				/* Drop non-IP packets. */
+				drop_packet(pkt);
+				continue;
+			}
 
 			/* 
 			 * Find the flow entry for the IP pair.
@@ -705,10 +640,6 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 	if (ret < 0)
 		goto out;
 
-	/* Convert RSS key. */
-	rte_convert_rss_key((uint32_t *)&default_rss_key,
-		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
-
 	rte_atomic32_init(&gk_conf->ref_cnt);
 
 	for (i = gk_conf->lcore_start_id; i <= gk_conf->lcore_end_id; i++) {
@@ -737,7 +668,7 @@ instance:
 	
 	rte_hash_free(inst_ptr->ip_flow_hash_table);
 	inst_ptr->ip_flow_hash_table = NULL;
-	
+
 	rte_free(inst_ptr->ip_flow_entry_table);
 	inst_ptr->ip_flow_entry_table = NULL;
 setup:

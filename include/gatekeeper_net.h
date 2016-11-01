@@ -20,6 +20,7 @@
 #define _GATEKEEPER_NET_H_
 
 #include <stdint.h>
+#include <netinet/in.h>
 
 #include <rte_atomic.h>
 
@@ -73,6 +74,15 @@ struct gatekeeper_if {
 	 */
 	rte_atomic16_t	rx_queue_id;
 	rte_atomic16_t	tx_queue_id;
+
+	/*
+	 * Specify the IPv4 and IPv6 addresses of this interface.
+	 * Notice that, while one address must always be there,
+	 * there may not be the second address.
+	 */
+	uint8_t         configured_proto;
+	struct in_addr  ip4_addr;
+	struct in6_addr ip6_addr;
 };
 
 /*
@@ -119,9 +129,11 @@ struct net_config {
 };
 
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
+extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs);
+	const char **pci_addrs, uint8_t num_pci_addrs,
+	const char **ip_addrs, uint8_t num_ip_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);

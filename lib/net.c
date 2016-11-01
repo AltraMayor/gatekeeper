@@ -18,8 +18,12 @@
 
 #include <stdbool.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #include <rte_mbuf.h>
+#include <rte_thash.h>
 #include <rte_errno.h>
 #include <rte_ethdev.h>
 #include <rte_eth_bond.h>
@@ -30,7 +34,7 @@
 #include "gatekeeper_config.h"
 
 /* Number of attempts to wait for a link to come up. */
-#define NUM_ATTEMPTS_LINK_GET	5
+#define NUM_ATTEMPTS_LINK_GET	(5)
 
 /*
  * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
@@ -41,10 +45,15 @@
  */
 #define GATEKEEPER_RETA_MAX_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
 
+/* To mark whether Gatekeeper server configures IPv4 or IPv6. */
+#define GK_CONFIGURED_IPV4 (1)
+#define GK_CONFIGURED_IPV6 (2)
+
 static struct net_config config;
 
 /*
- * XXX The secret key of the RSS hash must be random in order to avoid hackers to know it.
+ * XXX The secret key of the RSS hash must be random
+ * in order to avoid hackers to know it.
  */
 uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 	0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
@@ -53,6 +62,9 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 	0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
 	0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
 };
+
+/* To support the optimized implementation of generic RSS hash function. */
+uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 /* TODO Implement the configuration for Flow Director, RSS, and Filters. */
 static struct rte_eth_conf gatekeeper_port_conf = {
@@ -266,11 +278,49 @@ lua_free_iface(struct gatekeeper_if *iface)
 	destroy_iface(iface, IFACE_DESTROY_LUA);
 }
 
+static int
+get_ip_type(const char *ip_addr)
+{
+	int ret;
+	struct addrinfo hint;
+	struct addrinfo *res = NULL;
+
+	memset(&hint, 0, sizeof(hint));
+
+	hint.ai_family = PF_UNSPEC;
+	hint.ai_flags = AI_NUMERICHOST;
+
+	ret = getaddrinfo(ip_addr, NULL, &hint, &res);
+    	if (ret) {
+        	RTE_LOG(ERR, GATEKEEPER,
+			"gk: invalid ip address %s; %s\n",
+			ip_addr, gai_strerror(ret));
+        	return 1;
+    	}
+
+    	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: %s is an is unknown address format %d\n",
+			ip_addr, res->ai_family);
+
+	ret = res->ai_family;
+   	freeaddrinfo(res);
+
+	return ret;
+}
+
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs)
+	const char **pci_addrs, uint8_t num_pci_addrs,
+	const char **ip_addrs, uint8_t num_ip_addrs)
 {
 	uint8_t i, j;
+
+	if (num_ip_addrs < 1 || num_ip_addrs > 2) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"net: an interface has at least 1 IP address, also at most 1 IPv4 and 1 IPv6 address.\n");
+		return -1;
+	}
 
 	iface->num_ports = num_pci_addrs;
 
@@ -304,6 +354,24 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			goto name;
 		}
 		strcpy(iface->pci_addrs[i], pci_addrs[i]);
+	}
+
+	for (i = 0; i < num_ip_addrs; i++) {
+		int gk_type = get_ip_type(ip_addrs[i]);
+		if (gk_type == AF_INET &&
+				inet_pton(AF_INET, ip_addrs[i],
+				&iface->ip4_addr) == 1) {
+			iface->configured_proto |= GK_CONFIGURED_IPV4;
+			continue;
+		}
+		else if (gk_type == AF_INET6 &&
+				inet_pton(AF_INET6, ip_addrs[i],
+				&iface->ip6_addr) == 1) {
+			iface->configured_proto |= GK_CONFIGURED_IPV6;
+			continue;
+		}
+		else
+			goto name;
 	}
 
 	return 0;
@@ -551,6 +619,10 @@ gatekeeper_init_network(struct net_config *net_conf)
 	RTE_ASSERT(net_conf->front->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 	RTE_ASSERT(net_conf->back->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
 	RTE_ASSERT(net_conf->back->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+
+	/* Convert RSS key. */
+	rte_convert_rss_key((uint32_t *)&default_rss_key,
+		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
 
 	/* Initialize pktmbuf on each numa node. */
 	for (i = 0; (uint32_t)i < net_conf->numa_nodes; i++) {
