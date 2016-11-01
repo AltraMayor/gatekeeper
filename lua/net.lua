@@ -37,7 +37,7 @@ function M.setup_block()
 
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.0.2", "3ffe:2501:200:1fff::8"}
-	local back_rx_queues = 0
+	local back_rx_queues = 1
 	local back_tx_queues = 2
 
 	-- Code below this point should not need to be changed.

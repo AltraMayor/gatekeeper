@@ -77,6 +77,8 @@
  */
 #define GATEKEEPER_CACHE_SIZE	(512)
 
+#define GATEKEEPER_MAX_PKT_BURST (32)
+
 /* Configuration for the Dynamic Config functional block. */
 struct dynamic_config {
 	unsigned int	lcore_id;

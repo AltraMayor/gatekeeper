@@ -19,14 +19,33 @@
 #ifndef _GATEKEEPER_MAILBOX_H_
 #define _GATEKEEPER_MAILBOX_H_
 
-/*
- * TODO Remove this preprocessing directive when there are
- * are calls to these functions; for now, the mailbox is
- * just an example of how to set up a library.
- */
-#if 0
-void create_mailbox(void);
-void destroy_mailbox(void);
-#endif
+#include <rte_ring.h>
+#include <rte_mempool.h>
+
+#include "gatekeeper_main.h"
+
+struct mailbox {
+	struct rte_ring    *ring;
+	struct rte_mempool *pool;
+};
+
+int init_mailbox(
+	const char *tag, int ele_count,
+	int ele_size, unsigned int lcore_id, struct mailbox *mb);
+void *mb_alloc_entry(struct mailbox *mb);
+int mb_send_entry(struct mailbox *mb, void *obj);
+void destroy_mailbox(struct mailbox *mb);
+
+static inline int
+mb_dequeue_burst(struct mailbox *mb, void **obj_table, unsigned n)
+{
+	return rte_ring_sc_dequeue_burst(mb->ring, obj_table, n);
+}
+
+static inline void
+mb_free_entry(struct mailbox *mb, void *obj)
+{
+	rte_mempool_put(mb->pool, obj);
+}
 
 #endif /* _GATEKEEPER_MAILBOX_H_ */

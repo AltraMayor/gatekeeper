@@ -16,25 +16,111 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <rte_log.h>
+#include <rte_lcore.h>
+#include <rte_debug.h>
+#include <rte_malloc.h>
+
+#include "gatekeeper_main.h"
 #include "gatekeeper_mailbox.h"
 
-/*
- * TODO Remove this preprocessing directive when there are
- * are calls to these functions; for now, the mailbox is
- * just an example of how to set up a library.
- */
-#if 0
-void
-create_mailbox(void)
+/* XXX Sample parameters, need to be tested for better performance. */
+#define GK_MEM_CACHE_SIZE (64)
+
+int
+init_mailbox(const char *tag,
+	int ele_count, int ele_size, unsigned int lcore_id, struct mailbox *mb)
 {
-	/* TODO Write mailbox creation function. */
-	return;
+	int ret;
+	char ring_name[128];
+	char pool_name[128];
+	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
+
+	if (mb == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"mailbox: the mailbox pointer is NULL in function %s at lcore %u!\n",
+			__func__, lcore_id);
+		ret = -1;
+		goto out;
+	}
+
+	ret = snprintf(ring_name,
+		sizeof(ring_name), "%s_mailbox_ring_%u", tag, lcore_id);
+	RTE_ASSERT(ret < sizeof(ring_name));
+
+	mb->ring = (struct rte_ring *)rte_ring_create(
+		ring_name, ele_count, socket_id, RING_F_SC_DEQ);
+    	if (mb->ring == NULL) {
+		RTE_LOG(ERR, RING,
+			"mailbox: can't create ring %s (len = %d) at lcore %u!\n",
+			ring_name, ret, lcore_id);
+		ret = -1;
+		goto out;
+	}
+
+	ret = snprintf(pool_name,
+		sizeof(pool_name), "%s_mailbox_pool_%d", tag, lcore_id);
+	RTE_ASSERT(ret < sizeof(pool_name));
+
+    	mb->pool = (struct rte_mempool *)rte_mempool_create(
+		pool_name, ele_count, ele_size, GK_MEM_CACHE_SIZE,
+		0, NULL, NULL, NULL, NULL, socket_id, 0);
+    	if (mb->pool == NULL) {
+		RTE_LOG(ERR, MEMPOOL,
+			"mailbox: can't create mempool %s (len = %d) at lcore %u!\n",
+			pool_name, ret, lcore_id);
+        	goto free_ring;
+    	}
+
+	ret  = 0;
+	goto out;
+
+free_ring:
+	rte_ring_free(mb->ring);
+out:
+	return ret;
+}
+
+void *
+mb_alloc_entry(struct mailbox *mb)
+{
+	void *obj = NULL;
+	int ret = rte_mempool_get(mb->pool, &obj);
+	if (ret == -ENOENT) {
+		RTE_LOG(ERR, MEMPOOL,
+			"mailbox: not enough entries in the mempool.\n");
+		return NULL;
+	}
+
+	RTE_ASSERT(ret == 0);
+
+	return obj;
+}
+
+int
+mb_send_entry(struct mailbox *mb, void *obj)
+{
+	int ret = rte_ring_mp_enqueue(mb->ring, obj);
+	if (ret == -EDQUOT) {
+		RTE_LOG(WARNING, RING,
+			"mailbox: high water mark exceeded. The object has been enqueued.\n");
+		ret = 0;
+	} else if (ret == -ENOBUFS) {
+		RTE_LOG(ERR, RING,
+			"mailbox: quota exceeded. Not enough room in the ring to enqueue.\n");
+		mb_free_entry(mb, obj);
+	}
+
+	return ret;
 }
 
 void
-destroy_mailbox(void)
+destroy_mailbox(struct mailbox *mb)
 {
-	/* TODO Write mailbox destroy function. */
-	return;
+	if (mb) {
+		if (mb->ring)
+    			rte_ring_free(mb->ring);
+		if (mb->pool)
+			rte_mempool_free(mb->pool);
+	}
 }
-#endif

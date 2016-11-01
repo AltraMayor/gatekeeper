@@ -31,7 +31,9 @@
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
+#include "gatekeeper_mailbox.h"
 #include "gatekeeper_ipip.h"
+#include "gatekeeper_config.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -49,13 +51,16 @@
 /* XXX Sample parameter for test only. */
 #define GK_MAX_NUM_LCORES	 (16)
 
-#define GATEKEEPER_MAX_PKT_BURST (32)
+/* XXX Sample parameters, need to be tested for better performance. */
+#define GK_CMD_BURST_SIZE        (32)
 
 /*
- * A flow entry can be in one of three states:
- * request, granted, or declined.
+ * XXX Sample parameters, all gk mailboxes have 128 entries by default.
+ * rte_ring_create() requires that the ring size (i.e., parameter count)
+ * must be a power of two. Moreover, the real usable ring size is count-1
+ * instead of count to differentiate a free ring from an empty ring.
  */
-enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
+#define MAILBOX_MAX_ENTRIES      (128)
 
 /* Store information about a packet. */
 struct ipacket {
@@ -374,6 +379,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	int  ret;
 	char ht_name[64];
 	unsigned int block_idx = lcore_id - gk_conf->lcore_start_id;
+	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 	struct rte_hash_parameters ip_flow_hash_params = {
@@ -388,7 +394,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 
 	/* Setup the flow hash table for GK block @block_idx. */
 	ip_flow_hash_params.name = ht_name;
-	ip_flow_hash_params.socket_id = rte_lcore_to_socket_id(lcore_id);
+	ip_flow_hash_params.socket_id = socket_id;
 	instance->ip_flow_hash_table = rte_hash_create(&ip_flow_hash_params);
 	if (instance->ip_flow_hash_table == NULL) {
 		RTE_LOG(ERR, HASH,
@@ -413,13 +419,119 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_hash;
 	}
 
+	ret = init_mailbox("gk", MAILBOX_MAX_ENTRIES,
+		sizeof(struct gk_cmd_entry), lcore_id, &instance->mb);
+    	if (ret < 0)
+        	goto flow_entry;
+
 	ret = 0;
 	goto out;
 
+flow_entry:
+    	rte_free(instance->ip_flow_entry_table);
+    	instance->ip_flow_entry_table = NULL;
 flow_hash:
 	rte_hash_free(instance->ip_flow_hash_table);
 	instance->ip_flow_hash_table = NULL;
 out:
+	return ret;
+}
+
+static void
+add_ggu_policy(struct ggu_policy *policy, struct gk_instance *instance)
+{
+	int ret;
+	uint64_t now = rte_rdtsc();
+	struct flow_entry *fe;
+	uint32_t rss_hash_val = rss_ip_flow_hf(&policy->flow, 0, 0);
+
+	ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
+		&policy->flow, rss_hash_val);
+	if (ret < 0) {
+		/* Create a new flow entry. */
+		ret = rte_hash_add_key_with_hash(
+			instance->ip_flow_hash_table,
+ 			(void *)&policy->flow, rss_hash_val);
+		if (ret < 0) {
+			RTE_LOG(ERR, HASH,
+				"The GK block failed to add new key to hash table!\n");
+			return;
+		}
+
+		fe = &instance->ip_flow_entry_table[ret];
+		initialize_flow_entry(fe, &policy->flow);
+	} else
+		fe = &instance->ip_flow_entry_table[ret];
+
+	switch(policy->state) {
+	case GK_GRANTED:
+		fe->state = GK_GRANTED;
+		fe->u.granted.cap_expire_at = now +
+			policy->params.u.granted.cap_expire_sec *
+			cycles_per_sec;
+		fe->u.granted.tx_rate_kb_cycle =
+			policy->params.u.granted.tx_rate_kb_sec;
+		fe->u.granted.send_next_renewal_at = now +
+			policy->params.u.granted.next_renewal_ms *
+			cycles_per_ms;
+		fe->u.granted.renewal_step_cycle =
+			policy->params.u.granted.renewal_step_ms *
+			cycles_per_ms;
+		fe->u.granted.budget_renew_at =
+			now + cycle_from_second(1);
+		fe->u.granted.budget_byte =
+			fe->u.granted.tx_rate_kb_cycle * 1024;
+
+		/* TODO Fill up the grantor id field. */
+		break;
+
+	case GK_DECLINED:
+		fe->state = GK_DECLINED;
+		fe->u.declined.expire_at = now +
+			policy->params.u.declined.expire_sec * cycles_per_sec;
+		break;
+
+	default:
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: unknown flow state %u!\n", policy->state);
+		break;
+	}
+}
+
+static void
+process_gk_cmd(struct gk_cmd_entry *entry, struct gk_instance *instance)
+{
+	switch(entry->op) {
+	case GGU_POLICY_ADD:
+		add_ggu_policy(&entry->u.ggu, instance);
+		break;
+
+	default:
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: unknown command operation %u\n", entry->op);
+		break;
+	}
+}
+
+static int
+gk_setup_rss(struct gk_config *gk_conf)
+{
+	int ret = 0;
+	unsigned int i;
+	uint8_t port_in = gk_conf->net->front.id;
+	uint16_t gk_queues[GK_MAX_NUM_LCORES];
+	unsigned int num_lcores =
+			gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;
+
+	for (i = 0; i < num_lcores; i++)
+		gk_queues[i] = gk_conf->instances[i].rx_queue_front;
+
+	ret = gatekeeper_setup_rss(port_in, gk_queues, num_lcores);
+	if (ret < 0)
+		return ret;
+
+	ret = gatekeeper_get_rss_config(port_in, &gk_conf->rss_conf);
+
 	return ret;
 }
 
@@ -428,6 +540,7 @@ gk_proc(void *arg)
 {
 	/* TODO Implement the basic algorithm of a GK block. */
 
+	int ret;
 	unsigned int lcore = rte_lcore_id();
 	struct gk_config *gk_conf = (struct gk_config *)arg;
 	unsigned int block_idx = lcore - gk_conf->lcore_start_id;
@@ -441,21 +554,32 @@ gk_proc(void *arg)
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gk: the GK block is running at lcore = %u\n", lcore);
 
-	rte_atomic32_inc(&gk_conf->ref_cnt);
+	gk_conf_hold(gk_conf);
 
 	/* Wait for network devices to start. */
 	while (gk_conf->net->configuring)
 		;
 
+	/*
+	 * The RSS should be configured
+	 * after the network devices are started.
+	 */
+	if (block_idx == 0) {
+		ret = gk_setup_rss(gk_conf);
+		if (ret < 0)
+			exiting = true;
+	}
+
 	while (likely(!exiting)) {
 		/* Get burst of RX packets, from first port of pair. */
 		int i;
-		int ret = -1;
+		int num_cmd;
 		uint16_t num_rx;
 		uint16_t num_tx = 0;
 		uint16_t num_tx_succ;
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+		struct gk_cmd_entry *gk_cmds[GK_CMD_BURST_SIZE];
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port_in, rx_queue, rx_bufs,
@@ -472,7 +596,7 @@ gk_proc(void *arg)
 			 */
 			struct flow_entry *fe;
 			struct rte_mbuf *pkt = rx_bufs[i];
-			
+
 			ret = extract_packet_info(pkt, &packet);
 			if (ret < 0) {
 				/* Drop non-IP packets. */
@@ -562,19 +686,20 @@ gk_proc(void *arg)
 				rte_pktmbuf_free(tx_bufs[i]);
 		}
 
-		/* 
-		 * TODO Implement the command processing as follows:
-		 * Load a set of commands from its mailbox ring, and 
-		 * process each command.
-		 *
-		 * The writers of a GK mailbox: the GK-GT unit and Dynamic config.
-		 */
+		/* Load a set of commands from its mailbox ring. */
+        	num_cmd = mb_dequeue_burst(&instance->mb,
+                	(void **)gk_cmds, GK_CMD_BURST_SIZE);
+
+        	for (i = 0; i < num_cmd; i++) {
+			process_gk_cmd(gk_cmds[i], instance);
+			mb_free_entry(&instance->mb, gk_cmds[i]);
+        	}
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gk: the GK block at lcore = %u is exiting\n", lcore);
 
-	return cleanup_gk(gk_conf);
+	return gk_conf_put(gk_conf);
 }
 
 struct gk_config *
@@ -584,15 +709,26 @@ alloc_gk_conf(void)
 }
 
 int
+gk_conf_put(struct gk_config *gk_conf)
+{
+	/*
+	 * Atomically decrements the atomic counter (v) by one and returns true 
+	 * if the result is 0, or false in all other cases.
+	 */
+	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt))
+		return cleanup_gk(gk_conf);
+
+	return 0;
+}
+
+int
 run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 {
 	/* TODO Initialize and run GK functional block. */
 
 	unsigned int i;
 	unsigned int num_lcores;
-	int ret;
-	uint8_t port_in = get_net_conf()->front.id;
-	uint16_t gk_queues[GK_MAX_NUM_LCORES];
+	int ret = 0;
 	struct gk_instance *inst_ptr;
 
 	if (net_conf == NULL || gk_conf == NULL) {
@@ -632,13 +768,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 			goto out;
 		}
 		inst_ptr->tx_queue_back = (uint16_t)ret;
-
-		gk_queues[i] = inst_ptr->rx_queue_front;
 	}
-
-	ret = gatekeeper_setup_rss(port_in, gk_queues, num_lcores);
-	if (ret < 0)
-		goto out;
 
 	rte_atomic32_init(&gk_conf->ref_cnt);
 
@@ -660,6 +790,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 		}
 	}
 
+	ret = 0;
 	goto out;
 
 instance:
@@ -671,12 +802,15 @@ instance:
 
 	rte_free(inst_ptr->ip_flow_entry_table);
 	inst_ptr->ip_flow_entry_table = NULL;
+
+	destroy_mailbox(&inst_ptr->mb);
+
 setup:
 	/*
 	 * If failed to setup the first gk instance, needs to release
 	 * 'gk_conf->instances' and 'gk_conf'.
 	 * Otherwise, the launched gk instances need to call
-	 * cleanup_gk() to release.
+	 * gk_conf_put() to release.
 	 */
 	if (i == gk_conf->lcore_start_id) {
 		rte_free(gk_conf->instances);
@@ -696,24 +830,69 @@ cleanup_gk(struct gk_config *gk_conf)
 	unsigned int num_lcores = gk_conf->lcore_end_id -
 		gk_conf->lcore_start_id + 1;
 
-	/*
-	 * Atomically decrements the atomic counter (v) by one and returns true 
-	 * if the result is 0, or false in all other cases.
-	 */
-	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt)) {
-		for (i = 0; i < num_lcores; i++) {
-			if (gk_conf->instances[i].ip_flow_hash_table)
-				rte_hash_free(gk_conf->instances[i].
-					ip_flow_hash_table);
+	if (gk_conf == NULL)
+		return -1;
 
-			if (gk_conf->instances[i].ip_flow_entry_table)
-				rte_free(gk_conf->instances[i].
-					ip_flow_entry_table);
-		}
+	for (i = 0; i < num_lcores; i++) {
+		if (gk_conf->instances[i].ip_flow_hash_table)
+			rte_hash_free(gk_conf->instances[i].
+				ip_flow_hash_table);
 
-		rte_free(gk_conf->instances);
-		rte_free(gk_conf);
+		if (gk_conf->instances[i].ip_flow_entry_table)
+			rte_free(gk_conf->instances[i].
+				ip_flow_entry_table);
+
+                destroy_mailbox(&gk_conf->instances[i].mb);
 	}
 
+	rte_free(gk_conf->instances);
+	rte_free(gk_conf);
+
 	return 0;
+}
+
+struct mailbox *
+get_responsible_gk_mailbox(const struct ip_flow *flow,
+	const struct gk_config *gk_conf)
+{
+	/*
+	 * Calculate the RSS hash value for the
+	 * pair <Src, Dst> in the decision.
+	 */
+	uint32_t rss_hash_val = rss_ip_flow_hf(flow, 0, 0);
+	uint32_t i;
+	uint32_t idx;
+	uint32_t shift;
+	uint16_t queue_id;
+	int block_id = -1;
+
+	/*
+	 * XXX Change the mapping rss hash value to rss reta entry
+	 * if the reta size is not 128.
+	 */
+	RTE_ASSERT(gk_conf->rss_conf.reta_size == 128);
+	rss_hash_val = (rss_hash_val & 127);
+
+	/*
+	 * Identify which GK block is responsible for the
+	 * pair <Src, Dst> in the decision.
+	 */
+	idx = rss_hash_val / RTE_RETA_GROUP_SIZE;
+	shift = rss_hash_val % RTE_RETA_GROUP_SIZE;
+	queue_id = gk_conf->rss_conf.reta_conf[idx].reta[shift];
+
+	/* XXX Change mapping queue id to the gk instance id efficiently. */
+	for (i = gk_conf->lcore_start_id; i<= gk_conf->lcore_end_id; i++) {
+		if (gk_conf->instances[i - gk_conf->lcore_start_id].
+				rx_queue_front == queue_id)
+			block_id = i - gk_conf->lcore_start_id;
+	}
+
+	if (block_id == -1)
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: wrong RSS configuration for GK blocks!\n");
+
+	RTE_ASSERT(gk_conf->lcore_start_id + block_id <= gk_conf->lcore_end_id);
+
+	return &gk_conf->instances[block_id].mb;
 }

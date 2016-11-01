@@ -40,6 +40,7 @@ volatile int exiting = false;
  * initialized via time_resolution_init() function.
  */
 uint64_t cycles_per_sec;
+uint64_t cycles_per_ms;
 uint64_t picosec_per_cycle;
 
 /* Obtain the system time resolution. */
@@ -76,11 +77,12 @@ time_resolution_init(void)
 	}
 
 	cycles_per_sec = cycles * 1000000000UL / diff_ns;
+	cycles_per_ms = cycles_per_sec / 1000UL;
 	picosec_per_cycle = 1000UL * diff_ns / cycles;
 
 	RTE_LOG(NOTICE, TIMER,
-		"cycles/second = %" PRIu64 ", picosec/cycle = %" PRIu64 "!\n",
-		cycles_per_sec, picosec_per_cycle);
+		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "!\n",
+		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
 
 	return 0;
 }

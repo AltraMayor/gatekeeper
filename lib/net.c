@@ -36,14 +36,7 @@
 /* Number of attempts to wait for a link to come up. */
 #define NUM_ATTEMPTS_LINK_GET	(5)
 
-/*
- * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
- * configure the Redirection Table of the Receive Side Scaling (RSS) feature.
- * Notice, each "rte_eth_rss_reta_entry64" structure can configure 64 entries 
- * of the table. To configure more than 64 entries supported by hardware,
- * an array of this structure is needed.
- */
-#define GATEKEEPER_RETA_MAX_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+#define GATEKEEPER_PKT_DROP_QUEUE (127)
 
 /* To mark whether Gatekeeper server configures IPv4 or IPv6. */
 #define GK_CONFIGURED_IPV4 (1)
@@ -81,6 +74,115 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 		},
 	},
 };
+
+/*
+ * @dst_ip, @src_port and @dst_port must be in big endian.
+ * By specifying the tuple (proto, src_port, dst_port),
+ * it can filter both IPv4 and IPv6 addresses.
+ */
+int
+ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
+	uint16_t src_port, uint16_t dst_port, uint16_t queue_id)
+{
+	int ret = 0;
+	struct rte_eth_ntuple_filter filter_v4 = {
+		.flags = RTE_5TUPLE_FLAGS,
+		.dst_ip = dst_ip,
+		.dst_ip_mask = UINT32_MAX,
+		.src_ip = 0,
+		.src_ip_mask = 0,
+		.dst_port = dst_port,
+		.dst_port_mask = UINT16_MAX,
+		.src_port = src_port,
+		.src_port_mask = UINT16_MAX,
+		.proto = IPPROTO_UDP,
+		.proto_mask = UINT8_MAX,
+		.tcp_flags = 0,
+		.priority = 1,
+		.queue = queue_id,
+	};
+
+	struct rte_eth_ntuple_filter filter_v6 = {
+		.flags = RTE_5TUPLE_FLAGS,
+		.dst_ip = 0,
+		.dst_ip_mask = 0,
+		.src_ip = 0,
+		.src_ip_mask = 0,
+		.dst_port = dst_port,
+		.dst_port_mask = UINT16_MAX,
+		.src_port = src_port,
+		.src_port_mask = UINT16_MAX,
+		.proto = IPPROTO_UDP,
+		.proto_mask = UINT8_MAX,
+		.tcp_flags = 0,
+		.priority = 1,
+		.queue = queue_id,
+	};
+
+	ret = rte_eth_dev_filter_supported(portid, RTE_ETH_FILTER_NTUPLE);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"Ntuple filter is not supported on port %hhu.\n",
+			portid);
+		ret = -1;
+		goto out;
+	}
+
+	if (dst_ip != 0) {
+		ret = rte_eth_dev_filter_ctrl(portid,
+			RTE_ETH_FILTER_NTUPLE,
+			RTE_ETH_FILTER_ADD,
+			&filter_v4);
+		if (ret == -ENOTSUP) {
+			RTE_LOG(ERR, PORT,
+				"Hardware doesn't support adding an IPv4 ntuple filter on port %hhu!\n",
+				portid);
+			ret = -1;
+			goto out;
+		} else if (ret == -ENODEV) {
+			RTE_LOG(ERR, PORT,
+				"Port %hhu is invalid for adding an IPv4 ntuple filter!\n",
+				portid);
+			ret = -1;
+			goto out;
+		} else if (ret != 0) {
+			RTE_LOG(ERR, PORT,
+				"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter!\n",
+				portid);
+			ret = -1;
+			goto out;
+		}
+	}
+
+	ret = rte_eth_dev_filter_ctrl(portid,
+		RTE_ETH_FILTER_NTUPLE,
+		RTE_ETH_FILTER_ADD,
+		&filter_v6);
+	if (ret == -ENOTSUP) {
+		RTE_LOG(ERR, PORT,
+			"Hardware doesn't support adding an IPv6 ntuple filter on port %hhu!\n",
+			portid);
+		ret = -1;
+		goto out;
+	} else if (ret == -ENODEV) {
+		RTE_LOG(ERR, PORT,
+			"Port %hhu is invalid for adding an IPv6 ntuple filter!\n",
+			portid);
+		ret = -1;
+		goto out;
+	} else if (ret != 0) {
+		RTE_LOG(ERR, PORT,
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter!\n",
+			portid);
+		ret = -1;
+		goto out;
+	}
+
+	ret = 0;
+
+out:
+	return ret;
+}
 
 static uint32_t
 find_num_numa_nodes(void)
@@ -467,6 +569,52 @@ gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues)
 	} else if (ret == -EINVAL) {
 		RTE_LOG(ERR, PORT,
 			"Failed to setup RSS at port %hhu (RETA query with bad redirection table parameter)!\n",
+			portid);
+		ret = -1;
+	}
+
+out:
+	return ret;
+}
+
+int
+gatekeeper_get_rss_config(uint8_t portid,
+	struct gatekeeper_rss_config *rss_conf)
+{
+	int ret = 0;
+	uint16_t i;
+	struct rte_eth_dev_info dev_info;
+
+	/* Get RSS redirection table (RETA) information. */
+	memset(&dev_info, 0, sizeof(dev_info));
+	rte_eth_dev_info_get(portid, &dev_info);
+	rss_conf->reta_size = dev_info.reta_size;
+	if (rss_conf->reta_size == 0 ||
+			rss_conf->reta_size > ETH_RSS_RETA_SIZE_512) {
+		RTE_LOG(ERR, PORT,
+			"Failed to setup RSS at port %hhu (invalid RETA size = %hu)!\n",
+			portid, rss_conf->reta_size);
+		ret = -1;
+		goto out;
+	}
+
+	for (i = 0; i < dev_info.reta_size; i++) {
+		uint32_t idx = i / RTE_RETA_GROUP_SIZE;
+		/* Select all fields to query. */
+		rss_conf->reta_conf[idx].mask = ~0LL;
+	}
+
+	/* RETA query. */
+	ret = rte_eth_dev_rss_reta_query(portid,
+		rss_conf->reta_conf, rss_conf->reta_size);
+	if (ret == -ENOTSUP) {
+		RTE_LOG(ERR, PORT,
+			"Failed to query RSS configuration at port %hhu hardware doesn't support!\n",
+			portid);
+		ret = -1;
+	} else if (ret == -EINVAL) {
+		RTE_LOG(ERR, PORT,
+			"Failed to query RSS configuration at port %hhu (RETA query with bad redirection table parameter)!\n",
 			portid);
 		ret = -1;
 	}

@@ -31,6 +31,7 @@
 extern volatile int exiting;
 
 extern uint64_t cycles_per_sec;
+extern uint64_t cycles_per_ms;
 extern uint64_t picosec_per_cycle;
 
 #endif /* _GATEKEEPER_MAIN_H_ */
