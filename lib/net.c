@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdbool.h>
+#include <unistd.h>
+
 #include <rte_mbuf.h>
 #include <rte_errno.h>
 #include <rte_ethdev.h>
@@ -24,6 +27,9 @@
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
+
+/* Number of attempts to wait for a link to come up. */
+#define NUM_ATTEMPTS_LINK_GET	5
 
 /*
  * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
@@ -275,10 +281,12 @@ out:
 }
 
 static int
-init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports)
+init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports,
+	int wait_for_link)
 {
 	unsigned int lcore;
 	struct rte_eth_link link;
+	uint8_t attempts = 0;
 	int ret = rte_eth_dev_configure(port_id,
 		net_conf->num_rx_queues, net_conf->num_tx_queues,
 		&gatekeeper_port_conf);
@@ -336,16 +344,35 @@ init_port(struct net_config *net_conf, uint8_t port_id, uint8_t *num_succ_ports)
 	/*
 	 * The following code ensures that the device is ready for
 	 * full speed RX/TX.
+	 *
 	 * When the initialization is done without this,
 	 * the initial packet transmission may be blocked.
+	 *
+	 * Optionally, we can wait for the link to come up before
+	 * continuing. This is useful for bonded ports where the
+	 * slaves must be activated after starting the bonded
+	 * device in order for the link to come up. The slaves
+	 * are activated on a timer, so this can take some time.
 	 */
-	rte_eth_link_get(port_id, &link);
-	if (!link.link_status) {
+	do {
+		rte_eth_link_get(port_id, &link);
+
+		/* Link is up. */
+		if (link.link_status)
+			break;
+
 		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
 			port_id);
-		ret = -1;
-		return ret;
-	}
+
+		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
+			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
+			ret = -1;
+			return ret;
+		}
+
+		attempts++;
+		sleep(1);
+	} while (true);
 
 	/* TODO Configure the Flow Director and RSS. */
 
@@ -389,7 +416,7 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 		}
 		iface->ports[i] = port_id;
 
-		ret = init_port(net_conf, port_id, &num_succ_ports);
+		ret = init_port(net_conf, port_id, &num_succ_ports, false);
 		if (ret < 0)
 			goto close_ports;
 	}
@@ -410,10 +437,6 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 
 	iface->id = (uint8_t)ret;
 
-	ret = init_port(net_conf, iface->id, NULL);
-	if (ret < 0)
-		goto close_id;
-
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = rte_eth_bond_slave_add(iface->id, iface->ports[i]);
 		if (ret < 0) {
@@ -423,6 +446,10 @@ init_iface(struct net_config *net_conf, struct gatekeeper_if *iface)
 		}
 		num_slaves_added++;
 	}
+
+	ret = init_port(net_conf, iface->id, NULL, true);
+	if (ret < 0)
+		goto close_id;
 
 	return 0;
 
