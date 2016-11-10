@@ -3,7 +3,7 @@ local gatekeeperc = require("gatekeeperc")
 local M = {}
 
 -- Function that sets up the GK functional block.
-function M.setup_block()
+function M.setup_block(net_conf)
 
 	-- Init the GK configuration structure.
 	local conf = gatekeeperc.alloc_gk_conf()
@@ -12,7 +12,7 @@ function M.setup_block()
 	conf.flow_ht_size = 1024
 
 	-- Setup the GK functional block.
-	return gatekeeperc.run_gk(conf)
+	return gatekeeperc.run_gk(net_conf, conf)
 end
 
 return M

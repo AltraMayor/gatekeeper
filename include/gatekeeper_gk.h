@@ -25,6 +25,10 @@
 struct gk_instance {
 	struct rte_hash   *ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
+	/* RX queue on the front interface. */
+	uint16_t          rx_queue_front;
+	/* TX queue on the back interface. */
+	uint16_t          tx_queue_back;
 };
 
 /* Configuration for the GK functional block. */
@@ -45,10 +49,11 @@ struct gk_config {
 	 */
 	rte_atomic32_t	   ref_cnt;
 	struct gk_instance *instances;
+	struct net_config  *net;
 };
 
 struct gk_config *alloc_gk_conf(void);
-int run_gk(struct gk_config *gk_conf);
+int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
 int cleanup_gk(struct gk_config *gk_conf);
 
 #endif /* _GATEKEEPER_GK_H_ */
