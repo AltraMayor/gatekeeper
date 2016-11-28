@@ -83,7 +83,6 @@ struct gk_cmd_entry {
 struct gk_config *alloc_gk_conf(void);
 int gk_conf_put(struct gk_config *gk_conf);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
-int cleanup_gk(struct gk_config *gk_conf);
 struct mailbox *get_responsible_gk_mailbox(
 	const struct ip_flow *flow, const struct gk_config *gk_conf);
 
