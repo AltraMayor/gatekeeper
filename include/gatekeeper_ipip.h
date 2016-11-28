@@ -16,36 +16,21 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _GATEKEEPER_MAILBOX_H_
-#define _GATEKEEPER_MAILBOX_H_
+#ifndef _GATEKEEPER_IPIP_H_
+#define _GATEKEEPER_IPIP_H_
 
-#include <rte_ring.h>
-#include <rte_mempool.h>
+#include <rte_ether.h>
 
-#include "gatekeeper_main.h"
+#include "gatekeeper_flow.h"
 
-struct mailbox {
-	struct rte_ring    *ring;
-	struct rte_mempool *pool;
+struct ipip_tunnel_info {
+	struct ip_flow	     flow;
+	struct ether_addr    source_mac;
+	/* TODO The MAC addresses must come from the LLS block. */
+	struct ether_addr    nexthop_mac;
 };
 
-int init_mailbox(
-	const char *tag, int ele_count,
-	int ele_size, unsigned int lcore_id, struct mailbox *mb);
-void *mb_alloc_entry(struct mailbox *mb);
-int mb_send_entry(struct mailbox *mb, void *obj);
-void destroy_mailbox(struct mailbox *mb);
+int encapsulate(struct rte_mbuf *pkt, uint8_t priority,
+	struct ipip_tunnel_info *info);
 
-static inline int
-mb_dequeue_burst(struct mailbox *mb, void **obj_table, unsigned n)
-{
-	return rte_ring_sc_dequeue_burst(mb->ring, obj_table, n);
-}
-
-static inline void
-mb_free_entry(struct mailbox *mb, void *obj)
-{
-	rte_mempool_put(mb->pool, obj);
-}
-
-#endif /* _GATEKEEPER_MAILBOX_H_ */
+#endif /* _GATEKEEPER_IPIP_H_ */

@@ -16,22 +16,32 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _GATEKEEPER_MAIN_H_
-#define _GATEKEEPER_MAIN_H_
+#ifndef _GATEKEEPER_FLOW_H_
+#define _GATEKEEPER_FLOW_H_
 
+#include <stdio.h>
 #include <stdint.h>
 
-/*
- * Custom log type for Gatekeeper-related log entries.
- * When using this logtype, the log string should include
- * the name of the relevant functional block, library, etc.
- */
-#define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
+struct ip_flow {
+	/* IPv4 or IPv6. */
+	uint16_t proto;
 
-extern volatile int exiting;
+	union {
+		struct {
+			uint32_t src;
+			uint32_t dst;
+		} v4;
 
-extern uint64_t cycles_per_sec;
-extern uint64_t cycles_per_ms;
-extern uint64_t picosec_per_cycle;
+		struct {
+			uint8_t src[16];
+			uint8_t dst[16];
+		} v6;
+	} f;
+};
 
-#endif /* _GATEKEEPER_MAIN_H_ */
+uint32_t rss_ip_flow_hf(const void *data,
+	uint32_t data_len, uint32_t init_val);
+
+int ip_flow_cmp_eq(const void *key1, const void *key2, size_t key_len);
+
+#endif /* _GATEKEEPER_FLOW_H_ */

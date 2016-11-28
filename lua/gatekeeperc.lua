@@ -24,6 +24,13 @@ struct gk_config {
 	/* This struct has hidden fields. */
 };
 
+struct ggu_config {
+	unsigned int      lcore_id;
+	uint16_t          ggu_src_port;
+	uint16_t          ggu_dst_port;
+	/* This struct has hidden fields. */
+};
+
 ]]
 
 -- Functions and wrappers
@@ -31,7 +38,8 @@ struct gk_config {
 ffi.cdef[[
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs);
+	const char **pci_addrs, uint8_t num_pci_addrs,
+	const char **ip_addrs, uint8_t num_ip_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
@@ -41,6 +49,11 @@ int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
+
+struct ggu_config *alloc_ggu_conf(void);
+int run_ggu(struct net_config *net_conf,
+	struct gk_config *gk_conf, struct ggu_config *ggu_conf);
+int cleanup_ggu(struct ggu_config *ggu_conf);
 
 ]]
 

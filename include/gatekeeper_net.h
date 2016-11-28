@@ -20,11 +20,28 @@
 #define _GATEKEEPER_NET_H_
 
 #include <stdint.h>
+#include <netinet/in.h>
+
+#include <rte_ethdev.h>
 
 #include <rte_atomic.h>
 
 /* Size of the secret key of the RSS hash. */
 #define GATEKEEPER_RSS_KEY_LEN (40)
+
+/*
+ * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
+ * configure the Redirection Table of the Receive Side Scaling (RSS) feature.
+ * Notice, each "rte_eth_rss_reta_entry64" structure can configure 64 entries 
+ * of the table. To configure more than 64 entries supported by hardware,
+ * an array of this structure is needed.
+ */
+#define GATEKEEPER_RETA_MAX_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+
+struct gatekeeper_rss_config {
+	uint16_t reta_size;
+	struct rte_eth_rss_reta_entry64 reta_conf[GATEKEEPER_RETA_MAX_SIZE];
+};
 
 /*
  * A Gatekeeper interface is specified by a set of PCI addresses
@@ -73,6 +90,15 @@ struct gatekeeper_if {
 	 */
 	rte_atomic16_t	rx_queue_id;
 	rte_atomic16_t	tx_queue_id;
+
+	/*
+	 * Specify the IPv4 and IPv6 addresses of this interface.
+	 * Notice that, while one address must always be there,
+	 * there may not be the second address.
+	 */
+	uint8_t         configured_proto;
+	struct in_addr  ip4_addr;
+	struct in6_addr ip6_addr;
 };
 
 /*
@@ -119,15 +145,21 @@ struct net_config {
 };
 
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
+extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs);
+	const char **pci_addrs, uint8_t num_pci_addrs,
+	const char **ip_addrs, uint8_t num_ip_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
+int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
+	uint16_t src_port, uint16_t dst_port, uint16_t queue_id);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues);
+int gatekeeper_get_rss_config(uint8_t portid,
+	struct gatekeeper_rss_config *rss_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 int gatekeeper_start_network(void);
 void gatekeeper_free_network(void);
