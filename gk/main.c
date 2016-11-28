@@ -715,9 +715,6 @@ cleanup_gk(struct gk_config *gk_conf)
 	unsigned int num_lcores = gk_conf->lcore_end_id -
 		gk_conf->lcore_start_id + 1;
 
-	if (gk_conf == NULL)
-		return -1;
-
 	for (i = 0; i < num_lcores; i++) {
 		if (gk_conf->instances[i].ip_flow_hash_table)
 			rte_hash_free(gk_conf->instances[i].
