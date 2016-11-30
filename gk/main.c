@@ -761,6 +761,12 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 		goto out;
 	}
 
+	if (!net_conf->back_iface_enabled) {
+		RTE_LOG(ERR, GATEKEEPER, "gk: back interface is required\n");
+		ret = -1;
+		goto out;
+	}
+
 	gk_conf->net = net_conf;
 
 	num_lcores = gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;

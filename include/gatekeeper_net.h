@@ -125,6 +125,13 @@ int get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 /* Configuration for the Network. */
 struct net_config {
 	/*
+	 * Set to zero (false) when a back interface is
+	 * not needed, such as when running gatekeeper
+	 * for Grantor.
+	 */
+	int                  back_iface_enabled;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */

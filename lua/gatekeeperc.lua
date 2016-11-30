@@ -14,6 +14,7 @@ struct gatekeeper_if {
 };
 
 struct net_config {
+	int back_iface_enabled;
 	/* This struct has hidden fields. */
 };
 

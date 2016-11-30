@@ -510,7 +510,7 @@ get_if_front(struct net_config *net_conf)
 struct gatekeeper_if *
 get_if_back(struct net_config *net_conf)
 {
-	return &net_conf->back;
+	return net_conf->back_iface_enabled ? &net_conf->back : NULL;
 }
 
 int
@@ -774,8 +774,12 @@ gatekeeper_init_network(struct net_config *net_conf)
 	/* Make sure no interface has more queues than permitted. */
 	RTE_ASSERT(net_conf->front->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
 	RTE_ASSERT(net_conf->front->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->back->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->back->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	if (net_conf->back_iface_enabled) {
+		RTE_ASSERT(net_conf->back->num_rx_queues <=
+			GATEKEEPER_MAX_QUEUES);
+		RTE_ASSERT(net_conf->back->num_tx_queues <=
+			GATEKEEPER_MAX_QUEUES);
+	}
 
 	/* Convert RSS key. */
 	rte_convert_rss_key((uint32_t *)&default_rss_key,
@@ -825,16 +829,20 @@ gatekeeper_init_network(struct net_config *net_conf)
 	RTE_ASSERT(net_conf->num_ports != 0 &&
 		net_conf->num_ports <= GATEKEEPER_MAX_PORTS &&
 		net_conf->num_ports ==
-			(net_conf->front.num_ports + net_conf->back.num_ports));
+			(net_conf->front.num_ports +
+				(net_conf->back_iface_enabled ?
+				net_conf->back.num_ports : 0)));
 
 	/* Initialize interfaces. */
 	ret = init_iface(&net_conf->front);
 	if (ret < 0)
 		goto out;
 
-	ret = init_iface(&net_conf->back);
-	if (ret < 0)
-		goto destroy_front;
+	if (net_conf->back_iface_enabled) {
+		ret = init_iface(&net_conf->back);
+		if (ret < 0)
+			goto destroy_front;
+	}
 
 	goto out;
 
@@ -935,9 +943,11 @@ gatekeeper_start_network(void)
 	if (ret < 0)
 		return ret;
 
-	ret = start_iface(&config.back);
-	if (ret < 0)
-		destroy_iface(&config.front, IFACE_DESTROY_ALL);
+	if (config.back_iface_enabled) {
+		ret = start_iface(&config.back);
+		if (ret < 0)
+			destroy_iface(&config.front, IFACE_DESTROY_ALL);
+	}
  
 	return ret;
 }
@@ -945,6 +955,7 @@ gatekeeper_start_network(void)
 void
 gatekeeper_free_network(void)
 {
-	destroy_iface(&config.back, IFACE_DESTROY_ALL);
+	if (config.back_iface_enabled)
+		destroy_iface(&config.back, IFACE_DESTROY_ALL);
 	destroy_iface(&config.front, IFACE_DESTROY_ALL);
 }

@@ -35,6 +35,7 @@ function M.setup_block()
 	local front_rx_queues = 2
 	local front_tx_queues = 0
 
+	local back_iface_enabled = true
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.0.2", "3ffe:2501:200:1fff::8"}
 	local back_rx_queues = 1
@@ -49,12 +50,15 @@ function M.setup_block()
 		return nil
 	end
 
-	local back_iface = gatekeeperc.get_if_back(conf)
-	back_iface.num_rx_queues = back_rx_queues
-	back_iface.num_tx_queues = back_tx_queues
-	ret = init_iface(back_iface, "back", back_ports, back_ips)
-	if ret < 0 then
-		goto front
+	conf.back_iface_enabled = back_iface_enabled
+	if back_iface_enabled then
+		local back_iface = gatekeeperc.get_if_back(conf)
+		back_iface.num_rx_queues = back_rx_queues
+		back_iface.num_tx_queues = back_tx_queues
+		ret = init_iface(back_iface, "back", back_ports, back_ips)
+		if ret < 0 then
+			goto front
+		end
 	end
 
 	-- Set up the network.
@@ -66,7 +70,9 @@ function M.setup_block()
 	do return conf end
 
 ::back::
-	gatekeeperc.lua_free_iface(back_iface)
+	if back_iface_enabled then
+		gatekeeperc.lua_free_iface(back_iface)
+	end
 ::front::
 	gatekeeperc.lua_free_iface(front_iface)
 	return nil
