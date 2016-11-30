@@ -59,7 +59,18 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-/* TODO Implement the configuration for Flow Director, RSS, and Filters. */
+/* TODO Implement the configuration for Flow Director. */
+
+/*
+ * TODO Add support for VLAN tags.
+ *
+ * Assume for now that hardware support is available for
+ * VLAN stripping -- then only this configuration needs
+ * to be changed.
+ *
+ * For VLAN insertion, hardware support can't be
+ * assumed, so it must be added in software.
+ */
 static struct rte_eth_conf gatekeeper_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
@@ -637,8 +648,6 @@ init_port(struct gatekeeper_if *iface, uint8_t port_id,
 	}
 	if (pnum_succ_ports != NULL)
 		(*pnum_succ_ports)++;
-
-	/* TODO Configure the Flow Director and RSS. */
 
 	return 0;
 }

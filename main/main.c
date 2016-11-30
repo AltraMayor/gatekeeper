@@ -149,12 +149,6 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	/*
-	 * TODO Set up shared state (such as mailboxes) and figure out
-	 * how to pass that information to the functional blocks that
-	 * need it.
-	 */
-
 	ret = config_and_launch();
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize Gatekeeper!\n");
@@ -171,9 +165,6 @@ main(int argc, char **argv)
 wait:
 	get_net_conf()->configuring = false;
 	rte_eal_mp_wait_lcore();
-
-	/* TODO Perform any needed state destruction. */
-
 	gatekeeper_free_network();
 out:
 	return ret;
