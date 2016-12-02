@@ -138,7 +138,13 @@ struct net_config {
 	struct gatekeeper_if front;
 	struct gatekeeper_if back;
 
+	/* The total number of NUMA nodes in the host. */
 	uint32_t             numa_nodes;
+
+	/*
+	 * There is a memory pool per NUMA node to be used for
+	 * packet buffers in that node.
+	 */
 	struct rte_mempool   **gatekeeper_pktmbuf_pool;
 
 	/*
