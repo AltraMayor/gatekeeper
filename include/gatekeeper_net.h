@@ -138,7 +138,6 @@ struct net_config {
 	struct gatekeeper_if front;
 	struct gatekeeper_if back;
 
-	uint32_t             num_ports;
 	uint32_t             numa_nodes;
 	struct rte_mempool   **gatekeeper_pktmbuf_pool;
 

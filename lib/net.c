@@ -751,7 +751,7 @@ close_partial:
 int
 gatekeeper_init_network(struct net_config *net_conf)
 {
-	int i;
+	int i, num_ports;
 	int ret = -1;
 
 	if (net_conf == NULL)
@@ -824,10 +824,10 @@ gatekeeper_init_network(struct net_config *net_conf)
 	}
 
 	/* Check port limits. */
-	net_conf->num_ports = rte_eth_dev_count();
-	RTE_ASSERT(net_conf->num_ports != 0 &&
-		net_conf->num_ports <= GATEKEEPER_MAX_PORTS &&
-		net_conf->num_ports ==
+	num_ports = rte_eth_dev_count();
+	RTE_VERIFY(num_ports > 0 &&
+		num_ports <= GATEKEEPER_MAX_PORTS &&
+		num_ports ==
 			(net_conf->front.num_ports +
 				(net_conf->back_iface_enabled ?
 				net_conf->back.num_ports : 0)));
