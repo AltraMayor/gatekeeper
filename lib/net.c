@@ -198,11 +198,10 @@ out:
 static uint32_t
 find_num_numa_nodes(void)
 {
-	int i;
+	unsigned int i;
 	uint32_t nb_numa_nodes = 0;
-	int nb_lcores = rte_lcore_count();
 
-	for (i = 0; i < nb_lcores; i++) {
+	RTE_LCORE_FOREACH(i) {
 		uint32_t socket_id = rte_lcore_to_socket_id(i);
 		if (nb_numa_nodes <= socket_id)
 			nb_numa_nodes = socket_id + 1;
