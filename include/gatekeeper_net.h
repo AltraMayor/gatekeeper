@@ -50,17 +50,17 @@ struct gatekeeper_rss_config {
  */
 struct gatekeeper_if {
 	/* The ports (in PCI address format) that compose this interface. */
-	char		**pci_addrs;
+	char            **pci_addrs;
 
 	/* The number of ports that in this interface (length of @pci_addrs). */
-	uint8_t		num_ports;
+	uint8_t         num_ports;
 
 	/* Name of the interface. Needed for setting/getting bonded port. */
-	char		*name;
+	char            *name;
 
 	/* Number of RX and TX queues for this interface. */
-	uint16_t	num_rx_queues;
-	uint16_t	num_tx_queues;
+	uint16_t        num_rx_queues;
+	uint16_t        num_tx_queues;
 
 	/*
 	 * The fields below are for internal use.
@@ -68,7 +68,7 @@ struct gatekeeper_if {
 	 */
 
 	/* DPDK port IDs corresponding to each address in @pci_addrs. */
-	uint8_t		*ports;
+	uint8_t         *ports;
 
 	/*
 	 * The DPDK port ID for this interface.
@@ -80,16 +80,16 @@ struct gatekeeper_if {
 	uint8_t         id;
 
 	/* The RX and TX queue assignments on this interface for each lcore. */
-	int16_t		rx_queues[RTE_MAX_LCORE];
-	int16_t		tx_queues[RTE_MAX_LCORE];
+	int16_t         rx_queues[RTE_MAX_LCORE];
+	int16_t         tx_queues[RTE_MAX_LCORE];
 
 	/*
 	 * The next RX and TX queues to be assigned on this interface.
 	 * We need atomic here in case multiple blocks are trying to
 	 * configure their queues on the same interface at the same time.
 	 */
-	rte_atomic16_t	rx_queue_id;
-	rte_atomic16_t	tx_queue_id;
+	rte_atomic16_t  rx_queue_id;
+	rte_atomic16_t  tx_queue_id;
 
 	/*
 	 * Specify the IPv4 and IPv6 addresses of this interface.
@@ -125,15 +125,22 @@ int get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 /* Configuration for the Network. */
 struct net_config {
 	/*
+	 * Set to zero (false) when a back interface is
+	 * not needed, such as when running gatekeeper
+	 * for Grantor.
+	 */
+	int                  back_iface_enabled;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
-	struct gatekeeper_if	front;
-	struct gatekeeper_if	back;
+	struct gatekeeper_if front;
+	struct gatekeeper_if back;
 
-	uint32_t		num_ports;
-	uint32_t		numa_nodes;
-	struct rte_mempool 	**gatekeeper_pktmbuf_pool;
+	uint32_t             num_ports;
+	uint32_t             numa_nodes;
+	struct rte_mempool   **gatekeeper_pktmbuf_pool;
 
 	/*
 	 * Set to true while network devices are being configured,
@@ -141,7 +148,7 @@ struct net_config {
 	 * This is needed to enforce the ordering:
 	 *  configure devices -> configure per-block queues -> start devices
 	 */
-	volatile int		configuring;
+	volatile int         configuring;
 };
 
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];

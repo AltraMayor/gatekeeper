@@ -59,7 +59,18 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-/* TODO Implement the configuration for Flow Director, RSS, and Filters. */
+/* TODO Implement the configuration for Flow Director. */
+
+/*
+ * TODO Add support for VLAN tags.
+ *
+ * Assume for now that hardware support is available for
+ * VLAN stripping -- then only this configuration needs
+ * to be changed.
+ *
+ * For VLAN insertion, hardware support can't be
+ * assumed, so it must be added in software.
+ */
 static struct rte_eth_conf gatekeeper_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
@@ -499,7 +510,7 @@ get_if_front(struct net_config *net_conf)
 struct gatekeeper_if *
 get_if_back(struct net_config *net_conf)
 {
-	return &net_conf->back;
+	return net_conf->back_iface_enabled ? &net_conf->back : NULL;
 }
 
 int
@@ -638,8 +649,6 @@ init_port(struct gatekeeper_if *iface, uint8_t port_id,
 	if (pnum_succ_ports != NULL)
 		(*pnum_succ_ports)++;
 
-	/* TODO Configure the Flow Director and RSS. */
-
 	return 0;
 }
 
@@ -765,8 +774,12 @@ gatekeeper_init_network(struct net_config *net_conf)
 	/* Make sure no interface has more queues than permitted. */
 	RTE_ASSERT(net_conf->front->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
 	RTE_ASSERT(net_conf->front->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->back->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->back->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	if (net_conf->back_iface_enabled) {
+		RTE_ASSERT(net_conf->back->num_rx_queues <=
+			GATEKEEPER_MAX_QUEUES);
+		RTE_ASSERT(net_conf->back->num_tx_queues <=
+			GATEKEEPER_MAX_QUEUES);
+	}
 
 	/* Convert RSS key. */
 	rte_convert_rss_key((uint32_t *)&default_rss_key,
@@ -816,16 +829,20 @@ gatekeeper_init_network(struct net_config *net_conf)
 	RTE_ASSERT(net_conf->num_ports != 0 &&
 		net_conf->num_ports <= GATEKEEPER_MAX_PORTS &&
 		net_conf->num_ports ==
-			(net_conf->front.num_ports + net_conf->back.num_ports));
+			(net_conf->front.num_ports +
+				(net_conf->back_iface_enabled ?
+				net_conf->back.num_ports : 0)));
 
 	/* Initialize interfaces. */
 	ret = init_iface(&net_conf->front);
 	if (ret < 0)
 		goto out;
 
-	ret = init_iface(&net_conf->back);
-	if (ret < 0)
-		goto destroy_front;
+	if (net_conf->back_iface_enabled) {
+		ret = init_iface(&net_conf->back);
+		if (ret < 0)
+			goto destroy_front;
+	}
 
 	goto out;
 
@@ -926,9 +943,11 @@ gatekeeper_start_network(void)
 	if (ret < 0)
 		return ret;
 
-	ret = start_iface(&config.back);
-	if (ret < 0)
-		destroy_iface(&config.front, IFACE_DESTROY_ALL);
+	if (config.back_iface_enabled) {
+		ret = start_iface(&config.back);
+		if (ret < 0)
+			destroy_iface(&config.front, IFACE_DESTROY_ALL);
+	}
  
 	return ret;
 }
@@ -936,6 +955,7 @@ gatekeeper_start_network(void)
 void
 gatekeeper_free_network(void)
 {
-	destroy_iface(&config.back, IFACE_DESTROY_ALL);
+	if (config.back_iface_enabled)
+		destroy_iface(&config.back, IFACE_DESTROY_ALL);
 	destroy_iface(&config.front, IFACE_DESTROY_ALL);
 }

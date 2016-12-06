@@ -343,6 +343,12 @@ run_ggu(struct net_config *net_conf,
 		goto out;
 	}
 
+	if (!net_conf->back_iface_enabled) {
+		RTE_LOG(ERR, GATEKEEPER, "ggu: back interface is required\n");
+		ret = -1;
+		goto out;
+	}
+
 	ggu_conf->net = net_conf;
 	gk_conf_hold(gk_conf);
 	ggu_conf->gk = gk_conf;
