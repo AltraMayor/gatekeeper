@@ -7,7 +7,11 @@ local M = {}
 function init_iface(iface, name, ports, ips)
 	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
 	for i, v in ipairs(ports) do
-		pci_strs[i - 1] = ifaces[v]
+		local pci_addr = ifaces[v]
+		if pci_addr == nil then
+			error("There is no map for interface " .. v)
+		end
+		pci_strs[i - 1] = pci_addr
 	end
 
 	local ip_strs = ffi.new("const char *[" .. #ips .. "]")
