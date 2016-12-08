@@ -21,6 +21,7 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include <rte_lcore.h>
 #include <rte_log.h>
 #include <rte_debug.h>
 
@@ -30,6 +31,47 @@
 /* TODO Get the install-path via Makefile. */
 #define LUA_BASE_DIR               "./lua"
 #define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
+
+/*
+ * Return a table with all lcore ids but the lcore id of the master lcore.
+ * Function to be called from Lua.
+ */
+static int
+l_list_lcores(lua_State *l)
+{
+	unsigned int i;
+	lua_Integer lua_index = 1;
+
+	lua_newtable(l);	/* Result. */
+
+	/* Only list slave lcores because the master lcore is special. */
+	RTE_LCORE_FOREACH_SLAVE(i) {
+		/* Push lcore id into Lua stack. */
+		lua_pushinteger(l, i);
+		/* Add lcore id to the table at @lua_index position. */
+		lua_rawseti(l, -2, lua_index++);
+	}
+
+	return 1;	/* Return the table. */
+}
+
+static int
+l_rte_lcore_to_socket_id(lua_State *l)
+{
+	/* First (and only argument) must be the lcore id. */
+	lua_Integer lcore_id = luaL_checkinteger(l, 1);
+	if (lcore_id < 0 || lcore_id >= RTE_MAX_LCORE)
+		luaL_error(l, "The first argument of rte_lcore_to_socket_id() must be between %i and %i, inclusive\n",
+			0, RTE_MAX_LCORE - 1);
+	lua_pushinteger(l, rte_lcore_to_socket_id(lcore_id));
+	return 1;
+}
+
+static const struct luaL_reg gatekeeper [] = {
+	{"list_lcores",			l_list_lcores},
+	{"rte_lcore_to_socket_id",	l_rte_lcore_to_socket_id},
+	{NULL,				NULL}	/* Sentinel. */
+};
 
 static int
 set_lua_path(lua_State *l, const char *path)
@@ -71,6 +113,7 @@ config_and_launch(void)
 	}
 
 	luaL_openlibs(lua_state);
+	luaL_register(lua_state, "gatekeeper", gatekeeper);
 	set_lua_path(lua_state, LUA_BASE_DIR);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
