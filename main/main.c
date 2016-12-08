@@ -27,6 +27,7 @@
 #include <rte_common.h>
 #include <rte_launch.h>
 #include <rte_cycles.h>
+#include <rte_timer.h>
 
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
@@ -135,6 +136,9 @@ main(int argc, char **argv)
 
 	/* XXX Set the global log level. Change it as needed. */
 	rte_set_log_level(RTE_LOG_DEBUG);
+
+	/* Used by the LLS block. */
+	rte_timer_subsystem_init();
 
 	/* Given the nature of signal, it's okay to not have a cleanup for them. */
 	ret = run_signal_handler();

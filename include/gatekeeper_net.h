@@ -24,7 +24,9 @@
 
 #include <rte_ethdev.h>
 
-#include <rte_atomic.h>
+/* To mark whether Gatekeeper server configures IPv4 or IPv6. */
+#define GK_CONFIGURED_IPV4 (1)
+#define GK_CONFIGURED_IPV6 (2)
 
 /* Size of the secret key of the RSS hash. */
 #define GATEKEEPER_RSS_KEY_LEN (40)
@@ -62,10 +64,16 @@ struct gatekeeper_if {
 	uint16_t        num_rx_queues;
 	uint16_t        num_tx_queues;
 
+	/* Timeout for cache entries (in seconds) for Link Layer Support. */
+	uint32_t	arp_cache_timeout_sec;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
+
+	/* Ethernet address of this interface. */
+	struct ether_addr eth_addr;
 
 	/* DPDK port IDs corresponding to each address in @pci_addrs. */
 	uint8_t         *ports;
@@ -164,6 +172,8 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **ip_addrs, uint8_t num_ip_addrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
+int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
+	uint16_t queue_id);
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 	uint16_t src_port, uint16_t dst_port, uint16_t queue_id);
 struct net_config *get_net_conf(void);

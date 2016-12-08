@@ -14,6 +14,10 @@ function gatekeeper_init()
 	local net_conf = net.setup_block()
 	if net_conf == nil then return -1 end
 
+	local lls = require("lls")
+	local lls_conf = lls.setup_block(net_conf, numa_table)
+	if lls_conf == nil then return -1 end
+
 	-- Disable the GK and GGU blocks just removing the X below.
 	--X[[
 	local gk = require("gk")

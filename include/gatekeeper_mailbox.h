@@ -24,6 +24,14 @@
 
 #include "gatekeeper_main.h"
 
+/*
+ * XXX Sample parameters, all mailboxes have 128 entries by default.
+ * rte_ring_create() requires that the ring size (i.e., parameter count)
+ * must be a power of two. Moreover, the real usable ring size is count-1
+ * instead of count to differentiate a free ring from an empty ring.
+ */
+#define MAILBOX_MAX_ENTRIES (128)
+
 struct mailbox {
 	struct rte_ring    *ring;
 	struct rte_mempool *pool;

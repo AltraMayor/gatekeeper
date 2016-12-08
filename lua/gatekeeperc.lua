@@ -10,6 +10,7 @@ struct gatekeeper_if {
 	char     *name;
 	uint16_t num_rx_queues;
 	uint16_t num_tx_queues;
+	uint32_t arp_cache_timeout_sec;
 	/* This struct has hidden fields. */
 };
 
@@ -29,6 +30,12 @@ struct ggu_config {
 	unsigned int      lcore_id;
 	uint16_t          ggu_src_port;
 	uint16_t          ggu_dst_port;
+	/* This struct has hidden fields. */
+};
+
+struct lls_config {
+	unsigned int lcore_id;
+	int          debug;
 	/* This struct has hidden fields. */
 };
 
@@ -55,6 +62,9 @@ struct ggu_config *alloc_ggu_conf(void);
 int run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf);
 int cleanup_ggu(struct ggu_config *ggu_conf);
+
+struct lls_config *get_lls_conf(void);
+int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 
 ]]
 

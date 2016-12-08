@@ -54,14 +54,6 @@
 /* XXX Sample parameters, need to be tested for better performance. */
 #define GK_CMD_BURST_SIZE        (32)
 
-/*
- * XXX Sample parameters, all gk mailboxes have 128 entries by default.
- * rte_ring_create() requires that the ring size (i.e., parameter count)
- * must be a power of two. Moreover, the real usable ring size is count-1
- * instead of count to differentiate a free ring from an empty ring.
- */
-#define MAILBOX_MAX_ENTRIES      (128)
-
 /* Store information about a packet. */
 struct ipacket {
 	struct ip_flow  flow;
