@@ -48,9 +48,6 @@
 #define PRIORITY_RENEW_CAP	 (2)
 #define PRIORITY_MAX		 (63)
 
-/* XXX Sample parameter for test only. */
-#define GK_MAX_NUM_LCORES	 (16)
-
 /* XXX Sample parameters, need to be tested for better performance. */
 #define GK_CMD_BURST_SIZE        (32)
 
@@ -365,12 +362,21 @@ gk_process_declined(struct flow_entry *fe, struct ipacket *packet)
 	return drop_packet(packet->pkt);
 }
 
+static int get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
+{
+	int i;
+	for (i = 0; i < gk_conf->num_lcores; i++)
+		if (gk_conf->lcores[i] == lcore_id)
+			return i;
+	RTE_VERIFY(0);
+}
+
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
 	int  ret;
 	char ht_name[64];
-	unsigned int block_idx = lcore_id - gk_conf->lcore_start_id;
+	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
@@ -508,17 +514,14 @@ process_gk_cmd(struct gk_cmd_entry *entry, struct gk_instance *instance)
 static int
 gk_setup_rss(struct gk_config *gk_conf)
 {
-	int ret = 0;
-	unsigned int i;
+	int i, ret = 0;
 	uint8_t port_in = gk_conf->net->front.id;
-	uint16_t gk_queues[GK_MAX_NUM_LCORES];
-	unsigned int num_lcores =
-			gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;
+	uint16_t gk_queues[gk_conf->num_lcores];
 
-	for (i = 0; i < num_lcores; i++)
+	for (i = 0; i < gk_conf->num_lcores; i++)
 		gk_queues[i] = gk_conf->instances[i].rx_queue_front;
 
-	ret = gatekeeper_setup_rss(port_in, gk_queues, num_lcores);
+	ret = gatekeeper_setup_rss(port_in, gk_queues, gk_conf->num_lcores);
 	if (ret < 0)
 		return ret;
 
@@ -535,7 +538,7 @@ gk_proc(void *arg)
 	int ret;
 	unsigned int lcore = rte_lcore_id();
 	struct gk_config *gk_conf = (struct gk_config *)arg;
-	unsigned int block_idx = lcore - gk_conf->lcore_start_id;
+	unsigned int block_idx = get_block_idx(gk_conf, lcore);
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 
 	uint8_t port_in = get_net_conf()->front.id;
@@ -703,11 +706,9 @@ alloc_gk_conf(void)
 static int
 cleanup_gk(struct gk_config *gk_conf)
 {
-	unsigned int i;
-	unsigned int num_lcores = gk_conf->lcore_end_id -
-		gk_conf->lcore_start_id + 1;
+	int i;
 
-	for (i = 0; i < num_lcores; i++) {
+	for (i = 0; i < gk_conf->num_lcores; i++) {
 		if (gk_conf->instances[i].ip_flow_hash_table)
 			rte_hash_free(gk_conf->instances[i].
 				ip_flow_hash_table);
@@ -720,6 +721,7 @@ cleanup_gk(struct gk_config *gk_conf)
 	}
 
 	rte_free(gk_conf->instances);
+	rte_free(gk_conf->lcores);
 	rte_free(gk_conf);
 
 	return 0;
@@ -741,12 +743,9 @@ gk_conf_put(struct gk_config *gk_conf)
 int
 run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 {
-	/* TODO Initialize and run GK functional block. */
-
-	unsigned int i;
-	unsigned int num_lcores;
-	int ret = 0;
+	int i, ret = 0;
 	struct gk_instance *inst_ptr;
+	unsigned int lcore;
 
 	if (net_conf == NULL || gk_conf == NULL) {
 		ret = -1;
@@ -761,19 +760,16 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 
 	gk_conf->net = net_conf;
 
-	num_lcores = gk_conf->lcore_end_id - gk_conf->lcore_start_id + 1;
-	RTE_ASSERT(num_lcores <= GK_MAX_NUM_LCORES);
-
 	gk_conf->instances = (struct gk_instance *)rte_calloc(NULL,
-		num_lcores, sizeof(struct gk_instance), 0);
+		gk_conf->num_lcores, sizeof(struct gk_instance), 0);
 	if (gk_conf->instances == NULL) {
 		ret = -1;
 		goto out;
 	}
 
 	/* Set up queue identifiers now for RSS, before instances start. */
-	for (i = 0; i < num_lcores; i++) {
-		unsigned int lcore = i + gk_conf->lcore_start_id;
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		lcore = gk_conf->lcores[i];
 		inst_ptr = &gk_conf->instances[i];
 
 		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore);
@@ -795,19 +791,21 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 
 	rte_atomic32_init(&gk_conf->ref_cnt);
 
-	for (i = gk_conf->lcore_start_id; i <= gk_conf->lcore_end_id; i++) {
-		/* Setup the gk instance for lcore @i. */
-		ret = setup_gk_instance(i, gk_conf);
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		/* Setup the gk instance at @lcore. */
+		lcore = gk_conf->lcores[i];
+		ret = setup_gk_instance(lcore, gk_conf);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
-				"gk: failed to setup gk instances for GK block at %u!\n",
-				i);
+				"gk: failed to setup gk instances for GK block at lcore %u\n",
+				lcore);
 			goto setup;
 		}
 
-		ret = rte_eal_remote_launch(gk_proc, gk_conf, i);
+		ret = rte_eal_remote_launch(gk_proc, gk_conf, lcore);
 		if (ret) {
-			RTE_LOG(ERR, EAL, "lcore %u failed to launch GK\n", i);
+			RTE_LOG(ERR, EAL, "lcore %u failed to launch GK\n",
+				lcore);
 			ret = -1;
 			goto instance;
 		}
@@ -817,8 +815,8 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 	goto out;
 
 instance:
-	/* GK instance at lcore @i failed to launch. */
-	inst_ptr = &gk_conf->instances[i - gk_conf->lcore_start_id];
+	/* GK instance at lcore @lcore failed to launch. */
+	inst_ptr = &gk_conf->instances[i];
 	
 	rte_hash_free(inst_ptr->ip_flow_hash_table);
 	inst_ptr->ip_flow_hash_table = NULL;
@@ -835,7 +833,7 @@ setup:
 	 * Otherwise, the launched gk instances need to call
 	 * gk_conf_put() to release.
 	 */
-	if (i == gk_conf->lcore_start_id) {
+	if (i == 0) {
 		rte_free(gk_conf->instances);
 		gk_conf->instances = NULL;
 
@@ -855,11 +853,10 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	 * pair <Src, Dst> in the decision.
 	 */
 	uint32_t rss_hash_val = rss_ip_flow_hf(flow, 0, 0);
-	uint32_t i;
 	uint32_t idx;
 	uint32_t shift;
 	uint16_t queue_id;
-	int block_id = -1;
+	int i, block_idx = -1;
 
 	/*
 	 * XXX Change the mapping rss hash value to rss reta entry
@@ -877,17 +874,15 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	queue_id = gk_conf->rss_conf.reta_conf[idx].reta[shift];
 
 	/* XXX Change mapping queue id to the gk instance id efficiently. */
-	for (i = gk_conf->lcore_start_id; i<= gk_conf->lcore_end_id; i++) {
-		if (gk_conf->instances[i - gk_conf->lcore_start_id].
-				rx_queue_front == queue_id)
-			block_id = i - gk_conf->lcore_start_id;
-	}
+	for (i = 0; i < gk_conf->num_lcores; i++)
+		if (gk_conf->instances[i].rx_queue_front == queue_id) {
+			block_idx = i;
+			break;
+		}
 
-	if (block_id == -1)
+	if (block_idx == -1)
 		RTE_LOG(ERR, GATEKEEPER,
 			"gk: wrong RSS configuration for GK blocks!\n");
 
-	RTE_ASSERT(gk_conf->lcore_start_id + block_id <= gk_conf->lcore_end_id);
-
-	return &gk_conf->instances[block_id].mb;
+	return &gk_conf->instances[block_idx].mb;
 }

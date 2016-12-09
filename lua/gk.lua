@@ -16,9 +16,7 @@ function M.setup_block(net_conf, numa_table)
 	local gk_lcores = gatekeeper.alloc_lcores_from_same_numa(numa_table,
 		n_lcores + 1)
 	local ggu_lcore = table.remove(gk_lcores)
-	-- TODO Support any sequence of lcore ids.
-	gk_conf.lcore_start_id = gk_lcores[1]
-	gk_conf.lcore_end_id = gk_lcores[2]
+	gatekeeper.gk_assign_lcores(gk_conf, gk_lcores)
 
 	-- Setup the GK functional block.
 	local ret = gatekeeperc.run_gk(net_conf, gk_conf)

@@ -20,8 +20,6 @@ struct net_config {
 };
 
 struct gk_config {
-	unsigned int lcore_start_id;
-	unsigned int lcore_end_id;
 	unsigned int flow_ht_size;
 	/* This struct has hidden fields. */
 };

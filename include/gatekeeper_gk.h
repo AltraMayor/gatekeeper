@@ -44,13 +44,6 @@ struct gk_instance {
 
 /* Configuration for the GK functional block. */
 struct gk_config {
-	/*
-  	 * XXX The lcore IDs may not be sequential (e.g. only odd numbers).
-  	 * We need an array of lcores to use.
-  	 */
-	unsigned int	   lcore_start_id;
-	unsigned int	   lcore_end_id;
-
 	/* Specify the size of the flow hash table. */
 	unsigned int	   flow_ht_size;
 
@@ -59,6 +52,13 @@ struct gk_config {
 	 * Configuration files should not refer to them.
 	 */
 	rte_atomic32_t	   ref_cnt;
+
+	/* The lcore ids at which each instance runs. */
+	unsigned int       *lcores;
+
+	/* The number of lcore ids in @lcores. */
+	int                num_lcores;
+
 	struct gk_instance *instances;
 	struct net_config  *net;
 	struct gatekeeper_rss_config rss_conf;

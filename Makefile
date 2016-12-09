@@ -44,13 +44,19 @@ SRCS-y += lls/main.c lls/cache.c lls/arp.c
 SRCS-y += rt/main.c
 
 # Libraries.
-SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c
+SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c lib/luajit-ffi-cdata.c
 
-LDLIBS += $(LDIR) -lm -lluajit-5.1
+LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm
 CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.0/
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors
 
 include $(RTE_SDK)/mk/rte.extapp.mk
+
+# This file needs to include luajit's internal headers,
+# which don't compile with stricter parameter of GCC.
+lib/luajit-ffi-cdata.o: lib/luajit-ffi-cdata.c
+	$(CC) -o $@ -c $(CFLAGS) $(EXTRA_CFLAGS) -Wno-error=undef -Wno-undef \
+	-Wno-cast-qual $^
 
 cscope:
 	cscope -b -R -s.
