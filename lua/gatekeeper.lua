@@ -18,14 +18,6 @@ function get_numa_table ()
 	return numa_table
 end
 
-function alloc_an_lcore_from (numa_table, numa)
-	local t = numa_table[numa]
-	if t == nil then
-		return nil
-	end
-	return table.remove(t, 1)
-end
-
 function split_array (array, split_pos)
 	local a1 = {}
 	local a2 = {}
@@ -70,6 +62,14 @@ function alloc_lcores_from_same_numa (numa_table, n)
 		end
 	end
 	return nil
+end
+
+function alloc_an_lcore (numa_table)
+	local lcore_t = alloc_lcores_from_same_numa(numa_table, 1)
+	if lcore_t == nil then
+		error("There is not enough lcores");
+	end
+	return lcore_t[1]
 end
 
 function print_lcore_array (array)
