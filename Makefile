@@ -51,3 +51,8 @@ CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors
 
 include $(RTE_SDK)/mk/rte.extapp.mk
+
+cscope:
+	cscope -b -R -s.
+
+.PHONY: cscope
