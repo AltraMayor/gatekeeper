@@ -40,7 +40,7 @@ SRCS-y += cps/main.c
 SRCS-y += ggu/main.c
 SRCS-y += gk/main.c
 SRCS-y += gt/main.c
-SRCS-y += lls/main.c
+SRCS-y += lls/main.c lls/cache.c lls/arp.c
 SRCS-y += rt/main.c
 
 # Libraries.

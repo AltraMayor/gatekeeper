@@ -69,6 +69,7 @@ init_mailbox(const char *tag,
 		RTE_LOG(ERR, MEMPOOL,
 			"mailbox: can't create mempool %s (len = %d) at lcore %u!\n",
 			pool_name, ret, lcore_id);
+		ret = -1;
         	goto free_ring;
     	}
 

@@ -38,10 +38,6 @@
 
 #define GATEKEEPER_PKT_DROP_QUEUE (127)
 
-/* To mark whether Gatekeeper server configures IPv4 or IPv6. */
-#define GK_CONFIGURED_IPV4 (1)
-#define GK_CONFIGURED_IPV6 (2)
-
 static struct net_config config;
 
 /*
@@ -85,6 +81,56 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 		},
 	},
 };
+
+/* @ether_type should be in host ordering. */
+int
+ethertype_filter_add(uint8_t port_id, uint16_t ether_type, uint16_t queue_id)
+{
+	struct rte_eth_ethertype_filter filter = {
+		.ether_type = ether_type,
+		.flags = 0,
+		.queue = queue_id,
+	};
+
+	int ret = rte_eth_dev_filter_supported(port_id,
+		RTE_ETH_FILTER_ETHERTYPE);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"EtherType filters are not supported on port %hhu.\n",
+			port_id);
+		ret = -1;
+		goto out;
+	}
+
+	ret = rte_eth_dev_filter_ctrl(port_id,
+		RTE_ETH_FILTER_ETHERTYPE,
+		RTE_ETH_FILTER_ADD,
+		&filter);
+	if (ret == -ENOTSUP) {
+		RTE_LOG(ERR, PORT,
+			"Hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu!\n",
+			ether_type, port_id);
+		ret = -1;
+		goto out;
+	} else if (ret == -ENODEV) {
+		RTE_LOG(ERR, PORT,
+			"Port %hhu is invalid for adding an EtherType filter for 0x%02hx!\n",
+			ether_type, port_id);
+		ret = -1;
+		goto out;
+	} else if (ret != 0) {
+		RTE_LOG(ERR, PORT,
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx!\n",
+			port_id, ether_type);
+		ret = -1;
+		goto out;
+	}
+
+	ret = 0;
+
+out:
+	return ret;
+}
 
 /*
  * @dst_ip, @src_port and @dst_port must be in big endian.
@@ -654,7 +700,7 @@ init_port(struct gatekeeper_if *iface, uint8_t port_id,
 static int
 init_iface(struct gatekeeper_if *iface)
 {
-	int ret = 0;
+	int ret;
 	uint8_t i;
 	uint8_t num_succ_ports = 0;
 	uint8_t num_slaves_added = 0;
@@ -681,7 +727,7 @@ init_iface(struct gatekeeper_if *iface)
 		struct rte_pci_addr pci_addr;
 		uint8_t port_id;
 
-		int ret = eal_parse_pci_DomBDF(iface->pci_addrs[i], &pci_addr);
+		ret = eal_parse_pci_DomBDF(iface->pci_addrs[i], &pci_addr);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
 				"Failed to parse PCI %s (err=%d)!\n",
@@ -704,36 +750,39 @@ init_iface(struct gatekeeper_if *iface)
 	}
 
 	/* Initialize bonded port, if needed. */
-	if (iface->num_ports == 1) {
+	if (iface->num_ports == 1)
 		iface->id = iface->ports[0];
-		return 0;
-	}
-
-	/* TODO Also allow LACP to be used. */
-	ret = rte_eth_bond_create(iface->name, BONDING_MODE_ROUND_ROBIN, 0);
-	if (ret < 0) {
-		RTE_LOG(ERR, PORT, "Failed to create bonded port (err=%d)!\n",
-			ret);
-		goto close_partial;
-	}
-
-	iface->id = (uint8_t)ret;
-
-	for (i = 0; i < iface->num_ports; i++) {
-		ret = rte_eth_bond_slave_add(iface->id, iface->ports[i]);
+	else {
+		/* TODO Also allow LACP to be used. */
+		ret = rte_eth_bond_create(iface->name,
+			BONDING_MODE_ROUND_ROBIN, 0);
 		if (ret < 0) {
-			RTE_LOG(ERR, PORT, "Failed to add slave port %hhu to bonded port %hhu (err=%d)!\n",
-				iface->ports[i], iface->id, ret);
-			rm_slave_ports(iface, num_slaves_added);
-			goto close_ports;
+			RTE_LOG(ERR, PORT,
+				"Failed to create bonded port (err=%d)!\n",
+				ret);
+			goto close_partial;
 		}
-		num_slaves_added++;
+
+		iface->id = (uint8_t)ret;
+
+		for (i = 0; i < iface->num_ports; i++) {
+			ret = rte_eth_bond_slave_add(iface->id,
+				iface->ports[i]);
+			if (ret < 0) {
+				RTE_LOG(ERR, PORT, "Failed to add slave port %hhu to bonded port %hhu (err=%d)!\n",
+					iface->ports[i], iface->id, ret);
+				rm_slave_ports(iface, num_slaves_added);
+				goto close_ports;
+			}
+			num_slaves_added++;
+		}
+
+		ret = init_port(iface, iface->id, NULL);
+		if (ret < 0)
+			goto close_ports;
 	}
 
-	ret = init_port(iface, iface->id, NULL);
-	if (ret < 0)
-		goto close_ports;
-
+	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
 	return 0;
 
 close_ports:
