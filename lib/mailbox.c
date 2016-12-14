@@ -36,14 +36,6 @@ init_mailbox(const char *tag,
 	char pool_name[128];
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
 
-	if (mb == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"mailbox: the mailbox pointer is NULL in function %s at lcore %u!\n",
-			__func__, lcore_id);
-		ret = -1;
-		goto out;
-	}
-
 	ret = snprintf(ring_name,
 		sizeof(ring_name), "%s_mailbox_ring_%u", tag, lcore_id);
 	RTE_ASSERT(ret < sizeof(ring_name));
@@ -110,7 +102,8 @@ mb_send_entry(struct mailbox *mb, void *obj)
 		RTE_LOG(ERR, RING,
 			"mailbox: quota exceeded. Not enough room in the ring to enqueue.\n");
 		mb_free_entry(mb, obj);
-	}
+	} else
+		RTE_ASSERT(ret == 0);
 
 	return ret;
 }
