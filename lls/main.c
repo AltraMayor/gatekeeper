@@ -36,6 +36,7 @@ static struct lls_config lls_conf = {
 		.name = "arp",
 		.iface_enabled = iface_arp_enabled,
 		.ip_str = ipv4_str,
+		.ip_in_subnet = ipv4_in_subnet,
 		.xmit_req = xmit_arp_req,
 		.print_record = print_arp_record,
 	},

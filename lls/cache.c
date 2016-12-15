@@ -38,14 +38,14 @@ static void
 lls_send_request(struct lls_config *lls_conf, struct lls_cache *cache,
 	const uint8_t *ip_be, const struct ether_addr *ha)
 {
-	/*
-	 * TODO Use network mask to determine which
-	 * iface to use for invalid entries.
-	 */
-	if (cache->iface_enabled(lls_conf->net, &lls_conf->net->front))
+	struct gatekeeper_if *front = &lls_conf->net->front;
+	struct gatekeeper_if *back = &lls_conf->net->back;
+	if (cache->iface_enabled(lls_conf->net, front) &&
+			cache->ip_in_subnet(front, ip_be))
 		cache->xmit_req(&lls_conf->net->front, ip_be, ha,
 			lls_conf->tx_queue_front);
-	if (cache->iface_enabled(lls_conf->net, &lls_conf->net->back))
+	if (cache->iface_enabled(lls_conf->net, back) &&
+			cache->ip_in_subnet(back, ip_be))
 		cache->xmit_req(&lls_conf->net->back, ip_be, ha,
 			lls_conf->tx_queue_back);
 }

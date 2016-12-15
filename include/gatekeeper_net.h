@@ -106,7 +106,9 @@ struct gatekeeper_if {
 	 */
 	uint8_t         configured_proto;
 	struct in_addr  ip4_addr;
+	struct in_addr  ip4_mask;
 	struct in6_addr ip6_addr;
+	struct in6_addr ip6_mask;
 };
 
 /*
@@ -161,7 +163,7 @@ extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_addrs, uint8_t num_ip_addrs);
+	const char **ip_cidrs, uint8_t num_ip_cidrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
