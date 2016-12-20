@@ -32,6 +32,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
+#include "gatekeeper_launch.h"
 
 /* Number of attempts to wait for a link to come up. */
 #define NUM_ATTEMPTS_LINK_GET	(5)
@@ -796,6 +797,18 @@ close_partial:
 	return ret;
 }
 
+static int
+init_iface_stage1(void *arg)
+{
+	struct gatekeeper_if *iface = arg;
+
+	/* Make sure the interface has no more queues than permitted. */
+	RTE_ASSERT(iface->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_ASSERT(iface->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+
+	return init_iface(iface);
+}
+
 /* Initialize the network. */
 int
 gatekeeper_init_network(struct net_config *net_conf)
@@ -805,8 +818,6 @@ gatekeeper_init_network(struct net_config *net_conf)
 
 	if (net_conf == NULL)
 		return -1;
-
-	net_conf->configuring = true;
 
 	if (config.gatekeeper_pktmbuf_pool == NULL) {
 		config.numa_nodes = find_num_numa_nodes();
@@ -819,21 +830,11 @@ gatekeeper_init_network(struct net_config *net_conf)
 		}
 	}
 
-	/* Make sure no interface has more queues than permitted. */
-	RTE_ASSERT(net_conf->front->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(net_conf->front->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
-	if (net_conf->back_iface_enabled) {
-		RTE_ASSERT(net_conf->back->num_rx_queues <=
-			GATEKEEPER_MAX_QUEUES);
-		RTE_ASSERT(net_conf->back->num_tx_queues <=
-			GATEKEEPER_MAX_QUEUES);
-	}
-
 	/* Convert RSS key. */
 	rte_convert_rss_key((uint32_t *)&default_rss_key,
 		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
 
-	/* Initialize pktmbuf on each numa node. */
+	/* Initialize pktmbuf pool on each numa node. */
 	for (i = 0; (uint32_t)i < net_conf->numa_nodes; i++) {
 		char pool_name[64];
 
@@ -889,12 +890,15 @@ gatekeeper_init_network(struct net_config *net_conf)
 	}
 
 	/* Initialize interfaces. */
-	ret = init_iface(&net_conf->front);
+
+	ret = launch_at_stage1(net_conf, 0, 0, 0, 0,
+		init_iface_stage1, &net_conf->front);
 	if (ret < 0)
 		goto out;
 
 	if (net_conf->back_iface_enabled) {
-		ret = init_iface(&net_conf->back);
+		ret = launch_at_stage1(net_conf, 0, 0, 0, 0,
+			init_iface_stage1, &net_conf->back);
 		if (ret < 0)
 			goto destroy_front;
 	}
@@ -902,7 +906,7 @@ gatekeeper_init_network(struct net_config *net_conf)
 	goto out;
 
 destroy_front:
-	destroy_iface(&net_conf->front, IFACE_DESTROY_INIT);
+	pop_n_at_stage1(1);
 out:
 	return ret;
 }

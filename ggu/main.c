@@ -26,11 +26,12 @@
 #include <rte_ethdev.h>
 #include <rte_atomic.h>
 
-#include "gatekeeper_gk.h"
 #include "gatekeeper_ggu.h"
+#include "gatekeeper_gk.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
+#include "gatekeeper_launch.h"
 
 #define GGU_PD_VER1 (1)
 
@@ -284,7 +285,6 @@ free_packet:
 static int
 ggu_proc(void *arg)
 {
-	int ret;
 	uint32_t lcore = rte_lcore_id();
 	struct ggu_config *ggu_conf = (struct ggu_config *)arg;
 	uint8_t port_in = ggu_conf->net->back.id;
@@ -292,25 +292,6 @@ ggu_proc(void *arg)
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"ggu: the GK-GT unit is running at lcore = %u\n", lcore);
-
-	/* Wait for network devices to start. */
-	while (ggu_conf->net->configuring)
-		;
-
-	/*
-	 * Setup the ntuple filter that assign the GK-GT packets
-	 * to its queue for both IPv4 and IPv6 addresses.
-	 * Accordnig to the DPDK documentation, any functions from
-	 * the rte_ethdev.h library should be called after the 
-	 * network devices are started. So as the ntuple filters functions.
-	 */
-	ret = ntuple_filter_add(port_in,
-		ggu_conf->net->back.ip4_addr.s_addr,
-		ggu_conf->ggu_src_port,
-		ggu_conf->ggu_dst_port,
-		ggu_conf->rx_queue_back);
-	if (ret < 0)
-		exiting = true;
 
 	while (likely(!exiting)) {
 		uint16_t i;
@@ -332,6 +313,37 @@ ggu_proc(void *arg)
 	return cleanup_ggu(ggu_conf);
 }
 
+static int
+ggu_state1(void *arg)
+{
+	struct ggu_config *ggu_conf = arg;
+	int ret = get_queue_id(&ggu_conf->net->back, QUEUE_TYPE_RX,
+		ggu_conf->lcore_id);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "ggu: cannot assign an RX queue for the back interface for lcore %u\n",
+			ggu_conf->lcore_id);
+		return ret;
+	}
+	ggu_conf->rx_queue_back = ret;
+	return 0;
+}
+
+static int
+ggu_state2(void *arg)
+{
+	struct ggu_config *ggu_conf = arg;
+
+	/*
+	 * Setup the ntuple filters that assign the GK-GT packets
+	 * to its queue for both IPv4 and IPv6 addresses.
+	 */
+	return ntuple_filter_add(ggu_conf->net->back.id,
+		ggu_conf->net->back.ip4_addr.s_addr,
+		ggu_conf->ggu_src_port,
+		ggu_conf->ggu_dst_port,
+		ggu_conf->rx_queue_back);
+}
+
 int
 run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf)
@@ -349,6 +361,18 @@ run_ggu(struct net_config *net_conf,
 		goto out;
 	}
 
+	ret = launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_state1, ggu_conf);
+	if (ret < 0)
+		goto out;
+
+	ret = launch_at_stage2(ggu_state2, ggu_conf);
+	if (ret < 0)
+		goto stage1;
+
+	ret = launch_at_stage3("ggu", ggu_proc, ggu_conf, ggu_conf->lcore_id);
+	if (ret < 0)
+		goto stage2;
+
 	ggu_conf->net = net_conf;
 	gk_conf_hold(gk_conf);
 	ggu_conf->gk = gk_conf;
@@ -360,24 +384,13 @@ run_ggu(struct net_config *net_conf,
 	ggu_conf->ggu_src_port = rte_cpu_to_be_16(ggu_conf->ggu_src_port);
 	ggu_conf->ggu_dst_port = rte_cpu_to_be_16(ggu_conf->ggu_dst_port);
 
-	ret = get_queue_id(&ggu_conf->net->back,
-		QUEUE_TYPE_RX, ggu_conf->lcore_id);
-	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the back interface for lcore %u\n",
-			ggu_conf->lcore_id);
-		goto out;
-	}
-	ggu_conf->rx_queue_back = (uint16_t)ret;
-
-	ret = rte_eal_remote_launch(ggu_proc, ggu_conf, ggu_conf->lcore_id);
-	if (ret) {
-		RTE_LOG(ERR, EAL, "lcore %u failed to launch GGU\n",
-			ggu_conf->lcore_id);
-		ret = -1;
-		goto out;
-	}
-
 	ret = 0;
+	goto out;
+
+stage2:
+	pop_n_at_stage2(1);
+stage1:
+	pop_n_at_stage1(1);
 out:
 	return ret;
 }

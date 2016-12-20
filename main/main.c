@@ -32,6 +32,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_net.h"
+#include "gatekeeper_launch.h"
 
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;
@@ -153,22 +154,20 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	ret = config_and_launch();
+	ret = config_gatekeeper();
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize Gatekeeper!\n");
-		exiting = true;
-		goto wait;
+		RTE_LOG(ERR, GATEKEEPER, "Failed to configure Gatekeeper!\n");
+		goto net;
 	}
 
-	ret = gatekeeper_start_network();
+	ret = launch_gatekeeper();
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper!\n");
+		RTE_LOG(ERR, GATEKEEPER, "Failed to launch Gatekeeper!\n");
 		exiting = true;
 	}
 
-wait:
-	get_net_conf()->configuring = false;
 	rte_eal_mp_wait_lcore();
+net:
 	gatekeeper_free_network();
 out:
 	return ret;

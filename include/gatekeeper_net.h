@@ -154,14 +154,6 @@ struct net_config {
 	 * packet buffers in that node.
 	 */
 	struct rte_mempool   **gatekeeper_pktmbuf_pool;
-
-	/*
-	 * Set to true while network devices are being configured,
-	 * and set to false when all network devices have started.
-	 * This is needed to enforce the ordering:
-	 *  configure devices -> configure per-block queues -> start devices
-	 */
-	volatile int         configuring;
 };
 
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];

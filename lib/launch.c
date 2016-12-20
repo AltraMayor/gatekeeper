@@ -1,0 +1,268 @@
+/*
+ * Gatekeeper - DoS protection system.
+ * Copyright (C) 2016 Digirati LTDA.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <stdbool.h>
+
+#include <rte_malloc.h>
+
+#include "gatekeeper_launch.h"
+#include "list.h"
+#include "gatekeeper_main.h"
+
+static struct launch_heads {
+	struct list_head stage1;
+	struct list_head stage2;
+	struct list_head stage3;
+} launch_heads = {
+	.stage1 = LIST_HEAD_INIT(launch_heads.stage1),
+	.stage2 = LIST_HEAD_INIT(launch_heads.stage2),
+	.stage3 = LIST_HEAD_INIT(launch_heads.stage3),
+};
+
+struct stage1_entry {
+	struct list_head list;
+	lcore_function_t *f;
+	void             *arg;
+};
+
+int
+launch_at_stage1(struct net_config *net,
+	int front_rx_queues, int front_tx_queues,
+	int back_rx_queues, int back_tx_queues,
+	lcore_function_t *f, void *arg)
+{
+	struct stage1_entry *entry;
+
+	entry = rte_malloc(__func__, sizeof(*entry), 0);
+	if (entry == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		return -1;
+	}
+
+	RTE_ASSERT(front_rx_queues >= 0);
+	RTE_ASSERT(front_tx_queues >= 0);
+	net->front.num_rx_queues += front_rx_queues;
+	net->front.num_tx_queues += front_tx_queues;
+
+	if (net->back_iface_enabled) {
+		RTE_ASSERT(back_rx_queues >= 0);
+		RTE_ASSERT(back_tx_queues >= 0);
+		net->back.num_rx_queues += back_rx_queues;
+		net->back.num_tx_queues += back_tx_queues;
+	}
+
+	entry->f = f;
+	entry->arg = arg;
+	list_add_tail(&entry->list, &launch_heads.stage1);
+	return 0;
+}
+
+static int
+launch_stage1(void)
+{
+	struct stage1_entry *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &launch_heads.stage1, list) {
+		int ret = entry->f(entry->arg);
+		if (ret != 0)
+			return ret;
+		list_del(&entry->list);
+		rte_free(entry);
+	}
+
+	return 0;
+}
+
+void
+pop_n_at_stage1(int n)
+{
+	while (n > 0 && !list_empty(&launch_heads.stage1)) {
+		struct stage1_entry *last =
+			list_last_entry(&launch_heads.stage1,
+			struct stage1_entry, list);
+		list_del(&last->list);
+		rte_free(last);
+		n--;
+	}
+}
+
+struct stage2_entry {
+	struct list_head list;
+	lcore_function_t *f;
+	void             *arg;
+};
+
+int
+launch_at_stage2(lcore_function_t *f, void *arg)
+{
+	struct stage2_entry *entry;
+
+	entry = rte_malloc(__func__, sizeof(*entry), 0);
+	if (entry == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		return -1;
+	}
+
+	entry->f = f;
+	entry->arg = arg;
+	list_add_tail(&entry->list, &launch_heads.stage2);
+	return 0;
+}
+
+static int
+launch_stage2(void)
+{
+	struct stage2_entry *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &launch_heads.stage2, list) {
+		int ret = entry->f(entry->arg);
+		if (ret != 0)
+			return ret;
+		list_del(&entry->list);
+		rte_free(entry);
+	}
+
+	return 0;
+}
+
+void
+pop_n_at_stage2(int n)
+{
+	while (n > 0 && !list_empty(&launch_heads.stage2)) {
+		struct stage2_entry *last =
+			list_last_entry(&launch_heads.stage2,
+			struct stage2_entry, list);
+		list_del(&last->list);
+		rte_free(last);
+		n--;
+	}
+}
+
+struct stage3_entry {
+	struct list_head list;
+	char             *name;
+	lcore_function_t *f;
+	void             *arg;
+	unsigned int     lcore_id;
+};
+
+static char *
+rte_strdup(const char *s)
+{
+	int len = s == NULL ? 0 : strlen(s) + 1;
+	char *ret = rte_malloc(__func__, len, 0);
+	if (ret == NULL)
+		return ret;
+	return strcpy(ret, s);
+}
+
+int
+launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
+	unsigned int lcore_id)
+{
+	struct stage3_entry *entry;
+	char *name_cpy;
+
+	name_cpy = rte_strdup(name);
+	if (name_cpy == NULL)
+		goto fail;
+
+	entry = rte_malloc(__func__, sizeof(*entry), 0);
+	if (entry == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		goto name_cpy;
+	}
+
+	entry->name = name_cpy;
+	entry->f = f;
+	entry->arg = arg;
+	entry->lcore_id = lcore_id;
+	list_add_tail(&entry->list, &launch_heads.stage3);
+	return 0;
+
+name_cpy:
+	rte_free(name_cpy);
+fail:
+	return -1;
+}
+
+static inline void
+free_stage3_entry(struct stage3_entry *entry)
+{
+	rte_free(entry->name);
+	rte_free(entry);
+}
+
+static int
+launch_stage3(void)
+{
+	struct stage3_entry *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &launch_heads.stage3, list) {
+		int ret = rte_eal_remote_launch(entry->f, entry->arg,
+			entry->lcore_id);
+		if (ret != 0) {
+			RTE_LOG(ERR, EAL, "lcore %u failed to launch %s\n",
+				entry->lcore_id, entry->name);
+			return ret;
+		}
+		list_del(&entry->list);
+		free_stage3_entry(entry);
+	}
+
+	return 0;
+}
+
+void
+pop_n_at_stage3(int n)
+{
+	while (n > 0 && !list_empty(&launch_heads.stage3)) {
+		struct stage3_entry *last =
+			list_last_entry(&launch_heads.stage3,
+			struct stage3_entry, list);
+		list_del(&last->list);
+		free_stage3_entry(last);
+		n--;
+	}
+}
+
+int
+launch_gatekeeper(void)
+{
+	int ret;
+
+	ret = launch_stage1();
+	if (ret != 0)
+		return -1;
+
+	ret = gatekeeper_start_network();
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network!\n");
+		return -1;
+	}
+
+	ret = launch_stage2();
+	if (ret != 0)
+		return -1;
+
+	ret = launch_stage3();
+	if (ret != 0)
+		return -1;
+
+	return 0;
+}

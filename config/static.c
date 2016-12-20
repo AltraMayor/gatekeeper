@@ -177,7 +177,7 @@ set_lua_path(lua_State *l, const char *path)
 }
 
 int
-config_and_launch(void)
+config_gatekeeper(void)
 {
 	int ret;
 	char lua_entry_path[128];

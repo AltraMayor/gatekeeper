@@ -34,6 +34,7 @@
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_config.h"
+#include "gatekeeper_launch.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -551,20 +552,6 @@ gk_proc(void *arg)
 
 	gk_conf_hold(gk_conf);
 
-	/* Wait for network devices to start. */
-	while (gk_conf->net->configuring)
-		;
-
-	/*
-	 * The RSS should be configured
-	 * after the network devices are started.
-	 */
-	if (block_idx == 0) {
-		ret = gk_setup_rss(gk_conf);
-		if (ret < 0)
-			exiting = true;
-	}
-
 	while (likely(!exiting)) {
 		/* Get burst of RX packets, from first port of pair. */
 		int i;
@@ -740,12 +727,65 @@ gk_conf_put(struct gk_config *gk_conf)
 	return 0;
 }
 
+static int
+gk_stage1(void *arg)
+{
+	struct gk_config *gk_conf = arg;
+	int i;
+
+	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
+		sizeof(struct gk_instance), 0);
+	if (gk_conf->instances == NULL)
+		return -1;
+
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		unsigned int lcore = gk_conf->lcores[i];
+		struct gk_instance *inst_ptr = &gk_conf->instances[i];
+		int ret;
+
+		/* Set up queue identifiers for RSS. */
+
+		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the front interface for lcore %u\n",
+				lcore);
+			return -1;
+		}
+		inst_ptr->rx_queue_front = ret;
+
+		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
+				lcore);
+			return -1;
+		}
+		inst_ptr->tx_queue_back = ret;
+
+		/* Setup the gk instance at @lcore. */
+		ret = setup_gk_instance(lcore, gk_conf);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"gk: failed to setup gk instances for GK block at lcore %u\n",
+				lcore);
+			gk_conf_put(gk_conf);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int
+gk_stage2(void *arg)
+{
+	struct gk_config *gk_conf = arg;
+	return gk_setup_rss(gk_conf);
+}
+
 int
 run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 {
-	int i, ret = 0;
-	struct gk_instance *inst_ptr;
-	unsigned int lcore;
+	int ret, i;
 
 	if (net_conf == NULL || gk_conf == NULL) {
 		ret = -1;
@@ -760,88 +800,39 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 
 	gk_conf->net = net_conf;
 
-	gk_conf->instances = (struct gk_instance *)rte_calloc(NULL,
-		gk_conf->num_lcores, sizeof(struct gk_instance), 0);
-	if (gk_conf->instances == NULL) {
-		ret = -1;
+	if (gk_conf->num_lcores <= 0)
+		goto success;
+
+	ret = launch_at_stage1(net_conf, gk_conf->num_lcores, 0, 0,
+		gk_conf->num_lcores, gk_stage1, gk_conf);
+	if (ret < 0)
 		goto out;
-	}
 
-	/* Set up queue identifiers now for RSS, before instances start. */
-	for (i = 0; i < gk_conf->num_lcores; i++) {
-		lcore = gk_conf->lcores[i];
-		inst_ptr = &gk_conf->instances[i];
-
-		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore);
-		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the front interface for lcore %u\n",
-				lcore);
-			goto out;
-		}
-		inst_ptr->rx_queue_front = (uint16_t)ret;
-
-		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore);
-		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
-				lcore);
-			goto out;
-		}
-		inst_ptr->tx_queue_back = (uint16_t)ret;
-	}
-
-	rte_atomic32_init(&gk_conf->ref_cnt);
+	ret = launch_at_stage2(gk_stage2, gk_conf);
+	if (ret < 0)
+		goto stage1;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
-		/* Setup the gk instance at @lcore. */
-		lcore = gk_conf->lcores[i];
-		ret = setup_gk_instance(lcore, gk_conf);
+		unsigned int lcore = gk_conf->lcores[i];
+		ret = launch_at_stage3("gk", gk_proc, gk_conf, lcore);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"gk: failed to setup gk instances for GK block at lcore %u\n",
-				lcore);
-			goto setup;
-		}
-
-		ret = rte_eal_remote_launch(gk_proc, gk_conf, lcore);
-		if (ret) {
-			RTE_LOG(ERR, EAL, "lcore %u failed to launch GK\n",
-				lcore);
-			ret = -1;
-			goto instance;
+			pop_n_at_stage3(i);
+			goto stage2;
 		}
 	}
 
-	ret = 0;
-	goto out;
+	goto success;
 
-instance:
-	/* GK instance at lcore @lcore failed to launch. */
-	inst_ptr = &gk_conf->instances[i];
-	
-	rte_hash_free(inst_ptr->ip_flow_hash_table);
-	inst_ptr->ip_flow_hash_table = NULL;
-
-	rte_free(inst_ptr->ip_flow_entry_table);
-	inst_ptr->ip_flow_entry_table = NULL;
-
-	destroy_mailbox(&inst_ptr->mb);
-
-setup:
-	/*
-	 * If failed to setup the first gk instance, needs to release
-	 * 'gk_conf->instances' and 'gk_conf'.
-	 * Otherwise, the launched gk instances need to call
-	 * gk_conf_put() to release.
-	 */
-	if (i == 0) {
-		rte_free(gk_conf->instances);
-		gk_conf->instances = NULL;
-
-		rte_free(gk_conf);
-		gk_conf = NULL;
-	}
+stage2:
+	pop_n_at_stage2(1);
+stage1:
+	pop_n_at_stage1(1);
 out:
 	return ret;
+
+success:
+	rte_atomic32_init(&gk_conf->ref_cnt);
+	return 0;
 }
 
 struct mailbox *

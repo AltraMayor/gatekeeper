@@ -84,7 +84,7 @@ struct dynamic_config {
 	unsigned int	lcore_id;
 };
 
-int config_and_launch(void);
+int config_gatekeeper(void);
 int run_dynamic_config(const struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

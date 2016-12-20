@@ -21,8 +21,10 @@
 #include <rte_cycles.h>
 #include <rte_ethdev.h>
 
+#include "gatekeeper_lls.h"
 #include "arp.h"
 #include "cache.h"
+#include "gatekeeper_launch.h"
 
 /* Length of time (in seconds) to wait between scans of the cache. */
 #define LLS_CACHE_SCAN_INTERVAL 10
@@ -165,36 +167,10 @@ lls_proc(void *arg)
 {
 	struct lls_config *lls_conf = (struct lls_config *)arg;
 	struct net_config *net_conf = lls_conf->net;
-	int ret;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"lls: the LLS block is running at lcore = %u\n",
 		lls_conf->lcore_id);
-
-	/* Wait for network devices to start. */
-	while (net_conf->configuring)
-		;
-
-	/* Filters must be added after the network device starts. */
-	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = ethertype_filter_add(net_conf->front.id,
-			ETHER_TYPE_ARP, lls_conf->rx_queue_front);
-		if (ret < 0) {
-			exiting = true;
-			goto out;
-		}
-	}
-
-	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = ethertype_filter_add(net_conf->back.id,
-			ETHER_TYPE_ARP, lls_conf->rx_queue_back);
-		if (ret < 0) {
-			exiting = true;
-			goto out;
-		}
-	}
-
-	/* TODO Add ND filters. */
 
 	while (likely(!exiting)) {
 		/* Read in packets on front and back interfaces. */
@@ -220,7 +196,7 @@ lls_proc(void *arg)
 			rte_timer_manage();
 		}
 	}
-out:
+
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"lls: the LLS block at lcore = %u is exiting\n",
 		lls_conf->lcore_id);
@@ -234,28 +210,65 @@ assign_lls_queue_ids(struct lls_config *lls_conf)
 	int ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_RX,
 		lls_conf->lcore_id);
 	if (ret < 0)
-		return ret;
-	lls_conf->rx_queue_front = (uint16_t)ret;
+		goto fail;
+	lls_conf->rx_queue_front = ret;
 
 	ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_TX,
 		lls_conf->lcore_id);
 	if (ret < 0)
-		return ret;
-	lls_conf->tx_queue_front = (uint16_t)ret;
+		goto fail;
+	lls_conf->tx_queue_front = ret;
 
 	if (lls_conf->net->back_iface_enabled) {
 		ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_RX,
 			lls_conf->lcore_id);
 		if (ret < 0)
-			return ret;
-		lls_conf->rx_queue_back = (uint16_t)ret;
+			goto fail;
+		lls_conf->rx_queue_back = ret;
 
 		ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_TX,
 			lls_conf->lcore_id);
 		if (ret < 0)
-			return ret;
-		lls_conf->tx_queue_back = (uint16_t)ret;
+			goto fail;
+		lls_conf->tx_queue_back = ret;
 	}
+
+	return 0;
+
+fail:
+	RTE_LOG(ERR, GATEKEEPER, "lls: cannot assign queues\n");
+	return ret;
+}
+
+static int
+lls_stage1(void *arg)
+{
+	struct lls_config *lls_conf = arg;
+	return assign_lls_queue_ids(lls_conf);
+}
+
+static int
+lls_stage2(void *arg)
+{
+	struct lls_config *lls_conf = arg;
+	struct net_config *net_conf = lls_conf->net;
+	int ret;
+
+	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
+		ret = ethertype_filter_add(net_conf->front.id,
+			ETHER_TYPE_ARP, lls_conf->rx_queue_front);
+		if (ret < 0)
+			return ret;
+	}
+
+	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
+		ret = ethertype_filter_add(net_conf->back.id,
+			ETHER_TYPE_ARP, lls_conf->rx_queue_back);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* TODO Add ND filters. */
 
 	return 0;
 }
@@ -270,7 +283,17 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto out;
 	}
 
-	lls_conf->net = net_conf;
+	ret = launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
+	if (ret < 0)
+		goto out;
+
+	ret = launch_at_stage2(lls_stage2, lls_conf);
+	if (ret < 0)
+		goto stage1;
+
+	ret = launch_at_stage3("lls", lls_proc, lls_conf, lls_conf->lcore_id);
+	if (ret < 0)
+		goto stage2;
 
 	/* Do LLS cache scan every LLS_CACHE_SCAN_INTERVAL seconds. */
 	rte_timer_init(&lls_conf->timer);
@@ -279,13 +302,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, TIMER, "Cannot set LLS scan timer\n");
-		return -1;
-	}
-
-	ret = assign_lls_queue_ids(lls_conf);
-	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: cannot assign queues\n");
-		goto timer;
+		goto stage3;
 	}
 
 	ret = init_mailbox("lls_req", MAILBOX_MAX_ENTRIES,
@@ -294,6 +311,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 	if (ret < 0)
 		goto timer;
 
+	lls_conf->net = net_conf;
 	if (arp_enabled(lls_conf)) {
 		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache);
 		if (ret < 0) {
@@ -315,21 +333,23 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 
 	/* TODO Initialize ND cache. */
 
-	ret = rte_eal_remote_launch(lls_proc, lls_conf, lls_conf->lcore_id);
-	if (ret) {
-		RTE_LOG(ERR, EAL, "lcore %u failed to launch LLs\n",
-			lls_conf->lcore_id);
-		goto arp;
-	}
-
 	return 0;
+
+/* To be used once ND cache is added.
 arp:
 	if (arp_enabled(lls_conf))
 		lls_cache_destroy(&lls_conf->arp_cache);
+*/
 requests:
 	destroy_mailbox(&lls_conf->requests);
 timer:
 	rte_timer_stop(&lls_conf->timer);
+stage3:
+	pop_n_at_stage3(1);
+stage2:
+	pop_n_at_stage2(1);
+stage1:
+	pop_n_at_stage1(1);
 out:
 	return ret;
 }
