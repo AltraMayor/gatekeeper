@@ -803,7 +803,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 	if (gk_conf->num_lcores <= 0)
 		goto success;
 
-	ret = launch_at_stage1(net_conf, gk_conf->num_lcores, 0, 0,
+	ret = net_launch_at_stage1(net_conf, gk_conf->num_lcores, 0, 0,
 		gk_conf->num_lcores, gk_stage1, gk_conf);
 	if (ret < 0)
 		goto out;

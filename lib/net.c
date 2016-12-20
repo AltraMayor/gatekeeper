@@ -798,6 +798,88 @@ close_partial:
 }
 
 static int
+start_port(uint8_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
+{
+	struct rte_eth_link link;
+	uint8_t attempts = 0;
+
+	/* Start device. */
+	int ret = rte_eth_dev_start(port_id);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"Failed to start port %hhu (err=%d)!\n",
+			port_id, ret);
+		return ret;
+	}
+	if (pnum_succ_ports != NULL)
+		(*pnum_succ_ports)++;
+
+	/*
+	 * The following code ensures that the device is ready for
+	 * full speed RX/TX.
+	 *
+	 * When the initialization is done without this,
+	 * the initial packet transmission may be blocked.
+	 *
+	 * Optionally, we can wait for the link to come up before
+	 * continuing. This is useful for bonded ports where the
+	 * slaves must be activated after starting the bonded
+	 * device in order for the link to come up. The slaves
+	 * are activated on a timer, so this can take some time.
+	 */
+	do {
+		rte_eth_link_get(port_id, &link);
+
+		/* Link is up. */
+		if (link.link_status)
+			break;
+
+		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
+			port_id);
+
+		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
+			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
+			ret = -1;
+			return ret;
+		}
+
+		attempts++;
+		sleep(1);
+	} while (true);
+
+	return 0;
+}
+
+static int
+start_iface(struct gatekeeper_if *iface)
+{
+	int ret;
+	uint8_t i;
+	uint8_t num_succ_ports = 0;
+
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = start_port(iface->ports[i], &num_succ_ports, false);
+		if (ret < 0)
+			goto stop_partial;
+	}
+
+	/* If there's no bonded port, we're done. */
+	if (iface->num_ports == 1)
+		return 0;
+
+	ret = start_port(iface->id, NULL, true);
+	if (ret < 0)
+		goto stop_partial;
+
+	return 0;
+
+stop_partial:
+	stop_iface_ports(iface, num_succ_ports);
+	destroy_iface(iface, IFACE_DESTROY_INIT);
+	return ret;
+}
+
+static int
 init_iface_stage1(void *arg)
 {
 	struct gatekeeper_if *iface = arg;
@@ -807,6 +889,31 @@ init_iface_stage1(void *arg)
 	RTE_ASSERT(iface->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 
 	return init_iface(iface);
+}
+
+static int
+start_network_stage2(void *arg)
+{
+	struct net_config *net = arg;
+	int ret;
+
+	ret = start_iface(&net->front);
+	if (ret < 0)
+		goto fail;
+
+	if (net->back_iface_enabled) {
+		ret = start_iface(&net->back);
+		if (ret < 0)
+			goto destroy_front;
+	}
+
+	return 0;
+
+destroy_front:
+	destroy_iface(&net->front, IFACE_DESTROY_ALL);
+fail:
+	RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network!\n");
+	return ret;
 }
 
 /* Initialize the network. */
@@ -891,123 +998,27 @@ gatekeeper_init_network(struct net_config *net_conf)
 
 	/* Initialize interfaces. */
 
-	ret = launch_at_stage1(net_conf, 0, 0, 0, 0,
-		init_iface_stage1, &net_conf->front);
+	ret = launch_at_stage1(init_iface_stage1, &net_conf->front);
 	if (ret < 0)
 		goto out;
 
+	ret = launch_at_stage2(start_network_stage2, net_conf);
+	if (ret < 0)
+		goto destroy_front;
+
 	if (net_conf->back_iface_enabled) {
-		ret = launch_at_stage1(net_conf, 0, 0, 0, 0,
-			init_iface_stage1, &net_conf->back);
+		ret = launch_at_stage1(init_iface_stage1, &net_conf->back);
 		if (ret < 0)
-			goto destroy_front;
+			goto do_not_start_net;
 	}
 
 	goto out;
 
+do_not_start_net:
+	pop_n_at_stage2(1);
 destroy_front:
 	pop_n_at_stage1(1);
 out:
-	return ret;
-}
-
-static int
-start_port(uint8_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
-{
-	struct rte_eth_link link;
-	uint8_t attempts = 0;
-
-	/* Start device. */
-	int ret = rte_eth_dev_start(port_id);
-	if (ret < 0) {
-		RTE_LOG(ERR, PORT,
-			"Failed to start port %hhu (err=%d)!\n",
-			port_id, ret);
-		return ret;
-	}
-	if (pnum_succ_ports != NULL)
-		(*pnum_succ_ports)++;
-
-	/*
-	 * The following code ensures that the device is ready for
-	 * full speed RX/TX.
-	 *
-	 * When the initialization is done without this,
-	 * the initial packet transmission may be blocked.
-	 *
-	 * Optionally, we can wait for the link to come up before
-	 * continuing. This is useful for bonded ports where the
-	 * slaves must be activated after starting the bonded
-	 * device in order for the link to come up. The slaves
-	 * are activated on a timer, so this can take some time.
-	 */
-	do {
-		rte_eth_link_get(port_id, &link);
-
-		/* Link is up. */
-		if (link.link_status)
-			break;
-
-		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
-			port_id);
-
-		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
-			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
-			ret = -1;
-			return ret;
-		}
-
-		attempts++;
-		sleep(1);
-	} while (true);
-
-	return 0;
-}
-
-static int
-start_iface(struct gatekeeper_if *iface)
-{
-	int ret;
-	uint8_t i;
-	uint8_t num_succ_ports = 0;
-
-	for (i = 0; i < iface->num_ports; i++) {
-		ret = start_port(iface->ports[i], &num_succ_ports, false);
-		if (ret < 0)
-			goto stop_partial;
-	}
-
-	/* If there's no bonded port, we're done. */
-	if (iface->num_ports == 1)
-		return 0;
-
-	ret = start_port(iface->id, NULL, true);
-	if (ret < 0)
-		goto stop_partial;
-
-	return 0;
-
-stop_partial:
-	stop_iface_ports(iface, num_succ_ports);
-	destroy_iface(iface, IFACE_DESTROY_INIT);
-	return ret;
-}
-
-int
-gatekeeper_start_network(void)
-{
-	int ret;
-
-	ret = start_iface(&config.front);
-	if (ret < 0)
-		return ret;
-
-	if (config.back_iface_enabled) {
-		ret = start_iface(&config.back);
-		if (ret < 0)
-			destroy_iface(&config.front, IFACE_DESTROY_ALL);
-	}
- 
 	return ret;
 }
 
@@ -1017,4 +1028,30 @@ gatekeeper_free_network(void)
 	if (config.back_iface_enabled)
 		destroy_iface(&config.back, IFACE_DESTROY_ALL);
 	destroy_iface(&config.front, IFACE_DESTROY_ALL);
+}
+
+int
+net_launch_at_stage1(struct net_config *net,
+	int front_rx_queues, int front_tx_queues,
+	int back_rx_queues, int back_tx_queues,
+	lcore_function_t *f, void *arg)
+{
+	int ret = launch_at_stage1(f, arg);
+
+	if (ret < 0)
+		return ret;
+
+	RTE_ASSERT(front_rx_queues >= 0);
+	RTE_ASSERT(front_tx_queues >= 0);
+	net->front.num_rx_queues += front_rx_queues;
+	net->front.num_tx_queues += front_tx_queues;
+
+	if (net->back_iface_enabled) {
+		RTE_ASSERT(back_rx_queues >= 0);
+		RTE_ASSERT(back_tx_queues >= 0);
+		net->back.num_rx_queues += back_rx_queues;
+		net->back.num_tx_queues += back_tx_queues;
+	}
+
+	return 0;
 }

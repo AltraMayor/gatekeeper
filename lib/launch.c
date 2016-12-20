@@ -17,8 +17,12 @@
  */
 
 #include <stdbool.h>
+#include <string.h>
 
 #include <rte_malloc.h>
+#include <rte_lcore.h>
+#include <rte_debug.h>
+#include <rte_log.h>
 
 #include "gatekeeper_launch.h"
 #include "list.h"
@@ -41,10 +45,7 @@ struct stage1_entry {
 };
 
 int
-launch_at_stage1(struct net_config *net,
-	int front_rx_queues, int front_tx_queues,
-	int back_rx_queues, int back_tx_queues,
-	lcore_function_t *f, void *arg)
+launch_at_stage1(lcore_function_t *f, void *arg)
 {
 	struct stage1_entry *entry;
 
@@ -52,18 +53,6 @@ launch_at_stage1(struct net_config *net,
 	if (entry == NULL) {
 		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
 		return -1;
-	}
-
-	RTE_ASSERT(front_rx_queues >= 0);
-	RTE_ASSERT(front_tx_queues >= 0);
-	net->front.num_rx_queues += front_rx_queues;
-	net->front.num_tx_queues += front_tx_queues;
-
-	if (net->back_iface_enabled) {
-		RTE_ASSERT(back_rx_queues >= 0);
-		RTE_ASSERT(back_tx_queues >= 0);
-		net->back.num_rx_queues += back_rx_queues;
-		net->back.num_tx_queues += back_tx_queues;
 	}
 
 	entry->f = f;
@@ -290,12 +279,6 @@ launch_gatekeeper(void)
 	ret = launch_stage1();
 	if (ret != 0)
 		return -1;
-
-	ret = gatekeeper_start_network();
-	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network!\n");
-		return -1;
-	}
 
 	ret = launch_stage2();
 	if (ret != 0)

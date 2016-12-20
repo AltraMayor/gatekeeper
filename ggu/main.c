@@ -361,7 +361,7 @@ run_ggu(struct net_config *net_conf,
 		goto out;
 	}
 
-	ret = launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_state1, ggu_conf);
+	ret = net_launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_state1, ggu_conf);
 	if (ret < 0)
 		goto out;
 

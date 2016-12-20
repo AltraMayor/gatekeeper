@@ -21,33 +21,22 @@
 
 #include <rte_launch.h>
 
-#include "gatekeeper_net.h"
-
 /*
  * Postpone the execution of f(arg) until the Lua configuration finishes,
  * but before the network devices start.
  *
- * This initilization stage is perfect for allocation of queues in
- * the network devices.
- *
- * front_rx_queues, front_tx_queues, back_rx_queues, and back_tx_queues are
- * the number of queues on the front and back interfaces of the receiving and
- * transmitting types. This information must be known while calling
- * lch_launch_at_stage1(), but before f(arg) is called.
- *
- * If the back interface is not enabled, the parameters back_rx_queues and
- * back_tx_queues are ignored.
- *
  * If f() returns a non-zero, the inilization terminates in error.
+ *
+ * ATTENTION:
+ * This initilization stage is perfect for allocation of queues in
+ * the network devices. HOWEVER, if you're going to allocate any queue,
+ * DO NOT call this function, but net_launch_at_stage1() instead!
  *
  * RETURN
  *	Return 0 if success; otherwise -1.
  */
 int
-launch_at_stage1(struct net_config *net,
-	int front_rx_queues, int front_tx_queues,
-	int back_rx_queues, int back_tx_queues,
-	lcore_function_t *f, void *arg);
+launch_at_stage1(lcore_function_t *f, void *arg);
 
 /* Drop the @n last entries of stage1. */
 void

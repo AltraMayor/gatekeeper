@@ -175,7 +175,32 @@ int gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues);
 int gatekeeper_get_rss_config(uint8_t portid,
 	struct gatekeeper_rss_config *rss_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
-int gatekeeper_start_network(void);
 void gatekeeper_free_network(void);
+
+/*
+ * Postpone the execution of f(arg) until the Lua configuration finishes,
+ * but before the network devices start.
+ *
+ * This initilization stage is perfect for allocation of queues in
+ * the network devices.
+ *
+ * If you do not need to allocate any queue, you can may call
+ * net_launch_at_stage1() instead.
+ *
+ * front_rx_queues, front_tx_queues, back_rx_queues, and back_tx_queues are
+ * the number of queues on the front and back interfaces of the receiving and
+ * transmitting types.
+ *
+ * If the back interface is not enabled, the parameters back_rx_queues and
+ * back_tx_queues are ignored.
+ *
+ * RETURN
+ *	Return 0 if success; otherwise -1.
+ */
+int
+net_launch_at_stage1(struct net_config *net,
+	int front_rx_queues, int front_tx_queues,
+	int back_rx_queues, int back_tx_queues,
+	lcore_function_t *f, void *arg);
 
 #endif /* _GATEKEEPER_NET_H_ */

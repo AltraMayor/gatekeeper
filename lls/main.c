@@ -283,7 +283,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto out;
 	}
 
-	ret = launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
+	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
 	if (ret < 0)
 		goto out;
 
