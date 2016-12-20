@@ -49,7 +49,7 @@ l_list_lcores(lua_State *l)
 	lua_newtable(l);	/* Result. */
 
 	/* Only list slave lcores because the master lcore is special. */
-	RTE_LCORE_FOREACH_SLAVE(i) {
+	RTE_LCORE_FOREACH(i) {
 		/* Push lcore id into Lua stack. */
 		lua_pushinteger(l, i);
 		/* Add lcore id to the table at @lua_index position. */

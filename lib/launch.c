@@ -192,7 +192,12 @@ launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 	entry->f = f;
 	entry->arg = arg;
 	entry->lcore_id = lcore_id;
-	list_add_tail(&entry->list, &launch_heads.stage3);
+
+	if (lcore_id != rte_get_master_lcore())
+		list_add_tail(&entry->list, &launch_heads.stage3);
+	else
+		list_add(&entry->list, &launch_heads.stage3);
+
 	return 0;
 
 name_cpy:
@@ -211,10 +216,23 @@ free_stage3_entry(struct stage3_entry *entry)
 static int
 launch_stage3(void)
 {
+	unsigned int master_id = rte_get_master_lcore();
 	struct stage3_entry *entry, *next;
 
+	RTE_ASSERT(master_id == rte_lcore_id());
+
 	list_for_each_entry_safe(entry, next, &launch_heads.stage3, list) {
-		int ret = rte_eal_remote_launch(entry->f, entry->arg,
+		int ret;
+
+		if (entry->lcore_id == master_id) {
+			/*
+			 * Postpone the execution of this call since
+			 * this thread is running on the master lcore.
+			 */
+			continue;
+		}
+
+		ret = rte_eal_remote_launch(entry->f, entry->arg,
 			entry->lcore_id);
 		if (ret != 0) {
 			RTE_LOG(ERR, EAL, "lcore %u failed to launch %s\n",
@@ -226,6 +244,29 @@ launch_stage3(void)
 	}
 
 	return 0;
+}
+
+static int
+run_master_if_applicable(void)
+{
+	unsigned int master_id = rte_get_master_lcore();
+	struct stage3_entry *first;
+	int ret;
+
+	RTE_ASSERT(master_id == rte_lcore_id());
+
+	if (list_empty(&launch_heads.stage3))
+		return 0;
+
+	first = list_first_entry(&launch_heads.stage3, struct stage3_entry,
+		list);
+	if (first->lcore_id != master_id)
+		return 0;
+
+	list_del(&first->list);
+	ret = first->f(first->arg);
+	free_stage3_entry(first);
+	return ret;
 }
 
 void
@@ -264,5 +305,5 @@ launch_gatekeeper(void)
 	if (ret != 0)
 		return -1;
 
-	return 0;
+	return run_master_if_applicable();
 }

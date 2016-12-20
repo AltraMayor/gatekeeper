@@ -161,10 +161,8 @@ main(int argc, char **argv)
 	}
 
 	ret = launch_gatekeeper();
-	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to launch Gatekeeper!\n");
+	if (ret < 0)
 		exiting = true;
-	}
 
 	rte_eal_mp_wait_lcore();
 net:
