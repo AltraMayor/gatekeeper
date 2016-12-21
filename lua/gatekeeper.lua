@@ -183,5 +183,10 @@ function init_iface(iface, name, ports, ips)
 		ip_strs[i - 1] = v
 	end
 
-	return c.lua_init_iface(iface, name, pci_strs, #ports, ip_strs, #ips)
+	local ret = c.lua_init_iface(iface, name, pci_strs, #ports,
+		ip_strs, #ips)
+	if ret < 0 then
+		error("Failed to initilialize " .. name .. " interface")
+	end
+	return ret
 end

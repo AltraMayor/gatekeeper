@@ -2,7 +2,9 @@ return function (net_conf, numa_table)
 
 	-- Init the GK configuration structure.
 	local gk_conf = gatekeeper.c.alloc_gk_conf()
-	if gk_conf == nil then return nil end
+	if gk_conf == nil then
+		error("Failed to allocate gk_conf")
+	end
 	
 	-- Change these parameters to configure the Gatekeeper.
 	gk_conf.flow_ht_size = 1024
@@ -15,7 +17,9 @@ return function (net_conf, numa_table)
 
 	-- Setup the GK functional block.
 	local ret = gatekeeper.c.run_gk(net_conf, gk_conf)
-	if ret < 0 then return nil end
+	if ret < 0 then
+		error("Failed to run gk block(s)")
+	end
 
 	return gk_conf, ggu_lcore
 end
