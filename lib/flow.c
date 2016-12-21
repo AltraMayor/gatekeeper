@@ -88,7 +88,7 @@ rss_ip_flow_hf(const void *data,
 		return gk_softrss_be((const uint32_t *)&flow->f,
 				(sizeof(flow->f.v6)/sizeof(uint32_t)), rss_key_be);
 	else
-		RTE_ASSERT(false);
+		rte_panic("Unexpected protocol: %i\n", flow->proto);
 
 	return 0;
 }

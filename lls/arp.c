@@ -158,7 +158,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	ether_addr_copy(&arp_hdr->arp_data.arp_sha, &mod_req.ha);
 	mod_req.port_id = iface->id;
 	mod_req.ts = time(NULL);
-	RTE_ASSERT(mod_req.ts >= 0);
+	RTE_VERIFY(mod_req.ts >= 0);
 	lls_process_mod(lls_conf, &mod_req);
 
 	/*

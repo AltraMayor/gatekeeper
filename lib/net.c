@@ -307,8 +307,8 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	struct rte_mempool *mp;
 	int16_t new_queue_id;
 
-	RTE_ASSERT(lcore < RTE_MAX_LCORE);
-	RTE_ASSERT(ty < QUEUE_TYPE_MAX);
+	RTE_VERIFY(lcore < RTE_MAX_LCORE);
+	RTE_VERIFY(ty < QUEUE_TYPE_MAX);
 
 	queues = (ty == QUEUE_TYPE_RX) ? iface->rx_queues : iface->tx_queues;
 
@@ -426,7 +426,7 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 		break;
 	}
 	default:
-		RTE_ASSERT(0);
+		rte_panic("Unexpected condition\n");
 		break;
 	}
 }
@@ -885,8 +885,8 @@ init_iface_stage1(void *arg)
 	struct gatekeeper_if *iface = arg;
 
 	/* Make sure the interface has no more queues than permitted. */
-	RTE_ASSERT(iface->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_ASSERT(iface->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_VERIFY(iface->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_VERIFY(iface->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
 
 	return init_iface(iface);
 }
@@ -948,12 +948,9 @@ gatekeeper_init_network(struct net_config *net_conf)
 		if (net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
 			continue;
 
-		/* XXX For RTE_ASSERT(), default RTE_LOG_LEVEL=7,
-		 * so it does nothing.
-		 */
 		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u",
 			i);
-		RTE_ASSERT(ret < sizeof(pool_name));
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 		net_conf->gatekeeper_pktmbuf_pool[i] =
 			rte_pktmbuf_pool_create(pool_name,
                 		GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
@@ -1041,14 +1038,14 @@ net_launch_at_stage1(struct net_config *net,
 	if (ret < 0)
 		return ret;
 
-	RTE_ASSERT(front_rx_queues >= 0);
-	RTE_ASSERT(front_tx_queues >= 0);
+	RTE_VERIFY(front_rx_queues >= 0);
+	RTE_VERIFY(front_tx_queues >= 0);
 	net->front.num_rx_queues += front_rx_queues;
 	net->front.num_tx_queues += front_tx_queues;
 
 	if (net->back_iface_enabled) {
-		RTE_ASSERT(back_rx_queues >= 0);
-		RTE_ASSERT(back_tx_queues >= 0);
+		RTE_VERIFY(back_rx_queues >= 0);
+		RTE_VERIFY(back_tx_queues >= 0);
 		net->back.num_rx_queues += back_rx_queues;
 		net->back.num_tx_queues += back_tx_queues;
 	}

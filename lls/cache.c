@@ -107,7 +107,7 @@ lls_add_record(struct lls_cache *cache, const uint8_t *ip_be)
 			ret == -EINVAL ? "Invalid params" : "No space",
 			ip_str == NULL ? cache->name : ip_str);
 	} else
-		RTE_ASSERT(ret >= 0);
+		RTE_VERIFY(ret >= 0);
 	return ret;
 }
 
@@ -141,7 +141,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 		record->map.stale = true;
 		memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
 		record->ts = time(NULL);
-		RTE_ASSERT(record->ts >= 0);
+		RTE_VERIFY(record->ts >= 0);
 		record->holds[0] = hold_req->hold;
 		record->num_holds = 1;
 
@@ -162,7 +162,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 		return;
 	}
 
-	RTE_ASSERT(ret >= 0);
+	RTE_VERIFY(ret >= 0);
 	record = &cache->records[ret];
 
 	if (!record->map.stale) {
@@ -204,7 +204,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 		return;
 	}
 
-	RTE_ASSERT(ret >= 0);
+	RTE_VERIFY(ret >= 0);
 	record = &cache->records[ret];
 
 	for (i = 0; i < record->num_holds; i++) {
@@ -278,7 +278,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		return;
 	}
 
-	RTE_ASSERT(ret >= 0);
+	RTE_VERIFY(ret >= 0);
 	record = &cache->records[ret];
 
 	if (!is_same_ether_addr(&mod_req->ha, &record->map.ha)) {
@@ -377,7 +377,7 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 	struct gatekeeper_if *back = &lls_conf->net->back;
 	time_t now = time(NULL);
 
-	RTE_ASSERT(now >= 0);
+	RTE_VERIFY(now >= 0);
 	index = rte_hash_iterate(cache->hash, (void *)&ip_be, &data, &iter);
 	while (index >= 0) {
 		struct lls_record *record = &cache->records[index];
@@ -458,7 +458,7 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache)
 		.extra_flag = 0,
 	};
 
-	RTE_ASSERT(cache->key_len <= LLS_MAX_KEY_LEN);
+	RTE_VERIFY(cache->key_len <= LLS_MAX_KEY_LEN);
 	cache->hash = rte_hash_create(&lls_cache_params);
 	if (cache->hash == NULL) {
 		RTE_LOG(ERR, HASH, "Could not create %s cache hash\n",

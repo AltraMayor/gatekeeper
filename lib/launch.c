@@ -208,7 +208,7 @@ launch_stage3(void)
 	unsigned int master_id = rte_get_master_lcore();
 	struct stage3_entry *entry, *next;
 
-	RTE_ASSERT(master_id == rte_lcore_id());
+	RTE_VERIFY(master_id == rte_lcore_id());
 
 	list_for_each_entry_safe(entry, next, &launch_heads.stage3, list) {
 		int ret;
@@ -242,7 +242,7 @@ run_master_if_applicable(void)
 	struct stage3_entry *first;
 	int ret;
 
-	RTE_ASSERT(master_id == rte_lcore_id());
+	RTE_VERIFY(master_id == rte_lcore_id());
 
 	if (list_empty(&launch_heads.stage3))
 		return 0;

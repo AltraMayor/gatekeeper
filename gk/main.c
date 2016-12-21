@@ -369,7 +369,9 @@ static int get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 	for (i = 0; i < gk_conf->num_lcores; i++)
 		if (gk_conf->lcores[i] == lcore_id)
 			return i;
-	RTE_VERIFY(0);
+	rte_panic("Unexpected condition: lcore %u is not running a gk block\n",
+		lcore_id);
+	return 0;
 }
 
 static int
@@ -389,7 +391,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	};
 
 	ret = snprintf(ht_name, sizeof(ht_name), "ip_flow_hash_%u", block_idx);
-	RTE_ASSERT(ret < sizeof(ht_name));
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(ht_name));
 
 	/* Setup the flow hash table for GK block @block_idx. */
 	ip_flow_hash_params.name = ht_name;
@@ -853,7 +855,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	 * XXX Change the mapping rss hash value to rss reta entry
 	 * if the reta size is not 128.
 	 */
-	RTE_ASSERT(gk_conf->rss_conf.reta_size == 128);
+	RTE_VERIFY(gk_conf->rss_conf.reta_size == 128);
 	rss_hash_val = (rss_hash_val & 127);
 
 	/*

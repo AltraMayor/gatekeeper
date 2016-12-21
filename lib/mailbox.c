@@ -38,7 +38,7 @@ init_mailbox(const char *tag,
 
 	ret = snprintf(ring_name,
 		sizeof(ring_name), "%s_mailbox_ring_%u", tag, lcore_id);
-	RTE_ASSERT(ret < sizeof(ring_name));
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(ring_name));
 
 	mb->ring = (struct rte_ring *)rte_ring_create(
 		ring_name, ele_count, socket_id, RING_F_SC_DEQ);
@@ -52,7 +52,7 @@ init_mailbox(const char *tag,
 
 	ret = snprintf(pool_name,
 		sizeof(pool_name), "%s_mailbox_pool_%d", tag, lcore_id);
-	RTE_ASSERT(ret < sizeof(pool_name));
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 
     	mb->pool = (struct rte_mempool *)rte_mempool_create(
 		pool_name, ele_count, ele_size, GK_MEM_CACHE_SIZE,
@@ -85,7 +85,7 @@ mb_alloc_entry(struct mailbox *mb)
 		return NULL;
 	}
 
-	RTE_ASSERT(ret == 0);
+	RTE_VERIFY(ret == 0);
 
 	return obj;
 }
@@ -103,7 +103,7 @@ mb_send_entry(struct mailbox *mb, void *obj)
 			"mailbox: quota exceeded. Not enough room in the ring to enqueue.\n");
 		mb_free_entry(mb, obj);
 	} else
-		RTE_ASSERT(ret == 0);
+		RTE_VERIFY(ret == 0);
 
 	return ret;
 }

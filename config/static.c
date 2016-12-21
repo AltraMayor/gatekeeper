@@ -165,8 +165,9 @@ set_lua_path(lua_State *l, const char *path)
 	lua_getglobal(l, "package");
 	lua_getfield(l, -1, "path");
 
-	ret = snprintf(new_path, sizeof(new_path), "%s;%s/?.lua", lua_tostring(l, -1), path);
-	RTE_ASSERT(ret < sizeof(new_path));
+	ret = snprintf(new_path, sizeof(new_path), "%s;%s/?.lua",
+		lua_tostring(l, -1), path);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(new_path));
 
 	lua_pop(l, 1);
 	lua_pushstring(l, new_path);
@@ -186,7 +187,7 @@ config_gatekeeper(void)
 
 	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
 			"%s/%s", LUA_BASE_DIR, GATEKEEPER_CONFIG_FILE);
-	RTE_ASSERT(ret < sizeof(lua_entry_path));
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
 	lua_state = luaL_newstate();
 	if (!lua_state) {
