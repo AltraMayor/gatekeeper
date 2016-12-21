@@ -1,7 +1,4 @@
-local M = {}
-
--- Function that sets up the GGU functional block.
-function M.setup_block(net_conf, gk_conf, lcore)
+return function (net_conf, gk_conf, lcore)
 
 	-- Init the GGU configuration structure.
 	local ggu_conf = gatekeeper.c.alloc_ggu_conf()
@@ -20,5 +17,3 @@ function M.setup_block(net_conf, gk_conf, lcore)
 
 	return ggu_conf
 end
-
-return M

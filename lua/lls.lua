@@ -1,7 +1,4 @@
-local M = {}
-
--- Function that sets up the GK functional block.
-function M.setup_block(net_conf, numa_table)
+return function (net_conf, numa_table)
 
 	-- Init the LLS configuration structure.
 	local lls_conf = gatekeeper.c.get_lls_conf()
@@ -17,5 +14,3 @@ function M.setup_block(net_conf, numa_table)
 
 	return lls_conf
 end
-
-return M

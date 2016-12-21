@@ -1,7 +1,4 @@
-local M = {}
-
--- Function that sets up the network.
-function M.setup_block()
+return function ()
 
 	-- Init the network configuration structure.
 	local conf = gatekeeper.c.get_net_conf()
@@ -57,5 +54,3 @@ function M.setup_block()
 	gatekeeper.c.lua_free_iface(front_iface)
 	return nil
 end
-
-return M

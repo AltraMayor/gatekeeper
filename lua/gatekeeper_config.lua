@@ -8,22 +8,22 @@ require "gatekeeper"
 function gatekeeper_init()
 	local numa_table = gatekeeper.get_numa_table()
 
-	local net = require("net")
-	local net_conf = net.setup_block()
+	local netf = require("net")
+	local net_conf = netf()
 	if net_conf == nil then return -1 end
 
-	local lls = require("lls")
-	local lls_conf = lls.setup_block(net_conf, numa_table)
+	local llsf = require("lls")
+	local lls_conf = llsf(net_conf, numa_table)
 	if lls_conf == nil then return -1 end
 
 	-- Disable the GK and GGU blocks just removing the X below.
 	--X[[
-	local gk = require("gk")
-	local gk_conf, ggu_lcore = gk.setup_block(net_conf, numa_table)
+	local gkf = require("gk")
+	local gk_conf, ggu_lcore = gkf(net_conf, numa_table)
 	if gk_conf == nil then return -1 end
 
-	local ggu = require("ggu")
-	local ggu_conf = ggu.setup_block(net_conf, gk_conf, ggu_lcore)
+	local gguf = require("ggu")
+	local ggu_conf = gguf(net_conf, gk_conf, ggu_lcore)
 	if ggu_conf == nil then return -1 end
 	--]]
 

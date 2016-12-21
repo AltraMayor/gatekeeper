@@ -1,7 +1,4 @@
-local M = {}
-
--- Function that sets up the GK functional block.
-function M.setup_block(net_conf, numa_table)
+return function (net_conf, numa_table)
 
 	-- Init the GK configuration structure.
 	local gk_conf = gatekeeper.c.alloc_gk_conf()
@@ -22,5 +19,3 @@ function M.setup_block(net_conf, numa_table)
 
 	return gk_conf, ggu_lcore
 end
-
-return M
