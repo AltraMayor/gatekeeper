@@ -1,4 +1,3 @@
-local gatekeeperc = require("gatekeeperc")
 local ffi = require("ffi")
 local ifaces = require("if_map")
 
@@ -19,7 +18,7 @@ function init_iface(iface, name, ports, ips)
 		ip_strs[i - 1] = v
 	end
 
-	return gatekeeperc.lua_init_iface(
+	return gatekeeper.c.lua_init_iface(
 		iface, name, pci_strs, #ports, ip_strs, #ips)
 end
 
@@ -27,7 +26,7 @@ end
 function M.setup_block()
 
 	-- Init the network configuration structure.
-	local conf = gatekeeperc.get_net_conf()
+	local conf = gatekeeper.c.get_net_conf()
 
 	--
 	-- Change these parameters to configure the network.
@@ -45,7 +44,7 @@ function M.setup_block()
 	local back_arp_cache_timeout_sec = 7200
 
 	-- Code below this point should not need to be changed.
-	local front_iface = gatekeeperc.get_if_front(conf)
+	local front_iface = gatekeeper.c.get_if_front(conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	local ret = init_iface(front_iface, "front", front_ports, front_ips)
 	if ret < 0 then
@@ -54,7 +53,7 @@ function M.setup_block()
 
 	conf.back_iface_enabled = back_iface_enabled
 	if back_iface_enabled then
-		local back_iface = gatekeeperc.get_if_back(conf)
+		local back_iface = gatekeeper.c.get_if_back(conf)
 		back_iface.arp_cache_timeout_sec = back_arp_cache_timeout_sec
 		ret = init_iface(back_iface, "back", back_ports, back_ips)
 		if ret < 0 then
@@ -63,7 +62,7 @@ function M.setup_block()
 	end
 
 	-- Set up the network.
-	ret = gatekeeperc.gatekeeper_init_network(conf)
+	ret = gatekeeper.c.gatekeeper_init_network(conf)
 	if ret < 0 then
 		goto back
 	end
@@ -72,10 +71,10 @@ function M.setup_block()
 
 ::back::
 	if back_iface_enabled then
-		gatekeeperc.lua_free_iface(back_iface)
+		gatekeeper.c.lua_free_iface(back_iface)
 	end
 ::front::
-	gatekeeperc.lua_free_iface(front_iface)
+	gatekeeper.c.lua_free_iface(front_iface)
 	return nil
 end
 

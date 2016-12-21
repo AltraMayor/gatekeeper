@@ -1,12 +1,10 @@
-local gatekeeperc = require("gatekeeperc")
-
 local M = {}
 
 -- Function that sets up the GK functional block.
 function M.setup_block(net_conf, numa_table)
 
 	-- Init the GK configuration structure.
-	local gk_conf = gatekeeperc.alloc_gk_conf()
+	local gk_conf = gatekeeper.c.alloc_gk_conf()
 	if gk_conf == nil then return nil end
 	
 	-- Change these parameters to configure the Gatekeeper.
@@ -19,7 +17,7 @@ function M.setup_block(net_conf, numa_table)
 	gatekeeper.gk_assign_lcores(gk_conf, gk_lcores)
 
 	-- Setup the GK functional block.
-	local ret = gatekeeperc.run_gk(net_conf, gk_conf)
+	local ret = gatekeeper.c.run_gk(net_conf, gk_conf)
 	if ret < 0 then return nil end
 
 	return gk_conf, ggu_lcore

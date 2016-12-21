@@ -5,8 +5,6 @@
 package.loaded["gatekeeper"] = nil
 require "gatekeeper"
 
--- TODO Add configuration for other functional blocks.
-
 function gatekeeper_init()
 	local numa_table = gatekeeper.get_numa_table()
 
