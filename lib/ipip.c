@@ -112,7 +112,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
-			IPv6_DEFAULT_VTC_FLOW | (priority << 18));
+			IPv6_DEFAULT_VTC_FLOW | (priority << 22));
 		outer_ip6hdr->proto = IPPROTO_IPIP; 
 		outer_ip6hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
 
@@ -122,7 +122,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 			sizeof(info->flow.f.v6.dst));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
-			- sizeof(struct ether_hdr));
+			- sizeof(struct ether_hdr) - sizeof(struct ipv6_hdr));
 
 		pkt->outer_l2_len = sizeof(struct ether_hdr);
 		pkt->outer_l3_len = sizeof(struct ipv6_hdr);
