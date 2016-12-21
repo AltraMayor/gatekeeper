@@ -1,26 +1,4 @@
-local ffi = require("ffi")
-local ifaces = require("if_map")
-
 local M = {}
-
-function init_iface(iface, name, ports, ips)
-	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
-	for i, v in ipairs(ports) do
-		local pci_addr = ifaces[v]
-		if pci_addr == nil then
-			error("There is no map for interface " .. v)
-		end
-		pci_strs[i - 1] = pci_addr
-	end
-
-	local ip_strs = ffi.new("const char *[" .. #ips .. "]")
-	for i, v in ipairs(ips) do
-		ip_strs[i - 1] = v
-	end
-
-	return gatekeeper.c.lua_init_iface(
-		iface, name, pci_strs, #ports, ip_strs, #ips)
-end
 
 -- Function that sets up the network.
 function M.setup_block()
@@ -46,7 +24,8 @@ function M.setup_block()
 	-- Code below this point should not need to be changed.
 	local front_iface = gatekeeper.c.get_if_front(conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
-	local ret = init_iface(front_iface, "front", front_ports, front_ips)
+	local ret = gatekeeper.init_iface(front_iface, "front",
+		front_ports, front_ips)
 	if ret < 0 then
 		return nil
 	end
@@ -55,7 +34,8 @@ function M.setup_block()
 	if back_iface_enabled then
 		local back_iface = gatekeeper.c.get_if_back(conf)
 		back_iface.arp_cache_timeout_sec = back_arp_cache_timeout_sec
-		ret = init_iface(back_iface, "back", back_ports, back_ips)
+		ret = gatekeeper.init_iface(back_iface, "back",
+			back_ports, back_ips)
 		if ret < 0 then
 			goto front
 		end

@@ -161,3 +161,27 @@ int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 ]]
 
 c = ffi.C
+
+--
+-- Network configuration functions
+--
+
+local ifaces = require("if_map")
+
+function init_iface(iface, name, ports, ips)
+	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
+	for i, v in ipairs(ports) do
+		local pci_addr = ifaces[v]
+		if pci_addr == nil then
+			error("There is no map for interface " .. v)
+		end
+		pci_strs[i - 1] = pci_addr
+	end
+
+	local ip_strs = ffi.new("const char *[" .. #ips .. "]")
+	for i, v in ipairs(ips) do
+		ip_strs[i - 1] = v
+	end
+
+	return c.lua_init_iface(iface, name, pci_strs, #ports, ip_strs, #ips)
+end
