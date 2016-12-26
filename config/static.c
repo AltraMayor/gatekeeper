@@ -132,14 +132,15 @@ l_gk_assign_lcores(lua_State *l)
 	if (n <= 0)
 		return 0; /* No results. */
 
-	lcores = rte_malloc("gk_conf.lcores", n * sizeof(*lcores), 0);
-	if (lcores == NULL)
-		luaL_error(l, "DPDK has run out memory");
 	ud = lua_newuserdata(l, sizeof(lcores));
-	*ud = lcores;
 
 	lua_pushcfunction(l, protected_gk_assign_lcores);
 	lua_insert(l, 1);
+
+	lcores = rte_malloc("gk_conf.lcores", n * sizeof(*lcores), 0);
+	if (lcores == NULL)
+		luaL_error(l, "DPDK has run out memory");
+	*ud = lcores;
 
 	/* lua_pcall() is used here to avoid leaking @lcores. */
 	if (lua_pcall(l, 3, 0, 0)) {
@@ -210,14 +211,15 @@ l_gt_assign_lcores(lua_State *l)
 	if (n <= 0)
 		return 0; /* No results. */
 
-	lcores = rte_malloc("gt_conf.lcores", n * sizeof(*lcores), 0);
-	if (lcores == NULL)
-		luaL_error(l, "DPDK has run out memory");
 	ud = lua_newuserdata(l, sizeof(lcores));
-	*ud = lcores;
 
 	lua_pushcfunction(l, protected_gt_assign_lcores);
 	lua_insert(l, 1);
+
+	lcores = rte_malloc("gt_conf.lcores", n * sizeof(*lcores), 0);
+	if (lcores == NULL)
+		luaL_error(l, "DPDK has run out memory");
+	*ud = lcores;
 
 	/* lua_pcall() is used here to avoid leaking @lcores. */
 	if (lua_pcall(l, 3, 0, 0)) {
