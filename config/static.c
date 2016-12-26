@@ -30,6 +30,7 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_gk.h"
+#include "gatekeeper_gt.h"
 #include "luajit-ffi-cdata.h"
 
 /* TODO Get the install-path via Makefile. */
@@ -149,10 +150,89 @@ l_gk_assign_lcores(lua_State *l)
 	return 0;
 }
 
+#define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
+
+static int
+protected_gt_assign_lcores(lua_State *l)
+{
+	uint32_t ctypeid;
+	struct gt_config *gt_conf;
+	lua_Integer i, n;
+	unsigned int *lcores;
+
+	gt_conf = *(struct gt_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	n = lua_objlen(l, 2);
+	lcores = *(unsigned int **)lua_touserdata(l, 3);
+
+	for (i = 1; i <= n; i++) {
+		lua_pushinteger(l, i);	/* Push i. */
+		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+
+		/* Check that t[i] is a number. */
+		if (!lua_isnumber(l, -1))
+			luaL_error(l, "Index %i is not a number", i);
+		lcores[i - 1] = lua_tointeger(l, -1);
+
+		lua_pop(l, 1);		/* Pop t[i]. */
+	}
+
+	gt_conf->lcores = lcores;
+	gt_conf->num_lcores = n;
+	return 0; /* No results. */
+}
+
+static int
+l_gt_assign_lcores(lua_State *l)
+{
+	static bool assigned_type = false;
+	static uint32_t correct_ctypeid;
+
+	uint32_t ctypeid;
+	lua_Integer n;
+	unsigned int *lcores, **ud;
+
+	if (!assigned_type) {
+		correct_ctypeid = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+		assigned_type = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+
+	/* Second argument must be a table. */
+	luaL_checktype(l, 2, LUA_TTABLE);
+
+	n = lua_objlen(l, 2); /* Get size of the table. */
+	if (n <= 0)
+		return 0; /* No results. */
+
+	lcores = rte_malloc("gt_conf.lcores", n * sizeof(*lcores), 0);
+	if (lcores == NULL)
+		luaL_error(l, "DPDK has run out memory");
+	ud = lua_newuserdata(l, sizeof(lcores));
+	*ud = lcores;
+
+	lua_pushcfunction(l, protected_gt_assign_lcores);
+	lua_insert(l, 1);
+
+	/* lua_pcall() is used here to avoid leaking @lcores. */
+	if (lua_pcall(l, 3, 0, 0)) {
+		rte_free(lcores);
+		lua_error(l);
+	}
+	return 0;
+}
+
 static const struct luaL_reg gatekeeper [] = {
 	{"list_lcores",			l_list_lcores},
 	{"rte_lcore_to_socket_id",	l_rte_lcore_to_socket_id},
 	{"gk_assign_lcores",		l_gk_assign_lcores},
+	{"gt_assign_lcores",		l_gt_assign_lcores},
 	{NULL,				NULL}	/* Sentinel. */
 };
 
@@ -183,7 +263,6 @@ config_gatekeeper(void)
 	int ret;
 	char lua_entry_path[128];
 	lua_State *lua_state;
-
 
 	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
 			"%s/%s", LUA_BASE_DIR, GATEKEEPER_CONFIG_FILE);
