@@ -272,10 +272,194 @@ fill_eth_hdr(struct rte_mbuf *m,
 	return 0;
 }
 
+static void
+fill_eth_hdr_reverse(struct ether_hdr *eth_hdr,
+	struct gt_packet_headers *pkt_info)
+{
+	struct ether_hdr *raw_eth = (struct ether_hdr *)pkt_info->l2_hdr;
+	ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
+	ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
+	eth_hdr->ether_type = rte_cpu_to_be_16(pkt_info->outer_ip_ver);
+}
+
+static struct rte_mbuf *
+alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
+	struct gt_packet_headers *pkt_info, struct gt_config *gt_conf)
+{
+	uint8_t *data;
+	uint16_t ethertype = pkt_info->outer_ip_ver;
+	struct ether_hdr *notify_eth;
+	struct ipv4_hdr *notify_ipv4;
+	struct ipv6_hdr *notify_ipv6;
+	struct udp_hdr *notify_udp;
+	struct ggu_common_hdr *notify_ggu;
+
+	struct rte_mbuf *notify_pkt = rte_pktmbuf_alloc(
+		gt_conf->net->gatekeeper_pktmbuf_pool[socket]);
+	if (notify_pkt == NULL) {
+		RTE_LOG(ERR, MEMPOOL,
+			"gt: failed to allocate notification packet!");
+		return NULL;
+	}
+
+	if (ethertype == ETHER_TYPE_IPv4) {
+		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
+			sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr) +
+			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
+		notify_ipv4 = (struct ipv4_hdr *)&notify_eth[1];
+		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
+		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
+	} else if (ethertype == ETHER_TYPE_IPv6) {
+		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
+			sizeof(struct ether_hdr) + sizeof(struct ipv6_hdr) +
+			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
+		notify_ipv6 = (struct ipv6_hdr *)&notify_eth[1];
+		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
+		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
+	} else
+		rte_panic("Unexpected condition: gt fills up a notify packet with unknown ethernet type %hu\n",
+			ethertype);
+
+	/* Fill up the policy decision. */
+	memset(notify_ggu, 0, sizeof(*notify_ggu));
+	notify_ggu->v1 = GGU_PD_VER1;
+	if (policy->flow.proto == ETHER_TYPE_IPv4
+			&& policy->state == GK_DECLINED) {
+		notify_ggu->n1 = 1;
+		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
+			sizeof(policy->flow.f.v4) +
+			sizeof(policy->params.u.declined));
+		rte_memcpy(data, &policy->flow.f.v4,
+			sizeof(policy->flow.f.v4));
+		rte_memcpy(data + sizeof(policy->flow.f.v4),
+			&policy->params.u.declined,
+			sizeof(policy->params.u.declined));
+	} else if (policy->flow.proto == ETHER_TYPE_IPv6
+			&& policy->state == GK_DECLINED) {
+		notify_ggu->n2 = 1;
+		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
+			sizeof(policy->flow.f.v6) +
+			sizeof(policy->params.u.declined));
+		rte_memcpy(data, &policy->flow.f.v6,
+			sizeof(policy->flow.f.v6));
+		rte_memcpy(data + sizeof(policy->flow.f.v6),
+			&policy->params.u.declined,
+			sizeof(policy->params.u.declined));
+	} else if (policy->flow.proto == ETHER_TYPE_IPv4
+			&& policy->state == GK_GRANTED) {
+		notify_ggu->n3 = 1;
+		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
+			sizeof(policy->flow.f.v4) +
+			sizeof(policy->params.u.granted));
+		rte_memcpy(data, &policy->flow.f.v4,
+			sizeof(policy->flow.f.v4));
+		rte_memcpy(data + sizeof(policy->flow.f.v4),
+			&policy->params.u.granted,
+			sizeof(policy->params.u.granted));
+	} else if (policy->flow.proto == ETHER_TYPE_IPv6
+			&& policy->state == GK_GRANTED) {
+		notify_ggu->n4 = 1;
+		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
+			sizeof(policy->flow.f.v6) +
+			sizeof(policy->params.u.granted));
+		rte_memcpy(data, &policy->flow.f.v6,
+			sizeof(policy->flow.f.v6));
+		rte_memcpy(data + sizeof(policy->flow.f.v6),
+			&policy->params.u.granted,
+			sizeof(policy->params.u.granted));
+	} else
+		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
+			policy->state);
+
+	/* Fill up the Ethernet header. */
+	fill_eth_hdr_reverse(notify_eth, pkt_info);
+	notify_pkt->l2_len = sizeof(struct ether_hdr);
+
+	/* Fill up the IP header. */
+	if (ethertype == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *ipv4_hdr =
+			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+		/* Fill up the IPv4 header. */
+		notify_ipv4->version_ihl = IP_VHL_DEF;
+		notify_ipv4->packet_id = 0;
+		notify_ipv4->fragment_offset = IP_DN_FRAGMENT_FLAG;
+		notify_ipv4->time_to_live = IP_DEFTTL;
+		notify_ipv4->next_proto_id = IPPROTO_UDP;
+		/* The source address is the Grantor server IP address. */
+		notify_ipv4->src_addr = ipv4_hdr->dst_addr;
+		/*
+		 * The destination address is the
+		 * Gatekeeper server IP address.
+		 */
+		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
+		notify_ipv4->total_length = rte_cpu_to_be_16(
+			notify_pkt->data_len - sizeof(struct ether_hdr));
+
+		/*
+		 * The IP header checksum filed must be set to 0
+		 * in order to offload the checksum calculation.
+		 */
+		notify_ipv4->hdr_checksum = 0;
+
+		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
+			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->l3_len = sizeof(struct ipv4_hdr);
+
+		/* Offload the UDP checksum. */
+		notify_udp->dgram_cksum =
+			rte_ipv4_phdr_cksum(notify_ipv4,
+			notify_pkt->ol_flags);
+	} else if (ethertype == ETHER_TYPE_IPv6) {
+		struct ipv6_hdr *ipv6_hdr =
+			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+		/* Fill up the outer IPv6 header. */
+		notify_ipv6->vtc_flow =
+			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
+		notify_ipv6->proto = IPPROTO_UDP; 
+		notify_ipv6->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+
+		rte_memcpy(notify_ipv6->src_addr, ipv6_hdr->dst_addr,
+			sizeof(notify_ipv6->src_addr));
+		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
+			sizeof(notify_ipv6->dst_addr));
+		notify_ipv6->payload_len =
+			rte_cpu_to_be_16(notify_pkt->data_len -
+			sizeof(struct ether_hdr) - sizeof(struct ipv6_hdr));
+
+		notify_pkt->ol_flags |= (PKT_TX_IPV6 |
+			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->l3_len = sizeof(struct ipv6_hdr);
+
+		/* Offload the UDP checksum. */
+		notify_udp->dgram_cksum =
+			rte_ipv6_phdr_cksum(notify_ipv6,
+			notify_pkt->ol_flags);
+	}
+
+	/* Fill up the UDP header. */
+	notify_udp->src_port = gt_conf->ggu_src_port;
+	notify_udp->dst_port = gt_conf->ggu_dst_port;
+	notify_udp->dgram_len = rte_cpu_to_be_16((uint16_t)(
+		sizeof(*notify_udp) + sizeof(*notify_ggu) +
+		(notify_ggu->n1 + notify_ggu->n3) *
+		sizeof(policy->flow.f.v4) +
+		(notify_ggu->n2 + notify_ggu->n4) *
+		sizeof(policy->flow.f.v6) +
+		(notify_ggu->n1 + notify_ggu->n2) *
+		sizeof(policy->params.u.declined) + 
+		(notify_ggu->n3 + notify_ggu->n4) *
+		sizeof(policy->params.u.granted)));
+
+	notify_pkt->l4_len = sizeof(struct udp_hdr);
+
+	return notify_pkt;
+}
+
 static int
 gt_proc(void *arg)
 {
 	unsigned int lcore = rte_lcore_id();
+	unsigned int socket = rte_lcore_to_socket_id(lcore);
 	struct gt_config *gt_conf = (struct gt_config *)arg;
 	unsigned int block_idx = get_block_idx(gt_conf, lcore);
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
@@ -309,6 +493,7 @@ gt_proc(void *arg)
 			struct rte_mbuf *m = rx_bufs[i];
 			struct gt_packet_headers pkt_info;
 			struct ggu_policy policy;
+			struct rte_mbuf *notify_pkt;
 
 			/*
 			 * Only request packets and priority packets
@@ -355,6 +540,16 @@ gt_proc(void *arg)
 				continue;
 			}
 
+			/*
+			 * TODO Reply in a batch.
+			 * Reply the policy decision to GK-GT unit.
+			 */
+			notify_pkt = alloc_and_fill_notify_pkt(
+				socket, &policy, &pkt_info, gt_conf);
+			if (notify_pkt != NULL && rte_eth_tx_burst(
+					port, tx_queue, &notify_pkt, 1) != 1)
+				rte_pktmbuf_free(notify_pkt);
+
 			if (policy.state == GK_GRANTED) {
 				ret = fill_eth_hdr(m, gt_conf, &pkt_info);
 				if (ret < 0)
@@ -363,8 +558,6 @@ gt_proc(void *arg)
 					tx_bufs[num_tx++] = m;
 			} else
 				rte_pktmbuf_free(m);
-
-			/* TODO Reply the policy decision to GK-GT unit. */
 		}
 
 		/* Send burst of TX packets, to second port of pair. */
@@ -593,6 +786,13 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 			goto stage2;
 		}
 	}
+
+	/*
+	 * Convert port numbers in CPU order to network order
+	 * to avoid recomputation for each packet.
+	 */
+	gt_conf->ggu_src_port = rte_cpu_to_be_16(gt_conf->ggu_src_port);
+	gt_conf->ggu_dst_port = rte_cpu_to_be_16(gt_conf->ggu_dst_port);
 
 	goto success;
 

@@ -7,6 +7,9 @@ return function (net_conf, numa_table)
 	end
 	
 	-- Change these parameters to configure the Grantor.
+	gt_conf.ggu_src_port = 0xA0A0
+	gt_conf.ggu_dst_port = 0xB0B0
+
 	local n_lcores = 2
 
 	local gt_lcores = gatekeeper.alloc_lcores_from_same_numa(numa_table,

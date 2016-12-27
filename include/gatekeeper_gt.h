@@ -54,6 +54,10 @@ struct gt_instance {
 
 /* Configuration for the GT functional block. */
 struct gt_config {
+	/* The UDP source and destination port numbers for GK-GT Unit. */
+	uint16_t           ggu_src_port;
+	uint16_t           ggu_dst_port;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

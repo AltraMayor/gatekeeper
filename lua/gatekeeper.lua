@@ -133,6 +133,8 @@ struct lls_config {
 };
 
 struct gt_config {
+	uint16_t     ggu_src_port;
+	uint16_t     ggu_dst_port;
 	/* This struct has hidden fields. */
 };
 
