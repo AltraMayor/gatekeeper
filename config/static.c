@@ -18,7 +18,6 @@
 
 #include <stdio.h>
 #include <stdbool.h>
-#include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
 
@@ -236,7 +235,7 @@ static const struct luaL_reg gatekeeper [] = {
 	{NULL,				NULL}	/* Sentinel. */
 };
 
-static int
+int
 set_lua_path(lua_State *l, const char *path)
 {
 	int ret;

@@ -21,7 +21,24 @@
 
 #include <stdint.h>
 
+#include <rte_ip.h>
+#include <rte_tcp.h>
+#include <rte_udp.h>
 #include <rte_atomic.h>
+
+#include "gatekeeper_config.h"
+
+struct gt_packet_headers {
+	uint16_t outer_ip_ver;
+	uint16_t inner_ip_ver;
+	uint8_t l4_proto;
+	uint8_t priority;
+
+	void *l2_hdr;
+	void *outer_l3_hdr;
+	void *inner_l3_hdr;
+	void *l4_hdr;
+};
 
 /* Structures for each GT instance. */
 struct gt_instance {
@@ -30,6 +47,9 @@ struct gt_instance {
 
 	/* TX queue on the front interface. */
 	uint16_t      tx_queue;
+
+	/* The lua state that belongs to the instance. */
+	lua_State     *lua_state;
 };
 
 /* Configuration for the GT functional block. */
