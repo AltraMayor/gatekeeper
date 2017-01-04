@@ -57,6 +57,13 @@ ipv4_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
 	return buf;
 }
 
+int
+ipv4_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
+{
+	return !((iface->ip4_addr.s_addr ^ *(const uint32_t *)ip_be) &
+		iface->ip4_mask.s_addr);
+}
+
 void
 xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	const struct ether_addr *ha, uint16_t tx_queue)
@@ -149,7 +156,9 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		     arp_hdr->arp_pln != sizeof(struct in_addr)))
 		return -1;
 
-	/* TODO If sip is not in the same subnet as our IP address, drop. */
+	/* If sip is not in the same subnet as our IP address, drop. */
+	if (!ipv4_in_subnet(iface, &arp_hdr->arp_data.arp_sip))
+		return -1;
 
 	/* Update cache with source resolution, regardless of operation. */
 	mod_req.cache = &lls_conf->arp_cache;

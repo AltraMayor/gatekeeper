@@ -468,14 +468,23 @@ get_ip_type(const char *ip_addr)
 	return ret;
 }
 
+static inline int
+max_prefix_len(int gk_type)
+{
+	RTE_VERIFY(gk_type == AF_INET || gk_type == AF_INET6);
+	return 8 * (gk_type == AF_INET
+		? sizeof(struct in_addr)
+		: sizeof(struct in6_addr));
+}
+
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_addrs, uint8_t num_ip_addrs)
+	const char **ip_cidrs, uint8_t num_ip_cidrs)
 {
 	uint8_t i, j;
 
-	if (num_ip_addrs < 1 || num_ip_addrs > 2) {
+	if (num_ip_cidrs < 1 || num_ip_cidrs > 2) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"net: an interface has at least 1 IP address, also at most 1 IPv4 and 1 IPv6 address.\n");
 		return -1;
@@ -515,22 +524,94 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		strcpy(iface->pci_addrs[i], pci_addrs[i]);
 	}
 
-	for (i = 0; i < num_ip_addrs; i++) {
-		int gk_type = get_ip_type(ip_addrs[i]);
+	for (i = 0; i < num_ip_cidrs; i++) {
+		/* Need to make copy to tokenize. */
+		size_t ip_cidr_len = strlen(ip_cidrs[i]);
+		char ip_cidr_copy[ip_cidr_len + 1];
+		char *ip_addr;
+
+		char *saveptr;
+		char *prefix_len_str;
+		char *end;
+		long prefix_len;
+		int gk_type;
+
+		strncpy(ip_cidr_copy, ip_cidrs[i], ip_cidr_len + 1);
+
+		ip_addr = strtok_r(ip_cidr_copy, "/", &saveptr);
+		if (ip_addr == NULL)
+			goto name;
+
+		gk_type = get_ip_type(ip_addr);
 		if (gk_type == AF_INET &&
-				inet_pton(AF_INET, ip_addrs[i],
+				inet_pton(AF_INET, ip_addr,
 				&iface->ip4_addr) == 1) {
 			iface->configured_proto |= GK_CONFIGURED_IPV4;
-			continue;
 		}
 		else if (gk_type == AF_INET6 &&
-				inet_pton(AF_INET6, ip_addrs[i],
+				inet_pton(AF_INET6, ip_addr,
 				&iface->ip6_addr) == 1) {
 			iface->configured_proto |= GK_CONFIGURED_IPV6;
-			continue;
 		}
 		else
 			goto name;
+
+		prefix_len_str = strtok_r(NULL, "\0", &saveptr);
+		if (prefix_len_str == NULL)
+			goto name;
+
+		prefix_len = strtol(prefix_len_str, &end, 10);
+		if (prefix_len_str == end || !*prefix_len_str || *end) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"net: prefix length \"%s\" is not a number\n",
+				prefix_len_str);
+			goto name;
+		}
+		if ((prefix_len == LONG_MAX || prefix_len == LONG_MIN) &&
+				errno == ERANGE) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"net: prefix length \"%s\" caused underflow or overflow\n",
+				prefix_len_str);
+			goto name;
+		}
+		if (prefix_len < 0 || prefix_len > max_prefix_len(gk_type)) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"net: prefix length \"%s\" is out of range\n",
+				prefix_len_str);
+			goto name;
+		}
+
+		if (gk_type == AF_INET) {
+			/*
+			 * Need to be careful in case @prefix_len == 0,
+			 * since in that case we will be shifting by 32
+			 * bits, which is undefined for a 32-bit quantity.
+			 * So shift using a 0ULL (at least 64 bits), and then
+			 * cast back down to a 32-bit unsigned integer
+			 * implicitly using rte_cpu_to_be_32().
+			 */
+			iface->ip4_mask.s_addr =
+				rte_cpu_to_be_32(~0ULL << (32 - prefix_len));
+		} else if (gk_type == AF_INET6) {
+			/*
+			 * No portable way to do the same trick as above,
+			 * so make @prefix_len == 0 into its own case.
+			 * Then, the other two cases shift by at most 63 bits.
+			 */
+			uint64_t *paddr = (uint64_t *)iface->ip6_mask.s6_addr;
+			if (prefix_len == 0) {
+				paddr[0] = 0ULL;
+				paddr[1] = 0ULL;
+			} else if (prefix_len <= 64) {
+				paddr[0] = rte_cpu_to_be_64(
+					~0ULL << (64 - prefix_len));
+				paddr[1] = 0ULL;
+			} else {
+				paddr[0] = ~0ULL;
+				paddr[1] = rte_cpu_to_be_64(
+					~0ULL << (128 - prefix_len));
+			}
+		}
 	}
 
 	return 0;

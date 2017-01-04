@@ -139,7 +139,7 @@ ffi.cdef[[
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_addrs, uint8_t num_ip_addrs);
+	const char **ip_cidrs, uint8_t num_ip_cidrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 struct net_config *get_net_conf(void);
@@ -168,7 +168,7 @@ c = ffi.C
 
 local ifaces = require("if_map")
 
-function init_iface(iface, name, ports, ips)
+function init_iface(iface, name, ports, cidrs)
 	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
 	for i, v in ipairs(ports) do
 		local pci_addr = ifaces[v]
@@ -178,13 +178,13 @@ function init_iface(iface, name, ports, ips)
 		pci_strs[i - 1] = pci_addr
 	end
 
-	local ip_strs = ffi.new("const char *[" .. #ips .. "]")
-	for i, v in ipairs(ips) do
-		ip_strs[i - 1] = v
+	local ip_cidrs = ffi.new("const char *[" .. #cidrs .. "]")
+	for i, v in ipairs(cidrs) do
+		ip_cidrs[i - 1] = v
 	end
 
 	local ret = c.lua_init_iface(iface, name, pci_strs, #ports,
-		ip_strs, #ips)
+		ip_cidrs, #cidrs)
 	if ret < 0 then
 		error("Failed to initilialize " .. name .. " interface")
 	end

@@ -152,6 +152,12 @@ struct lls_cache {
 		char *buf, size_t len);
 
 	/*
+	 * Returns whether @ip_be is in the same subnet as the
+	 * relevant address for this cache assigned to @iface.
+	 */
+	int (*ip_in_subnet)(struct gatekeeper_if *iface, const void *ip_be);
+
+	/*
 	 * Function to transmit a request out of @iface to resolve
 	 * IP address @ip_be to an Ethernet address.
 	 *

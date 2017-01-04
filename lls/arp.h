@@ -29,6 +29,9 @@ int iface_arp_enabled(struct net_config *net, struct gatekeeper_if *iface);
 char *ipv4_str(struct lls_cache *cache, const uint8_t *ip_be,
 	char *buf, size_t len);
 
+/* Return whether @ip_be is in the same subnet as @iface's IPv4 address. */
+int ipv4_in_subnet(struct gatekeeper_if *iface, const void *ip_be);
+
 /* Transmit an ARP request packet. */
 void xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	const struct ether_addr *ha, uint16_t tx_queue);

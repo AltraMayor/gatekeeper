@@ -6,12 +6,12 @@ return function ()
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.
-	local front_ips  = {"10.0.0.1", "3ffe:2501:200:1fff::7"}
+	local front_ips  = {"10.0.0.1/24", "3ffe:2501:200:1fff::7/48"}
 	local front_arp_cache_timeout_sec = 7200
 
 	local back_iface_enabled = true
 	local back_ports = {"enp133s0f1"}
-	local back_ips  = {"10.0.0.2", "3ffe:2501:200:1fff::8"}
+	local back_ips  = {"10.0.0.2/24", "3ffe:2501:200:1fff::8/48"}
 	local back_arp_cache_timeout_sec = 7200
 
 	--
