@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <lua.h>
+
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
 
@@ -85,6 +87,7 @@ struct dynamic_config {
 };
 
 int config_gatekeeper(void);
+int set_lua_path(lua_State *l, const char *path);
 int run_dynamic_config(const struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

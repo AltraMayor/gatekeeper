@@ -33,8 +33,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 
-#define GGU_PD_VER1 (1)
-
 static void
 process_single_policy(const struct ggu_policy *policy, const struct ggu_config *ggu_conf)
 {

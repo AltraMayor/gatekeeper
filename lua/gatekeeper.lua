@@ -132,6 +132,12 @@ struct lls_config {
 	/* This struct has hidden fields. */
 };
 
+struct gt_config {
+	uint16_t     ggu_src_port;
+	uint16_t     ggu_dst_port;
+	/* This struct has hidden fields. */
+};
+
 ]]
 
 -- Functions and wrappers
@@ -157,6 +163,9 @@ int cleanup_ggu(struct ggu_config *ggu_conf);
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
+
+struct gt_config *alloc_gt_conf(void);
+int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
 
 ]]
 

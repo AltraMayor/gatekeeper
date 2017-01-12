@@ -22,6 +22,8 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_flow.h"
 
+#define GGU_PD_VER1 (1)
+
 /* Configuration for the GK-GT Unit functional block. */
 struct ggu_config {
 	unsigned int      lcore_id;
