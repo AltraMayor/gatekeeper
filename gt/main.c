@@ -182,7 +182,7 @@ static inline bool
 is_valid_dest_addr(struct gt_config *gt_conf,
 	struct gt_packet_headers *pkt_info)
 {
-	return likely((pkt_info->outer_ip_ver == ETHER_TYPE_IPv4 &&
+	return (pkt_info->outer_ip_ver == ETHER_TYPE_IPv4 &&
 			((struct ipv4_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr
 			== gt_conf->net->front.ip4_addr.s_addr)
@@ -191,7 +191,7 @@ is_valid_dest_addr(struct gt_config *gt_conf,
 			memcmp(((struct ipv6_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr,
 			gt_conf->net->front.ip6_addr.s6_addr,
-			sizeof(gt_conf->net->front.ip6_addr) == 0)));
+			sizeof(gt_conf->net->front.ip6_addr) == 0));
 }
 
 static void
@@ -510,7 +510,7 @@ gt_proc(void *arg)
 				continue;
 			}
 
-			if (!is_valid_dest_addr(gt_conf, &pkt_info)) {
+			if (unlikely(!is_valid_dest_addr(gt_conf, &pkt_info))) {
 				print_ip_err_msg(&pkt_info);
 				rte_pktmbuf_free(m);
 				continue;
