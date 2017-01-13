@@ -81,7 +81,7 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be, unsigned int lcore_id)
 				.lcore_id = lcore_id,
 			},
 		};
-		memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
+		rte_memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
@@ -99,7 +99,7 @@ put_arp(struct in_addr *ip_be, unsigned int lcore_id)
 			.cache = &lls_conf.arp_cache,
 			.lcore_id = lcore_id,
 		};
-		memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
+		rte_memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 

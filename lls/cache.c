@@ -83,7 +83,7 @@ lls_update_subscribers(struct lls_record *record)
 		/* Delete hold; keep all holds in beginning of array. */
 		record->num_holds--;
 		if (i < record->num_holds) {
-			memcpy(&record->holds[i],
+			rte_memcpy(&record->holds[i],
 				&record->holds[record->num_holds],
 				sizeof(record->holds[i]));
 			/*
@@ -139,7 +139,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 
 		record = &cache->records[ret];
 		record->map.stale = true;
-		memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
+		rte_memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
 		record->ts = time(NULL);
 		RTE_VERIFY(record->ts >= 0);
 		record->holds[0] = hold_req->hold;
@@ -233,7 +233,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 	/* Keep all holds in beginning of array. */
 	record->num_holds--;
 	if (i < record->num_holds)
-		memcpy(&record->holds[i], &record->holds[record->num_holds],
+		rte_memcpy(&record->holds[i], &record->holds[record->num_holds],
 			sizeof(record->holds[i]));
 
 	if (lls_conf->debug)
@@ -260,7 +260,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		ether_addr_copy(&mod_req->ha, &record->map.ha);
 		record->map.port_id = mod_req->port_id;
 		record->map.stale = false;
-		memcpy(record->map.ip_be, mod_req->ip_be, cache->key_len);
+		rte_memcpy(record->map.ip_be, mod_req->ip_be, cache->key_len);
 		record->ts = mod_req->ts;
 		record->num_holds = 0;
 
