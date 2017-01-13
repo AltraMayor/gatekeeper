@@ -871,7 +871,6 @@ init_iface(struct gatekeeper_if *iface)
 			goto close_ports;
 	}
 
-	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
 	return 0;
 
 close_ports:
@@ -953,12 +952,14 @@ start_iface(struct gatekeeper_if *iface)
 
 	/* If there's no bonded port, we're done. */
 	if (iface->num_ports == 1)
-		return 0;
+		goto out;
 
 	ret = start_port(iface->id, NULL, true);
 	if (ret < 0)
 		goto stop_partial;
 
+out:
+	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
 	return 0;
 
 stop_partial:
