@@ -69,8 +69,8 @@ cleanup_lls(void)
 	return 0;
 }
 
-int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
-	unsigned int lcore_id)
+int
+hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_hold_req hold_req = {
@@ -91,7 +91,8 @@ int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
 	return -1;
 }
 
-int put_arp(struct in_addr *ip_be, unsigned int lcore_id)
+int
+put_arp(struct in_addr *ip_be, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_put_req put_req = {
