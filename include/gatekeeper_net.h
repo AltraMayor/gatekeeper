@@ -24,9 +24,26 @@
 
 #include <rte_ethdev.h>
 
+#include "gatekeeper_flow.h"
+
 /* To mark whether Gatekeeper server configures IPv4 or IPv6. */
 #define GK_CONFIGURED_IPV4 (1)
 #define GK_CONFIGURED_IPV6 (2)
+
+#define IPv6_DEFAULT_VTC_FLOW   (0x60000000)
+#define IPv6_DEFAULT_HOP_LIMITS (0xFF)
+
+/* Store information about a packet. */
+struct ipacket {
+	/* Flow identifier for this packet. */
+	struct ip_flow  flow;
+	/* Pointer to the packet itself. */
+	struct rte_mbuf *pkt;
+	/* The length of the packet. */
+	uint16_t        len;
+	/* The type of the next header, if present. */
+	uint8_t         next_hdr;
+};
 
 /* Size of the secret key of the RSS hash. */
 #define GATEKEEPER_RSS_KEY_LEN (40)
@@ -64,8 +81,9 @@ struct gatekeeper_if {
 	uint16_t        num_rx_queues;
 	uint16_t        num_tx_queues;
 
-	/* Timeout for cache entries (in seconds) for Link Layer Support. */
+	/* Timeouts for cache entries (in seconds) for Link Layer Support. */
 	uint32_t	arp_cache_timeout_sec;
+	uint32_t	nd_cache_timeout_sec;
 
 	/*
 	 * The fields below are for internal use.
@@ -105,10 +123,60 @@ struct gatekeeper_if {
 	 * there may not be the second address.
 	 */
 	uint8_t         configured_proto;
+
+	/* IPv4 address and network mask. */
 	struct in_addr  ip4_addr;
 	struct in_addr  ip4_mask;
+
+	/*
+	 * Global IPv6 address and network mask.
+	 *
+	 * This is the address/mask given by configuration
+	 * and used for global routing.
+	 */
 	struct in6_addr ip6_addr;
 	struct in6_addr ip6_mask;
+
+	/*
+	 * Addresses related to Neighbor Discovery.
+	 */
+
+	/*
+	 * Link-local IPv6 address and network mask.
+	 *
+	 * ND messages can be sent from, and to, link-local IPv6
+	 * addresses that are only routable inside the local
+	 * network. We are also responsible for responding to
+	 * resolution requests for the link-local address. It is
+	 * automatically generated.
+	 */
+	struct in6_addr ll_ip6_addr;
+	struct in6_addr ll_ip6_mask;
+
+	/*
+	 * IPv6 solicited-node multicast addresses.
+	 *
+	 * If a resolution is unknown, an ND Solicitation is sent
+	 * to a solicited-node multicast address to reduce the
+	 * number of hosts in the broadcast domain that receive
+	 * the Solicitation. Two of these multicast addresses are
+	 * automatically generated: one that covers the global IPv6
+	 * address and one that covers the IPv6 link-local address.
+	 */
+	struct in6_addr ip6_mc_addr;
+	struct in6_addr ll_ip6_mc_addr;
+
+	/*
+	 * IPv6 multicast Ethernet addresses.
+	 *
+	 * For packets that use a solicited-node multicast address
+	 * for the IPv6 destination field, the Ethernet destination
+	 * field should also use a special IPv6 multicast address.
+	 * Two such addresses are automatically generated: they cover
+	 * the global and link-local solicited-node multicast addresses.
+	 */
+	struct ether_addr eth_mc_addr;
+	struct ether_addr ll_eth_mc_addr;
 };
 
 /*
@@ -161,10 +229,25 @@ struct net_config {
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
 extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
+/*
+ * Initializes an array of 16 bytes that represents the IPv6 solicited
+ * node multicast address. Users of this macro need to pass the IPv6
+ * address as an array of 16 bytes, the last three of which are used
+ * as the last three bytes of the multicast address as well.
+ */
+#define IPV6_SN_MC_ADDR(ipv6) {				\
+		0xFF, 0x02, 0x00, 0x00,			\
+		0x00, 0x00, 0x00, 0x00,			\
+		0x00, 0x00, 0x00, 0x01,			\
+		0xFF, ipv6[13], ipv6[14], ipv6[15],	\
+	}
+
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
 	const char **ip_cidrs, uint8_t num_ip_cidrs);
 void lua_free_iface(struct gatekeeper_if *iface);
+
+int extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet);
 
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 	uint16_t queue_id);

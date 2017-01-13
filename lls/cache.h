@@ -48,6 +48,15 @@ struct lls_put_req {
 	unsigned int     lcore_id;
 };
 
+/* Information needed to submit an ND packet to the LLS block. */
+struct lls_nd_req {
+	/* ND neighbor packet. */
+	struct rte_mbuf      *pkt;
+
+	/* Interface that received @pkt. */
+	struct gatekeeper_if *iface;
+};
+
 /* A modification to an LLS map. */
 struct lls_mod_req {
 	/* Cache that holds (or will hold) this map. */
@@ -82,6 +91,8 @@ struct lls_request {
 		struct lls_hold_req hold;
 		/* If @ty is LLS_REQ_PUT, use @put. */
 		struct lls_put_req  put;
+		/* If @ty is LLS_REQ_ND, use @nd. */
+		struct lls_nd_req   nd;
 	} u;
 };
 
@@ -105,6 +116,15 @@ int lls_req(enum lls_req_ty ty, void *req_arg);
  *	requests to modify the cache should go through lls_req().
  */
 void lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod);
+
+/*
+ * Fetch a map according to the key @ip_be.
+ *
+ * NOTE
+ *	This should only be used by the LLS block itself. Other
+ *	requests to get maps should go through hold requests.
+ */
+struct lls_map *lls_cache_get(struct lls_cache *cache, const uint8_t *ip_be);
 
 /* Scan the cache and send requests or remove entries as needed. */
 void lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache);

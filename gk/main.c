@@ -35,6 +35,7 @@
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_lls.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -51,12 +52,6 @@
 
 /* XXX Sample parameters, need to be tested for better performance. */
 #define GK_CMD_BURST_SIZE        (32)
-
-/* Store information about a packet. */
-struct ipacket {
-	struct ip_flow  flow;
-	struct rte_mbuf *pkt;
-};
 
 struct flow_entry {
 	/* IP flow information. */
@@ -160,53 +155,6 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 		return 0;
 	
 	return integer_log_base_2(delta_time);
-}
-
-static int
-extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
-{
-	int ret = 0;
-	uint16_t ether_type;
-	struct ether_hdr *eth_hdr;
-	struct ipv4_hdr  *ip4_hdr;
-	struct ipv6_hdr  *ip6_hdr;
-
-	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
-
-	switch (ether_type) {
-	case ETHER_TYPE_IPv4:
-		ip4_hdr = rte_pktmbuf_mtod_offset(pkt, 
-					struct ipv4_hdr *, 
-					sizeof(struct ether_hdr));
-		packet->flow.proto = ETHER_TYPE_IPv4;
-		packet->flow.f.v4.src = ip4_hdr->src_addr;
-		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
-		break;
-
-	case ETHER_TYPE_IPv6:
-		ip6_hdr = rte_pktmbuf_mtod_offset(pkt, 
-					struct ipv6_hdr *, 
-					sizeof(struct ether_hdr));
-		packet->flow.proto = ETHER_TYPE_IPv6;
-		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
-			sizeof(packet->flow.f.v6.src));
-		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
-			sizeof(packet->flow.f.v6.dst));
-		break;
-
-	default:
-		packet->flow.proto = 0;
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"gk: unknown network layer protocol %" PRIu16 "!\n",
-			ether_type);
-		ret = -1;
-		break;
-	}
-
-	packet->pkt = pkt;
-
-	return ret;
 }
 
 static inline void
@@ -585,6 +533,14 @@ gk_proc(void *arg)
 			if (ret < 0) {
 				/* Drop non-IP packets. */
 				drop_packet(pkt);
+				continue;
+			} else if (pkt_is_nd(&packet, &gk_conf->net->front)) {
+				/*
+				 * TODO Use DPDK packet classification
+				 * and distribution here instead.
+				 */
+				if (submit_nd(pkt, &gk_conf->net->front) == -1)
+					drop_packet(pkt);
 				continue;
 			}
 

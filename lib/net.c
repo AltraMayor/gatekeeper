@@ -83,6 +83,73 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 	},
 };
 
+int
+extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
+{
+	int ret = 0;
+	uint16_t ether_type;
+	struct ether_hdr *eth_hdr;
+	struct ipv4_hdr *ip4_hdr;
+	struct ipv6_hdr *ip6_hdr;
+
+	packet->len = rte_pktmbuf_data_len(pkt);
+	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+	switch (ether_type) {
+	case ETHER_TYPE_IPv4:
+		if (packet->len < sizeof(*eth_hdr) + sizeof(*ip4_hdr)) {
+			packet->flow.proto = 0;
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"net: packet is too short to be IPv4 (%" PRIu16 ")!\n",
+				packet->len);
+			ret = -1;
+			goto out;
+		}
+
+		ip4_hdr = rte_pktmbuf_mtod_offset(pkt,
+					struct ipv4_hdr *,
+					sizeof(struct ether_hdr));
+		packet->flow.proto = ETHER_TYPE_IPv4;
+		packet->flow.f.v4.src = ip4_hdr->src_addr;
+		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
+		packet->next_hdr = ip4_hdr->next_proto_id;
+		break;
+
+	case ETHER_TYPE_IPv6:
+		if (packet->len < sizeof(*eth_hdr) + sizeof(*ip6_hdr)) {
+			packet->flow.proto = 0;
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"net: packet is too short to be IPv6 (%" PRIu16 ")!\n",
+				packet->len);
+			ret = -1;
+			goto out;
+		}
+
+		ip6_hdr = rte_pktmbuf_mtod_offset(pkt,
+					struct ipv6_hdr *,
+					sizeof(struct ether_hdr));
+		packet->flow.proto = ETHER_TYPE_IPv6;
+		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
+			sizeof(packet->flow.f.v6.src));
+		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
+			sizeof(packet->flow.f.v6.dst));
+		packet->next_hdr = ip6_hdr->proto;
+		break;
+
+	default:
+		packet->flow.proto = 0;
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"net: unknown network layer protocol %" PRIu16 "!\n",
+			ether_type);
+		ret = -1;
+		break;
+	}
+out:
+	packet->pkt = pkt;
+	return ret;
+}
+
 /*
  * @ether_type should be passed in host ordering, but is converted
  * to little endian ordering before being added as a filter. The
@@ -937,6 +1004,74 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
 	return 0;
 }
 
+static inline void
+gen_ipv6_link_local(struct gatekeeper_if *iface)
+{
+	/* Link-local IPv6 calculation according to RFC 4291. */
+	struct in6_addr *addr = &iface->ll_ip6_addr;
+	uint64_t *pmask = (uint64_t *)iface->ll_ip6_mask.s6_addr;
+
+	addr->s6_addr[0] = 0xFE;
+	addr->s6_addr[1] = 0x80;
+	memset(addr->s6_addr + 2, 0, 6);
+
+	rte_memcpy(addr->s6_addr + 8, iface->eth_addr.addr_bytes, 3);
+	addr->s6_addr[11] = 0xFF;
+	addr->s6_addr[12] = 0xFE;
+	rte_memcpy(addr->s6_addr + 13, iface->eth_addr.addr_bytes + 3, 3);
+
+	addr->s6_addr[8] ^= 2;
+
+	pmask[0] = ~0ULL;
+	pmask[1] = 0ULL;
+}
+
+static void
+setup_ipv6_addrs(struct gatekeeper_if *iface)
+{
+	/*
+	 * Generate and assign IPv6 solicited-node multicast
+	 * address for our global address.
+	 */
+	uint8_t ip6_mc_addr[16] = IPV6_SN_MC_ADDR(iface->ip6_addr.s6_addr);
+	struct ether_addr eth_mc_addr = {
+		.addr_bytes = {
+			           0x33,            0x33,
+			ip6_mc_addr[12], ip6_mc_addr[13],
+			ip6_mc_addr[14], ip6_mc_addr[15],
+		},
+	};
+	rte_memcpy(iface->ip6_mc_addr.s6_addr, ip6_mc_addr,
+		sizeof(iface->ip6_mc_addr.s6_addr));
+	ether_addr_copy(&eth_mc_addr, &iface->eth_mc_addr);
+
+	/*
+	 * Generate a link-local address, and then use it to
+	 * generate a solicited-node multicast address for
+	 * that link-local address.
+	 */
+	gen_ipv6_link_local(iface);
+	{
+		uint8_t ll_ip6_mc_addr[16] =
+			IPV6_SN_MC_ADDR(iface->ll_ip6_addr.s6_addr);
+		struct ether_addr ll_eth_mc_addr = {
+			.addr_bytes = {
+				              0x33,               0x33,
+				ll_ip6_mc_addr[12], ll_ip6_mc_addr[13],
+				ll_ip6_mc_addr[14], ll_ip6_mc_addr[15],
+			},
+		};
+		struct ether_addr mc_addrs[2] =
+			{ eth_mc_addr, ll_eth_mc_addr };
+		rte_memcpy(iface->ll_ip6_mc_addr.s6_addr, ll_ip6_mc_addr,
+			sizeof(iface->ll_ip6_mc_addr.s6_addr));
+		ether_addr_copy(&ll_eth_mc_addr, &iface->ll_eth_mc_addr);
+
+		/* Add to list of accepted MAC addresses. */
+		rte_eth_dev_set_mc_addr_list(iface->id, mc_addrs, 2);
+	}
+}
+
 static int
 start_iface(struct gatekeeper_if *iface)
 {
@@ -960,6 +1095,8 @@ start_iface(struct gatekeeper_if *iface)
 
 out:
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
+	if (iface->configured_proto & GK_CONFIGURED_IPV6)
+		setup_ipv6_addrs(iface);
 	return 0;
 
 stop_partial:

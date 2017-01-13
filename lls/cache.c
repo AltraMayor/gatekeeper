@@ -22,6 +22,7 @@
 
 #include <gatekeeper_lls.h>
 #include "cache.h"
+#include "nd.h"
 
 #ifdef RTE_MACHINE_CPUFLAG_SSE4_2
 #include <rte_hash_crc.h>
@@ -318,6 +319,12 @@ lls_process_reqs(struct lls_config *lls_conf)
 		case LLS_REQ_PUT:
 			lls_process_put(lls_conf, &reqs[i]->u.put);
 			break;
+		case LLS_REQ_ND: {
+			struct lls_nd_req *nd = &reqs[i]->u.nd;
+			if (process_nd(lls_conf, nd->iface, nd->pkt) == -1)
+				rte_pktmbuf_free(nd->pkt);
+			break;
+		}
 		default:
 			RTE_LOG(ERR, GATEKEEPER,
 				"lls: unrecognized request type (%d)\n",
@@ -352,6 +359,9 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	case LLS_REQ_PUT:
 		req->u.put = *(struct lls_put_req *)req_arg;
 		break;
+	case LLS_REQ_ND:
+		req->u.nd = *(struct lls_nd_req *)req_arg;
+		break;
 	default:
 		mb_free_entry(&lls_conf->requests, req);
 		RTE_LOG(ERR, GATEKEEPER,
@@ -364,6 +374,15 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 		return ret;
 
 	return 0;
+}
+
+struct lls_map *
+lls_cache_get(struct lls_cache *cache, const uint8_t *ip_be)
+{
+	int ret = rte_hash_lookup(cache->hash, ip_be);
+	if (ret < 0)
+		return NULL;
+	return &cache->records[ret].map;
 }
 
 void

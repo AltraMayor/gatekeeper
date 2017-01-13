@@ -106,6 +106,7 @@ struct gatekeeper_if {
 	uint16_t num_rx_queues;
 	uint16_t num_tx_queues;
 	uint32_t arp_cache_timeout_sec;
+	uint32_t nd_cache_timeout_sec;
 	/* This struct has hidden fields. */
 };
 
