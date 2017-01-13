@@ -83,12 +83,19 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 	},
 };
 
-/* @ether_type should be in host ordering. */
+/*
+ * @ether_type should be passed in host ordering, but is converted
+ * to little endian ordering before being added as a filter. The
+ * EType register's value should be in little endian, according to
+ * the 82599 datasheet.
+ *
+ * XXX Does the endianness change with other NICs?
+ */
 int
 ethertype_filter_add(uint8_t port_id, uint16_t ether_type, uint16_t queue_id)
 {
 	struct rte_eth_ethertype_filter filter = {
-		.ether_type = ether_type,
+		.ether_type = rte_cpu_to_le_16(ether_type),
 		.flags = 0,
 		.queue = queue_id,
 	};
