@@ -543,12 +543,12 @@ get_ip_type(const char *ip_addr)
 }
 
 static inline int
-max_prefix_len(int gk_type)
+max_prefix_len(int ip_type)
 {
-	RTE_VERIFY(gk_type == AF_INET || gk_type == AF_INET6);
-	return 8 * (gk_type == AF_INET
-		? sizeof(struct in_addr)
-		: sizeof(struct in6_addr));
+	RTE_VERIFY(ip_type == AF_INET || ip_type == AF_INET6);
+	return ip_type == AF_INET
+		? sizeof(struct in_addr) * 8
+		: sizeof(struct in6_addr) * 8;
 }
 
 int
@@ -1095,7 +1095,7 @@ start_iface(struct gatekeeper_if *iface)
 
 out:
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
-	if (iface->configured_proto & GK_CONFIGURED_IPV6)
+	if (ipv6_if_configured(iface))
 		setup_ipv6_addrs(iface);
 	return 0;
 

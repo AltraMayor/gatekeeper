@@ -21,6 +21,7 @@
 
 #include <rte_ether.h>
 
+#include "gatekeeper_main.h"
 #include "gatekeeper_flow.h"
 
 #define IP_VERSION              (0x40)
@@ -31,14 +32,19 @@
 #define IP_VHL_DEF              (IP_VERSION | IP_HDRLEN)
 #define IP_DN_FRAGMENT_FLAG     (0x0040)
 
-struct ipip_tunnel_info {
-	struct ip_flow	     flow;
-	struct ether_addr    source_mac;
-	/* TODO The MAC addresses must come from the LLS block. */
-	struct ether_addr    nexthop_mac;
-};
-
-int encapsulate(struct rte_mbuf *pkt, uint8_t priority,
-	struct ipip_tunnel_info *info);
+/*
+ * TODO The encapsulation function should not add the Ethernet header.
+ * This way we can compose the Ethernet header copying it from a cache,
+ * or by setting his fields.
+ * Implement a way to add the Ethernet header.
+ * Also, the function to add Ethernet header
+ * needs to set the @outer_l2_len field of the packet.
+ *
+ * Notice that, the original packet should contain the Ethernet header,
+ * while the function shouldn't add an Ethernet header.
+ * When allocating space for the outer IP header,
+ * it only needs to allocate the extra needed space.
+ */
+int encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *fow);
 
 #endif /* _GATEKEEPER_IPIP_H_ */
