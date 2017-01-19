@@ -33,6 +33,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_lls.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
@@ -504,6 +505,30 @@ gt_proc(void *arg)
 			 */
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
+				/*
+				 * TODO Forward all IPv6 packets that
+				 * are not encapsulated to an IPv6
+				 * block to do further processing, including
+				 * sending any ND packets to the LLS block.
+				 * For now, extract all needed packet fields
+				 * and pass it to the LLS block.
+				 */
+				struct ipacket packet;
+				ret = extract_packet_info(m, &packet);
+				if (ret < 0)
+					goto drop;
+
+				if (pkt_is_nd(&packet, &gt_conf->net->front)) {
+					/*
+					 * TODO Use DPDK packet classification
+					 * and distribution here instead.
+					 */
+					if (submit_nd(m,
+						    &gt_conf->net->front) == -1)
+						rte_pktmbuf_free(m);
+					continue;
+				}
+drop:
 				RTE_LOG(ALERT, GATEKEEPER,
 					"gt: parsing an invalid packet!\n");
 				rte_pktmbuf_free(m);

@@ -21,6 +21,7 @@
 
 #include <netinet/in.h>
 
+#include <rte_ip.h>
 #include <rte_timer.h>
 
 #include "gatekeeper_mailbox.h"
@@ -46,6 +47,8 @@ enum lls_req_ty {
 	 * be invoked again.
 	 */
 	LLS_REQ_PUT,
+	/* Request to handle an ND packet received from another block. */
+	LLS_REQ_ND,
 };
 
 /* Replies that come from the LLS block. */
@@ -161,7 +164,8 @@ struct lls_cache {
 	 * Function to transmit a request out of @iface to resolve
 	 * IP address @ip_be to an Ethernet address.
 	 *
-	 * If @ha is NULL, then broadcast. Otherwise, unicast to @ha.
+	 * If @ha is NULL, then broadcast (IPv4) or multicast (IPv6).
+	 * Otherwise, unicast to @ha.
 	 */
 	void (*xmit_req)(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		const struct ether_addr *ha, uint16_t tx_queue);
@@ -193,6 +197,9 @@ struct lls_config {
 	/* Cache of entries that map IPv4 addresses to Ethernet addresses. */
 	struct lls_cache  arp_cache;
 
+	/* Cache of entries that map IPv6 addresses to Ethernet addresses. */
+	struct lls_cache  nd_cache;
+
 	/* Timer to scan over LLS cache(s). */
 	struct rte_timer  timer;
 
@@ -201,6 +208,12 @@ struct lls_config {
 	uint16_t          tx_queue_front;
 	uint16_t          rx_queue_back;
 	uint16_t          tx_queue_back;
+
+	/*
+	 * TODO Have a different block use RSS on the back interface,
+	 * and pass ND packets to the LLS block.
+	 */
+	struct gatekeeper_rss_config rss_conf;
 };
 
 /*
@@ -223,6 +236,64 @@ struct lls_config {
 int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
 	unsigned int lcore_id);
 int put_arp(struct in_addr *ip_be, unsigned int lcore_id);
+
+struct icmpv6_hdr {
+	/* The type of this ICMPv6 packet. */
+	uint8_t  type;
+	/* An additional value to describe the message, dependent on @type. */
+	uint8_t  code;
+	/* Checksum over the entire ICMPv6 message. */
+	uint16_t cksum;
+} __attribute__((__packed__));
+
+struct nd_neigh_msg {
+	/*
+	 * For Neighbor Solicitations, @flags is reserved and should be 0.
+	 *
+	 * For Neighbor Advertisements, the most significant three bits
+	 * of @flags should be: router (msb), solicited, and override.
+	 * The other 29 bits of @flags are reserved and should be 0.
+	 */
+	uint32_t          flags;
+	/* IPv6 address of the target of the ND messages. */
+	uint8_t           target[16];
+	/* Any ND options, if present. */
+	uint8_t           opts[0];
+} __attribute__((__packed__));
+
+#define ND_NEIGH_HDR_MIN_LEN (sizeof(struct nd_neigh_msg))
+
+#define ND_NEIGH_PKT_MIN_LEN (sizeof(struct ether_hdr) + \
+	sizeof(struct ipv6_hdr) + sizeof(struct icmpv6_hdr) + \
+	ND_NEIGH_HDR_MIN_LEN)
+
+/* Supported IPv6 ND packets via the type field in struct icmpv6_hdr. */
+#define ND_NEIGHBOR_SOLICITATION (135)
+#define ND_NEIGHBOR_ADVERTISEMENT (136)
+
+/*
+ * Interface for functional blocks to resolve IPv6 --> Ethernet addresses.
+ *
+ * Functionality is the same as for hold_arp() and put_arp(); see
+ * comments above.
+ */
+int hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be,
+	unsigned int lcore_id);
+int put_nd(struct in6_addr *ip_be, unsigned int lcore_id);
+
+/* Submit an ND packet to the LLS block. */
+int submit_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface);
+
+static inline int
+ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
+{
+	const uint64_t *paddr1 = (const uint64_t *)addr1;
+	const uint64_t *paddr2 = (const uint64_t *)addr2;
+	return (paddr1[0] == paddr2[0]) && (paddr1[1] == paddr2[1]);
+}
+
+/* Returns whether this packet is an ND neighbor msg destined for us. */
+int pkt_is_nd(struct ipacket *packet, struct gatekeeper_if *iface);
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);

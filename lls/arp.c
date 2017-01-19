@@ -162,7 +162,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 
 	/* Update cache with source resolution, regardless of operation. */
 	mod_req.cache = &lls_conf->arp_cache;
-	memcpy(mod_req.ip_be, &arp_hdr->arp_data.arp_sip,
+	rte_memcpy(mod_req.ip_be, &arp_hdr->arp_data.arp_sip,
 		lls_conf->arp_cache.key_len);
 	ether_addr_copy(&arp_hdr->arp_data.arp_sha, &mod_req.ha);
 	mod_req.port_id = iface->id;

@@ -31,9 +31,6 @@
 #define IP_VHL_DEF              (IP_VERSION | IP_HDRLEN)
 #define IP_DN_FRAGMENT_FLAG     (0x0040)
 
-#define IPv6_DEFAULT_VTC_FLOW   (0x60000000)
-#define IPv6_DEFAULT_HOP_LIMITS (0xFF)
-
 struct ipip_tunnel_info {
 	struct ip_flow	     flow;
 	struct ether_addr    source_mac;

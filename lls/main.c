@@ -25,6 +25,7 @@
 #include "arp.h"
 #include "cache.h"
 #include "gatekeeper_launch.h"
+#include "nd.h"
 
 /* Length of time (in seconds) to wait between scans of the cache. */
 #define LLS_CACHE_SCAN_INTERVAL 10
@@ -40,7 +41,16 @@ static struct lls_config lls_conf = {
 		.xmit_req = xmit_arp_req,
 		.print_record = print_arp_record,
 	},
-	/* TODO Initialize ND cache. */
+	.nd_cache = {
+		.key_len = sizeof(struct in6_addr),
+		.key_str_len = INET6_ADDRSTRLEN,
+		.name = "nd",
+		.iface_enabled = iface_nd_enabled,
+		.ip_str = ipv6_str,
+		.ip_in_subnet = ipv6_in_subnet,
+		.xmit_req = xmit_nd_req,
+		.print_record = print_nd_record,
+	},
 };
 
 static inline int
@@ -49,6 +59,15 @@ arp_enabled(struct lls_config *lls_conf)
 	return lls_conf->arp_cache.iface_enabled(lls_conf->net,
 			&lls_conf->net->front) ||
 		lls_conf->arp_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->back);
+}
+
+static inline int
+nd_enabled(struct lls_config *lls_conf)
+{
+	return lls_conf->nd_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->front) ||
+		lls_conf->nd_cache.iface_enabled(lls_conf->net,
 			&lls_conf->net->back);
 }
 
@@ -61,7 +80,8 @@ get_lls_conf(void)
 static int
 cleanup_lls(void)
 {
-	/* TODO Destroy ND cache. */
+	if (nd_enabled(&lls_conf))
+		lls_cache_destroy(&lls_conf.nd_cache);
 	if (arp_enabled(&lls_conf))
 		lls_cache_destroy(&lls_conf.arp_cache);
 	destroy_mailbox(&lls_conf.requests);
@@ -69,8 +89,8 @@ cleanup_lls(void)
 	return 0;
 }
 
-int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
-	unsigned int lcore_id)
+int
+hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_hold_req hold_req = {
@@ -81,7 +101,7 @@ int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
 				.lcore_id = lcore_id,
 			},
 		};
-		memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
+		rte_memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
@@ -91,14 +111,15 @@ int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
 	return -1;
 }
 
-int put_arp(struct in_addr *ip_be, unsigned int lcore_id)
+int
+put_arp(struct in_addr *ip_be, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_put_req put_req = {
 			.cache = &lls_conf.arp_cache,
 			.lcore_id = lcore_id,
 		};
-		memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
+		rte_memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 
@@ -108,13 +129,99 @@ int put_arp(struct in_addr *ip_be, unsigned int lcore_id)
 	return -1;
 }
 
+int
+hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be, unsigned int lcore_id)
+{
+	if (nd_enabled(&lls_conf)) {
+		struct lls_hold_req hold_req = {
+			.cache = &lls_conf.nd_cache,
+			.hold = {
+				.cb = cb,
+				.arg = arg,
+				.lcore_id = lcore_id,
+			},
+		};
+		rte_memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
+		return lls_req(LLS_REQ_HOLD, &hold_req);
+	}
+
+	RTE_LOG(WARNING, GATEKEEPER,
+		"lls: lcore %u called %s but ND service is not enabled\n",
+		lcore_id, __func__);
+	return -1;
+}
+
+int
+put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
+{
+	if (nd_enabled(&lls_conf)) {
+		struct lls_put_req put_req = {
+			.cache = &lls_conf.nd_cache,
+			.lcore_id = lcore_id,
+		};
+		rte_memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
+		return lls_req(LLS_REQ_PUT, &put_req);
+	}
+
+	RTE_LOG(WARNING, GATEKEEPER,
+		"lls: lcore %u called %s but ND service is not enabled\n",
+		lcore_id, __func__);
+	return -1;
+}
+
+int
+submit_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+{
+	if (nd_enabled(&lls_conf)) {
+		struct lls_nd_req nd_req = {
+			.pkt = pkt,
+			.iface = iface,
+		};
+		return lls_req(LLS_REQ_ND, &nd_req);
+	}
+
+	RTE_LOG(WARNING, GATEKEEPER,
+		"lls: %s invoked but ND service is not enabled\n", __func__);
+	return -1;
+}
+
+int
+pkt_is_nd(struct ipacket *packet, struct gatekeeper_if *iface)
+{
+	struct icmpv6_hdr *icmpv6_hdr;
+
+	if (packet->len < ND_NEIGH_PKT_MIN_LEN ||
+			packet->flow.proto != ETHER_TYPE_IPv6 ||
+			packet->next_hdr != IPPROTO_ICMPV6)
+		return false;
+
+	/*
+	 * Make sure this is an ND neighbor message and that it was
+	 * sent to us (our global address, link-local address, or
+	 * either of the solicited-node multicast addresses.
+	 */
+	icmpv6_hdr = rte_pktmbuf_mtod_offset(packet->pkt, struct icmpv6_hdr *,
+		sizeof(struct ether_hdr) + sizeof(struct ipv6_hdr));
+	return (icmpv6_hdr->type == ND_NEIGHBOR_SOLICITATION ||
+			icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) &&
+		(ipv6_addrs_equal(packet->flow.f.v6.dst,
+			iface->ll_ip6_addr.s6_addr) ||
+		ipv6_addrs_equal(packet->flow.f.v6.dst,
+			iface->ip6_addr.s6_addr) ||
+		ipv6_addrs_equal(packet->flow.f.v6.dst,
+			iface->ip6_mc_addr.s6_addr) ||
+		ipv6_addrs_equal(packet->flow.f.v6.dst,
+			iface->ll_ip6_mc_addr.s6_addr));
+}
+
 static void
 lls_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 {
 	struct lls_config *lls_conf = (struct lls_config *)arg;
 	if (arp_enabled(lls_conf))
 		lls_cache_scan(lls_conf, &lls_conf->arp_cache);
-	/* TODO Scan the ND cache. */
+	if (nd_enabled(lls_conf))
+		lls_cache_scan(lls_conf, &lls_conf->nd_cache);
 }
 
 static void
@@ -138,12 +245,20 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 * bonded interface.
 		 *
 		 * See: http://dpdk.org/doc/guides/prog_guide/link_bonding_poll_mode_drv_lib.html#configuration
+		 *
+		 * XXX Is this check needed? By default, the NIC only
+		 * accepts the assigned MAC address, broadcast address,
+		 * and any MAC added (for example, for IPv6 Ethernet multicast).
 		 */
-		if (!is_broadcast_ether_addr(&eth_hdr->d_addr) &&
-		    !is_same_ether_addr(&eth_hdr->d_addr, &iface->eth_addr))
+		if (unlikely(!is_broadcast_ether_addr(&eth_hdr->d_addr) &&
+			!is_same_ether_addr(&eth_hdr->d_addr,
+				&iface->eth_mc_addr) &&
+			!is_same_ether_addr(&eth_hdr->d_addr,
+				&iface->ll_eth_mc_addr) &&
+			!is_same_ether_addr(&eth_hdr->d_addr,
+				&iface->eth_addr)))
 			goto free_buf;
 
-		/* TODO Add support for ND packets. */
 		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
 		case ETHER_TYPE_ARP:
 			if (process_arp(lls_conf, iface, tx_queue,
@@ -152,6 +267,35 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 
 			/* ARP reply was sent, so no free is needed. */
 			continue;
+		case ETHER_TYPE_IPv6:
+			if (iface == &lls_conf->net->back) {
+				/*
+				 * Back interface can also see ND packets
+				 * received here.
+				 *
+				 * TODO Move RSS on the back interface
+				 * to a different block and pass ND
+				 * packets to the LLS using DPDK
+				 * packet classification and distribution.
+				 * Then, handle any non-ARP and non-ND
+				 * packets on the back interface. For now,
+				 * just drop them.
+				 */
+				struct ipacket packet;
+				int ret = extract_packet_info(bufs[i], &packet);
+				if (ret < 0)
+					goto free_buf;
+
+				if (pkt_is_nd(&packet, iface)) {
+					if (process_nd(lls_conf, iface,
+							bufs[i]) == -1)
+						goto free_buf;
+
+					/* ND reply sent, so no free needed. */
+					continue;
+				}
+			}
+			/* FALLTHROUGH */
 		default:
 			RTE_LOG(ERR, GATEKEEPER, "lls: %s interface should not be seeing a packet with EtherType 0x%04hx\n",
 				iface->name,
@@ -269,7 +413,29 @@ lls_stage2(void *arg)
 			return ret;
 	}
 
-	/* TODO Add ND filters. */
+	/*
+	 * Receive ND packets on the front interface from the
+	 * GK and GT blocks, depending on whether we're running
+	 * Gatekeeper or Grantor.
+	 */
+
+	/*
+	 * TODO Have a different block set up RSS on the back interface,
+	 * and classify + distribute ND packets to the LLS block using
+	 * the DPDK libraries.
+	 */
+	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
+		uint8_t port_in = net_conf->back.id;
+		uint16_t lls_queue = lls_conf->rx_queue_back;
+
+		ret = gatekeeper_setup_rss(port_in, &lls_queue, 1);
+		if (ret < 0)
+			return ret;
+
+		ret = gatekeeper_get_rss_config(port_in, &lls_conf->rss_conf);
+		if (ret < 0)
+			return ret;
+	}
 
 	return 0;
 }
@@ -332,15 +498,29 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 				lls_conf->net->back.arp_cache_timeout_sec;
 	}
 
-	/* TODO Initialize ND cache. */
+	if (nd_enabled(lls_conf)) {
+		ret = lls_cache_init(lls_conf, &lls_conf->nd_cache);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"lls: ND cache cannot be started\n");
+			goto arp;
+		}
+
+		/* Set timeouts for front and back (if needed). */
+		if (lls_conf->nd_cache.iface_enabled(net_conf,
+				&net_conf->front))
+			lls_conf->nd_cache.front_timeout_sec =
+				net_conf->front.nd_cache_timeout_sec;
+		if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back))
+			lls_conf->nd_cache.back_timeout_sec =
+				lls_conf->net->back.nd_cache_timeout_sec;
+	}
 
 	return 0;
 
-/* To be used once ND cache is added.
 arp:
 	if (arp_enabled(lls_conf))
 		lls_cache_destroy(&lls_conf->arp_cache);
-*/
 requests:
 	destroy_mailbox(&lls_conf->requests);
 timer:

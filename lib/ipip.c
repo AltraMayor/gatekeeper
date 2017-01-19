@@ -22,6 +22,7 @@
 #include <rte_byteorder.h>
 
 #include "gatekeeper_ipip.h"
+#include "gatekeeper_net.h"
 
 int
 encapsulate(struct rte_mbuf *pkt, uint8_t priority,

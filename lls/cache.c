@@ -22,6 +22,7 @@
 
 #include <gatekeeper_lls.h>
 #include "cache.h"
+#include "nd.h"
 
 #ifdef RTE_MACHINE_CPUFLAG_SSE4_2
 #include <rte_hash_crc.h>
@@ -83,7 +84,7 @@ lls_update_subscribers(struct lls_record *record)
 		/* Delete hold; keep all holds in beginning of array. */
 		record->num_holds--;
 		if (i < record->num_holds) {
-			memcpy(&record->holds[i],
+			rte_memcpy(&record->holds[i],
 				&record->holds[record->num_holds],
 				sizeof(record->holds[i]));
 			/*
@@ -139,7 +140,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 
 		record = &cache->records[ret];
 		record->map.stale = true;
-		memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
+		rte_memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
 		record->ts = time(NULL);
 		RTE_VERIFY(record->ts >= 0);
 		record->holds[0] = hold_req->hold;
@@ -233,7 +234,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 	/* Keep all holds in beginning of array. */
 	record->num_holds--;
 	if (i < record->num_holds)
-		memcpy(&record->holds[i], &record->holds[record->num_holds],
+		rte_memcpy(&record->holds[i], &record->holds[record->num_holds],
 			sizeof(record->holds[i]));
 
 	if (lls_conf->debug)
@@ -260,7 +261,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		ether_addr_copy(&mod_req->ha, &record->map.ha);
 		record->map.port_id = mod_req->port_id;
 		record->map.stale = false;
-		memcpy(record->map.ip_be, mod_req->ip_be, cache->key_len);
+		rte_memcpy(record->map.ip_be, mod_req->ip_be, cache->key_len);
 		record->ts = mod_req->ts;
 		record->num_holds = 0;
 
@@ -318,6 +319,12 @@ lls_process_reqs(struct lls_config *lls_conf)
 		case LLS_REQ_PUT:
 			lls_process_put(lls_conf, &reqs[i]->u.put);
 			break;
+		case LLS_REQ_ND: {
+			struct lls_nd_req *nd = &reqs[i]->u.nd;
+			if (process_nd(lls_conf, nd->iface, nd->pkt) == -1)
+				rte_pktmbuf_free(nd->pkt);
+			break;
+		}
 		default:
 			RTE_LOG(ERR, GATEKEEPER,
 				"lls: unrecognized request type (%d)\n",
@@ -352,6 +359,9 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	case LLS_REQ_PUT:
 		req->u.put = *(struct lls_put_req *)req_arg;
 		break;
+	case LLS_REQ_ND:
+		req->u.nd = *(struct lls_nd_req *)req_arg;
+		break;
 	default:
 		mb_free_entry(&lls_conf->requests, req);
 		RTE_LOG(ERR, GATEKEEPER,
@@ -364,6 +374,15 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 		return ret;
 
 	return 0;
+}
+
+struct lls_map *
+lls_cache_get(struct lls_cache *cache, const uint8_t *ip_be)
+{
+	int ret = rte_hash_lookup(cache->hash, ip_be);
+	if (ret < 0)
+		return NULL;
+	return &cache->records[ret].map;
 }
 
 void
