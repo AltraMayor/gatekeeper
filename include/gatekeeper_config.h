@@ -17,6 +17,7 @@
  */
 
 #include <lua.h>
+#include <sys/time.h>
 
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
@@ -83,11 +84,31 @@
 
 /* Configuration for the Dynamic Config functional block. */
 struct dynamic_config {
-	unsigned int	lcore_id;
+
+	/* The lcore id that the block is running on. */
+	unsigned int   lcore_id;
+
+	/*
+	 * The fields below are for internal use.
+	 * Configuration files should not refer to them.
+	 */
+
+	/* The server socket descriptor. */
+	int            sock_fd;
+
+	/* The file path that the Unix socket will use. */
+	char           *server_path;
+
+	/* Specify the receiving timeouts until reporting an error. */
+	struct timeval rcv_time_out;
 };
 
 int config_gatekeeper(void);
 int set_lua_path(lua_State *l, const char *path);
-int run_dynamic_config(const struct dynamic_config *dy_conf);
+struct dynamic_config *get_dy_conf(void);
+void set_dyc_timeout(unsigned sec, unsigned usec,
+	struct dynamic_config *dy_conf);
+int run_dynamic_config(const char *server_path,
+	struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

@@ -28,6 +28,13 @@
  */
 #define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
 
+/*
+ * Custom log type for Lua-related log entries.
+ * When using this logtype, the log string should include
+ * the name of the relevant functional block, library, etc.
+ */
+#define RTE_LOGTYPE_LUA RTE_LOGTYPE_USER2
+
 #define GATEKEEPER_MAX_PKT_BURST (32)
 
 extern volatile int exiting;
