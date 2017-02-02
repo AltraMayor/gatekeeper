@@ -321,8 +321,12 @@ lls_process_reqs(struct lls_config *lls_conf)
 			break;
 		case LLS_REQ_ND: {
 			struct lls_nd_req *nd = &reqs[i]->u.nd;
-			if (process_nd(lls_conf, nd->iface, nd->pkt) == -1)
-				rte_pktmbuf_free(nd->pkt);
+			int i;
+			for (i = 0; i < nd->num_pkts; i++) {
+				if (process_nd(lls_conf, nd->iface,
+						nd->pkts[i]) == -1)
+					rte_pktmbuf_free(nd->pkts[i]);
+			}
 			break;
 		}
 		default:

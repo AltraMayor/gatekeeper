@@ -48,10 +48,13 @@ struct lls_put_req {
 	unsigned int     lcore_id;
 };
 
-/* Information needed to submit an ND packet to the LLS block. */
+/* Information needed to submit ND packets to the LLS block. */
 struct lls_nd_req {
-	/* ND neighbor packet. */
-	struct rte_mbuf      *pkt;
+	/* ND neighbor packets. */
+	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+
+	/* Number of packets stored in @pkts. */
+	int                  num_pkts;
 
 	/* Interface that received @pkt. */
 	struct gatekeeper_if *iface;

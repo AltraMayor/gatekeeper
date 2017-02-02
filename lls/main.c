@@ -22,10 +22,10 @@
 #include <rte_ethdev.h>
 
 #include "gatekeeper_config.h"
+#include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
 #include "arp.h"
 #include "cache.h"
-#include "gatekeeper_launch.h"
 #include "nd.h"
 
 /* Length of time (in seconds) to wait between scans of the cache. */
@@ -54,6 +54,12 @@
  * unusually long time to configure (since this could mean the
  * link partner does not have LACP configured).
  */
+
+/*
+ * To capture both ND solicitations and advertisements being sent
+ * to any of four different IPv6 addresses, we need eight rules.
+ */
+#define NUM_ACL_ND_RULES (8)
 
 static struct lls_config lls_conf = {
 	.arp_cache = {
@@ -200,48 +206,24 @@ put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
 }
 
 int
-submit_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+submit_nd(struct rte_mbuf **pkts, int num_pkts, struct gatekeeper_if *iface)
 {
-	if (nd_enabled(&lls_conf)) {
-		struct lls_nd_req nd_req = {
-			.pkt = pkt,
-			.iface = iface,
-		};
-		return lls_req(LLS_REQ_ND, &nd_req);
+	struct lls_nd_req nd_req = {
+		.num_pkts = num_pkts,
+		.iface = iface,
+	};
+	int ret;
+
+	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
+
+	ret = lls_req(LLS_REQ_ND, &nd_req);
+	if (unlikely(ret < 0)) {
+		int i;
+		for (i = 0; i < num_pkts; i++)
+			rte_pktmbuf_free(pkts[i]);
+		return ret;
 	}
-
-	RTE_LOG(WARNING, GATEKEEPER,
-		"lls: %s invoked but ND service is not enabled\n", __func__);
-	return -1;
-}
-
-int
-pkt_is_nd(struct ipacket *packet, struct gatekeeper_if *iface)
-{
-	struct icmpv6_hdr *icmpv6_hdr;
-
-	if (packet->len < ND_NEIGH_PKT_MIN_LEN ||
-			packet->flow.proto != ETHER_TYPE_IPv6 ||
-			packet->next_hdr != IPPROTO_ICMPV6)
-		return false;
-
-	/*
-	 * Make sure this is an ND neighbor message and that it was
-	 * sent to us (our global address, link-local address, or
-	 * either of the solicited-node multicast addresses.
-	 */
-	icmpv6_hdr = rte_pktmbuf_mtod_offset(packet->pkt, struct icmpv6_hdr *,
-		sizeof(struct ether_hdr) + sizeof(struct ipv6_hdr));
-	return (icmpv6_hdr->type == ND_NEIGHBOR_SOLICITATION ||
-			icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) &&
-		(ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ll_ip6_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ip6_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ip6_mc_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ll_ip6_mc_addr.s6_addr));
+	return 0;
 }
 
 static void
@@ -287,6 +269,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
 		GATEKEEPER_MAX_PKT_BURST);
+	IPV6_ACL_SEARCH_DEF(acl);
 	int num_tx = 0;
 	uint16_t i;
 
@@ -339,20 +322,8 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 				 * packets on the back interface. For now,
 				 * just drop them.
 				 */
-				struct ipacket packet;
-				int ret = extract_packet_info(bufs[i], &packet);
-				if (ret < 0)
-					goto free_buf;
-
-				if (pkt_is_nd(&packet, iface)) {
-					if (process_nd(lls_conf, iface,
-							bufs[i]) == -1)
-						goto free_buf;
-
-					/* ND reply sent, so no free needed. */
-					num_tx++;
-					continue;
-				}
+				add_pkt_ipv6_acl(&acl, bufs[i]);
+				continue;
 			}
 			/* FALLTHROUGH */
 		default:
@@ -364,6 +335,8 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 free_buf:
 		rte_pktmbuf_free(bufs[i]);
 	}
+
+	process_pkts_ipv6_acl(&lls_conf->net->back, lls_conf->lcore_id, &acl);
 
 	return num_tx;
 }
@@ -430,6 +403,68 @@ lls_proc(void *arg)
 	return cleanup_lls();
 }
 
+static void
+fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
+{
+	uint32_t *ptr32 = (uint32_t *)addr;
+	int i;
+
+	RTE_VERIFY(nd_type == ND_NEIGHBOR_SOLICITATION ||
+		nd_type == ND_NEIGHBOR_ADVERTISEMENT);
+
+	rule->data.category_mask = 0x1;
+	rule->data.priority = 1;
+	/* Userdata is filled in in register_ipv6_acl(). */
+
+	rule->field[PROTO_FIELD_IPV6].value.u8 = IPPROTO_ICMPV6;
+	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
+
+	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
+		rule->field[i].value.u32 = rte_be_to_cpu_32(*ptr32);
+		rule->field[i].mask_range.u32 = 32;
+		ptr32++;
+	}
+
+	rule->field[TYPE_FIELD_ICMPV6].value.u32 = (nd_type << 24) & 0xFF000000;
+	rule->field[TYPE_FIELD_ICMPV6].mask_range.u32 = 0xFF000000;
+}
+
+static int
+register_nd_acl_rules(struct gatekeeper_if *iface)
+{
+	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	int ret;
+
+	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[1], &iface->ll_ip6_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[2], &iface->ip6_mc_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
+		ND_NEIGHBOR_SOLICITATION);
+
+	fill_nd_rule(&ipv6_rules[4], &iface->ip6_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[5], &iface->ll_ip6_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[6], &iface->ip6_mc_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+
+	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
+		submit_nd, iface);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"lls: could not register ND IPv6 ACL on %s iface\n",
+			iface->name);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int
 assign_lls_queue_ids(struct lls_config *lls_conf)
 {
@@ -494,17 +529,15 @@ lls_stage2(void *arg)
 			return ret;
 	}
 
-	/*
-	 * Receive ND packets on the front interface from the
-	 * GK and GT blocks, depending on whether we're running
-	 * Gatekeeper or Grantor.
-	 */
+	/* Receive ND packets using IPv6 ACL filters. */
 
-	/*
-	 * TODO Have a different block set up RSS on the back interface,
-	 * and classify + distribute ND packets to the LLS block using
-	 * the DPDK libraries.
-	 */
+	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
+		ret = register_nd_acl_rules(&net_conf->front);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* TODO Have a different block set up RSS on the back interface. */
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
 		uint8_t port_in = net_conf->back.id;
 		uint16_t lls_queue = lls_conf->rx_queue_back;
@@ -514,6 +547,10 @@ lls_stage2(void *arg)
 			return ret;
 
 		ret = gatekeeper_get_rss_config(port_in, &lls_conf->rss_conf);
+		if (ret < 0)
+			return ret;
+
+		ret = register_nd_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}

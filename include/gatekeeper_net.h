@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <netinet/in.h>
 
+#include <rte_acl.h>
 #include <rte_eth_bond.h>
 #include <rte_ethdev.h>
 #include <rte_timer.h>
@@ -35,18 +36,6 @@
 
 #define IPv6_DEFAULT_VTC_FLOW   (0x60000000)
 #define IPv6_DEFAULT_HOP_LIMITS (0xFF)
-
-/* Store information about a packet. */
-struct ipacket {
-	/* Flow identifier for this packet. */
-	struct ip_flow  flow;
-	/* Pointer to the packet itself. */
-	struct rte_mbuf *pkt;
-	/* The length of the packet. */
-	uint16_t        len;
-	/* The type of the next header, if present. */
-	uint8_t         next_hdr;
-};
 
 struct ipaddr {
 	/* The network layer protocol of the nexthop. */
@@ -75,6 +64,18 @@ struct gatekeeper_rss_config {
 	uint16_t reta_size;
 	struct rte_eth_rss_reta_entry64 reta_conf[GATEKEEPER_RETA_MAX_SIZE];
 };
+
+/* Maximum number of ACL classification types. */
+#define GATEKEEPER_IPV6_ACL_MAX (8)
+
+/*
+ * Format of function called when a rule matches in the IPv6 ACL.
+ * Need forward declaration because acl_cb_func and struct gatekeeper_if
+ * are circularly defined.
+ */
+struct gatekeeper_if *iface;
+typedef int (*acl_cb_func)(struct rte_mbuf **pkts, int num_pkts,
+	struct gatekeeper_if *iface);
 
 /*
  * A Gatekeeper interface is specified by a set of PCI addresses
@@ -197,6 +198,20 @@ struct gatekeeper_if {
 
 	/* Timer to transmit from LLS block to fulfill LACP TX requirement. */
 	struct rte_timer  lacp_timer;
+
+	/* Per-socket ACLs used for classifying IPv6 packets. */
+	struct rte_acl_ctx *ipv6_acls[RTE_MAX_NUMA_NODES];
+
+	/*
+	 * Callback functions for each ACL rule type.
+	 *
+	 * On error, these functions should return a negative value
+	 * and free all packets that have not already been handled.
+	 */
+	acl_cb_func        acl_funcs[GATEKEEPER_IPV6_ACL_MAX];
+
+	/* Number of ACL types installed in @acl_funcs. */
+	unsigned int       acl_func_count;
 };
 
 /*
@@ -279,8 +294,6 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **ip_cidrs, uint8_t num_ip_cidrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
-int extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet);
-
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
@@ -331,5 +344,13 @@ net_launch_at_stage1(struct net_config *net,
 	int front_rx_queues, int front_tx_queues,
 	int back_rx_queues, int back_tx_queues,
 	lcore_function_t *f, void *arg);
+
+/*
+ * Do any processing necessary to end stage 2 -- the last part of the
+ * network configuration that happens before individual lcores are
+ * launched. This is useful for any network configuration that requires
+ * input from the individual blocks in stage 2.
+ */
+int finalize_stage2(void *arg);
 
 #endif /* _GATEKEEPER_NET_H_ */
