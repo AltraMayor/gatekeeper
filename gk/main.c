@@ -834,11 +834,11 @@ cleanup_gk(struct gk_config *gk_conf)
 	int i;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
-		if (gk_conf->instances[i].ip_flow_hash_table)
+		if (gk_conf->instances[i].ip_flow_hash_table != NULL)
 			rte_hash_free(gk_conf->instances[i].
 				ip_flow_hash_table);
 
-		if (gk_conf->instances[i].ip_flow_entry_table)
+		if (gk_conf->instances[i].ip_flow_entry_table != NULL)
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
 
@@ -923,7 +923,7 @@ gk_stage1(void *arg)
 	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
 		sizeof(struct gk_instance), 0);
 	if (gk_conf->instances == NULL)
-		return -1;
+		goto cleanup;
 
 	/*
 	 * Set up the GK LPM table. We assume that
@@ -946,7 +946,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->rx_queue_front = ret;
 
@@ -954,7 +954,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->tx_queue_back = ret;
 
@@ -964,19 +964,31 @@ gk_stage1(void *arg)
 			RTE_LOG(ERR, GATEKEEPER,
 				"gk: failed to setup gk instances for GK block at lcore %u\n",
 				lcore);
-			gk_conf_put(gk_conf);
-			return -1;
+			goto cleanup;
 		}
 	}
 
 	return 0;
+
+cleanup:
+	cleanup_gk(gk_conf);
+	return -1;
 }
 
 static int
 gk_stage2(void *arg)
 {
 	struct gk_config *gk_conf = arg;
-	return gk_setup_rss(gk_conf);
+
+	int ret = gk_setup_rss(gk_conf);
+	if (ret < 0)
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	cleanup_gk(gk_conf);
+	return ret;
 }
 
 /*

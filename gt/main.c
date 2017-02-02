@@ -711,7 +711,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
-			goto out;
+			goto free_lua_state;
 		}
 		inst_ptr->rx_queue = ret;
 
@@ -719,7 +719,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
-			goto out;
+			goto free_lua_state;
 		}
 		inst_ptr->tx_queue = ret;
 
@@ -759,7 +759,7 @@ gt_stage1(void *arg)
 
 	ret = init_gt_instances(gt_conf);
 	if (ret < 0)
-		goto  instance;
+		goto instance;
 
 	goto out;
 
@@ -776,7 +776,15 @@ static int
 gt_stage2(void *arg)
 {
 	struct gt_config *gt_conf = arg;
-	return gt_setup_rss(gt_conf);
+	int ret = gt_setup_rss(gt_conf);
+	if (ret < 0)
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	cleanup_gt(gt_conf);
+	return ret;
 }
 
 int
