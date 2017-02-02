@@ -23,7 +23,9 @@
 #include <stdbool.h>
 #include <netinet/in.h>
 
+#include <rte_eth_bond.h>
 #include <rte_ethdev.h>
+#include <rte_timer.h>
 
 #include "gatekeeper_flow.h"
 
@@ -96,6 +98,9 @@ struct gatekeeper_if {
 	/* Timeouts for cache entries (in seconds) for Link Layer Support. */
 	uint32_t	arp_cache_timeout_sec;
 	uint32_t	nd_cache_timeout_sec;
+
+	/* The type of bonding used for this interface, if needed. */
+	uint32_t        bonding_mode;
 
 	/*
 	 * The fields below are for internal use.
@@ -189,6 +194,9 @@ struct gatekeeper_if {
 	 */
 	struct ether_addr eth_mc_addr;
 	struct ether_addr ll_eth_mc_addr;
+
+	/* Timer to transmit from LLS block to fulfill LACP TX requirement. */
+	struct rte_timer  lacp_timer;
 };
 
 /*
@@ -253,6 +261,18 @@ extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 		0x00, 0x00, 0x00, 0x01,			\
 		0xFF, ipv6[13], ipv6[14], ipv6[15],	\
 	}
+
+static inline int
+lacp_enabled(struct net_config *net, struct gatekeeper_if *iface)
+{
+	/* When @iface is the back, need to make sure it's enabled. */
+	if (iface == &net->back)
+		return net->back_iface_enabled &&
+			iface->bonding_mode == BONDING_MODE_8023AD;
+
+	/* @iface is the front interface. */
+	return iface->bonding_mode == BONDING_MODE_8023AD;
+}
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,

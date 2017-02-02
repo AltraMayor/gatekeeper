@@ -22,7 +22,6 @@
 #include <netinet/in.h>
 
 #include <rte_ip.h>
-#include <rte_timer.h>
 
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_net.h"
@@ -201,7 +200,7 @@ struct lls_config {
 	struct lls_cache  nd_cache;
 
 	/* Timer to scan over LLS cache(s). */
-	struct rte_timer  timer;
+	struct rte_timer  scan_timer;
 
 	/* Receive and transmit queues for both interfaces. */
 	uint16_t          rx_queue_front;
