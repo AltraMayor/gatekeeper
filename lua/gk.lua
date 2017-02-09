@@ -15,6 +15,13 @@ return function (net_conf, numa_table)
 	local ggu_lcore = table.remove(gk_lcores)
 	gatekeeper.gk_assign_lcores(gk_conf, gk_lcores)
 
+	gk_conf.max_num_ipv4_rules = 1024
+	gk_conf.num_ipv4_tbl8s = 256
+	gk_conf.max_num_ipv6_rules = 1024
+	gk_conf.num_ipv6_tbl8s = 65536
+
+ 	-- TODO Edit of the FIB table.
+
 	-- Setup the GK functional block.
 	local ret = gatekeeper.c.run_gk(net_conf, gk_conf)
 	if ret < 0 then

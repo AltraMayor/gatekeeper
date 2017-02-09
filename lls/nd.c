@@ -133,11 +133,10 @@ iface_nd_enabled(struct net_config *net, struct gatekeeper_if *iface)
 {
 	/* When @iface is the back, need to make sure it's enabled. */
 	if (iface == &net->back)
-		return net->back_iface_enabled &&
-			iface->configured_proto & GK_CONFIGURED_IPV6;
+		return net->back_iface_enabled && ipv6_if_configured(iface);
 
 	/* @iface is the front interface. */
-	return iface->configured_proto & GK_CONFIGURED_IPV6;
+	return ipv6_if_configured(iface);
 }
 
 char *

@@ -28,11 +28,10 @@ iface_arp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 {
 	/* When @iface is the back, need to make sure it's enabled. */
 	if (iface == &net->back)
-		return net->back_iface_enabled &&
-			iface->configured_proto & GK_CONFIGURED_IPV4;
+		return net->back_iface_enabled && ipv4_if_configured(iface);
 
 	/* @iface is the front interface. */
-	return iface->configured_proto & GK_CONFIGURED_IPV4;
+	return ipv4_if_configured(iface);
 }
 
 char *

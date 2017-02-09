@@ -25,33 +25,20 @@
 #include "gatekeeper_net.h"
 
 int
-encapsulate(struct rte_mbuf *pkt, uint8_t priority,
-	struct ipip_tunnel_info *info)
+encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *flow)
 {
-	struct ether_hdr *new_eth;
 	struct ipv4_hdr *outer_ip4hdr;
 	struct ipv6_hdr *outer_ip6hdr;
 
-	if (info->flow.proto == ETHER_TYPE_IPv4) {
+	if (flow->proto == ETHER_TYPE_IPv4) {
 		/* Allocate space for outer IPv4 header. */
-		new_eth = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv4_hdr));
-		if (new_eth == NULL) {
+		outer_ip4hdr = (struct ipv4_hdr *)rte_pktmbuf_prepend(pkt,
+			sizeof(struct ipv4_hdr) - sizeof(struct ether_hdr));
+		if (outer_ip4hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
 				"Not enough headroom space in the first segment!\n");
 			return -1;
 		}
-
-		outer_ip4hdr = (struct ipv4_hdr *)&new_eth[1];
-
-		/* Fill up the new Ethernet header. */
-		rte_memcpy(&new_eth->s_addr, &info->source_mac,
-			sizeof(new_eth->s_addr));
-		/* Fill up the destination MAC address via Gateway MAC. */
-		rte_memcpy(&new_eth->d_addr, &info->nexthop_mac,
-			sizeof(new_eth->d_addr));
-
-		new_eth->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
 
 		/* Fill up the outer IP header. */
 		outer_ip4hdr->version_ihl = IP_VHL_DEF;
@@ -61,12 +48,11 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		outer_ip4hdr->time_to_live = IP_DEFTTL;
 		outer_ip4hdr->next_proto_id = IPPROTO_IPIP;
 		/* The source address is the Gatekeeper server IP address. */
-		outer_ip4hdr->src_addr = info->flow.f.v4.src;
+		outer_ip4hdr->src_addr = flow->f.v4.src;
 		/* The destination address is the Grantor server IP address. */
-		outer_ip4hdr->dst_addr = info->flow.f.v4.dst;
+		outer_ip4hdr->dst_addr = flow->f.v4.dst;
 
-		outer_ip4hdr->total_length = rte_cpu_to_be_16(pkt->data_len
-			- sizeof(struct ether_hdr));
+		outer_ip4hdr->total_length = rte_cpu_to_be_16(pkt->data_len);
 
 		/*
 		 * The IP header checksum filed must be set to 0
@@ -74,31 +60,19 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		 */
 		outer_ip4hdr->hdr_checksum = 0;
 
-		pkt->outer_l2_len = sizeof(struct ether_hdr);
 		pkt->outer_l3_len = sizeof(struct ipv4_hdr);
 		/* Offload checksum computation for the outer IPv4 header. */
 		pkt->ol_flags |= (PKT_TX_IPV4 |
 			PKT_TX_IP_CKSUM | PKT_TX_OUTER_IPV4);
-	} else if (info->flow.proto == ETHER_TYPE_IPv6) {
+	} else if (flow->proto == ETHER_TYPE_IPv6) {
 		/* Allocate space for new IPv6 header. */
-		new_eth = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv6_hdr));
-		if (new_eth == NULL) {
+		outer_ip6hdr = (struct ipv6_hdr *)rte_pktmbuf_prepend(pkt,
+			sizeof(struct ipv6_hdr) - sizeof(struct ether_hdr));
+		if (outer_ip6hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
 				"Not enough headroom space in the first segment!\n");
 			return -1;
 		}
-
-		outer_ip6hdr = (struct ipv6_hdr *)&new_eth[1];
-
-		/* Fill up the new Ethernet header. */
-		rte_memcpy(&new_eth->s_addr, &info->source_mac,
-			sizeof(new_eth->s_addr));
-		/* Fill up the destination MAC address via Gateway MAC. */
-		rte_memcpy(&new_eth->d_addr, &info->nexthop_mac,
-			sizeof(new_eth->d_addr));
-
-		new_eth->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
 
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
@@ -106,15 +80,14 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		outer_ip6hdr->proto = IPPROTO_IPIP; 
 		outer_ip6hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
 
-		rte_memcpy(outer_ip6hdr->src_addr, info->flow.f.v6.src,
-			sizeof(info->flow.f.v6.src));
-		rte_memcpy(outer_ip6hdr->dst_addr, info->flow.f.v6.dst,
-			sizeof(info->flow.f.v6.dst));
+		rte_memcpy(outer_ip6hdr->src_addr, flow->f.v6.src,
+			sizeof(flow->f.v6.src));
+		rte_memcpy(outer_ip6hdr->dst_addr, flow->f.v6.dst,
+			sizeof(flow->f.v6.dst));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
-			- sizeof(struct ether_hdr) - sizeof(struct ipv6_hdr));
+			- sizeof(struct ipv6_hdr));
 
-		pkt->outer_l2_len = sizeof(struct ether_hdr);
 		pkt->outer_l3_len = sizeof(struct ipv6_hdr);
 	} else 
 		return -1;

@@ -117,6 +117,10 @@ struct net_config {
 
 struct gk_config {
 	unsigned int flow_ht_size;
+	unsigned int max_num_ipv4_rules;
+	unsigned int num_ipv4_tbl8s;
+	unsigned int max_num_ipv6_rules;
+	unsigned int num_ipv6_tbl8s;
 	/* This struct has hidden fields. */
 };
 

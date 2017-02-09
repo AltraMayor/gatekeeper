@@ -20,6 +20,7 @@
 #define _GATEKEEPER_NET_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <netinet/in.h>
 
 #include <rte_ethdev.h>
@@ -43,6 +44,17 @@ struct ipacket {
 	uint16_t        len;
 	/* The type of the next header, if present. */
 	uint8_t         next_hdr;
+};
+
+struct ipaddr {
+	/* The network layer protocol of the nexthop. */
+	uint16_t proto;
+
+	/* The IP address of the nexthop. */
+	union {
+		struct in_addr  v4;
+		struct in6_addr v6;
+	} ip;
 };
 
 /* Size of the secret key of the RSS hash. */
@@ -261,6 +273,18 @@ int gatekeeper_get_rss_config(uint8_t portid,
 	struct gatekeeper_rss_config *rss_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);
+
+static inline bool
+ipv4_if_configured(struct gatekeeper_if *iface)
+{
+	return !!(iface->configured_proto & GK_CONFIGURED_IPV4);
+}
+
+static inline bool
+ipv6_if_configured(struct gatekeeper_if *iface)
+{
+	return !!(iface->configured_proto & GK_CONFIGURED_IPV6);
+}
 
 /*
  * Postpone the execution of f(arg) until the Lua configuration finishes,
