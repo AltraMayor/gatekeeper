@@ -99,6 +99,17 @@ local ffi = require("ffi")
 -- Structs
 ffi.cdef[[
 
+enum bonding_modes {
+	/* Corresponding to the values in rte_eth_bond.h. */
+	BONDING_MODE_ROUND_ROBIN = 0,
+	BONDING_MODE_ACTIVE_BACKUP = 1,
+	BONDING_MODE_BALANCE = 2,
+	BONDING_MODE_BROADCAST = 3,
+	BONDING_MODE_8023AD = 4,
+	BONDING_MODE_TLB = 5,
+	BONDING_MODE_ALB = 6,
+};
+
 struct gatekeeper_if {
 	char     **pci_addrs;
 	uint8_t  num_ports;
@@ -107,6 +118,7 @@ struct gatekeeper_if {
 	uint16_t num_tx_queues;
 	uint32_t arp_cache_timeout_sec;
 	uint32_t nd_cache_timeout_sec;
+	uint32_t bonding_mode;
 	/* This struct has hidden fields. */
 };
 

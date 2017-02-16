@@ -481,6 +481,7 @@ gt_proc(void *arg)
 		uint16_t num_tx_succ;
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+		IPV6_ACL_SEARCH_DEF(acl);
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
@@ -505,30 +506,11 @@ gt_proc(void *arg)
 			 */
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
-				/*
-				 * TODO Forward all IPv6 packets that
-				 * are not encapsulated to an IPv6
-				 * block to do further processing, including
-				 * sending any ND packets to the LLS block.
-				 * For now, extract all needed packet fields
-				 * and pass it to the LLS block.
-				 */
-				struct ipacket packet;
-				ret = extract_packet_info(m, &packet);
-				if (ret < 0)
-					goto drop;
-
-				if (pkt_is_nd(&packet, &gt_conf->net->front)) {
-					/*
-					 * TODO Use DPDK packet classification
-					 * and distribution here instead.
-					 */
-					if (submit_nd(m,
-						    &gt_conf->net->front) == -1)
-						rte_pktmbuf_free(m);
+				if (pkt_info.outer_ip_ver == ETHER_TYPE_IPv6) {
+					add_pkt_ipv6_acl(&acl, m);
 					continue;
 				}
-drop:
+
 				RTE_LOG(ALERT, GATEKEEPER,
 					"gt: parsing an invalid packet!\n");
 				rte_pktmbuf_free(m);
@@ -597,6 +579,8 @@ drop:
 			for (i = num_tx_succ; i < num_tx; i++)
 				rte_pktmbuf_free(tx_bufs[i]);
 		}
+
+		process_pkts_ipv6_acl(&gt_conf->net->front, lcore, &acl);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -711,7 +695,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
-			goto out;
+			goto free_lua_state;
 		}
 		inst_ptr->rx_queue = ret;
 
@@ -719,7 +703,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
-			goto out;
+			goto free_lua_state;
 		}
 		inst_ptr->tx_queue = ret;
 
@@ -759,7 +743,7 @@ gt_stage1(void *arg)
 
 	ret = init_gt_instances(gt_conf);
 	if (ret < 0)
-		goto  instance;
+		goto instance;
 
 	goto out;
 
@@ -776,7 +760,15 @@ static int
 gt_stage2(void *arg)
 {
 	struct gt_config *gt_conf = arg;
-	return gt_setup_rss(gt_conf);
+	int ret = gt_setup_rss(gt_conf);
+	if (ret < 0)
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	cleanup_gt(gt_conf);
+	return ret;
 }
 
 int

@@ -22,10 +22,9 @@
 #include <netinet/in.h>
 
 #include <rte_ip.h>
-#include <rte_timer.h>
 
+#include "gatekeeper_acl.h"
 #include "gatekeeper_mailbox.h"
-#include "gatekeeper_net.h"
 
 /*
  * Maximum key length (in bytes) for an LLS map. It should be set
@@ -201,7 +200,7 @@ struct lls_config {
 	struct lls_cache  nd_cache;
 
 	/* Timer to scan over LLS cache(s). */
-	struct rte_timer  timer;
+	struct rte_timer  scan_timer;
 
 	/* Receive and transmit queues for both interfaces. */
 	uint16_t          rx_queue_front;
@@ -281,8 +280,9 @@ int hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be,
 	unsigned int lcore_id);
 int put_nd(struct in6_addr *ip_be, unsigned int lcore_id);
 
-/* Submit an ND packet to the LLS block. */
-int submit_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface);
+/* Submit ND packets to the LLS block. */
+int submit_nd(struct rte_mbuf **pkts, int num_pkts,
+	struct gatekeeper_if *iface);
 
 static inline int
 ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
@@ -291,9 +291,6 @@ ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
 	const uint64_t *paddr2 = (const uint64_t *)addr2;
 	return (paddr1[0] == paddr2[0]) && (paddr1[1] == paddr2[1]);
 }
-
-/* Returns whether this packet is an ND neighbor msg destined for us. */
-int pkt_is_nd(struct ipacket *packet, struct gatekeeper_if *iface);
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);

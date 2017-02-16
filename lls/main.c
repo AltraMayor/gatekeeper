@@ -21,14 +21,45 @@
 #include <rte_cycles.h>
 #include <rte_ethdev.h>
 
+#include "gatekeeper_config.h"
+#include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
 #include "arp.h"
 #include "cache.h"
-#include "gatekeeper_launch.h"
 #include "nd.h"
 
 /* Length of time (in seconds) to wait between scans of the cache. */
-#define LLS_CACHE_SCAN_INTERVAL 10
+#define LLS_CACHE_SCAN_INTERVAL_SEC 10
+
+/*
+ * When using LACP, there are two requirements:
+ * 
+ *  - For LACP to work best, RX burst size should be at least twice
+ *    the number of slaves. This is so that the interface can receive
+ *    any needed LACP messages flowing without the application's
+ *    knowledge. This is enforced with the definition of
+ *    GATEKEEPER_MAX_PKT_BURST.
+ *
+ *  - RX/TX burst functions must be invoked at least once every 100ms.
+ *    To do so, the RX burst function is called with every iteration
+ *    of the loop in lls_proc(), and lls_lacp_announce() fulfills the
+ *    TX burst requirement on a timer that runs slightly more frequently
+ *    than every 100ms, defined below.
+ */
+#define LLS_LACP_ANNOUNCE_INTERVAL_MS 99
+
+/*
+ * TODO Don't alert user of LLS transmission failures while LACP
+ * is still configuring, and warn the user if LACP is taking an
+ * unusually long time to configure (since this could mean the
+ * link partner does not have LACP configured).
+ */
+
+/*
+ * To capture both ND solicitations and advertisements being sent
+ * to any of four different IPv6 addresses, we need eight rules.
+ */
+#define NUM_ACL_ND_RULES (8)
 
 static struct lls_config lls_conf = {
 	.arp_cache = {
@@ -80,12 +111,17 @@ get_lls_conf(void)
 static int
 cleanup_lls(void)
 {
+	struct net_config *net_conf = lls_conf.net;
+	if (lacp_enabled(net_conf, &net_conf->back))
+		rte_timer_stop(&net_conf->back.lacp_timer);
+	if (lacp_enabled(net_conf, &net_conf->front))
+		rte_timer_stop(&net_conf->front.lacp_timer);
 	if (nd_enabled(&lls_conf))
 		lls_cache_destroy(&lls_conf.nd_cache);
 	if (arp_enabled(&lls_conf))
 		lls_cache_destroy(&lls_conf.arp_cache);
 	destroy_mailbox(&lls_conf.requests);
-	rte_timer_stop(&lls_conf.timer);
+	rte_timer_stop(&lls_conf.scan_timer);
 	return 0;
 }
 
@@ -170,48 +206,24 @@ put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
 }
 
 int
-submit_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+submit_nd(struct rte_mbuf **pkts, int num_pkts, struct gatekeeper_if *iface)
 {
-	if (nd_enabled(&lls_conf)) {
-		struct lls_nd_req nd_req = {
-			.pkt = pkt,
-			.iface = iface,
-		};
-		return lls_req(LLS_REQ_ND, &nd_req);
+	struct lls_nd_req nd_req = {
+		.num_pkts = num_pkts,
+		.iface = iface,
+	};
+	int ret;
+
+	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
+
+	ret = lls_req(LLS_REQ_ND, &nd_req);
+	if (unlikely(ret < 0)) {
+		int i;
+		for (i = 0; i < num_pkts; i++)
+			rte_pktmbuf_free(pkts[i]);
+		return ret;
 	}
-
-	RTE_LOG(WARNING, GATEKEEPER,
-		"lls: %s invoked but ND service is not enabled\n", __func__);
-	return -1;
-}
-
-int
-pkt_is_nd(struct ipacket *packet, struct gatekeeper_if *iface)
-{
-	struct icmpv6_hdr *icmpv6_hdr;
-
-	if (packet->len < ND_NEIGH_PKT_MIN_LEN ||
-			packet->flow.proto != ETHER_TYPE_IPv6 ||
-			packet->next_hdr != IPPROTO_ICMPV6)
-		return false;
-
-	/*
-	 * Make sure this is an ND neighbor message and that it was
-	 * sent to us (our global address, link-local address, or
-	 * either of the solicited-node multicast addresses.
-	 */
-	icmpv6_hdr = rte_pktmbuf_mtod_offset(packet->pkt, struct icmpv6_hdr *,
-		sizeof(struct ether_hdr) + sizeof(struct ipv6_hdr));
-	return (icmpv6_hdr->type == ND_NEIGHBOR_SOLICITATION ||
-			icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) &&
-		(ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ll_ip6_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ip6_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ip6_mc_addr.s6_addr) ||
-		ipv6_addrs_equal(packet->flow.f.v6.dst,
-			iface->ll_ip6_mc_addr.s6_addr));
+	return 0;
 }
 
 static void
@@ -225,12 +237,40 @@ lls_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 }
 
 static void
+lls_lacp_announce(__attribute__((unused)) struct rte_timer *timer, void *arg)
+{
+	struct gatekeeper_if *iface = (struct gatekeeper_if *)arg;
+	uint16_t tx_queue = iface == &lls_conf.net->front
+		? lls_conf.tx_queue_front
+		: lls_conf.tx_queue_back;
+	/*
+	 * This function returns 0 when no packets are transmitted or
+	 * when there's an error. Since we're asking for no packets to
+	 * be transmitted, we can't differentiate between success and
+	 * failure, so we don't check. However, if this fails repeatedly, 
+	 * the LACP bonding driver will log an error.
+	 */
+	rte_eth_tx_burst(iface->id, tx_queue, NULL, 0);
+}
+
+static inline int
+lacp_timer_reset(struct lls_config *lls_conf, struct gatekeeper_if *iface)
+{
+	return rte_timer_reset(&iface->lacp_timer,
+		(uint64_t)((LLS_LACP_ANNOUNCE_INTERVAL_MS / 1000.0) *
+			rte_get_timer_hz()), PERIODICAL,
+		lls_conf->lcore_id, lls_lacp_announce, iface);
+}
+
+static int
 process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t rx_queue, uint16_t tx_queue)
 {
 	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
 		GATEKEEPER_MAX_PKT_BURST);
+	IPV6_ACL_SEARCH_DEF(acl);
+	int num_tx = 0;
 	uint16_t i;
 
 	for (i = 0; i < num_rx; i++) {
@@ -266,6 +306,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 				goto free_buf;
 
 			/* ARP reply was sent, so no free is needed. */
+			num_tx++;
 			continue;
 		case ETHER_TYPE_IPv6:
 			if (iface == &lls_conf->net->back) {
@@ -281,19 +322,8 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 				 * packets on the back interface. For now,
 				 * just drop them.
 				 */
-				struct ipacket packet;
-				int ret = extract_packet_info(bufs[i], &packet);
-				if (ret < 0)
-					goto free_buf;
-
-				if (pkt_is_nd(&packet, iface)) {
-					if (process_nd(lls_conf, iface,
-							bufs[i]) == -1)
-						goto free_buf;
-
-					/* ND reply sent, so no free needed. */
-					continue;
-				}
+				add_pkt_ipv6_acl(&acl, bufs[i]);
+				continue;
 			}
 			/* FALLTHROUGH */
 		default:
@@ -305,6 +335,10 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 free_buf:
 		rte_pktmbuf_free(bufs[i]);
 	}
+
+	process_pkts_ipv6_acl(&lls_conf->net->back, lls_conf->lcore_id, &acl);
+
+	return num_tx;
 }
 
 static int
@@ -312,6 +346,8 @@ lls_proc(void *arg)
 {
 	struct lls_config *lls_conf = (struct lls_config *)arg;
 	struct net_config *net_conf = lls_conf->net;
+	struct gatekeeper_if *front = &net_conf->front;
+	struct gatekeeper_if *back = &net_conf->back;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"lls: the LLS block is running at lcore = %u\n",
@@ -319,12 +355,21 @@ lls_proc(void *arg)
 
 	while (likely(!exiting)) {
 		/* Read in packets on front and back interfaces. */
-		process_pkts(lls_conf, &net_conf->front,
+		int num_tx = process_pkts(lls_conf, front,
 			lls_conf->rx_queue_front, lls_conf->tx_queue_front);
-		if (net_conf->back_iface_enabled)
-			process_pkts(lls_conf, &net_conf->back,
-				lls_conf->rx_queue_back,
-				lls_conf->tx_queue_back);
+		if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
+			if (lacp_timer_reset(lls_conf, front) < 0)
+				RTE_LOG(NOTICE, TIMER, "Can't reset front LACP timer to skip cycle\n");
+		}
+
+		if (net_conf->back_iface_enabled) {
+			num_tx = process_pkts(lls_conf, back,
+			    lls_conf->rx_queue_back, lls_conf->tx_queue_back);
+			if ((num_tx > 0) && lacp_enabled(net_conf, back)) {
+				if (lacp_timer_reset(lls_conf, back) < 0)
+					RTE_LOG(NOTICE, TIMER, "Can't reset back LACP timer to skip cycle\n");
+			}
+		}
 
 		/* Process any requests. */
 		if (likely(lls_process_reqs(lls_conf) == 0)) {
@@ -337,6 +382,15 @@ lls_proc(void *arg)
 			 * happen. In fact, we may want to reduce the amount
 			 * of times this is called, since reading the HPET
 			 * timer is inefficient. See the timer application.
+			 *
+			 * Also invoke the TX burst function to fulfill
+			 * the LACP requirement.
+			 *
+			 * XXX The LACP requirement could be starved if
+			 * the LLS block receives a lot of requests but
+			 * we are unable to answer them -- i.e. the
+			 * number of requests > 0 for a sustained
+			 * period but we never invoke the TX burst.
 			 */
 			rte_timer_manage();
 		}
@@ -347,6 +401,68 @@ lls_proc(void *arg)
 		lls_conf->lcore_id);
 
 	return cleanup_lls();
+}
+
+static void
+fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
+{
+	uint32_t *ptr32 = (uint32_t *)addr;
+	int i;
+
+	RTE_VERIFY(nd_type == ND_NEIGHBOR_SOLICITATION ||
+		nd_type == ND_NEIGHBOR_ADVERTISEMENT);
+
+	rule->data.category_mask = 0x1;
+	rule->data.priority = 1;
+	/* Userdata is filled in in register_ipv6_acl(). */
+
+	rule->field[PROTO_FIELD_IPV6].value.u8 = IPPROTO_ICMPV6;
+	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
+
+	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
+		rule->field[i].value.u32 = rte_be_to_cpu_32(*ptr32);
+		rule->field[i].mask_range.u32 = 32;
+		ptr32++;
+	}
+
+	rule->field[TYPE_FIELD_ICMPV6].value.u32 = (nd_type << 24) & 0xFF000000;
+	rule->field[TYPE_FIELD_ICMPV6].mask_range.u32 = 0xFF000000;
+}
+
+static int
+register_nd_acl_rules(struct gatekeeper_if *iface)
+{
+	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	int ret;
+
+	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[1], &iface->ll_ip6_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[2], &iface->ip6_mc_addr,
+		ND_NEIGHBOR_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
+		ND_NEIGHBOR_SOLICITATION);
+
+	fill_nd_rule(&ipv6_rules[4], &iface->ip6_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[5], &iface->ll_ip6_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[6], &iface->ip6_mc_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
+		ND_NEIGHBOR_ADVERTISEMENT);
+
+	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
+		submit_nd, iface);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"lls: could not register ND IPv6 ACL on %s iface\n",
+			iface->name);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int
@@ -413,17 +529,15 @@ lls_stage2(void *arg)
 			return ret;
 	}
 
-	/*
-	 * Receive ND packets on the front interface from the
-	 * GK and GT blocks, depending on whether we're running
-	 * Gatekeeper or Grantor.
-	 */
+	/* Receive ND packets using IPv6 ACL filters. */
 
-	/*
-	 * TODO Have a different block set up RSS on the back interface,
-	 * and classify + distribute ND packets to the LLS block using
-	 * the DPDK libraries.
-	 */
+	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
+		ret = register_nd_acl_rules(&net_conf->front);
+		if (ret < 0)
+			return ret;
+	}
+
+	/* TODO Have a different block set up RSS on the back interface. */
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
 		uint8_t port_in = net_conf->back.id;
 		uint16_t lls_queue = lls_conf->rx_queue_back;
@@ -433,6 +547,10 @@ lls_stage2(void *arg)
 			return ret;
 
 		ret = gatekeeper_get_rss_config(port_in, &lls_conf->rss_conf);
+		if (ret < 0)
+			return ret;
+
+		ret = register_nd_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}
@@ -462,10 +580,10 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 	if (ret < 0)
 		goto stage2;
 
-	/* Do LLS cache scan every LLS_CACHE_SCAN_INTERVAL seconds. */
-	rte_timer_init(&lls_conf->timer);
-	ret = rte_timer_reset(&lls_conf->timer,
-		LLS_CACHE_SCAN_INTERVAL * rte_get_timer_hz(), PERIODICAL,
+	/* Do LLS cache scan every LLS_CACHE_SCAN_INTERVAL_SEC seconds. */
+	rte_timer_init(&lls_conf->scan_timer);
+	ret = rte_timer_reset(&lls_conf->scan_timer,
+		LLS_CACHE_SCAN_INTERVAL_SEC * rte_get_timer_hz(), PERIODICAL,
 		lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, TIMER, "Cannot set LLS scan timer\n");
@@ -516,15 +634,40 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 				lls_conf->net->back.nd_cache_timeout_sec;
 	}
 
-	return 0;
+	/* Set per-interface LACP timers, if needed. */
+	if (lacp_enabled(net_conf, &net_conf->front)) {
+		rte_timer_init(&net_conf->front.lacp_timer);
+		ret = lacp_timer_reset(lls_conf, &net_conf->front);
+		if (ret < 0) {
+			RTE_LOG(ERR, TIMER,
+				"Cannot set LACP timer on front interface\n");
+			goto nd;
+		}
+	}
+	if (lacp_enabled(net_conf, &net_conf->back)) {
+		rte_timer_init(&net_conf->back.lacp_timer);
+		ret = lacp_timer_reset(lls_conf, &net_conf->back);
+		if (ret < 0) {
+			RTE_LOG(ERR, TIMER,
+				"Cannot set LACP timer on back interface\n");
+			goto lacp;
+		}
+	}
 
+	return 0;
+lacp:
+	if (lacp_enabled(net_conf, &net_conf->front))
+		rte_timer_stop(&net_conf->front.lacp_timer);
+nd:
+	if (nd_enabled(lls_conf))
+		lls_cache_destroy(&lls_conf->nd_cache);
 arp:
 	if (arp_enabled(lls_conf))
 		lls_cache_destroy(&lls_conf->arp_cache);
 requests:
 	destroy_mailbox(&lls_conf->requests);
 timer:
-	rte_timer_stop(&lls_conf->timer);
+	rte_timer_stop(&lls_conf->scan_timer);
 stage3:
 	pop_n_at_stage3(1);
 stage2:

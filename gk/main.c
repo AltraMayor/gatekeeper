@@ -51,6 +51,14 @@
 /* XXX Sample parameters, need to be tested for better performance. */
 #define GK_CMD_BURST_SIZE        (32)
 
+/* Store information about a packet. */
+struct ipacket {
+	/* Flow identifier for this packet. */
+	struct ip_flow  flow;
+	/* Pointer to the packet itself. */
+	struct rte_mbuf *pkt;
+};
+
 struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
@@ -177,6 +185,71 @@ look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
 		__func__, flow->proto);
 
 	return NULL; /* Unreachable. */
+}
+
+static int
+extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
+{
+	int ret = 0;
+	uint16_t ether_type;
+	struct ether_hdr *eth_hdr;
+	struct ipv4_hdr *ip4_hdr;
+	struct ipv6_hdr *ip6_hdr;
+	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
+
+	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+
+	switch (ether_type) {
+	case ETHER_TYPE_IPv4:
+		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip4_hdr)) {
+			packet->flow.proto = 0;
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"gk: packet is too short to be IPv4 (%" PRIu16 ")!\n",
+				pkt_len);
+			ret = -1;
+			goto out;
+		}
+
+		ip4_hdr = rte_pktmbuf_mtod_offset(pkt,
+					struct ipv4_hdr *,
+					sizeof(struct ether_hdr));
+		packet->flow.proto = ETHER_TYPE_IPv4;
+		packet->flow.f.v4.src = ip4_hdr->src_addr;
+		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
+		break;
+
+	case ETHER_TYPE_IPv6:
+		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip6_hdr)) {
+			packet->flow.proto = 0;
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"gk: packet is too short to be IPv6 (%" PRIu16 ")!\n",
+				pkt_len);
+			ret = -1;
+			goto out;
+		}
+
+		ip6_hdr = rte_pktmbuf_mtod_offset(pkt,
+					struct ipv6_hdr *,
+					sizeof(struct ether_hdr));
+		packet->flow.proto = ETHER_TYPE_IPv6;
+		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
+			sizeof(packet->flow.f.v6.src));
+		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
+			sizeof(packet->flow.f.v6.dst));
+		break;
+
+	default:
+		packet->flow.proto = 0;
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"gk: unknown network layer protocol %" PRIu16 "!\n",
+			ether_type);
+		ret = -1;
+		break;
+	}
+out:
+	packet->pkt = pkt;
+	return ret;
 }
 
 static inline void
@@ -652,6 +725,7 @@ gk_proc(void *arg)
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct gk_cmd_entry *gk_cmds[GK_CMD_BURST_SIZE];
+		IPV6_ACL_SEARCH_DEF(acl);
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port_in, rx_queue, rx_bufs,
@@ -673,14 +747,6 @@ gk_proc(void *arg)
 			if (ret < 0) {
 				/* Drop non-IP packets. */
 				drop_packet(pkt);
-				continue;
-			} else if (pkt_is_nd(&packet, &gk_conf->net->front)) {
-				/*
-				 * TODO Use DPDK packet classification
-				 * and distribution here instead.
-				 */
-				if (submit_nd(pkt, &gk_conf->net->front) == -1)
-					drop_packet(pkt);
 				continue;
 			}
 
@@ -709,9 +775,14 @@ gk_proc(void *arg)
 				 * drop the packet.
 				 */
 				if (fib == NULL) {
-					print_flow_err_msg(&packet.flow,
-						"gk: failed to get the fib entry");
-					drop_packet(pkt);
+					if (packet.flow.proto ==
+							ETHER_TYPE_IPv6)
+						add_pkt_ipv6_acl(&acl, pkt);
+					else {
+						print_flow_err_msg(&packet.flow,
+							"gk: failed to get the fib entry");
+						drop_packet(pkt);
+					}
 					continue;
 				}
 
@@ -807,6 +878,8 @@ gk_proc(void *arg)
 			process_gk_cmd(gk_cmds[i], instance, &gk_conf->lpm_tbl);
 			mb_free_entry(&instance->mb, gk_cmds[i]);
         	}
+
+		process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -834,11 +907,11 @@ cleanup_gk(struct gk_config *gk_conf)
 	int i;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
-		if (gk_conf->instances[i].ip_flow_hash_table)
+		if (gk_conf->instances[i].ip_flow_hash_table != NULL)
 			rte_hash_free(gk_conf->instances[i].
 				ip_flow_hash_table);
 
-		if (gk_conf->instances[i].ip_flow_entry_table)
+		if (gk_conf->instances[i].ip_flow_entry_table != NULL)
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
 
@@ -923,7 +996,7 @@ gk_stage1(void *arg)
 	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
 		sizeof(struct gk_instance), 0);
 	if (gk_conf->instances == NULL)
-		return -1;
+		goto cleanup;
 
 	/*
 	 * Set up the GK LPM table. We assume that
@@ -946,7 +1019,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->rx_queue_front = ret;
 
@@ -954,7 +1027,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->tx_queue_back = ret;
 
@@ -964,19 +1037,31 @@ gk_stage1(void *arg)
 			RTE_LOG(ERR, GATEKEEPER,
 				"gk: failed to setup gk instances for GK block at lcore %u\n",
 				lcore);
-			gk_conf_put(gk_conf);
-			return -1;
+			goto cleanup;
 		}
 	}
 
 	return 0;
+
+cleanup:
+	cleanup_gk(gk_conf);
+	return -1;
 }
 
 static int
 gk_stage2(void *arg)
 {
 	struct gk_config *gk_conf = arg;
-	return gk_setup_rss(gk_conf);
+
+	int ret = gk_setup_rss(gk_conf);
+	if (ret < 0)
+		goto cleanup;
+
+	return 0;
+
+cleanup:
+	cleanup_gk(gk_conf);
+	return ret;
 }
 
 /*

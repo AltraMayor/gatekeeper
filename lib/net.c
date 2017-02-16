@@ -29,6 +29,7 @@
 #include <rte_eth_bond.h>
 #include <rte_malloc.h>
 
+#include "gatekeeper_acl.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_config.h"
@@ -82,73 +83,6 @@ static struct rte_eth_conf gatekeeper_port_conf = {
 		},
 	},
 };
-
-int
-extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
-{
-	int ret = 0;
-	uint16_t ether_type;
-	struct ether_hdr *eth_hdr;
-	struct ipv4_hdr *ip4_hdr;
-	struct ipv6_hdr *ip6_hdr;
-
-	packet->len = rte_pktmbuf_data_len(pkt);
-	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
-
-	switch (ether_type) {
-	case ETHER_TYPE_IPv4:
-		if (packet->len < sizeof(*eth_hdr) + sizeof(*ip4_hdr)) {
-			packet->flow.proto = 0;
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"net: packet is too short to be IPv4 (%" PRIu16 ")!\n",
-				packet->len);
-			ret = -1;
-			goto out;
-		}
-
-		ip4_hdr = rte_pktmbuf_mtod_offset(pkt,
-					struct ipv4_hdr *,
-					sizeof(struct ether_hdr));
-		packet->flow.proto = ETHER_TYPE_IPv4;
-		packet->flow.f.v4.src = ip4_hdr->src_addr;
-		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
-		packet->next_hdr = ip4_hdr->next_proto_id;
-		break;
-
-	case ETHER_TYPE_IPv6:
-		if (packet->len < sizeof(*eth_hdr) + sizeof(*ip6_hdr)) {
-			packet->flow.proto = 0;
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"net: packet is too short to be IPv6 (%" PRIu16 ")!\n",
-				packet->len);
-			ret = -1;
-			goto out;
-		}
-
-		ip6_hdr = rte_pktmbuf_mtod_offset(pkt,
-					struct ipv6_hdr *,
-					sizeof(struct ether_hdr));
-		packet->flow.proto = ETHER_TYPE_IPv6;
-		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
-			sizeof(packet->flow.f.v6.src));
-		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
-			sizeof(packet->flow.f.v6.dst));
-		packet->next_hdr = ip6_hdr->proto;
-		break;
-
-	default:
-		packet->flow.proto = 0;
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"net: unknown network layer protocol %" PRIu16 "!\n",
-			ether_type);
-		ret = -1;
-		break;
-	}
-out:
-	packet->pkt = pkt;
-	return ret;
-}
 
 /*
  * @ether_type should be passed in host ordering, but is converted
@@ -417,7 +351,8 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	}
 
 	/* If there's a bonded port, configure it too. */
-	if (iface->num_ports > 1) {
+	if (iface->num_ports > 1 ||
+			iface->bonding_mode == BONDING_MODE_8023AD) {
 		ret = configure_queue(iface->id, (uint16_t)new_queue_id,
 			ty, numa_node, mp);
 		if (ret < 0)
@@ -472,13 +407,18 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 		stop_iface_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_INIT:
+		/* Destroy the IPv6 ACL for each socket. */
+		if (ipv6_if_configured(iface))
+			destroy_ipv6_acls(iface);
 		/* Remove any slave ports added to a bonded port. */
-		if (iface->num_ports > 1)
+		if (iface->num_ports > 1 ||
+				iface->bonding_mode == BONDING_MODE_8023AD)
 			rm_slave_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_PORTS:
 		/* Stop and close bonded port, if needed. */
-		if (iface->num_ports > 1)
+		if (iface->num_ports > 1 ||
+				iface->bonding_mode == BONDING_MODE_8023AD)
 			rte_eth_bond_free(iface->name);
 
 		/* Close and free interface ports. */
@@ -861,6 +801,14 @@ init_iface(struct gatekeeper_if *iface)
 	uint8_t num_succ_ports = 0;
 	uint8_t num_slaves_added = 0;
 
+	if (iface->bonding_mode == BONDING_MODE_8023AD &&
+			GATEKEEPER_MAX_PKT_BURST < 2 * iface->num_ports) {
+		RTE_LOG(ERR, GATEKEEPER, "The %s interface is configured for LACP, but Gatekeeper must support packet bursts of at least twice the number of slaves (%d)\n",
+			iface->name, 2 * iface->num_ports);
+		destroy_iface(iface, IFACE_DESTROY_LUA);
+		return -1;
+	}
+
 	/* Initialize all potential queues on this interface. */
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		iface->rx_queues[i] = GATEKEEPER_QUEUE_UNALLOCATED;
@@ -906,12 +854,10 @@ init_iface(struct gatekeeper_if *iface)
 	}
 
 	/* Initialize bonded port, if needed. */
-	if (iface->num_ports == 1)
+	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
 		iface->id = iface->ports[0];
 	else {
-		/* TODO Also allow LACP to be used. */
-		ret = rte_eth_bond_create(iface->name,
-			BONDING_MODE_ROUND_ROBIN, 0);
+		ret = rte_eth_bond_create(iface->name, iface->bonding_mode, 0);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
 				"Failed to create bonded port (err=%d)!\n",
@@ -934,6 +880,12 @@ init_iface(struct gatekeeper_if *iface)
 		}
 
 		ret = init_port(iface, iface->id, NULL);
+		if (ret < 0)
+			goto close_ports;
+	}
+
+	if (ipv6_if_configured(iface)) {
+		ret = init_ipv6_acls(iface);
 		if (ret < 0)
 			goto close_ports;
 	}
@@ -1086,7 +1038,7 @@ start_iface(struct gatekeeper_if *iface)
 	}
 
 	/* If there's no bonded port, we're done. */
-	if (iface->num_ports == 1)
+	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
 		goto out;
 
 	ret = start_port(iface->id, NULL, true);
@@ -1140,6 +1092,22 @@ destroy_front:
 fail:
 	RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network!\n");
 	return ret;
+}
+
+int
+finalize_stage2(__attribute__((unused)) void *arg)
+{
+	if (ipv6_if_configured(&config.front)) {
+		int ret = build_ipv6_acls(&config.front);
+		if (ret < 0)
+			return ret;
+	}
+	if (ipv6_if_configured(&config.back)) {
+		int ret = build_ipv6_acls(&config.back);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
 }
 
 /* Initialize the network. */

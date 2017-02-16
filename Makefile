@@ -45,7 +45,7 @@ SRCS-y += rt/main.c
 
 # Libraries.
 SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
-	lib/luajit-ffi-cdata.c lib/launch.c lib/lpm.c
+	lib/luajit-ffi-cdata.c lib/launch.c lib/lpm.c lib/acl.c
 
 LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm
 CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.0/

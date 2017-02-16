@@ -160,6 +160,16 @@ main(int argc, char **argv)
 		goto net;
 	}
 
+	/*
+	 * Finalize any network configuration, such as building ACL tries,
+	 * after blocks have had a chance to make use of network state
+	 * during stage 2. This is needed because there is no stage 3 for
+	 * the network configuration.
+	 */
+	ret = launch_at_stage2(finalize_stage2, NULL);
+	if (ret < 0)
+		goto net;
+
 	ret = launch_gatekeeper();
 	if (ret < 0)
 		exiting = true;
