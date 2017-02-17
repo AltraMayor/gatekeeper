@@ -45,17 +45,29 @@ enum gk_fib_action {
 	/* Forward the packet to the corresponding Grantor. */
 	GK_FWD_GRANTOR,
 
-	/* Forward the packet to the corresponding gateway. */
-	GK_FWD_GATEWAY,
+	/*
+	 * Forward the packet to the corresponding gateway
+	 * in the front network.
+	 */
+	GK_FWD_GATEWAY_FRONT_NET,
 
 	/*
-	 * The destination address is a neighbor.
+	 * Forward the packet to the corresponding gateway
+	 * in the back network.
+	 */
+	GK_FWD_GATEWAY_BACK_NET,
+
+	/*
+	 * The destination address is a neighbor in the front network.
 	 * Forward the packet to the destination directly.
 	 */
-	GK_FWD_NEIGHBOR,
+	GK_FWD_NEIGHBOR_FRONT_NET,
 
-	/* Forward the packet to the back interface. */
-	GK_FWD_BACK_NET,
+	/*
+	 * The destination address is a neighbor in the back network.
+	 * Forward the packet to the destination directly.
+	 */
+	GK_FWD_NEIGHBOR_BACK_NET,
 
 	/* Drop the packet. */
 	GK_DROP,
@@ -72,16 +84,23 @@ struct ether_cache {
 
 	/* The whole Ethernet header. */
 	struct ether_hdr eth_hdr;
+
+	/*
+	 * The count of how many times the LPM tables refer to it,
+	 * so a neighbor entry can go away only when no one referring to it.
+	 */
+	uint32_t ref_cnt;
 };
 
-/* The nexthop information. */
-struct gk_nexthop {
+struct neighbor_hash_table {
+	/* The hash table size. */
+	int tbl_size;
 
-	/* The IP address of the nexthop. */
-	struct ipaddr ip_addr;
+	/* The tables that store the Ethernet headers. */
+	struct ether_cache *cache_tbl;
 
-	/* The cached Ethernet header. */
-	struct ether_cache eth_cache;
+	/* TODO Use a spin lock to edit the hash table. */
+	struct rte_hash *hash_table;
 };
 
 /* The gk forward information base (fib). */
@@ -98,9 +117,16 @@ struct gk_fib {
 
 	union {
 		/*
-	 	 * The nexthop information when the action is GK_FWD_GATEWAY.
+	 	 * The nexthop information when the action is
+		 * GK_FWD_GATEWAY_*_NET.
 	 	 */
-		struct gk_nexthop nexthop;
+		struct {
+			/* The IP address of the nexthop. */
+			struct ipaddr ip_addr;
+
+			/* The cached Ethernet header. */
+			struct ether_cache *eth_cache;
+		} gateway;
 
 		struct {
 			/*
@@ -118,10 +144,19 @@ struct gk_fib {
 
 			/*
 			 * Cache the whole Ethernet header when the @next_fib
-			 * action is GK_FWD_NEIGHBOR.
+			 * action is GK_FWD_NEIGHBOR_*_NET.
 			 */
-			struct ether_cache eth_cache;
+			struct ether_cache *eth_cache;
 		} grantor;
+
+		/*
+		 * When the action is GK_FWD_NEIGHBOR_*_NET, it stores all
+		 * the neighbors' Ethernet headers in a hash table.
+		 * The entries can be accessed according to its IP address.
+		 */
+		struct neighbor_hash_table neigh;
+
+		struct neighbor_hash_table neigh6;
 	} u;
 };
 
@@ -152,6 +187,10 @@ struct gk_instance {
 	struct flow_entry *ip_flow_entry_table;
 	/* RX queue on the front interface. */
 	uint16_t          rx_queue_front;
+	/* TX queue on the front interface. */
+	uint16_t          tx_queue_front;
+	/* RX queue on the back interface. */
+	uint16_t          rx_queue_back;
 	/* TX queue on the back interface. */
 	uint16_t          tx_queue_back;
 	struct mailbox    mb;
@@ -200,7 +239,12 @@ struct gk_config {
 	 * LPM table is maintained.
 	 */
 	struct gk_lpm      lpm_tbl;
-	struct gatekeeper_rss_config rss_conf;
+
+	/* The RSS configuration for the front interface. */
+	struct gatekeeper_rss_config rss_conf_front;
+
+	/* The RSS configuration for the back interface. */
+	struct gatekeeper_rss_config rss_conf_back;
 };
 
 /* Define the possible command operations for GK block. */

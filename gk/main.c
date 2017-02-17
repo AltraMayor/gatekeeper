@@ -679,36 +679,426 @@ static int
 gk_setup_rss(struct gk_config *gk_conf)
 {
 	int i, ret = 0;
-	uint8_t port_in = gk_conf->net->front.id;
-	uint16_t gk_queues[gk_conf->num_lcores];
+	uint8_t port_front = gk_conf->net->front.id;
+	uint16_t gk_queues_front[gk_conf->num_lcores];
+	uint8_t port_back = gk_conf->net->back.id;
+	uint16_t gk_queues_back[gk_conf->num_lcores];
 
-	for (i = 0; i < gk_conf->num_lcores; i++)
-		gk_queues[i] = gk_conf->instances[i].rx_queue_front;
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		gk_queues_front[i] = gk_conf->instances[i].rx_queue_front;
+		gk_queues_back[i] = gk_conf->instances[i].rx_queue_back;
+	}
 
-	ret = gatekeeper_setup_rss(port_in, gk_queues, gk_conf->num_lcores);
+	ret = gatekeeper_setup_rss(
+		port_front, gk_queues_front, gk_conf->num_lcores);
 	if (ret < 0)
-		return ret;
+		goto out;
 
-	ret = gatekeeper_get_rss_config(port_in, &gk_conf->rss_conf);
+	ret = gatekeeper_get_rss_config(
+		port_front, &gk_conf->rss_conf_front);
+	if (ret < 0)
+		goto out;
 
+	ret = gatekeeper_setup_rss(
+		port_back, gk_queues_back, gk_conf->num_lcores);
+	if (ret < 0)
+		goto out;
+
+	ret = gatekeeper_get_rss_config(
+		port_back, &gk_conf->rss_conf_back);
+	if (ret < 0)
+		goto out;
+
+	ret = 0;
+
+out:
 	return ret;
+}
+
+/* TODO Customize the hash function for IPv4. */
+
+static inline struct ether_cache *
+lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)
+{
+	int ret = rte_hash_lookup(neigh_tbl->hash_table, key);
+
+	if (ret < 0)
+		return NULL;
+
+	return &neigh_tbl->cache_tbl[ret];
+}
+
+/* Process the packets on the front interface. */
+static void
+process_pkts_front(uint8_t port_front, uint8_t port_back,
+	uint16_t rx_queue_front, uint16_t tx_queue_back,
+	unsigned int lcore, struct gk_instance *instance,
+	struct gk_config *gk_conf)
+{
+	/* Get burst of RX packets, from first port of pair. */
+	int i;
+	int ret;
+	uint16_t num_rx;
+	uint16_t num_tx = 0;
+	uint16_t num_tx_succ;
+	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	IPV6_ACL_SEARCH_DEF(acl);
+
+	/* Load a set of packets from the front NIC. */
+	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
+		GATEKEEPER_MAX_PKT_BURST);
+
+	if (unlikely(num_rx == 0))
+		return;
+
+	for (i = 0; i < num_rx; i++) {
+		struct ipacket packet;
+		/*
+		 * Pointer to the flow entry in request state 
+		 * under evaluation.
+		 */
+		struct flow_entry *fe;
+		struct rte_mbuf *pkt = rx_bufs[i];
+
+		ret = extract_packet_info(pkt, &packet);
+		if (ret < 0) {
+			/* Drop non-IP packets. */
+			drop_packet(pkt);
+			continue;
+		}
+
+		/* 
+		 * Find the flow entry for the IP pair.
+		 *
+		 * If the pair of source and destination addresses 
+		 * is in the flow table, proceed as the entry instructs,
+		 * and go to the next packet.
+		 */
+		ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
+			&packet.flow, pkt->hash.rss);
+		if (ret >= 0)
+			fe = &instance->ip_flow_entry_table[ret];
+		else {
+			/*
+			 * Otherwise, look up the destination address
+		 	 * in the global LPM table.
+			 */
+			struct gk_fib *fib = look_up_fib(
+				&gk_conf->lpm_tbl, &packet.flow);
+			struct ether_cache *eth_cache;
+			struct ether_hdr *eth_hdr;
+
+		 	/* No entry for the destination, drop the packet. */
+			if (fib == NULL) {
+				if (packet.flow.proto == ETHER_TYPE_IPv6)
+					add_pkt_ipv6_acl(&acl, pkt);
+				else {
+					print_flow_err_msg(&packet.flow,
+						"gk: failed to get the fib entry");
+					drop_packet(pkt);
+				}
+				continue;
+			}
+
+			switch (fib->action) {
+			case GK_FWD_GRANTOR:
+				/*
+				 * The entry instructs to enforce
+				 * policies over its packets,
+			 	 * initialize an entry in the
+				 * flow table, proceed as the
+				 * brand-new entry instructs, and
+			 	 * go to the next packet.
+			 	 */
+				ret = rte_hash_add_key_with_hash(
+					instance->ip_flow_hash_table,
+ 					&packet.flow, pkt->hash.rss);
+				if (ret < 0) {
+					RTE_LOG(ERR, HASH,
+						"The GK block failed to add new key to hash table!\n");
+					drop_packet(pkt);
+					continue;
+				}
+
+				fe = &instance->ip_flow_entry_table[ret];
+				initialize_flow_entry(fe, &packet.flow, fib);
+				break;
+
+			case GK_FWD_GATEWAY_BACK_NET: {
+			 	/*
+				 * The entry instructs to forward
+				 * its packets to the gateway in
+				 * the back network, forward accordingly.
+				 *
+				 * BP block bypasses from the front to the
+				 * back interface are expected to bypass
+				 * ranges of IP addresses that should not
+				 * go through Gatekeeper.
+				 *
+				 * Notice that one needs to update
+				 * the Ethernet header.
+				 *
+				 * TODO Add sequential lock to deal with the
+				 * concurrency between GK and LLS on the cached
+				 * Ethernet header.
+				 */
+				eth_cache = fib->u.gateway.eth_cache;
+				if (eth_cache == NULL || eth_cache->stale) {
+					drop_packet(pkt);
+					continue;
+				}
+
+				eth_hdr = rte_pktmbuf_mtod(
+					pkt, struct ether_hdr *);
+				rte_memcpy(eth_hdr,
+					&eth_cache->eth_hdr, sizeof(*eth_hdr));
+				tx_bufs[num_tx++] = pkt;
+				continue;
+			}
+
+			case GK_FWD_NEIGHBOR_BACK_NET: {
+				/*
+				 * The entry instructs to forward
+				 * its packets to the neighbor in
+				 * the back network, forward accordingly.
+				 */
+				if (packet.flow.proto == ETHER_TYPE_IPv4) {
+					eth_cache = lookup_ether_cache(
+						&fib->u.neigh,
+						&packet.flow.f.v4.dst);
+				} else {
+					eth_cache = lookup_ether_cache(
+						&fib->u.neigh6,
+						packet.flow.f.v6.dst);
+				}
+
+				if (eth_cache == NULL || eth_cache->stale) {
+					drop_packet(pkt);
+					continue;
+				}
+
+				eth_hdr = rte_pktmbuf_mtod(
+					pkt, struct ether_hdr *);
+				rte_memcpy(eth_hdr,
+					&eth_cache->eth_hdr, sizeof(*eth_hdr));
+				tx_bufs[num_tx++] = pkt;
+				continue;
+			}
+
+			case GK_DROP:
+				/* FALLTHROUGH */
+			default:
+				drop_packet(pkt);
+				continue;
+			}
+		}
+
+		switch (fe->state) {
+		case GK_REQUEST:
+			ret = gk_process_request(fe, &packet);
+			break;
+
+		case GK_GRANTED:
+			ret = gk_process_granted(fe, &packet);
+			break;
+
+		case GK_DECLINED:
+			ret = gk_process_declined(fe, &packet);
+			break;
+
+		default:
+			ret = -1;
+			/* XXX Incorrect state, log warning. */
+			RTE_LOG(ERR, GATEKEEPER,
+				"gk: unknown flow state!\n");
+			break;
+		}
+
+		if (ret < 0)
+			rte_pktmbuf_free(pkt);
+		else
+			tx_bufs[num_tx++] = pkt;
+	}
+
+	/* Send burst of TX packets, to second port of pair. */
+	num_tx_succ = rte_eth_tx_burst(port_back, tx_queue_back,
+		tx_bufs, num_tx);
+
+	/* XXX Do something better here! For now, free any unsent packets. */
+	if (unlikely(num_tx_succ < num_tx)) {
+		for (i = num_tx_succ; i < num_tx; i++)
+			rte_pktmbuf_free(tx_bufs[i]);
+	}
+
+	process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
+}
+
+/* Process the packets on the back interface. */
+static void
+process_pkts_back(uint8_t port_back, uint8_t port_front,
+	uint16_t rx_queue_back, uint16_t tx_queue_front,
+	unsigned int lcore, struct gk_config *gk_conf)
+{
+	/* Get burst of RX packets, from first port of pair. */
+	int i;
+	int ret;
+	uint16_t num_rx;
+	uint16_t num_tx = 0;
+	uint16_t num_tx_succ;
+	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	IPV6_ACL_SEARCH_DEF(acl);
+
+	/* Load a set of packets from the back NIC. */
+	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
+		GATEKEEPER_MAX_PKT_BURST);
+
+	if (unlikely(num_rx == 0))
+		return;
+
+	for (i = 0; i < num_rx; i++) {
+		struct ipacket packet;
+		struct gk_fib *fib;
+		struct rte_mbuf *pkt = rx_bufs[i];
+		struct ether_cache *eth_cache;
+		struct ether_hdr *eth_hdr;
+
+		ret = extract_packet_info(pkt, &packet);
+		if (ret < 0) {
+			/* Drop non-IP packets. */
+			drop_packet(pkt);
+			continue;
+		}
+
+		fib = look_up_fib(&gk_conf->lpm_tbl, &packet.flow);
+
+		 /* No entry for the destination, drop the packet. */
+		if (fib == NULL) {
+			if (packet.flow.proto == ETHER_TYPE_IPv6)
+				add_pkt_ipv6_acl(&acl, pkt);
+			else {
+				print_flow_err_msg(&packet.flow,
+					"gk: failed to get the fib entry");
+				drop_packet(pkt);
+			}
+			continue;
+		}
+
+		switch (fib->action) {
+		case GK_FWD_GATEWAY_FRONT_NET: {
+			/*
+			 * The entry instructs to forward
+			 * its packets to the gateway in
+			 * the front network, forward accordingly.
+			 *
+			 * BP bypasses from the back to the front interface
+			 * are expected to bypass the outgoing traffic
+			 * from the AS to its peers.
+			 *
+			 * Notice that one needs to update
+			 * the Ethernet header.
+			 *
+			 * TODO Add sequential lock to deal with the
+			 * concurrency between GK and LLS on the cached
+			 * Ethernet header.
+			 */
+			eth_cache = fib->u.gateway.eth_cache;
+			if (eth_cache == NULL || eth_cache->stale) {
+				drop_packet(pkt);
+				continue;
+			}
+
+			eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+			rte_memcpy(eth_hdr,
+				&eth_cache->eth_hdr, sizeof(*eth_hdr));
+			tx_bufs[num_tx++] = pkt;
+			continue;
+		}
+
+		case GK_FWD_NEIGHBOR_FRONT_NET: {
+			/*
+		 	 * The entry instructs to forward
+			 * its packets to the neighbor in
+			 * the front network, forward accordingly.
+			 */
+			if (packet.flow.proto == ETHER_TYPE_IPv4) {
+				eth_cache = lookup_ether_cache(
+					&fib->u.neigh,
+					&packet.flow.f.v4.dst);
+			} else {
+				eth_cache = lookup_ether_cache(
+					&fib->u.neigh6,
+					packet.flow.f.v6.dst);
+			}
+
+			if (eth_cache == NULL || eth_cache->stale) {
+				drop_packet(pkt);
+				continue;
+			}
+
+			eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+			rte_memcpy(eth_hdr,
+				&eth_cache->eth_hdr, sizeof(*eth_hdr));
+			tx_bufs[num_tx++] = pkt;
+			continue;
+		}
+
+		default:
+			/* All other actions should log a warning. */
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gk: the fib entry has an unexpected action %u at %s!\n",
+				fib->action, __func__);
+			drop_packet(pkt);
+			continue;
+		}
+	}
+
+	/* Send burst of TX packets, to second port of pair. */
+	num_tx_succ = rte_eth_tx_burst(port_front, tx_queue_front,
+		tx_bufs, num_tx);
+
+	/* XXX Do something better here! For now, free any unsent packets. */
+	if (unlikely(num_tx_succ < num_tx)) {
+		for (i = num_tx_succ; i < num_tx; i++)
+			rte_pktmbuf_free(tx_bufs[i]);
+	}
+
+	process_pkts_ipv6_acl(&gk_conf->net->back, lcore, &acl);
+}
+
+static void
+process_cmds_from_mailbox(
+	struct gk_instance *instance, struct gk_config *gk_conf)
+{
+	int i;
+	int num_cmd;
+	struct gk_cmd_entry *gk_cmds[GK_CMD_BURST_SIZE];
+
+	/* Load a set of commands from its mailbox ring. */
+        num_cmd = mb_dequeue_burst(&instance->mb,
+               	(void **)gk_cmds, GK_CMD_BURST_SIZE);
+
+        for (i = 0; i < num_cmd; i++) {
+		process_gk_cmd(gk_cmds[i], instance, &gk_conf->lpm_tbl);
+		mb_free_entry(&instance->mb, gk_cmds[i]);
+        }
 }
 
 static int
 gk_proc(void *arg)
 {
-	/* TODO Implement the basic algorithm of a GK block. */
-
-	int ret;
 	unsigned int lcore = rte_lcore_id();
 	struct gk_config *gk_conf = (struct gk_config *)arg;
 	unsigned int block_idx = get_block_idx(gk_conf, lcore);
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 
-	uint8_t port_in = get_net_conf()->front.id;
-	uint8_t port_out = get_net_conf()->back.id;
-	uint16_t rx_queue = instance->rx_queue_front;
-	uint16_t tx_queue = instance->tx_queue_back;
+	uint8_t port_front = get_net_conf()->front.id;
+	uint8_t port_back = get_net_conf()->back.id;
+	uint16_t rx_queue_front = instance->rx_queue_front;
+	uint16_t tx_queue_front = instance->tx_queue_front;
+	uint16_t rx_queue_back = instance->rx_queue_back;
+	uint16_t tx_queue_back = instance->tx_queue_back;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gk: the GK block is running at lcore = %u\n", lcore);
@@ -716,170 +1106,15 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
-		/* Get burst of RX packets, from first port of pair. */
-		int i;
-		int num_cmd;
-		uint16_t num_rx;
-		uint16_t num_tx = 0;
-		uint16_t num_tx_succ;
-		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct gk_cmd_entry *gk_cmds[GK_CMD_BURST_SIZE];
-		IPV6_ACL_SEARCH_DEF(acl);
+		process_pkts_front(port_front, port_back,
+			rx_queue_front, tx_queue_back,
+			lcore, instance, gk_conf);
 
-		/* Load a set of packets from the front NIC. */
-		num_rx = rte_eth_rx_burst(port_in, rx_queue, rx_bufs,
-			GATEKEEPER_MAX_PKT_BURST);
+		process_pkts_back(port_back, port_front,
+			rx_queue_back, tx_queue_front,
+			lcore, gk_conf);
 
-		if (unlikely(num_rx == 0))
-			continue;
-
-		for (i = 0; i < num_rx; i++) {
-			struct ipacket packet;
-			/*
-			 * Pointer to the flow entry in request state 
-			 * under evaluation.
-			 */
-			struct flow_entry *fe;
-			struct rte_mbuf *pkt = rx_bufs[i];
-
-			ret = extract_packet_info(pkt, &packet);
-			if (ret < 0) {
-				/* Drop non-IP packets. */
-				drop_packet(pkt);
-				continue;
-			}
-
-			/* 
-			 * Find the flow entry for the IP pair.
-			 *
-			 * If the pair of source and destination addresses 
-			 * is in the flow table, proceed as the entry instructs,
-			 * and go to the next packet.
-			 */
-			ret = rte_hash_lookup_with_hash(
-				instance->ip_flow_hash_table,
-				&packet.flow, pkt->hash.rss);
-			if (ret >= 0)
-				fe = &instance->ip_flow_entry_table[ret];
-			else {
-				/*
-				 * Otherwise, look up the destination address
-			 	 * in the global LPM table.
-				 */
-				struct gk_fib *fib = look_up_fib(
-					&gk_conf->lpm_tbl, &packet.flow);
-
-			 	/*
-				 * No entry for the destination,
-				 * drop the packet.
-				 */
-				if (fib == NULL) {
-					if (packet.flow.proto ==
-							ETHER_TYPE_IPv6)
-						add_pkt_ipv6_acl(&acl, pkt);
-					else {
-						print_flow_err_msg(&packet.flow,
-							"gk: failed to get the fib entry");
-						drop_packet(pkt);
-					}
-					continue;
-				}
-
-				switch (fib->action) {
-				case GK_FWD_GRANTOR:
-					/*
-			 		 * The entry instructs to enforce
-					 * policies over its packets,
-			 		 * initialize an entry in the
-					 * flow table, proceed as the
-					 * brand-new entry instructs, and
-			 		 * go to the next packet.
-			 		 */
-					ret = rte_hash_add_key_with_hash(
-						instance->ip_flow_hash_table,
- 						&packet.flow, pkt->hash.rss);
-					if (ret < 0) {
-						RTE_LOG(ERR, HASH,
-							"The GK block failed to add new key to hash table!\n");
-						drop_packet(pkt);
-						continue;
-					}
-
-					fe = &instance->
-						ip_flow_entry_table[ret];
-					initialize_flow_entry(fe,
-						&packet.flow, fib);
-					break;
-
-				case GK_FWD_BACK_NET:
-			 		/*
-					 * TODO The entry instructs to forward
-					 * its packets to the back interface,
-					 * forward accordingly.
-					 *
-					 * Implementing the BP block here.
-					 *
-					 * Notice that one needs to update
-					 * the Ethernet header.
-					 */
-					continue;
-
-				case GK_DROP:
-					/* FALLTHROUGH */
-				default:
-					drop_packet(pkt);
-					continue;
-				}
-			}
-
-			switch (fe->state) {
-			case GK_REQUEST:
-				ret = gk_process_request(fe, &packet);
-				break;
-
-			case GK_GRANTED:
-				ret = gk_process_granted(fe, &packet);
-				break;
-
-			case GK_DECLINED:
-				ret = gk_process_declined(fe, &packet);
-				break;
-
-			default:
-				ret = -1;
-				/* XXX Incorrect state, log warning. */
-				RTE_LOG(ERR, GATEKEEPER,
-					"gk: unknown flow state!\n");
-				break;
-			}
-
-			if (ret < 0)
-				rte_pktmbuf_free(pkt);
-			else
-				tx_bufs[num_tx++] = pkt;
-		}
-
-		/* Send burst of TX packets, to second port of pair. */
-		num_tx_succ = rte_eth_tx_burst(port_out, tx_queue,
-			tx_bufs, num_tx);
-
-		/* XXX Do something better here! For now, free any unsent packets. */
-		if (unlikely(num_tx_succ < num_tx)) {
-			for (i = num_tx_succ; i < num_tx; i++)
-				rte_pktmbuf_free(tx_bufs[i]);
-		}
-
-		/* Load a set of commands from its mailbox ring. */
-        	num_cmd = mb_dequeue_burst(&instance->mb,
-                	(void **)gk_cmds, GK_CMD_BURST_SIZE);
-
-        	for (i = 0; i < num_cmd; i++) {
-			process_gk_cmd(gk_cmds[i], instance, &gk_conf->lpm_tbl);
-			mb_free_entry(&instance->mb, gk_cmds[i]);
-        	}
-
-		process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
+		process_cmds_from_mailbox(instance, gk_conf);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -1023,6 +1258,22 @@ gk_stage1(void *arg)
 		}
 		inst_ptr->rx_queue_front = ret;
 
+		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_TX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the front interface for lcore %u\n",
+				lcore);
+			return -1;
+		}
+		inst_ptr->tx_queue_front = ret;
+
+		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_RX, lcore);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the back interface for lcore %u\n",
+				lcore);
+			return -1;
+		}
+		inst_ptr->rx_queue_back = ret;
+
 		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the back interface for lcore %u\n",
@@ -1088,8 +1339,9 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 	if (gk_conf->num_lcores <= 0)
 		goto success;
 
-	ret = net_launch_at_stage1(net_conf, gk_conf->num_lcores, 0, 0,
-		gk_conf->num_lcores, gk_stage1, gk_conf);
+	ret = net_launch_at_stage1(
+		net_conf, gk_conf->num_lcores, gk_conf->num_lcores,
+		gk_conf->num_lcores, gk_conf->num_lcores, gk_stage1, gk_conf);
 	if (ret < 0)
 		goto out;
 
@@ -1138,7 +1390,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	 * XXX Change the mapping rss hash value to rss reta entry
 	 * if the reta size is not 128.
 	 */
-	RTE_VERIFY(gk_conf->rss_conf.reta_size == 128);
+	RTE_VERIFY(gk_conf->rss_conf_front.reta_size == 128);
 	rss_hash_val = (rss_hash_val & 127);
 
 	/*
@@ -1147,7 +1399,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	 */
 	idx = rss_hash_val / RTE_RETA_GROUP_SIZE;
 	shift = rss_hash_val % RTE_RETA_GROUP_SIZE;
-	queue_id = gk_conf->rss_conf.reta_conf[idx].reta[shift];
+	queue_id = gk_conf->rss_conf_front.reta_conf[idx].reta[shift];
 
 	/* XXX Change mapping queue id to the GK instance id efficiently. */
 	for (i = 0; i < gk_conf->num_lcores; i++)
