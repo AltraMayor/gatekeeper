@@ -162,7 +162,7 @@ process_ipv6_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 			 * Each ACL function is responsible for
 			 * freeing packets not already handled.
 			 */
-			RTE_LOG(WARN, GATEKEEPER,
+			RTE_LOG(WARNING, GATEKEEPER,
 				"acl: ACL function %d failed on %s iface\n",
 				i, iface->name);
 		}
