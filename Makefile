@@ -33,7 +33,6 @@ APP = gatekeeper
 SRCS-y := main/main.c
 
 # Functional blocks.
-SRCS-y += catcher/main.c
 SRCS-y += config/static.c config/dynamic.c
 SRCS-y += cps/main.c
 SRCS-y += ggu/main.c
