@@ -269,7 +269,6 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
 		GATEKEEPER_MAX_PKT_BURST);
-	IPV6_ACL_SEARCH_DEF(acl);
 	int num_tx = 0;
 	uint16_t i;
 
@@ -308,24 +307,13 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			/* ARP reply was sent, so no free is needed. */
 			num_tx++;
 			continue;
-		case ETHER_TYPE_IPv6:
-			if (iface == &lls_conf->net->back) {
-				/*
-				 * Back interface can also see ND packets
-				 * received here.
-				 *
-				 * TODO Move RSS on the back interface
-				 * to a different block and pass ND
-				 * packets to the LLS using DPDK
-				 * packet classification and distribution.
-				 * Then, handle any non-ARP and non-ND
-				 * packets on the back interface. For now,
-				 * just drop them.
-				 */
-				add_pkt_ipv6_acl(&acl, bufs[i]);
-				continue;
-			}
-			/* FALLTHROUGH */
+
+			/*
+			 * Both back and front interfaces cannot
+			 * see ND packets received here.
+			 * All ND packets come from the IPv6 filter.
+			 */
+
 		default:
 			RTE_LOG(ERR, GATEKEEPER, "lls: %s interface should not be seeing a packet with EtherType 0x%04hx\n",
 				iface->name,
@@ -335,8 +323,6 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 free_buf:
 		rte_pktmbuf_free(bufs[i]);
 	}
-
-	process_pkts_ipv6_acl(&lls_conf->net->back, lls_conf->lcore_id, &acl);
 
 	return num_tx;
 }
@@ -537,19 +523,7 @@ lls_stage2(void *arg)
 			return ret;
 	}
 
-	/* TODO Have a different block set up RSS on the back interface. */
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		uint8_t port_in = net_conf->back.id;
-		uint16_t lls_queue = lls_conf->rx_queue_back;
-
-		ret = gatekeeper_setup_rss(port_in, &lls_queue, 1);
-		if (ret < 0)
-			return ret;
-
-		ret = gatekeeper_get_rss_config(port_in, &lls_conf->rss_conf);
-		if (ret < 0)
-			return ret;
-
 		ret = register_nd_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;

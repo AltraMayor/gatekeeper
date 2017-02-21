@@ -207,12 +207,6 @@ struct lls_config {
 	uint16_t          tx_queue_front;
 	uint16_t          rx_queue_back;
 	uint16_t          tx_queue_back;
-
-	/*
-	 * TODO Have a different block use RSS on the back interface,
-	 * and pass ND packets to the LLS block.
-	 */
-	struct gatekeeper_rss_config rss_conf;
 };
 
 /*
