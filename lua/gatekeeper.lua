@@ -133,6 +133,9 @@ struct gk_config {
 	unsigned int num_ipv4_tbl8s;
 	unsigned int max_num_ipv6_rules;
 	unsigned int num_ipv6_tbl8s;
+	unsigned int max_num_ipv6_neighbors;
+	unsigned int gk_max_num_ipv4_fib_entries;
+	unsigned int gk_max_num_ipv6_fib_entries;
 	/* This struct has hidden fields. */
 };
 
@@ -163,7 +166,8 @@ struct cps_config {
 };
 
 struct dynamic_config {
-	unsigned int   lcore_id;
+	unsigned int     lcore_id;
+	struct gk_config *gk;
 	/* This struct has hidden fields. */
 };
 
@@ -186,6 +190,8 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **ip_cidrs, uint8_t num_ip_cidrs);
 void lua_free_iface(struct gatekeeper_if *iface);
 
+bool ipv4_configured(struct net_config *net_conf);
+bool ipv6_configured(struct net_config *net_conf);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
@@ -212,8 +218,8 @@ int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(const char *server_path,
-	struct dynamic_config *dy_conf);
+int run_dynamic_config(struct gk_config *gk_conf,
+	const char *server_path, struct dynamic_config *dy_conf);
 
 struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);

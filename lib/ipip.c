@@ -25,20 +25,24 @@
 #include "gatekeeper_net.h"
 
 int
-encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *flow)
+encapsulate(struct rte_mbuf *pkt, uint8_t priority,
+	struct gatekeeper_if *iface, struct ipaddr *gt_addr)
 {
+	struct ether_hdr *eth_hdr;
 	struct ipv4_hdr *outer_ip4hdr;
 	struct ipv6_hdr *outer_ip6hdr;
 
-	if (flow->proto == ETHER_TYPE_IPv4) {
+	if (gt_addr->proto == ETHER_TYPE_IPv4) {
 		/* Allocate space for outer IPv4 header. */
-		outer_ip4hdr = (struct ipv4_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv4_hdr) - sizeof(struct ether_hdr));
-		if (outer_ip4hdr == NULL) {
+		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
+			sizeof(struct ipv4_hdr));
+		if (eth_hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
 				"Not enough headroom space in the first segment!\n");
 			return -1;
 		}
+
+		outer_ip4hdr = (struct ipv4_hdr *)&eth_hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip4hdr->version_ihl = IP_VHL_DEF;
@@ -48,9 +52,9 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *flow)
 		outer_ip4hdr->time_to_live = IP_DEFTTL;
 		outer_ip4hdr->next_proto_id = IPPROTO_IPIP;
 		/* The source address is the Gatekeeper server IP address. */
-		outer_ip4hdr->src_addr = flow->f.v4.src;
+		outer_ip4hdr->src_addr = iface->ip4_addr.s_addr;
 		/* The destination address is the Grantor server IP address. */
-		outer_ip4hdr->dst_addr = flow->f.v4.dst;
+		outer_ip4hdr->dst_addr = gt_addr->ip.v4.s_addr;
 
 		outer_ip4hdr->total_length = rte_cpu_to_be_16(pkt->data_len);
 
@@ -64,15 +68,17 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *flow)
 		/* Offload checksum computation for the outer IPv4 header. */
 		pkt->ol_flags |= (PKT_TX_IPV4 |
 			PKT_TX_IP_CKSUM | PKT_TX_OUTER_IPV4);
-	} else if (flow->proto == ETHER_TYPE_IPv6) {
+	} else if (likely(gt_addr->proto == ETHER_TYPE_IPv6)) {
 		/* Allocate space for new IPv6 header. */
-		outer_ip6hdr = (struct ipv6_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv6_hdr) - sizeof(struct ether_hdr));
-		if (outer_ip6hdr == NULL) {
+		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
+			sizeof(struct ipv6_hdr));
+		if (eth_hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
 				"Not enough headroom space in the first segment!\n");
 			return -1;
 		}
+
+		outer_ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
@@ -80,10 +86,10 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *flow)
 		outer_ip6hdr->proto = IPPROTO_IPIP; 
 		outer_ip6hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
 
-		rte_memcpy(outer_ip6hdr->src_addr, flow->f.v6.src,
-			sizeof(flow->f.v6.src));
-		rte_memcpy(outer_ip6hdr->dst_addr, flow->f.v6.dst,
-			sizeof(flow->f.v6.dst));
+		rte_memcpy(outer_ip6hdr->src_addr, iface->ip6_addr.s6_addr,
+			sizeof(outer_ip6hdr->src_addr));
+		rte_memcpy(outer_ip6hdr->dst_addr, gt_addr->ip.v6.s6_addr,
+			sizeof(outer_ip6hdr->dst_addr));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
 			- sizeof(struct ipv6_hdr));

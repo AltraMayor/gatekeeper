@@ -456,7 +456,7 @@ lua_free_iface(struct gatekeeper_if *iface)
 	destroy_iface(iface, IFACE_DESTROY_LUA);
 }
 
-static int
+int
 get_ip_type(const char *ip_addr)
 {
 	int ret;
@@ -473,7 +473,7 @@ get_ip_type(const char *ip_addr)
         	RTE_LOG(ERR, GATEKEEPER,
 			"gk: invalid ip address %s; %s\n",
 			ip_addr, gai_strerror(ret));
-        	return 1;
+		return AF_UNSPEC;
     	}
 
     	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
@@ -487,13 +487,24 @@ get_ip_type(const char *ip_addr)
 	return ret;
 }
 
-static inline int
-max_prefix_len(int ip_type)
+int
+convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 {
-	RTE_VERIFY(ip_type == AF_INET || ip_type == AF_INET6);
-	return ip_type == AF_INET
-		? sizeof(struct in_addr) * 8
-		: sizeof(struct in6_addr) * 8;
+	int ip_type = get_ip_type(ip_addr);
+	if (ip_type == AF_INET) {
+		if (inet_pton(AF_INET, ip_addr, &res->ip.v4) != 1)
+			return -1;
+
+		res->proto = ETHER_TYPE_IPv4;
+	} else if (likely(ip_type == AF_INET6)) {
+		if (inet_pton(AF_INET6, ip_addr, &res->ip.v6) != 1)
+			return -1;
+
+		res->proto = ETHER_TYPE_IPv6;
+	} else
+		return -1;
+
+	return 0;
 }
 
 int
@@ -1252,4 +1263,24 @@ net_launch_at_stage1(struct net_config *net,
 	}
 
 	return 0;
+}
+
+bool
+ipv4_configured(struct net_config *net_conf)
+{
+	if (net_conf->back_iface_enabled) {
+		return ipv4_if_configured(&net_conf->front) &&
+			ipv4_if_configured(&net_conf->back);
+	}
+	return ipv4_if_configured(&net_conf->front);
+}
+
+bool
+ipv6_configured(struct net_config *net_conf)
+{
+	if (net_conf->back_iface_enabled) {
+		return ipv6_if_configured(&net_conf->front) &&
+			ipv6_if_configured(&net_conf->back);
+	}
+	return ipv6_if_configured(&net_conf->front);
 }

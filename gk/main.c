@@ -281,7 +281,6 @@ initialize_flow_entry(struct flow_entry *fe,
 	 * needed while editing the FIB table.
 	 */
 	fe->grantor_fib = grantor_fib;
-	grantor_fib->ref_cnt++;
 }
 
 static inline void
@@ -313,7 +312,7 @@ drop_packet(struct rte_mbuf *pkt)
  */
 static int
 gk_process_request(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct gatekeeper_if *iface, struct sol_config *sol_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -353,7 +352,8 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	/* The assigned priority is @priority. */
 
 	/* Encapsulate the packet as a request. */
-	ret = encapsulate(packet->pkt, priority, &fib->u.grantor.flow);
+	ret = encapsulate(packet->pkt, priority,
+		iface, &fib->u.grantor.gt_addr);
 	if (ret < 0)
 		return ret;
 
@@ -380,7 +380,7 @@ cycle_from_second(uint64_t time)
  */
 static int
 gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct gatekeeper_if *iface, struct sol_config *sol_conf)
 {
 	int ret;
 	bool renew_cap;
@@ -391,7 +391,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf);
+		return gk_process_request(fe, packet, iface, sol_conf);
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
@@ -419,7 +419,8 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	 * mark it as a capability renewal request if @renew_cap is true,
 	 * enter destination according to @fe->grantor_fib.
 	 */
-	ret = encapsulate(packet->pkt, priority, &fib->u.grantor.flow);
+	ret = encapsulate(packet->pkt, priority,
+		iface, &fib->u.grantor.gt_addr);
 	if (ret < 0)
 		return ret;
 
@@ -438,13 +439,13 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct gatekeeper_if *iface, struct sol_config *sol_conf)
 {
 	uint64_t now = rte_rdtsc();
 
 	if (unlikely(now >= fe->u.declined.expire_at)) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf);
+		return gk_process_request(fe, packet, iface, sol_conf);
 	}
 
 	return -1;
@@ -614,7 +615,6 @@ add_new_flow_from_policy(
 	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
 
 	fe->grantor_fib = fib;
-	fib->ref_cnt++;
 
 	return fe;
 }
@@ -682,12 +682,81 @@ add_ggu_policy(struct ggu_policy *policy,
 }
 
 static void
+gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
+{
+	switch (fib->action) {
+	case GK_FWD_GRANTOR: {
+		/* Flush the grantor @fib in the flow table. */
+
+		uint32_t next = 0;
+		int32_t index;
+		const struct ip_flow *key;
+		void *data;
+
+		index = rte_hash_iterate(instance->ip_flow_hash_table,
+			(void *)&key, &data, &next);
+		while (index >= 0) {
+			struct flow_entry *fe =
+				&instance->ip_flow_entry_table[index];
+			if (fe->grantor_fib == fib) {
+				int ret = rte_hash_del_key(
+					instance->ip_flow_hash_table,
+					&fe->flow);
+				if (likely(ret >= 0))
+					memset(fe, 0, sizeof(*fe));
+				else {
+					RTE_LOG(ERR, HASH,
+						"gk: failed to call rte_hash_del_key() at %s - %s",
+						__func__, strerror(-ret));
+				}
+			}
+
+			index = rte_hash_iterate(instance->ip_flow_hash_table,
+				(void *)&key, &data, &next);
+		}
+
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"gk: finished flushing flow table at lcore %u\n",
+			rte_lcore_id());
+
+		break;
+	}
+
+	case GK_FWD_GATEWAY_FRONT_NET:
+		/* FALLTHROUGH */
+	case GK_FWD_GATEWAY_BACK_NET:
+		/* FALLTHROUGH */
+	case GK_DROP:
+		/* FALLTHROUGH */
+	case GK_FWD_NEIGHBOR_FRONT_NET:
+		/* FALLTHROUGH */
+	case GK_FWD_NEIGHBOR_BACK_NET:
+		/*
+		 * Do nothing because at this point we do not
+		 * have a reference to @fib.
+		 */
+		break;
+
+	default:
+		rte_panic("Invalid FIB action (%u) at %s with lcore %u\n",
+			fib->action, __func__, rte_lcore_id());
+		break;
+	}
+
+	rte_atomic16_inc(&fib->num_updated_instances);
+}
+
+static void
 process_gk_cmd(struct gk_cmd_entry *entry,
 	struct gk_instance *instance, struct gk_lpm *ltbl)
 {
 	switch (entry->op) {
 	case GGU_POLICY_ADD:
 		add_ggu_policy(&entry->u.ggu, instance, ltbl);
+		break;
+
+	case GK_SYNCH_WITH_LPM:
+		gk_synchronize(entry->u.fib, instance);
 		break;
 
 	default:
@@ -737,19 +806,6 @@ out:
 	return ret;
 }
 
-/* TODO Customize the hash function for IPv4. */
-
-static inline struct ether_cache *
-lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)
-{
-	int ret = rte_hash_lookup(neigh_tbl->hash_table, key);
-
-	if (ret < 0)
-		return NULL;
-
-	return &neigh_tbl->cache_tbl[ret];
-}
-
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint8_t port_front, uint8_t port_back,
@@ -766,6 +822,7 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	IPV6_ACL_SEARCH_DEF(acl);
+	struct gatekeeper_if *iface = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
@@ -919,17 +976,17 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 		switch (fe->state) {
 		case GK_REQUEST:
 			ret = gk_process_request(fe, &packet,
-				gk_conf->sol_conf);
+				iface, gk_conf->sol_conf);
 			break;
 
 		case GK_GRANTED:
 			ret = gk_process_granted(fe, &packet,
-				gk_conf->sol_conf);
+				iface, gk_conf->sol_conf);
 			break;
 
 		case GK_DECLINED:
 			ret = gk_process_declined(fe, &packet,
-				gk_conf->sol_conf);
+				iface, gk_conf->sol_conf);
 			break;
 
 		default:
@@ -1164,24 +1221,48 @@ static void
 destroy_gk_lpm(struct gk_lpm *ltbl)
 {
 	destroy_ipv4_lpm(ltbl->lpm);
+	ltbl->lpm = NULL;
+	rte_free(ltbl->fib_tbl);
+	ltbl->fib_tbl = NULL;
+
 	destroy_ipv6_lpm(ltbl->lpm6);
+	ltbl->lpm6 = NULL;
+	rte_free(ltbl->fib_tbl6);
+	ltbl->fib_tbl6 = NULL;
 }
 
 static int
 cleanup_gk(struct gk_config *gk_conf)
 {
 	int i;
+	unsigned int ui;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
-		if (gk_conf->instances[i].ip_flow_hash_table != NULL)
+		if (gk_conf->instances[i].ip_flow_hash_table != NULL) {
 			rte_hash_free(gk_conf->instances[i].
 				ip_flow_hash_table);
+		}
 
-		if (gk_conf->instances[i].ip_flow_entry_table != NULL)
+		if (gk_conf->instances[i].ip_flow_entry_table != NULL) {
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
+		}
 
                 destroy_mailbox(&gk_conf->instances[i].mb);
+	}
+
+	for (ui = 0; ui < gk_conf->gk_max_num_ipv4_fib_entries; ui++) {
+		struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl[ui];
+		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+				fib->action == GK_FWD_NEIGHBOR_BACK_NET)
+			destroy_neigh_hash_table(&fib->u.neigh);
+	}
+
+	for (ui = 0; ui < gk_conf->gk_max_num_ipv6_fib_entries; ui++) {
+		struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl6[ui];
+		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+				fib->action == GK_FWD_NEIGHBOR_BACK_NET)
+			destroy_neigh_hash_table(&fib->u.neigh6);
 	}
 
 	destroy_gk_lpm(&gk_conf->lpm_tbl);
@@ -1204,53 +1285,6 @@ gk_conf_put(struct gk_config *gk_conf)
 		return cleanup_gk(gk_conf);
 
 	return 0;
-}
-
-/*
- * XXX Only instantiate the LPM tables needed, for example,
- * there's no need for an IPv6 LPM table in an IPv4-only deployment.
- */
-static int
-setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
-{
-	int ret;
-	struct rte_lpm_config ipv4_lpm_config;
-	struct rte_lpm6_config ipv6_lpm_config;
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-
-	ipv4_lpm_config.max_rules = gk_conf->max_num_ipv4_rules;
-	ipv4_lpm_config.number_tbl8s = gk_conf->num_ipv4_tbl8s;
-	ipv6_lpm_config.max_rules = gk_conf->max_num_ipv6_rules;
-	ipv6_lpm_config.number_tbl8s = gk_conf->num_ipv6_tbl8s;
-
-	/*
-	 * The GK blocks only need to create one single IPv4 LPM table
-	 * on the @socket_id, so the @lcore and @identifier are set to 0.
-	 */
-	ltbl->lpm = init_ipv4_lpm("gk", &ipv4_lpm_config, socket_id, 0, 0);
-	if (ltbl->lpm == NULL) {
-		ret = -1;
-		goto out;
-	}
-
-	/*
-	 * The GK blocks only need to create one single IPv6 LPM table
-	 * on the @socket_id, so the @lcore and @identifier are set to 0.
-	 */
-	ltbl->lpm6 = init_ipv6_lpm("gk", &ipv6_lpm_config, socket_id, 0, 0);
-	if (ltbl->lpm6 == NULL) {
-		ret = -1;
-		goto free_lpm;
-	}
-
-	ret = 0;
-	goto out;
-
-free_lpm:
-	destroy_ipv4_lpm(ltbl->lpm);
-
-out:
-	return ret;
 }
 
 static int
@@ -1344,9 +1378,6 @@ cleanup:
 	return ret;
 }
 
-/*
- * TODO Implement the addition of FIB entries in the dynamic configuration.
- */
 int
 run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf)
@@ -1360,6 +1391,24 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	if (!net_conf->back_iface_enabled) {
 		RTE_LOG(ERR, GATEKEEPER, "gk: back interface is required\n");
+		ret = -1;
+		goto out;
+	}
+
+	if (!ipv4_configured(net_conf) &&
+			gk_conf->gk_max_num_ipv4_fib_entries != 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: IPv4 is not configured, but the number of FIB entries for IPv4 is non-zero %u\n",
+			gk_conf->gk_max_num_ipv4_fib_entries);
+		ret = -1;
+		goto out;
+	}
+
+	if (!ipv6_configured(net_conf) &&
+			gk_conf->gk_max_num_ipv6_fib_entries != 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gk: IPv6 is not configured, but the number of FIB entries for IPv6 is non-zero %u\n",
+			gk_conf->gk_max_num_ipv6_fib_entries);
 		ret = -1;
 		goto out;
 	}

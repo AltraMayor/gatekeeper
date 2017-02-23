@@ -19,6 +19,8 @@
 #include <lua.h>
 #include <sys/time.h>
 
+#include "gatekeeper_gk.h"
+
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
 
@@ -82,11 +84,16 @@
 
 #define GATEKEEPER_MAX_PKT_BURST (32)
 
+extern const uint16_t LUA_MSG_MAX_LEN;
+
 /* Configuration for the Dynamic Config functional block. */
 struct dynamic_config {
 
 	/* The lcore id that the block is running on. */
-	unsigned int   lcore_id;
+	unsigned int     lcore_id;
+
+	/* Reference to the gk configuration struct. */
+	struct gk_config *gk;
 
 	/*
 	 * The fields below are for internal use.
@@ -94,13 +101,13 @@ struct dynamic_config {
 	 */
 
 	/* The server socket descriptor. */
-	int            sock_fd;
+	int              sock_fd;
 
 	/* The file path that the Unix socket will use. */
-	char           *server_path;
+	char             *server_path;
 
 	/* Specify the receiving timeouts until reporting an error. */
-	struct timeval rcv_time_out;
+	struct timeval   rcv_time_out;
 };
 
 int config_gatekeeper(void);
@@ -108,7 +115,7 @@ int set_lua_path(lua_State *l, const char *path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(const char *server_path,
-	struct dynamic_config *dy_conf);
+int run_dynamic_config(struct gk_config *gk_conf,
+	const char *server_path, struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */
