@@ -37,6 +37,8 @@ enum {
 	DST2_INPUT_IPV6,
 	DST3_INPUT_IPV6,
 	DST4_INPUT_IPV6,
+	/* Source/destination ports are grouped together. */
+	PORTS_INPUT_IPV6,
 	TYPE_INPUT_ICMPV6,
 	NUM_INPUTS_IPV6,
 };
@@ -92,6 +94,25 @@ struct rte_acl_field_def ipv6_defs[NUM_FIELDS_IPV6] = {
 		.field_index = DST4_FIELD_IPV6,
 		.input_index = DST4_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, dst_addr[12]),
+	},
+	/*
+	 * The source and destination ports are the first and second
+	 * fields in TCP and UDP, so they are the four bytes directly
+	 * following the IPv6 header.
+	 */
+	{
+		.type = RTE_ACL_FIELD_TYPE_BITMASK,
+		.size = sizeof(uint16_t),
+		.field_index = SRCP_FIELD_IPV6,
+		.input_index = PORTS_INPUT_IPV6,
+		.offset = sizeof(struct ipv6_hdr),
+	},
+	{
+		.type = RTE_ACL_FIELD_TYPE_BITMASK,
+		.size = sizeof(uint16_t),
+		.field_index = DSTP_FIELD_IPV6,
+		.input_index = PORTS_INPUT_IPV6,
+		.offset = sizeof(struct ipv6_hdr) + sizeof(uint16_t),
 	},
 	{
 		/* Enforce grouping into four bytes. */

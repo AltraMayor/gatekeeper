@@ -26,7 +26,7 @@
  * They should be configured in the configuration step.
  */
 #define GATEKEEPER_MAX_PORTS	(4)
-#define GATEKEEPER_MAX_QUEUES	(4)
+#define GATEKEEPER_MAX_QUEUES	(8)
 
 /*
  * XXX Sample parameters for test only.

@@ -142,13 +142,17 @@ out:
 }
 
 /*
- * @dst_ip, @src_port and @dst_port must be in big endian.
- * By specifying the tuple (proto, src_port, dst_port),
+ * @dst_ip, @src_port, @src_port_mask, @dst_port, and @dst_port_mask
+ * must be in big endian.
+ *
+ * By specifying the tuple (proto, src_port, dst_port) (and masks),
  * it can filter both IPv4 and IPv6 addresses.
  */
 int
 ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
-	uint16_t src_port, uint16_t dst_port, uint16_t queue_id)
+	uint16_t src_port, uint16_t src_port_mask,
+	uint16_t dst_port, uint16_t dst_port_mask,
+	uint8_t proto, uint16_t queue_id, int ipv4_only)
 {
 	int ret = 0;
 	struct rte_eth_ntuple_filter filter_v4 = {
@@ -158,10 +162,10 @@ ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 		.src_ip = 0,
 		.src_ip_mask = 0,
 		.dst_port = dst_port,
-		.dst_port_mask = UINT16_MAX,
+		.dst_port_mask = dst_port_mask,
 		.src_port = src_port,
-		.src_port_mask = UINT16_MAX,
-		.proto = IPPROTO_UDP,
+		.src_port_mask = src_port_mask,
+		.proto = proto,
 		.proto_mask = UINT8_MAX,
 		.tcp_flags = 0,
 		.priority = 1,
@@ -175,10 +179,10 @@ ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 		.src_ip = 0,
 		.src_ip_mask = 0,
 		.dst_port = dst_port,
-		.dst_port_mask = UINT16_MAX,
+		.dst_port_mask = dst_port_mask,
 		.src_port = src_port,
-		.src_port_mask = UINT16_MAX,
-		.proto = IPPROTO_UDP,
+		.src_port_mask = src_port_mask,
+		.proto = proto,
 		.proto_mask = UINT8_MAX,
 		.tcp_flags = 0,
 		.priority = 1,
@@ -220,6 +224,9 @@ ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 		}
 	}
 
+	if (ipv4_only)
+		return 0;
+
 	ret = rte_eth_dev_filter_ctrl(portid,
 		RTE_ETH_FILTER_NTUPLE,
 		RTE_ETH_FILTER_ADD,
@@ -243,9 +250,7 @@ ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 		ret = -1;
 		goto out;
 	}
-
 	ret = 0;
-
 out:
 	return ret;
 }

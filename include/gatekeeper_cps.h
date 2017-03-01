@@ -19,11 +19,37 @@
 #ifndef _GATEKEEPER_CPS_H_
 #define _GATEKEEPER_CPS_H_
 
+#include "gatekeeper_mailbox.h"
+
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
-	unsigned int	lcore_id;
+	/* lcore that the CPS block runs on. */
+	unsigned int      lcore_id;
+	/* Source and destination TCP ports to capture BGP traffic. */
+	uint16_t          tcp_port_bgp;
+
+	/*
+	 * The fields below are for internal use.
+	 * Configuration files should not refer to them.
+	 */
+	struct net_config *net;
+
+	/* Kernel NIC interfaces for control plane messages */
+	struct rte_kni    *front_kni;
+	struct rte_kni    *back_kni;
+
+	/* Mailbox to hold requests from other blocks. */
+	struct mailbox    mailbox;
+
+	/* Receive and transmit queues for both interfaces. */
+	uint16_t          rx_queue_front;
+	uint16_t          tx_queue_front;
+	uint16_t          rx_queue_back;
+	uint16_t          tx_queue_back;
 };
 
-int run_cps(const struct cps_config *cps_conf);
+struct cps_config *get_cps_conf(void);
+int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
+	const char *kni_kmod_path);
 
 #endif /* _GATEKEEPER_CPS_H_ */

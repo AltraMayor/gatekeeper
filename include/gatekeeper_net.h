@@ -297,7 +297,9 @@ void lua_free_iface(struct gatekeeper_if *iface);
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
-	uint16_t src_port, uint16_t dst_port, uint16_t queue_id);
+	uint16_t src_port, uint16_t src_port_mask,
+	uint16_t dst_port, uint16_t dst_port_mask,
+	uint8_t proto, uint16_t queue_id, int ipv4_only);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
