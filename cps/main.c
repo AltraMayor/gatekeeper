@@ -16,8 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <rte_kni.h>
-
 #include "gatekeeper_acl.h"
 #include "gatekeeper_cps.h"
 #include "gatekeeper_launch.h"
@@ -471,6 +469,13 @@ cps_stage2(void *arg)
 		goto error;
 	}
 
+	ret = kni_config(cps_conf->front_kni, &cps_conf->net->front);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: failed to configure KNI on the front iface\n");
+		goto error;
+	}
+
 	if (cps_conf->net->back_iface_enabled) {
 		ret = add_bgp_filters(&cps_conf->net->back,
 			cps_conf->tcp_port_bgp, cps_conf->rx_queue_back);
@@ -479,9 +484,14 @@ cps_stage2(void *arg)
 				"cps: failed to add BGP filters on the back iface");
 			goto error;
 		}
-	}
 
-	/* TODO Add IP addresses to KNIs and bring KNI interfaces up. */
+		ret = kni_config(cps_conf->back_kni, &cps_conf->net->back);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"cps: failed to configure KNI on the back iface\n");
+			goto error;
+		}
+	}
 
 	return 0;
 

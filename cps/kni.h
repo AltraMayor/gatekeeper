@@ -19,8 +19,13 @@
 #ifndef _GATEKEEPER_CPS_KNI_H_
 #define _GATEKEEPER_CPS_KNI_H_
 
+#include <rte_kni.h>
+
+#include "gatekeeper_net.h"
+
 int kni_change_mtu(uint8_t port_id, unsigned new_mtu);
 int kni_change_if(uint8_t port_id, uint8_t if_up);
+int kni_config(struct rte_kni *kni, struct gatekeeper_if *iface);
 int init_kni(const char *kni_kmod_path, unsigned int num_kni);
 void rm_kni(void);
 

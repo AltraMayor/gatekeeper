@@ -7,7 +7,9 @@
 Install the following software dependencies:
 
     $ sudo apt-get update
-    $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r`
+    $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev
+
+Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
 
 To use DPDK, make sure you have all of the environmental requirements: <http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-applications>.
 

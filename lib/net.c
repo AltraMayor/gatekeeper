@@ -611,6 +611,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			 */
 			iface->ip4_mask.s_addr =
 				rte_cpu_to_be_32(~0ULL << (32 - prefix_len));
+			iface->ip4_addr_plen = prefix_len;
 		} else if (gk_type == AF_INET6) {
 			/*
 			 * No portable way to do the same trick as above,
@@ -630,6 +631,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 				paddr[1] = rte_cpu_to_be_64(
 					~0ULL << (128 - prefix_len));
 			}
+			iface->ip6_addr_plen = prefix_len;
 		}
 	}
 

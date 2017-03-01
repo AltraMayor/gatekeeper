@@ -145,6 +145,7 @@ struct gatekeeper_if {
 	/* IPv4 address and network mask. */
 	struct in_addr  ip4_addr;
 	struct in_addr  ip4_mask;
+	uint8_t         ip4_addr_plen;
 
 	/*
 	 * Global IPv6 address and network mask.
@@ -154,6 +155,7 @@ struct gatekeeper_if {
 	 */
 	struct in6_addr ip6_addr;
 	struct in6_addr ip6_mask;
+	uint8_t         ip6_addr_plen;
 
 	/*
 	 * Addresses related to Neighbor Discovery.
