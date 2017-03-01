@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <libmnl/libmnl.h>
 #include <linux/rtnetlink.h>
@@ -35,6 +36,9 @@
 
 /* Number of times to attempt bring a KNI interface up or down. */
 #define NUM_ATTEMPTS_KNI_LINK_SET (5)
+
+/* Maximum number of updates for LPM table to serve at once. */
+#define MAX_CPS_ROUTE_UPDATES (8)
 
 /*
  * According to init_module(2) and delete_module(2), there
@@ -293,6 +297,350 @@ kni_config(struct rte_kni *kni, struct gatekeeper_if *iface)
 close:
 	mnl_socket_close(nl);
 	return ret;
+}
+
+void
+route_event_sock_close(struct cps_config *cps_conf)
+{
+	if (cps_conf->nl != NULL) {
+		mnl_socket_close(cps_conf->nl);
+		cps_conf->nl = NULL;
+	}
+}
+
+int
+route_event_sock_open(struct cps_config *cps_conf)
+{
+	struct mnl_socket *nl;
+	int ret;
+
+	nl = mnl_socket_open(NETLINK_ROUTE);
+	if (nl == NULL) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: %s: mnl_socket_open: %s\n",
+			__func__, strerror(errno));
+		return -1;
+	}
+	cps_conf->nl = nl;
+
+	/*
+	 * TODO This bind will get all changes that arrive at the kernel,
+	 * but it will duplicate the FIB: one in the kernel and another
+	 * in Gatekeeper.
+	 */
+	ret = mnl_socket_bind(nl, RTMGRP_IPV4_ROUTE|RTMGRP_IPV6_ROUTE,
+		MNL_SOCKET_AUTOPID);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: %s: mnl_socket_bind: %s\n",
+			__func__, strerror(errno));
+		goto close;
+	}
+
+	return 0;
+
+close:
+	route_event_sock_close(cps_conf);
+	return ret;
+}
+
+static inline void
+inet_print(const char *msg, struct in_addr *in)
+{
+	char buf[INET_ADDRSTRLEN];
+	RTE_LOG(INFO, GATEKEEPER, "cps update: %s: %s\n", msg,
+		inet_ntop(AF_INET, &in->s_addr, buf, sizeof(buf)));
+}
+
+static inline void
+inet6_print(const char *msg, struct in6_addr *in6)
+{
+	char buf[INET6_ADDRSTRLEN];
+	RTE_LOG(INFO, GATEKEEPER, "cps update: %s: %s\n", msg,
+		inet_ntop(AF_INET6, &in6->s6_addr, buf, sizeof(buf)));
+}
+
+/* TODO Remove attributes that are irrelevant to updating the LPM table. */
+
+static void
+attr_get(struct cps_config *cps_conf,
+	__attribute__((unused)) struct route_update *update,
+	int family, struct nlattr *tb[])
+{
+	if (tb[RTA_MULTIPATH]) {
+		/*
+		 * XXX This is the attribute used to implement ECMP.
+		 * We should more closely parse this attribute and
+		 * return the appropriate information through
+		 * @update to Grantor, if we're running Grantor.
+		 *
+		 * Example usage:
+		 *
+		 * struct rtnexthop *rt =
+		 *	mnl_attr_get_payload(tb[RTA_MULTIPATH]);
+		 */
+		if (cps_conf->debug)
+			RTE_LOG(INFO, GATEKEEPER, "cps update: multipath\n");
+	}
+	if (tb[RTA_DST]) {
+		if (family == AF_INET6) {
+			struct in6_addr *addr =
+				mnl_attr_get_payload(tb[RTA_DST]);
+			if (cps_conf->debug)
+				inet6_print("dst", addr);
+		} else {
+			struct in_addr *addr =
+				mnl_attr_get_payload(tb[RTA_DST]);
+			if (cps_conf->debug)
+				inet_print("dst", addr);
+		}
+	}
+	if (tb[RTA_SRC]) {
+		if (family == AF_INET6) {
+			struct in6_addr *addr =
+				mnl_attr_get_payload(tb[RTA_SRC]);
+			if (cps_conf->debug)
+				inet6_print("src", addr);
+		} else {
+			struct in_addr *addr =
+				mnl_attr_get_payload(tb[RTA_SRC]);
+			if (cps_conf->debug)
+				inet_print("src", addr);
+		}
+	}
+	if (tb[RTA_OIF]) {
+		if (cps_conf->debug)
+			RTE_LOG(INFO, GATEKEEPER, "cps update: oif=%u\n",
+				mnl_attr_get_u32(tb[RTA_OIF]));
+	}
+	if (tb[RTA_FLOW]) {
+		if (cps_conf->debug)
+			RTE_LOG(INFO, GATEKEEPER, "cps update: flow=%u\n",
+				mnl_attr_get_u32(tb[RTA_FLOW]));
+	}
+	if (tb[RTA_PREFSRC]) {
+		if (family == AF_INET6) {
+			struct in6_addr *addr =
+				mnl_attr_get_payload(tb[RTA_PREFSRC]);
+			if (cps_conf->debug)
+				inet6_print("prefsrc", addr);
+		} else {
+			struct in_addr *addr =
+				mnl_attr_get_payload(tb[RTA_PREFSRC]);
+			if (cps_conf->debug)
+				inet_print("prefsrc", addr);
+		}
+	}
+	if (tb[RTA_GATEWAY]) {
+		if (family == AF_INET6) {
+			struct in6_addr *addr =
+				mnl_attr_get_payload(tb[RTA_GATEWAY]);
+			if (cps_conf->debug)
+				inet6_print("gw", addr);
+		} else {
+			struct in_addr *addr =
+				mnl_attr_get_payload(tb[RTA_GATEWAY]);
+			if (cps_conf->debug)
+				inet_print("gw", addr);
+		}
+	}
+	if (tb[RTA_PRIORITY]) {
+		if (cps_conf->debug)
+			RTE_LOG(INFO, GATEKEEPER, "cps update: prio=%u\n",
+				mnl_attr_get_u32(tb[RTA_PRIORITY]));
+	}
+}
+
+static int
+data_ipv4_attr_cb(const struct nlattr *attr, void *data)
+{
+	const struct nlattr **tb = data;
+	int type = mnl_attr_get_type(attr);
+
+	/* Skip unsupported attribute in user-space. */
+	if (mnl_attr_type_valid(attr, RTA_MAX) < 0)
+		return MNL_CB_OK;
+
+	switch (type) {
+	case RTA_MULTIPATH:
+		if (mnl_attr_validate(attr, MNL_TYPE_NESTED) < 0)
+			return MNL_CB_ERROR;
+		break;
+	case RTA_TABLE:
+	case RTA_DST:
+	case RTA_SRC:
+	case RTA_OIF:
+	case RTA_FLOW:
+	case RTA_PREFSRC:
+	case RTA_GATEWAY:
+	case RTA_PRIORITY:
+		if (mnl_attr_validate(attr, MNL_TYPE_U32) < 0)
+			return MNL_CB_ERROR;
+		break;
+	default:
+		/* Skip attributes we don't know about. */
+		return MNL_CB_OK;
+	}
+	tb[type] = attr;
+	return MNL_CB_OK;
+}
+
+static int
+data_ipv6_attr_cb(const struct nlattr *attr, void *data)
+{
+	const struct nlattr **tb = data;
+	int type = mnl_attr_get_type(attr);
+
+	/* Skip unsupported attribute in user-space. */
+	if (mnl_attr_type_valid(attr, RTA_MAX) < 0)
+		return MNL_CB_OK;
+
+	switch (type) {
+	case RTA_MULTIPATH:
+		if (mnl_attr_validate(attr, MNL_TYPE_NESTED) < 0)
+			return MNL_CB_ERROR;
+		break;
+	case RTA_TABLE:
+	case RTA_OIF:
+	case RTA_FLOW:
+	case RTA_PRIORITY:
+		if (mnl_attr_validate(attr, MNL_TYPE_U32) < 0)
+			return MNL_CB_ERROR;
+		break;
+	case RTA_DST:
+	case RTA_SRC:
+	case RTA_PREFSRC:
+	case RTA_GATEWAY:
+		if (mnl_attr_validate2(attr, MNL_TYPE_BINARY,
+				sizeof(struct in6_addr)) < 0)
+			return MNL_CB_ERROR;
+		break;
+	default:
+		/* Skip attributes we don't know about. */
+		return MNL_CB_OK;
+	}
+	tb[type] = attr;
+	return MNL_CB_OK;
+}
+
+static int
+route_cb(const struct nlmsghdr *nlh, void *arg)
+{
+	struct nlattr *tb[__RTA_MAX] = {};
+	struct cps_config *cps_conf = get_cps_conf();
+	struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
+	struct route_update *update = arg;
+
+	update->valid = false;
+
+	if (nlh->nlmsg_type != RTM_NEWROUTE &&
+			nlh->nlmsg_type != RTM_DELROUTE) {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"cps: unrecognized netlink message type: %u\n",
+			nlh->nlmsg_type);
+		return MNL_CB_OK;
+	}
+
+	if (cps_conf->debug)
+		RTE_LOG(INFO, GATEKEEPER, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
+			nlh->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
+			rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
+			rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
+			rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
+
+	/*
+	 * TODO Which fields and attributes are needed for the LPM update?
+	 * Add them to @update here and in attr_get(), and if all of those
+	 * fields are present, set update->valid to true before returning.
+	 */
+	update->type = nlh->nlmsg_type;
+	update->family = rm->rtm_family;
+
+	switch(rm->rtm_family) {
+	case AF_INET:
+		mnl_attr_parse(nlh, sizeof(*rm), data_ipv4_attr_cb, tb);
+		attr_get(cps_conf, update, rm->rtm_family, tb);
+		break;
+	case AF_INET6:
+		mnl_attr_parse(nlh, sizeof(*rm), data_ipv6_attr_cb, tb);
+		attr_get(cps_conf, update, rm->rtm_family, tb);
+		break;
+	default:
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"cps: unrecognized family in netlink event: %u\n",
+			rm->rtm_family);
+		break;
+	}
+
+	return MNL_CB_OK;
+}
+
+/*
+ * Receive a netlink message with the ability to pass flags to recvmsg().
+ * This function is an adaptation of mnl_socket_recvfrom() from
+ * http://git.netfilter.org/libmnl/tree/src/socket.c#n263, which does
+ * not allow flags.
+ */
+static ssize_t
+mnl_socket_recvfrom_flags(const struct mnl_socket *nl, void *buf, size_t bufsiz,
+	int flags)
+{
+	ssize_t ret;
+	struct sockaddr_nl addr;
+	struct iovec iov = {
+		.iov_base = buf,
+		.iov_len  = bufsiz,
+	};
+	struct msghdr msg = {
+		.msg_name       = &addr,
+		.msg_namelen    = sizeof(struct sockaddr_nl),
+		.msg_iov        = &iov,
+		.msg_iovlen     = 1,
+		.msg_control    = NULL,
+		.msg_controllen = 0,
+		.msg_flags      = 0,
+	};
+	ret = recvmsg(mnl_socket_get_fd(nl), &msg, flags);
+	if (ret == -1)
+		return ret;
+
+	if (msg.msg_flags & MSG_TRUNC) {
+		errno = ENOSPC;
+		return -1;
+	}
+	if (msg.msg_namelen != sizeof(struct sockaddr_nl)) {
+		errno = EINVAL;
+		return -1;
+	}
+	return ret;
+}
+
+void
+kni_cps_route_event(struct cps_config *cps_conf)
+{
+	struct route_update updates[MAX_CPS_ROUTE_UPDATES];
+	unsigned int num_updates = 0;
+	char buf[MNL_SOCKET_BUFFER_SIZE];
+
+	do {
+		int ret = mnl_socket_recvfrom_flags(cps_conf->nl, buf,
+			sizeof(buf), MSG_DONTWAIT);
+		if (ret == -1) {
+			if (errno != EAGAIN && errno != EWOULDBLOCK)
+				RTE_LOG(ERR, GATEKEEPER,
+					"cps: %s: recv: %s\n",
+					__func__, strerror(errno));
+			break;
+		}
+
+		ret = mnl_cb_run(buf, ret, 0, 0,
+			route_cb, &updates[num_updates]);
+		if (ret != MNL_CB_OK)
+			break;
+
+		if (updates[num_updates].valid)
+			num_updates++;
+	} while (num_updates < MAX_CPS_ROUTE_UPDATES);
+
+	/* TODO Send updates to GK block to update LPM table. */
 }
 
 /*

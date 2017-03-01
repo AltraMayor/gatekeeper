@@ -15,6 +15,7 @@ return function (net_conf, lls_conf, numa_table)
 	-- Setup the CPS functional block.
 	cps_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 	cps_conf.tcp_port_bgp = tcp_port_bgp
+	cps_conf.debug = false
 
 	local ret = gatekeeper.c.run_cps(net_conf, cps_conf, lls_conf,
 		kni_kmod_path)

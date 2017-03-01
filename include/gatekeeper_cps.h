@@ -32,6 +32,12 @@ struct cps_config {
 	uint16_t          tcp_port_bgp;
 
 	/*
+	 * When non-zero, routing table update information
+	 * from the KNI will be displayed.
+	 */
+	int               debug;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
@@ -57,6 +63,9 @@ struct cps_config {
 
 	/* Timer to scan over outstanding resolution requests. */
 	struct rte_timer  scan_timer;
+
+	/* Socket for receiving routing table updates. */
+	struct mnl_socket *nl;
 };
 
 /* Information needed to submit IPv6 BGP packets to the CPS block. */
@@ -113,6 +122,20 @@ struct cps_request {
 		/* If @ty is CPS_REQ_ND, use @nd. */
 		struct cps_nd_req nd;
 	} u;
+};
+
+struct route_update {
+	/* Type of update: RTM_NEWROUTE or RTM_DELROUTE. */
+	int type;
+
+	/* Address family of update: AF_INET or AF_INET6. */
+	int family;
+
+	/*
+	 * Whether this update has all the fields and attributes
+	 * necessary to update the LPM table.
+	 */
+	int valid;
 };
 
 struct cps_config *get_cps_conf(void);

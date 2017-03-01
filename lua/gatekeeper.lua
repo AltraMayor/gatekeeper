@@ -158,6 +158,7 @@ struct gt_config {
 struct cps_config {
 	unsigned int lcore_id;
 	uint16_t     tcp_port_bgp;
+	int          debug;
 	/* This struct has hidden fields. */
 };
 

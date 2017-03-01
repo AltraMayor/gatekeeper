@@ -38,6 +38,9 @@ struct nd_request {
 int kni_change_mtu(uint8_t port_id, unsigned new_mtu);
 int kni_change_if(uint8_t port_id, uint8_t if_up);
 int kni_config(struct rte_kni *kni, struct gatekeeper_if *iface);
+int route_event_sock_open(struct cps_config *cps_conf);
+void route_event_sock_close(struct cps_config *cps_conf);
+void kni_cps_route_event(struct cps_config *cps_conf);
 int init_kni(const char *kni_kmod_path, unsigned int num_kni);
 void rm_kni(void);
 

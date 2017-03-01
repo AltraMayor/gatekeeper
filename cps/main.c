@@ -47,7 +47,11 @@ get_cps_conf(void)
 static int
 cleanup_cps(void)
 {
-	/* rte_kni_release() can be passed NULL. */
+	/*
+	 * route_event_sock_close() can be called even when the netlink
+	 * socket is not open, and rte_kni_release() can be passed NULL.
+	 */
+	route_event_sock_close(&cps_conf);
 	rte_kni_release(cps_conf.back_kni);
 	rte_kni_release(cps_conf.front_kni);
 	rte_timer_stop(&cps_conf.scan_timer);
@@ -424,7 +428,8 @@ cps_proc(void *arg)
 		/* Periodically scan resolution requests from KNIs. */
 		rte_timer_manage();
 
-		/* TODO Get route updates from kernel. */
+		/* Read in routing table updates and update LPM table. */
+		kni_cps_route_event(cps_conf);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -755,6 +760,13 @@ cps_stage2(void *arg)
 				"cps: failed to configure KNI on the back iface\n");
 			goto error;
 		}
+	}
+
+	ret = route_event_sock_open(cps_conf);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: failed to open route event socket\n");
+		goto error;
 	}
 
 	return 0;
