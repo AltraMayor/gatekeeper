@@ -274,10 +274,6 @@ int hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be,
 	unsigned int lcore_id);
 int put_nd(struct in6_addr *ip_be, unsigned int lcore_id);
 
-/* Submit ND packets to the LLS block. */
-int submit_nd(struct rte_mbuf **pkts, int num_pkts,
-	struct gatekeeper_if *iface);
-
 static inline int
 ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
 {

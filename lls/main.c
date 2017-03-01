@@ -33,7 +33,7 @@
 
 /*
  * When using LACP, there are two requirements:
- * 
+ *
  *  - For LACP to work best, RX burst size should be at least twice
  *    the number of slaves. This is so that the interface can receive
  *    any needed LACP messages flowing without the application's
@@ -205,7 +205,7 @@ put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
 	return -1;
 }
 
-int
+static int
 submit_nd(struct rte_mbuf **pkts, int num_pkts, struct gatekeeper_if *iface)
 {
 	struct lls_nd_req nd_req = {
@@ -247,7 +247,7 @@ lls_lacp_announce(__attribute__((unused)) struct rte_timer *timer, void *arg)
 	 * This function returns 0 when no packets are transmitted or
 	 * when there's an error. Since we're asking for no packets to
 	 * be transmitted, we can't differentiate between success and
-	 * failure, so we don't check. However, if this fails repeatedly, 
+	 * failure, so we don't check. However, if this fails repeatedly,
 	 * the LACP bonding driver will log an error.
 	 */
 	rte_eth_tx_burst(iface->id, tx_queue, NULL, 0);
