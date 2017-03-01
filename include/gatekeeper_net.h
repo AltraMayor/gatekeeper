@@ -74,7 +74,7 @@ struct gatekeeper_rss_config {
  * are circularly defined.
  */
 struct gatekeeper_if *iface;
-typedef int (*acl_cb_func)(struct rte_mbuf **pkts, int num_pkts,
+typedef int (*acl_cb_func)(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface);
 
 /*

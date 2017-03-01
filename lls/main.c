@@ -206,7 +206,8 @@ put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
 }
 
 static int
-submit_nd(struct rte_mbuf **pkts, int num_pkts, struct gatekeeper_if *iface)
+submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct gatekeeper_if *iface)
 {
 	struct lls_nd_req nd_req = {
 		.num_pkts = num_pkts,
@@ -218,7 +219,7 @@ submit_nd(struct rte_mbuf **pkts, int num_pkts, struct gatekeeper_if *iface)
 
 	ret = lls_req(LLS_REQ_ND, &nd_req);
 	if (unlikely(ret < 0)) {
-		int i;
+		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
 			rte_pktmbuf_free(pkts[i]);
 		return ret;
@@ -420,6 +421,8 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 {
 	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
 	int ret;
+
+	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
 
 	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
 		ND_NEIGHBOR_SOLICITATION);
