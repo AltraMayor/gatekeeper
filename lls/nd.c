@@ -53,49 +53,6 @@
  *     for neighbor cache entries.
  */
 
-#define rte_ipv6_icmpv6_cksum rte_ipv6_udptcp_cksum
-
-/* ND options as defined by RFC 4861. */
-enum {
-	/* Link-layer address of sender, optional in Solicitations. */
-	ND_OPT_SOURCE_LL_ADDR = 1,
-	/* Link-layer address of the target, optional in Advertisements. */
-	ND_OPT_TARGET_LL_ADDR = 2,
-	/* Other options exist but are not supported here. */
-	ND_OPT_MAX,
-};
-
-struct nd_opts {
-	/* Pointers to each option present in an ICMPv6 packet. */
-	struct nd_opt_hdr *opt_array[ND_OPT_MAX];
-};
-
-struct nd_opt_hdr {
-	/* Type of the option. */
-	uint8_t type;
-	/* Length of option (including @type and @len) in units of 64 bits. */
-	uint8_t len;
-} __attribute__((__packed__));
-
-/* Used for both ND_OPT_SOURCE_LL_ADDR and ND_OPT_TARGET_LL_ADDR. */
-struct nd_opt_lladdr {
-	/* Type of the option. */
-	uint8_t           type;
-	/* Length of option (including @type and @len) in units of 64 bits. */
-	uint8_t           len;
-	/* Hardware address corresponding to @type. */
-	struct ether_addr ha;
-} __attribute__((__packed__));
-
-/* Minimum size of a Neighbor Discovery packet with a link-layer option. */
-#define ND_NEIGH_PKT_LLADDR_MIN_LEN (ND_NEIGH_PKT_MIN_LEN + \
-	sizeof(struct nd_opt_lladdr))
-
-/* Flags for Neighbor Advertisements. */
-#define LLS_ND_NA_ROUTER    0x80000000
-#define LLS_ND_NA_SOLICITED 0x40000000
-#define LLS_ND_NA_OVERRIDE  0x20000000
-
 /*
  * Returns whether a given IPv6 address is the unspecified address,
  * which can be used for duplicate address detection.

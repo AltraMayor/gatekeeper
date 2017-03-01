@@ -192,7 +192,7 @@ int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
 
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
-	const char *kni_kmod_path);
+	struct lls_config *lls_conf, const char *kni_kmod_path);
 
 ]]
 

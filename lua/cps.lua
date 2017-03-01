@@ -1,4 +1,4 @@
-return function (net_conf, numa_table)
+return function (net_conf, lls_conf, numa_table)
 	--
 	-- These parameters should not need to be changed after initial setup.
 	--
@@ -16,7 +16,8 @@ return function (net_conf, numa_table)
 	cps_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 	cps_conf.tcp_port_bgp = tcp_port_bgp
 
-	local ret = gatekeeper.c.run_cps(net_conf, cps_conf, kni_kmod_path)
+	local ret = gatekeeper.c.run_cps(net_conf, cps_conf, lls_conf,
+		kni_kmod_path)
 	if ret < 0 then
 		error("Failed to run cps block")
 	end

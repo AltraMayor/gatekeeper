@@ -43,6 +43,13 @@ struct list_head {
 
 #define LIST_HEAD_INIT(name) { &(name), &(name) }
 
+static inline void
+INIT_LIST_HEAD(struct list_head *list)
+{
+	list->next = list;
+	list->prev = list;
+}
+
 /**
  * list_entry - get the struct for this entry
  * @ptr:	the &struct list_head pointer.

@@ -23,10 +23,28 @@
 
 #include "gatekeeper_net.h"
 
+struct arp_request {
+	struct list_head list;
+	uint32_t         addr;
+	int              stale;
+};
+
+struct nd_request {
+	struct list_head list;
+	uint8_t          addr[16];
+	int              stale;
+};
+
 int kni_change_mtu(uint8_t port_id, unsigned new_mtu);
 int kni_change_if(uint8_t port_id, uint8_t if_up);
 int kni_config(struct rte_kni *kni, struct gatekeeper_if *iface);
 int init_kni(const char *kni_kmod_path, unsigned int num_kni);
 void rm_kni(void);
+
+void kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr);
+void kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr,
+	uint16_t pkt_len);
 
 #endif /* _GATEKEEPER_CPS_KNI_H_ */

@@ -16,9 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <rte_cycles.h>
+
 #include "gatekeeper_acl.h"
 #include "gatekeeper_cps.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_lls.h"
 #include "kni.h"
 
 /*
@@ -30,34 +33,8 @@
 /* XXX Sample parameters, need to be tested for better performance. */
 #define CPS_REQ_BURST_SIZE (32)
 
-/* Information needed to submit IPv6 BGP packets to the CPS block. */
-struct cps_bgp_req {
-	/* IPv6 BGP packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
-
-	/* Number of packets stored in @pkts. */
-	unsigned int         num_pkts;
-
-	/* KNI that should receive @pkts. */
-	struct rte_kni       *kni;
-};
-
-/* Requests that can be made to the CPS block. */
-enum cps_req_ty {
-	/* Request to handle an IPv6 BGP packet received from another block. */
-	CPS_REQ_BGP,
-};
-
-/* Request submitted to the CPS block. */
-struct cps_request {
-	/* Type of request. */
-	enum cps_req_ty ty;
-
-	union {
-		/* If @ty is CPS_REQ_BGP, use @bgp. */
-		struct cps_bgp_req bgp;
-	} u;
-};
+/* Period between scans of the outstanding resolution requests from KNIs. */
+#define CPS_SCAN_INTERVAL_SEC (5)
 
 static struct cps_config cps_conf;
 
@@ -73,9 +50,162 @@ cleanup_cps(void)
 	/* rte_kni_release() can be passed NULL. */
 	rte_kni_release(cps_conf.back_kni);
 	rte_kni_release(cps_conf.front_kni);
+	rte_timer_stop(&cps_conf.scan_timer);
 	destroy_mailbox(&cps_conf.mailbox);
 	rm_kni();
 	return 0;
+}
+
+/*
+ * Responding to ARP and ND packets from the KNI. If responding to
+ * an ARP/ND packet fails, we remove the request from the linked list
+ * anyway, forcing the KNI to issue another resolution request.
+ */
+
+static void
+send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
+{
+	struct gatekeeper_if *iface = arp->iface;
+	struct rte_mbuf *created_pkt;
+	struct ether_hdr *eth_hdr;
+	struct arp_hdr *arp_hdr;
+	size_t pkt_size;
+	struct rte_kni *kni;
+	struct rte_mempool *mp;
+	int ret;
+
+	mp = cps_conf->net->gatekeeper_pktmbuf_pool[
+		rte_lcore_to_socket_id(cps_conf->lcore_id)];
+	created_pkt = rte_pktmbuf_alloc(mp);
+	if (created_pkt == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: could not allocate an ARP reply on the %s KNI\n",
+			iface->name);
+		return;
+	}
+
+	pkt_size = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
+	created_pkt->data_len = pkt_size;
+	created_pkt->pkt_len = pkt_size;
+
+	/*
+	 * Set-up Ethernet header. The Ethernet address of the KNI is the
+	 * same as that of the Gatekeeper interface, so we use that in
+	 * the Ethernet and ARP headers.
+	 */
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
+	ether_addr_copy(&arp->ha, &eth_hdr->s_addr);
+	ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
+
+	/* Set-up ARP header. */
+	arp_hdr = (struct arp_hdr *)&eth_hdr[1];
+	arp_hdr->arp_hrd = rte_cpu_to_be_16(ARP_HRD_ETHER);
+	arp_hdr->arp_pro = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+	arp_hdr->arp_hln = ETHER_ADDR_LEN;
+	arp_hdr->arp_pln = sizeof(struct in_addr);
+	arp_hdr->arp_op = rte_cpu_to_be_16(ARP_OP_REPLY);
+	ether_addr_copy(&arp->ha, &arp_hdr->arp_data.arp_sha);
+	rte_memcpy(&arp_hdr->arp_data.arp_sip, &arp->ip,
+		sizeof(arp_hdr->arp_data.arp_sip));
+	ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_tha);
+	arp_hdr->arp_data.arp_tip = iface->ip4_addr.s_addr;
+
+	if (iface == &cps_conf->net->front)
+		kni = cps_conf->front_kni;
+	else
+		kni = cps_conf->back_kni;
+
+	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
+	if (ret <= 0) {
+		rte_pktmbuf_free(created_pkt);
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: could not transmit an ARP reply to the %s KNI\n",
+			iface->name);
+		return;
+	}
+}
+
+static void
+send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
+{
+	struct gatekeeper_if *iface = nd->iface;
+	struct rte_mbuf *created_pkt;
+	struct ether_hdr *eth_hdr;
+	struct ipv6_hdr *ipv6_hdr;
+	struct icmpv6_hdr *icmpv6_hdr;
+	struct nd_neigh_msg *nd_msg;
+	struct nd_opt_lladdr *nd_opt;
+	struct rte_kni *kni;
+	struct rte_mempool *mp;
+	int ret;
+
+	mp = cps_conf->net->gatekeeper_pktmbuf_pool[
+		rte_lcore_to_socket_id(cps_conf->lcore_id)];
+	created_pkt = rte_pktmbuf_alloc(mp);
+	if (created_pkt == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: could not allocate an ND advertisement on the %s KNI\n",
+			iface->name);
+		return;
+	}
+
+	/* Advertisement will include target link layer address. */
+	created_pkt->data_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
+	created_pkt->pkt_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
+
+	/*
+	 * Set-up Ethernet header. The Ethernet address of the KNI is the
+	 * same as that of the Gatekeeper interface, so we use that in
+	 * the Ethernet header.
+	 */
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
+	ether_addr_copy(&nd->ha, &eth_hdr->s_addr);
+	ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+
+	/* Set-up IPv6 header. */
+	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ipv6_hdr->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
+	ipv6_hdr->payload_len = rte_cpu_to_be_16(ND_NEIGH_PKT_LLADDR_MIN_LEN -
+		(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
+	ipv6_hdr->proto = IPPROTO_ICMPV6;
+	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+	rte_memcpy(ipv6_hdr->src_addr, nd->ip, sizeof(ipv6_hdr->dst_addr));
+	rte_memcpy(ipv6_hdr->dst_addr, iface->ll_ip6_addr.s6_addr,
+		sizeof(ipv6_hdr->dst_addr));
+
+	/* Set-up ICMPv6 header. */
+	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
+	icmpv6_hdr->type = ND_NEIGHBOR_ADVERTISEMENT;
+	icmpv6_hdr->code = 0;
+	icmpv6_hdr->cksum = 0; /* Calculated below. */
+
+	/* Set up ND Advertisement header with target LL addr option. */
+	nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
+	nd_msg->flags =
+		rte_cpu_to_be_32(LLS_ND_NA_OVERRIDE|LLS_ND_NA_SOLICITED);
+	rte_memcpy(nd_msg->target, nd->ip, sizeof(nd_msg->target));
+	nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
+	nd_opt->type = ND_OPT_TARGET_LL_ADDR;
+	nd_opt->len = 1;
+	ether_addr_copy(&nd->ha, &nd_opt->ha);
+
+	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
+
+	if (iface == &cps_conf->net->front)
+		kni = cps_conf->front_kni;
+	else
+		kni = cps_conf->back_kni;
+
+	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
+	if (ret <= 0) {
+		rte_pktmbuf_free(created_pkt);
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: could not transmit an ND advertisement to the %s KNI\n",
+			iface->name);
+		return;
+	}
 }
 
 static void
@@ -96,6 +226,38 @@ process_reqs(struct cps_config *cps_conf)
 				uint16_t j;
 				for (j = num_tx; j < bgp->num_pkts; j++)
 					rte_pktmbuf_free(bgp->pkts[j]);
+			}
+			break;
+		}
+		case CPS_REQ_ARP: {
+			struct cps_arp_req *arp = &reqs[i]->u.arp;
+			struct arp_request *entry, *next;
+
+			send_arp_reply_kni(cps_conf, arp);
+
+			list_for_each_entry_safe(entry, next,
+					&cps_conf->arp_requests, list) {
+				if (arp->ip == entry->addr) {
+					list_del(&entry->list);
+					rte_free(entry);
+					break;
+				}
+			}
+			break;
+		}
+		case CPS_REQ_ND: {
+			struct cps_nd_req *nd = &reqs[i]->u.nd;
+			struct nd_request *entry, *next;
+
+			send_nd_reply_kni(cps_conf, nd);
+
+			list_for_each_entry_safe(entry, next,
+					&cps_conf->nd_requests, list) {
+				if (ipv6_addrs_equal(nd->ip, entry->addr)) {
+					list_del(&entry->list);
+					rte_free(entry);
+					break;
+				}
 			}
 			break;
 		}
@@ -136,24 +298,84 @@ process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 			__func__, rte_kni_get_name(kni));
 }
 
-static void
-process_egress(struct gatekeeper_if *iface, struct rte_kni *kni,
-	uint16_t tx_queue)
+static int
+pkt_is_nd(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+	uint16_t pkt_len)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
-	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, GATEKEEPER_MAX_PKT_BURST);
-	unsigned int num_tx = rte_eth_tx_burst(iface->id, tx_queue,
-		bufs, num_rx);
+	struct ipv6_hdr *ipv6_hdr;
+	struct icmpv6_hdr *icmpv6_hdr;
+
+	if (pkt_len < (sizeof(*eth_hdr) + sizeof(*ipv6_hdr) +
+			sizeof(icmpv6_hdr)))
+		return false;
+
+	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	if (ipv6_hdr->proto != IPPROTO_ICMPV6)
+		return false;
 
 	/*
-	 * TODO Forward BGP, respond to ARP or ND requests with resolution,
-	 * and drop everything else.
+	 * Make sure this is an ND neighbor message and that it was
+	 * sent by us (our global address, link-local address, or
+	 * either of the solicited-node multicast addresses.
 	 */
+	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
+	return (icmpv6_hdr->type == ND_NEIGHBOR_SOLICITATION ||
+			icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) &&
+		(ipv6_addrs_equal(ipv6_hdr->src_addr,
+			iface->ll_ip6_addr.s6_addr) ||
+		ipv6_addrs_equal(ipv6_hdr->src_addr,
+			iface->ip6_addr.s6_addr) ||
+		ipv6_addrs_equal(ipv6_hdr->src_addr,
+			iface->ip6_mc_addr.s6_addr) ||
+		ipv6_addrs_equal(ipv6_hdr->src_addr,
+			iface->ll_ip6_mc_addr.s6_addr));
+}
 
-	if (unlikely(num_tx < num_rx)) {
+static void
+process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_kni *kni, uint16_t tx_queue)
+{
+	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *forward_bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, GATEKEEPER_MAX_PKT_BURST);
+	uint16_t num_forward = 0;
+	unsigned int num_tx;
+	unsigned int i;
+
+	if (num_rx == 0)
+		return;
+
+	for (i = 0; i < num_rx; i++) {
+		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
+			struct ether_hdr *);
+		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
+		case ETHER_TYPE_ARP:
+			/* Intercept ARP packet and handle it. */
+			kni_process_arp(cps_conf, iface, bufs[i], eth_hdr);
+			break;
+		case ETHER_TYPE_IPv6: {
+			uint16_t pkt_len = rte_pktmbuf_data_len(bufs[i]);
+			if (pkt_is_nd(iface, eth_hdr, pkt_len)) {
+				/* Intercept ND packet and handle it. */
+				kni_process_nd(cps_conf, iface,
+					bufs[i], eth_hdr, pkt_len);
+				break;
+			}
+		}
+			/* FALLTHROUGH */
+		default:
+			/* Forward all other packets to the interface. */
+			forward_bufs[num_forward++] = bufs[i];
+			break;
+		}
+	}
+
+	num_tx = rte_eth_tx_burst(iface->id, tx_queue,
+		forward_bufs, num_forward);
+	if (unlikely(num_tx < num_forward)) {
 		uint16_t i;
-		for (i = num_tx; i < num_rx; i++)
-			rte_pktmbuf_free(bufs[i]);
+		for (i = num_tx; i < num_forward; i++)
+			rte_pktmbuf_free(forward_bufs[i]);
 	}
 }
 
@@ -193,11 +415,14 @@ cps_proc(void *arg)
 		 * Read in packets from KNI interfaces, and
 		 * transmit to respective Gatekeeper interfaces.
 		 */
-		process_egress(front_iface, front_kni,
+		process_egress(cps_conf, front_iface, front_kni,
 			cps_conf->tx_queue_front);
 		if (net_conf->back_iface_enabled)
-			process_egress(back_iface, back_kni,
+			process_egress(cps_conf, back_iface, back_kni,
 				cps_conf->tx_queue_back);
+
+		/* Periodically scan resolution requests from KNIs. */
+		rte_timer_manage();
 
 		/* TODO Get route updates from kernel. */
 	}
@@ -334,6 +559,45 @@ kni_create(struct rte_kni **kni, struct rte_mempool *mp,
 	}
 
 	return 0;
+}
+
+static void
+cps_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
+{
+	struct cps_config *cps_conf = (struct cps_config *)arg;
+	if (arp_enabled(cps_conf->lls)) {
+		struct arp_request *entry, *next;
+		list_for_each_entry_safe(entry, next, &cps_conf->arp_requests,
+				list) {
+			if (entry->stale) {
+				/*
+				 * It's possible that if this request
+				 * was recently satisfied the callback
+				 * has already been disabled, but it's
+				 * safe to issue an extra put_arp() here.
+				 */
+				put_arp((struct in_addr *)&entry->addr,
+					cps_conf->lcore_id);
+				list_del(&entry->list);
+				rte_free(entry);
+			} else
+				entry->stale = true;
+		}
+	}
+	if (nd_enabled(cps_conf->lls)) {
+		struct nd_request *entry, *next;
+		list_for_each_entry_safe(entry, next, &cps_conf->nd_requests,
+				list) {
+			if (entry->stale) {
+				/* Same as above -- this may be unnecessary. */
+				put_nd((struct in6_addr *)entry->addr,
+					cps_conf->lcore_id);
+				list_del(&entry->list);
+				rte_free(entry);
+			} else
+				entry->stale = true;
+		}
+	}
 }
 
 static int
@@ -502,11 +766,11 @@ error:
 
 int
 run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
-	const char *kni_kmod_path)
+	struct lls_config *lls_conf, const char *kni_kmod_path)
 {
 	int ret;
 
-	if (net_conf == NULL || cps_conf == NULL) {
+	if (net_conf == NULL || cps_conf == NULL || lls_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -524,6 +788,7 @@ run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
 		goto stage2;
 
 	cps_conf->net = net_conf;
+	cps_conf->lls = lls_conf;
 
 	ret = init_kni(kni_kmod_path, net_conf->back_iface_enabled ? 2 : 1);
 	if (ret < 0) {
@@ -537,7 +802,23 @@ run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
 	if (ret < 0)
 		goto kni;
 
+	if (arp_enabled(cps_conf->lls))
+		INIT_LIST_HEAD(&cps_conf->arp_requests);
+	if (nd_enabled(cps_conf->lls))
+		INIT_LIST_HEAD(&cps_conf->nd_requests);
+
+	rte_timer_init(&cps_conf->scan_timer);
+	ret = rte_timer_reset(&cps_conf->scan_timer,
+		CPS_SCAN_INTERVAL_SEC * rte_get_timer_hz(), PERIODICAL,
+		cps_conf->lcore_id, cps_scan, cps_conf);
+	if (ret < 0) {
+		RTE_LOG(ERR, TIMER, "Cannot set CPS scan timer\n");
+		goto mailbox;
+	}
+
 	return 0;
+mailbox:
+	destroy_mailbox(&cps_conf->mailbox);
 kni:
 	rm_kni();
 stage3:

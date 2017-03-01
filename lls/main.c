@@ -84,24 +84,6 @@ static struct lls_config lls_conf = {
 	},
 };
 
-static inline int
-arp_enabled(struct lls_config *lls_conf)
-{
-	return lls_conf->arp_cache.iface_enabled(lls_conf->net,
-			&lls_conf->net->front) ||
-		lls_conf->arp_cache.iface_enabled(lls_conf->net,
-			&lls_conf->net->back);
-}
-
-static inline int
-nd_enabled(struct lls_config *lls_conf)
-{
-	return lls_conf->nd_cache.iface_enabled(lls_conf->net,
-			&lls_conf->net->front) ||
-		lls_conf->nd_cache.iface_enabled(lls_conf->net,
-			&lls_conf->net->back);
-}
-
 struct lls_config *
 get_lls_conf(void)
 {

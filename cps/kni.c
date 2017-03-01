@@ -29,6 +29,7 @@
 #include <rte_malloc.h>
 
 #include "gatekeeper_cps.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 #include "kni.h"
 
@@ -484,4 +485,203 @@ rm_kni(void)
 	if (ret < 0)
 		RTE_LOG(ERR, GATEKEEPER, "Error removing %s: %s\n",
 			name, strerror(errno));
+}
+
+static void
+cps_arp_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused)) enum lls_reply_ty ty, int *pcall_again)
+{
+	struct cps_config *cps_conf = get_cps_conf();
+	struct cps_request *req;
+	int ret;
+
+	if (pcall_again != NULL)
+		*pcall_again = false;
+	else {
+		/*
+		 * Destination didn't reply, so this callback
+		 * is the result of a call to put_arp().
+		 */
+		return;
+	}
+	RTE_VERIFY(!map->stale);
+
+	/*
+	 * If this allocation or queueing of an entry fails, the
+	 * resolution request will time out after two iterations
+	 * of the timer and be removed in cps_scan() anyway.
+	 */
+
+	req = mb_alloc_entry(&cps_conf->mailbox);
+	if (req == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: %s: allocation of mailbox message failed\n",
+			__func__);
+		return;
+	}
+
+	req->ty = CPS_REQ_ARP;
+	rte_memcpy(&req->u.arp.ip, map->ip_be, sizeof(req->u.arp.ip));
+	rte_memcpy(&req->u.arp.ha, &map->ha, sizeof(req->u.arp.ha));
+	req->u.arp.iface = arg;
+
+	ret = mb_send_entry(&cps_conf->mailbox, req);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: %s: failed to enqueue message to mailbox\n",
+			__func__);
+		return;
+	}
+}
+
+void
+kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr)
+{
+	struct arp_hdr *arp_hdr;
+	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
+	struct arp_request *arp_req;
+	struct arp_request *entry;
+
+	if (unlikely(!arp_enabled(cps_conf->lls))) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: KNI for %s iface received ARP packet, but the interface is not configured for ARP\n",
+			iface->name);
+		goto out;
+	}
+
+	if (unlikely(pkt_len < sizeof(*eth_hdr) + sizeof(*arp_hdr))) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: KNI received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
+			pkt_len, sizeof(*eth_hdr) + sizeof(*arp_hdr));
+		goto out;
+	}
+
+	arp_hdr = rte_pktmbuf_mtod_offset(buf, struct arp_hdr *,
+		sizeof(*eth_hdr));
+
+	/* If it's a Gratuitous ARP or reply, then no action is needed. */
+	if (unlikely(rte_be_to_cpu_16(arp_hdr->arp_op) != ARP_OP_REQUEST ||
+			is_garp_pkt(arp_hdr)))
+		goto out;
+
+	list_for_each_entry(entry, &cps_conf->arp_requests, list) {
+		/* There's already a resolution request for this address. */
+		if (arp_hdr->arp_data.arp_tip == entry->addr)
+			goto out;
+	}
+
+	arp_req = rte_malloc(__func__, sizeof(*arp_req), 0);
+	if (unlikely(entry == NULL)) {
+		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		goto out;
+	}
+
+	arp_req->addr = arp_hdr->arp_data.arp_tip;
+	arp_req->stale = false;
+	list_add_tail(&arp_req->list, &cps_conf->arp_requests);
+
+	hold_arp(cps_arp_cb, iface,
+		(struct in_addr *)&arp_hdr->arp_data.arp_tip,
+		cps_conf->lcore_id);
+out:
+	rte_pktmbuf_free(buf);
+}
+
+static void
+cps_nd_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused)) enum lls_reply_ty ty, int *pcall_again)
+{
+	struct cps_config *cps_conf = get_cps_conf();
+	struct cps_request *req;
+	int ret;
+
+	if (pcall_again != NULL)
+		*pcall_again = false;
+	else {
+		/*
+		 * Destination didn't reply, so this callback
+		 * is the result of a call to put_nd().
+		 */
+		return;
+	}
+	RTE_VERIFY(!map->stale);
+
+	/*
+	 * If this allocation or queueing of an entry fails, the
+	 * resolution request will time out after two iterations
+	 * of the timer and be removed anyway.
+	 */
+
+	req = mb_alloc_entry(&cps_conf->mailbox);
+	if (req == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: %s: allocation of mailbox message failed\n",
+			__func__);
+		return;
+	}
+
+	req->ty = CPS_REQ_ND;
+	rte_memcpy(&req->u.nd.ip, map->ip_be, sizeof(req->u.nd.ip));
+	rte_memcpy(&req->u.nd.ha, &map->ha, sizeof(req->u.nd.ha));
+	req->u.nd.iface = arg;
+
+	ret = mb_send_entry(&cps_conf->mailbox, req);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: %s: failed to enqueue message to mailbox\n",
+			__func__);
+		return;
+	}
+}
+
+void
+kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr, uint16_t pkt_len)
+{
+	struct icmpv6_hdr *icmpv6_hdr;
+	struct nd_neigh_msg *nd_msg;
+	struct nd_request *nd_req;
+	struct nd_request *entry;
+
+	if (unlikely(!nd_enabled(cps_conf->lls))) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: KNI for %s iface received ND packet, but the interface is not configured for ND\n",
+			iface->name);
+		goto out;
+	}
+
+	if (pkt_len < ND_NEIGH_PKT_MIN_LEN) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
+			pkt_len, ND_NEIGH_PKT_MIN_LEN);
+		goto out;
+	}
+
+	icmpv6_hdr = rte_pktmbuf_mtod_offset(buf, struct icmpv6_hdr *,
+		sizeof(*eth_hdr) + sizeof(struct ipv6_hdr));
+	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: ND Advertisement packet received from KNI attached to %s iface\n",
+			iface->name);
+		goto out;
+	}
+
+	nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
+
+	list_for_each_entry(entry, &cps_conf->nd_requests, list) {
+		/* There's already a resolution request for this address. */
+		if (ipv6_addrs_equal(nd_msg->target, entry->addr))
+			goto out;
+	}
+
+	nd_req = rte_malloc(__func__, sizeof(*nd_req), 0);
+	if (unlikely(entry == NULL)) {
+		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		goto out;
+	}
+
+	rte_memcpy(nd_req->addr, nd_msg->target, sizeof(nd_req->addr));
+	nd_req->stale = false;
+	list_add_tail(&nd_req->list, &cps_conf->nd_requests);
+
+	hold_nd(cps_nd_cb, iface, (struct in6_addr *)nd_msg->target,
+		cps_conf->lcore_id);
+out:
+	rte_pktmbuf_free(buf);
 }

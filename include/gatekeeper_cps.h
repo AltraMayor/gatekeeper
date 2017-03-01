@@ -19,7 +19,10 @@
 #ifndef _GATEKEEPER_CPS_H_
 #define _GATEKEEPER_CPS_H_
 
+#include <rte_timer.h>
+
 #include "gatekeeper_mailbox.h"
+#include "list.h"
 
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
@@ -33,6 +36,7 @@ struct cps_config {
 	 * Configuration files should not refer to them.
 	 */
 	struct net_config *net;
+	struct lls_config *lls;
 
 	/* Kernel NIC interfaces for control plane messages */
 	struct rte_kni    *front_kni;
@@ -46,10 +50,73 @@ struct cps_config {
 	uint16_t          tx_queue_front;
 	uint16_t          rx_queue_back;
 	uint16_t          tx_queue_back;
+
+	/* Unanswered resolution requests from the KNIs. */
+	struct list_head  arp_requests;
+	struct list_head  nd_requests;
+
+	/* Timer to scan over outstanding resolution requests. */
+	struct rte_timer  scan_timer;
+};
+
+/* Information needed to submit IPv6 BGP packets to the CPS block. */
+struct cps_bgp_req {
+	/* IPv6 BGP packets. */
+	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+
+	/* Number of packets stored in @pkts. */
+	unsigned int         num_pkts;
+
+	/* KNI that should receive @pkts. */
+	struct rte_kni       *kni;
+};
+
+/*
+ * Information needed for the LLS block to submit a request for
+ * the CPS block to send ARP/ND replies back to the KNI. To do so,
+ * the CPS block needs to know the IP and hardware address of the
+ * map, as well as the interface on which this map was received.
+ */
+
+struct cps_arp_req {
+	uint32_t             ip;
+	struct ether_addr    ha;
+	struct gatekeeper_if *iface;
+};
+
+struct cps_nd_req {
+	uint8_t              ip[16];
+	struct ether_addr    ha;
+	struct gatekeeper_if *iface;
+};
+
+/* Requests that can be made to the CPS block. */
+enum cps_req_ty {
+	/* Request to handle an IPv6 BGP packet received from another block. */
+	CPS_REQ_BGP,
+	/* Request to handle a response to an ARP packet. */
+	CPS_REQ_ARP,
+	/* Request to handle a response to an ND packet. */
+	CPS_REQ_ND,
+};
+
+/* Request submitted to the CPS block. */
+struct cps_request {
+	/* Type of request. */
+	enum cps_req_ty ty;
+
+	union {
+		/* If @ty is CPS_REQ_BGP, use @bgp. */
+		struct cps_bgp_req bgp;
+		/* If @ty is CPS_REQ_ARP, use @arp. */
+		struct cps_arp_req arp;
+		/* If @ty is CPS_REQ_ND, use @nd. */
+		struct cps_nd_req nd;
+	} u;
 };
 
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
-	const char *kni_kmod_path);
+	struct lls_config *lls_conf, const char *kni_kmod_path);
 
 #endif /* _GATEKEEPER_CPS_H_ */
