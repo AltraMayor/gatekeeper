@@ -76,6 +76,8 @@ struct gatekeeper_rss_config {
 struct gatekeeper_if *iface;
 typedef int (*acl_cb_func)(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface);
+/* Format of function called when no rule matches in the IPv6 ACL. */
+typedef int (*ext_cb_func)(struct rte_mbuf *pkt, struct gatekeeper_if *iface);
 
 /*
  * A Gatekeeper interface is specified by a set of PCI addresses
@@ -212,6 +214,15 @@ struct gatekeeper_if {
 	 */
 	acl_cb_func        acl_funcs[GATEKEEPER_IPV6_ACL_MAX];
 
+	/*
+	 * Callback functions for each ACL rule type with
+	 * IPv6 extension headers.
+	 *
+	 * Returning values: 0 means a match and a negative value
+	 * means an error or that there was no match.
+	 */
+	ext_cb_func        ext_funcs[GATEKEEPER_IPV6_ACL_MAX];
+
 	/* Number of ACL types installed in @acl_funcs. */
 	unsigned int       acl_func_count;
 };
@@ -300,6 +311,7 @@ int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
+
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 	uint16_t src_port, uint16_t src_port_mask,
 	uint16_t dst_port, uint16_t dst_port_mask,

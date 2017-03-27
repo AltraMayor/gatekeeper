@@ -16,12 +16,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <rte_tcp.h>
 #include <rte_cycles.h>
 
 #include "gatekeeper_acl.h"
 #include "gatekeeper_cps.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
+#include "gatekeeper_varip.h"
 #include "kni.h"
 
 /*
@@ -446,6 +448,7 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct cps_config *cps_conf = get_cps_conf();
 	struct cps_request *req = mb_alloc_entry(&cps_conf->mailbox);
 	int ret;
+	unsigned int i;
 
 	RTE_VERIFY(num_pkts <=
 		(sizeof(req->u.bgp.pkts) / sizeof(*req->u.bgp.pkts)));
@@ -454,7 +457,8 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 		RTE_LOG(ERR, GATEKEEPER,
 			"cps: %s: allocation of mailbox message failed\n",
 			__func__);
-		return -1;
+		ret = -ENOMEM;
+		goto free_pkts;
 	}
 
 	req->ty = CPS_REQ_BGP;
@@ -466,16 +470,18 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {
-		unsigned int i;
 		RTE_LOG(ERR, GATEKEEPER,
 			"cps: %s: failed to enqueue message to mailbox\n",
 			__func__);
-		for (i = 0; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
-		return ret;
+		goto free_pkts;
 	}
 
 	return 0;
+
+free_pkts:
+	for (i = 0; i < num_pkts; i++)
+		rte_pktmbuf_free(pkts[i]);
+	return ret;
 }
 
 static int
@@ -672,6 +678,65 @@ fill_bgp_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
 	}
 }
 
+/*
+ * Match the packet if it fails to be classifed by ACL rules.
+ * If it's a bgp packet, then submit it to the LLS block.
+ *
+ * Return values: 0 for successful match, and -ENOENT for no matching.
+ */
+static int
+match_bgp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+{
+	/*
+	 * The TCP header offset in terms of the
+	 * beginning of the IPv6 header.
+	 */
+	int tcp_offset;
+	uint8_t nexthdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+	struct ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct ipv6_hdr *ip6hdr;
+	struct tcp_hdr *tcp_hdr;
+	uint16_t minimum_size = sizeof(*eth_hdr) +
+		sizeof(struct ipv6_hdr) + sizeof(struct tcp_hdr);
+	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
+
+	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv6))
+		return -ENOENT;
+
+	if (pkt->data_len < minimum_size) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+			pkt->data_len, minimum_size);
+		return -ENOENT;
+	}
+
+ 	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
+
+	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
+			sizeof(iface->ip6_addr)) != 0))
+		return -ENOENT;
+
+	tcp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
+		sizeof(*eth_hdr), &nexthdr);
+	if (tcp_offset < 0 || nexthdr != IPPROTO_TCP)
+		return -ENOENT;
+
+	minimum_size += tcp_offset - sizeof(*ip6hdr);
+	if (pkt->data_len < minimum_size) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+			pkt->data_len, minimum_size);
+		return -ENOENT;
+	}
+
+	tcp_hdr = (struct tcp_hdr *)((uint8_t *)ip6hdr + tcp_offset);
+	if (tcp_hdr->src_port != cps_bgp_port &&
+			tcp_hdr->dst_port != cps_bgp_port)
+		return -ENOENT;
+
+	return 0;
+}
+
 static int
 add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 	uint16_t rx_queue)
@@ -712,7 +777,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 		fill_bgp_rule(&ipv6_rules[1], iface, false, tcp_port_bgp);
 
 		ret = register_ipv6_acl(ipv6_rules, NUM_ACL_BGP_RULES,
-			submit_bgp, iface);
+			submit_bgp, match_bgp, iface);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"cps: could not register BGP IPv6 ACL on %s iface\n",

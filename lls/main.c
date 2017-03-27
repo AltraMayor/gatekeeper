@@ -24,6 +24,7 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
+#include "gatekeeper_varip.h"
 #include "arp.h"
 #include "cache.h"
 #include "nd.h"
@@ -206,6 +207,70 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 			rte_pktmbuf_free(pkts[i]);
 		return ret;
 	}
+	return 0;
+}
+
+/*
+ * Match the packet if it fails to be classifed by ACL rules.
+ * If it's an ND packet, then submit it to the LLS block.
+ *
+ * Return values: 0 for successful match, and -ENOENT for no matching.
+ */
+static int
+match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+{
+	/*
+	 * The ND header offset in terms of the
+	 * beginning of the IPv6 header.
+	 */
+	int nd_offset;
+	uint8_t nexthdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+	struct ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct ipv6_hdr *ip6hdr;
+	struct icmpv6_hdr *nd_hdr;
+
+	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv6))
+		return -ENOENT;
+
+	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN) {
+		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+			pkt->data_len, ND_NEIGH_PKT_MIN_LEN, __func__);
+		return -ENOENT;
+	}
+
+ 	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
+
+	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
+			sizeof(iface->ip6_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
+			sizeof(iface->ll_ip6_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &iface->ip6_mc_addr,
+			sizeof(iface->ip6_mc_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr,
+			&iface->ll_ip6_mc_addr,
+			sizeof(iface->ll_ip6_mc_addr)) != 0))
+		return -ENOENT;
+
+	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
+		sizeof(*eth_hdr), &nexthdr);
+	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
+		return -ENOENT;
+
+	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN +
+			nd_offset - sizeof(*ip6hdr))) {
+		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+			pkt->data_len, ND_NEIGH_PKT_MIN_LEN +
+			nd_offset - sizeof(*ip6hdr), __func__);
+		return -ENOENT;
+	}
+
+	nd_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + nd_offset);
+	if (nd_hdr->type != ND_NEIGHBOR_SOLICITATION &&
+			nd_hdr->type != ND_NEIGHBOR_ADVERTISEMENT)
+		return -ENOENT;
+
 	return 0;
 }
 
@@ -425,7 +490,7 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 		ND_NEIGHBOR_ADVERTISEMENT);
 
 	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
-		submit_nd, iface);
+		submit_nd, match_nd, iface);
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"lls: could not register ND IPv6 ACL on %s iface\n",
