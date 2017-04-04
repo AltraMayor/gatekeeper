@@ -157,6 +157,11 @@ struct gt_config {
 	uint16_t     ggu_src_port;
 	uint16_t     ggu_dst_port;
 	int          max_num_ipv6_neighbors;
+	uint32_t     frag_scan_timeout_ms;
+	uint32_t     frag_bucket_num;
+	uint32_t     frag_bucket_entries;
+	uint32_t     frag_max_entries;
+	uint32_t     frag_max_flow_ttl_ms;
 	/* This struct has hidden fields. */
 };
 

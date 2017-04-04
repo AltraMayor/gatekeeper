@@ -108,3 +108,18 @@ function lookup_policy(pkt_info, policy)
 			group["params"]["renewal_step_ms"]
 	end
 end
+
+--[[
+Flows associated with fragments that have to be discarded
+before being fully assembled must be punished. Otherwise, an
+attacker could overflow the request channel with fragments that
+never complete, and policies wouldn't be able to do anything about it
+because they would not be aware of these fragments. The punishment
+is essentially a policy decision stated in the configuration files
+to be applied to these cases. For example, decline the flow for 10 minutes.
+--]]
+function lookup_frag_punish_policy(policy)
+	local pl = ffi.cast("struct ggu_policy *", policy)
+	pl.state = policylib.c.GK_DECLINED
+	pl.params.u.declined.expire_sec = 600
+end

@@ -72,6 +72,7 @@ struct gt_packet_headers {
 	void *outer_l3_hdr;
 	void *inner_l3_hdr;
 	void *l4_hdr;
+	/* This struct has hidden fields. */
 };
 
 struct ip_flow {
