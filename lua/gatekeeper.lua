@@ -137,6 +137,7 @@ struct gk_config {
 	unsigned int max_num_ipv6_neighbors;
 	unsigned int gk_max_num_ipv4_fib_entries;
 	unsigned int gk_max_num_ipv6_fib_entries;
+	unsigned int flow_table_full_scan_ms;
 	/* This struct has hidden fields. */
 };
 
@@ -205,6 +206,8 @@ struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);
+void set_gk_request_timeout(unsigned int request_timeout_sec,
+	struct gk_config *gk_conf);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);
 
