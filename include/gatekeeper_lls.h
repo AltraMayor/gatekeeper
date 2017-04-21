@@ -21,6 +21,7 @@
 
 #include <netinet/in.h>
 
+#include <rte_arp.h>
 #include <rte_ip.h>
 
 #include "gatekeeper_acl.h"
@@ -230,6 +231,23 @@ int hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be,
 	unsigned int lcore_id);
 int put_arp(struct in_addr *ip_be, unsigned int lcore_id);
 
+/*
+ * A Gratuitous ARP is an ARP request that serves as an announcement of
+ * a neighbor's mapping. The sender and target IP address should be the same,
+ * AND the target Ethernet address should be the same as the sender Ethernet
+ * address OR zero.
+ */
+static inline int
+is_garp_pkt(const struct arp_hdr *arp_hdr)
+{
+	return (arp_hdr->arp_data.arp_sip == arp_hdr->arp_data.arp_tip) &&
+		(is_zero_ether_addr(&arp_hdr->arp_data.arp_tha) ||
+		is_same_ether_addr(&arp_hdr->arp_data.arp_tha,
+			&arp_hdr->arp_data.arp_sha));
+}
+
+#define rte_ipv6_icmpv6_cksum rte_ipv6_udptcp_cksum
+
 struct icmpv6_hdr {
 	/* The type of this ICMPv6 packet. */
 	uint8_t  type;
@@ -254,15 +272,74 @@ struct nd_neigh_msg {
 	uint8_t           opts[0];
 } __attribute__((__packed__));
 
+/* ND options as defined by RFC 4861. */
+enum {
+	/* Link-layer address of sender, optional in Solicitations. */
+	ND_OPT_SOURCE_LL_ADDR = 1,
+	/* Link-layer address of the target, optional in Advertisements. */
+	ND_OPT_TARGET_LL_ADDR = 2,
+	/* Other options exist but are not supported here. */
+	ND_OPT_MAX,
+};
+
+struct nd_opts {
+	/* Pointers to each option present in an ICMPv6 packet. */
+	struct nd_opt_hdr *opt_array[ND_OPT_MAX];
+};
+
+struct nd_opt_hdr {
+	/* Type of the option. */
+	uint8_t type;
+	/* Length of option (including @type and @len) in units of 64 bits. */
+	uint8_t len;
+} __attribute__((__packed__));
+
+/* Used for both ND_OPT_SOURCE_LL_ADDR and ND_OPT_TARGET_LL_ADDR. */
+struct nd_opt_lladdr {
+	/* Type of the option. */
+	uint8_t           type;
+	/* Length of option (including @type and @len) in units of 64 bits. */
+	uint8_t           len;
+	/* Hardware address corresponding to @type. */
+	struct ether_addr ha;
+} __attribute__((__packed__));
+
 #define ND_NEIGH_HDR_MIN_LEN (sizeof(struct nd_neigh_msg))
 
 #define ND_NEIGH_PKT_MIN_LEN (sizeof(struct ether_hdr) + \
 	sizeof(struct ipv6_hdr) + sizeof(struct icmpv6_hdr) + \
 	ND_NEIGH_HDR_MIN_LEN)
 
+/* Minimum size of a Neighbor Discovery packet with a link-layer option. */
+#define ND_NEIGH_PKT_LLADDR_MIN_LEN (ND_NEIGH_PKT_MIN_LEN + \
+	sizeof(struct nd_opt_lladdr))
+
+/* Flags for Neighbor Advertisements. */
+#define LLS_ND_NA_ROUTER    0x80000000
+#define LLS_ND_NA_SOLICITED 0x40000000
+#define LLS_ND_NA_OVERRIDE  0x20000000
+
 /* Supported IPv6 ND packets via the type field in struct icmpv6_hdr. */
 #define ND_NEIGHBOR_SOLICITATION (135)
 #define ND_NEIGHBOR_ADVERTISEMENT (136)
+
+static inline int
+arp_enabled(struct lls_config *lls_conf)
+{
+	return lls_conf->arp_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->front) ||
+		lls_conf->arp_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->back);
+}
+
+static inline int
+nd_enabled(struct lls_config *lls_conf)
+{
+	return lls_conf->nd_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->front) ||
+		lls_conf->nd_cache.iface_enabled(lls_conf->net,
+			&lls_conf->net->back);
+}
 
 /*
  * Interface for functional blocks to resolve IPv6 --> Ethernet addresses.
@@ -273,10 +350,6 @@ struct nd_neigh_msg {
 int hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be,
 	unsigned int lcore_id);
 int put_nd(struct in6_addr *ip_be, unsigned int lcore_id);
-
-/* Submit ND packets to the LLS block. */
-int submit_nd(struct rte_mbuf **pkts, int num_pkts,
-	struct gatekeeper_if *iface);
 
 static inline int
 ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)

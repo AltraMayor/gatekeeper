@@ -29,11 +29,11 @@
 #include <rte_cycles.h>
 #include <rte_malloc.h>
 
+#include "gatekeeper_acl.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
-#include "gatekeeper_lls.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */

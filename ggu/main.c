@@ -337,9 +337,9 @@ ggu_state2(void *arg)
 	 */
 	return ntuple_filter_add(ggu_conf->net->back.id,
 		ggu_conf->net->back.ip4_addr.s_addr,
-		ggu_conf->ggu_src_port,
-		ggu_conf->ggu_dst_port,
-		ggu_conf->rx_queue_back);
+		ggu_conf->ggu_src_port, UINT16_MAX,
+		ggu_conf->ggu_dst_port, UINT16_MAX,
+		IPPROTO_UDP, ggu_conf->rx_queue_back, false);
 }
 
 int

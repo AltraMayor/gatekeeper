@@ -116,21 +116,6 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	}
 }
 
-/*
- * A Gratuitous ARP is an ARP request that serves as an announcement of
- * a neighbor's mapping. The sender and target IP address should be the same,
- * AND the target Ethernet address should be the same as the sender Ethernet
- * address OR zero.
- */
-static inline int
-is_garp_pkt(const struct arp_hdr *arp_hdr)
-{
-	return (arp_hdr->arp_data.arp_sip == arp_hdr->arp_data.arp_tip) &&
-		(is_zero_ether_addr(&arp_hdr->arp_data.arp_tha) ||
-		is_same_ether_addr(&arp_hdr->arp_data.arp_tha,
-			&arp_hdr->arp_data.arp_sha));
-}
-
 int
 process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr)

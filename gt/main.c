@@ -26,6 +26,7 @@
 #include <rte_lcore.h>
 #include <rte_malloc.h>
 
+#include "gatekeeper_acl.h"
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_gk.h"
@@ -33,7 +34,6 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
-#include "gatekeeper_lls.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"

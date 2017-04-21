@@ -22,12 +22,33 @@
 /* Maximum number of rules installed per ACL. */
 #define MAX_NUM_IPV6_ACL_RULES (32)
 
+/*
+ * Input indices for the IPv6-related ACL fields. Fields are given
+ * unique identifiers, but since the DPDK ACL library processes
+ * each packet in four-byte chunks, the fields need to be grouped
+ * into four-byte input indices. Therefore, adjacent fields may
+ * share the same input index. For example, TCP and UDP ports are
+ * two-byte contiguous fields forming four consecutive bytes, so
+ * they could have the same input index.
+ */
+enum {
+	PROTO_INPUT_IPV6,
+	DST1_INPUT_IPV6,
+	DST2_INPUT_IPV6,
+	DST3_INPUT_IPV6,
+	DST4_INPUT_IPV6,
+	/* Source/destination ports are grouped together. */
+	PORTS_INPUT_IPV6,
+	TYPE_INPUT_ICMPV6,
+	NUM_INPUTS_IPV6,
+};
+
 /* Callback function for when there's no classification match. */
 static inline int
-drop_ipv6_acl_pkts(struct rte_mbuf **pkts, int num_pkts,
+drop_ipv6_acl_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < num_pkts; i++)
 		rte_pktmbuf_free(pkts[i]);
 	return 0;
@@ -43,43 +64,62 @@ struct rte_acl_field_def ipv6_defs[NUM_FIELDS_IPV6] = {
 		.type = RTE_ACL_FIELD_TYPE_BITMASK,
 		.size = sizeof(uint8_t),
 		.field_index = PROTO_FIELD_IPV6,
-		.input_index = PROTO_FIELD_IPV6,
+		.input_index = PROTO_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, proto),
 	},
 	{
 		.type = RTE_ACL_FIELD_TYPE_MASK,
 		.size = sizeof(uint32_t),
 		.field_index = DST1_FIELD_IPV6,
-		.input_index = DST1_FIELD_IPV6,
+		.input_index = DST1_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, dst_addr[0]),
 	},
 	{
 		.type = RTE_ACL_FIELD_TYPE_MASK,
 		.size = sizeof(uint32_t),
 		.field_index = DST2_FIELD_IPV6,
-		.input_index = DST2_FIELD_IPV6,
+		.input_index = DST2_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, dst_addr[4]),
 	},
 	{
 		.type = RTE_ACL_FIELD_TYPE_MASK,
 		.size = sizeof(uint32_t),
 		.field_index = DST3_FIELD_IPV6,
-		.input_index = DST3_FIELD_IPV6,
+		.input_index = DST3_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, dst_addr[8]),
 	},
 	{
 		.type = RTE_ACL_FIELD_TYPE_MASK,
 		.size = sizeof(uint32_t),
 		.field_index = DST4_FIELD_IPV6,
-		.input_index = DST4_FIELD_IPV6,
+		.input_index = DST4_INPUT_IPV6,
 		.offset = offsetof(struct ipv6_hdr, dst_addr[12]),
+	},
+	/*
+	 * The source and destination ports are the first and second
+	 * fields in TCP and UDP, so they are the four bytes directly
+	 * following the IPv6 header.
+	 */
+	{
+		.type = RTE_ACL_FIELD_TYPE_BITMASK,
+		.size = sizeof(uint16_t),
+		.field_index = SRCP_FIELD_IPV6,
+		.input_index = PORTS_INPUT_IPV6,
+		.offset = sizeof(struct ipv6_hdr),
+	},
+	{
+		.type = RTE_ACL_FIELD_TYPE_BITMASK,
+		.size = sizeof(uint16_t),
+		.field_index = DSTP_FIELD_IPV6,
+		.input_index = PORTS_INPUT_IPV6,
+		.offset = sizeof(struct ipv6_hdr) + sizeof(uint16_t),
 	},
 	{
 		/* Enforce grouping into four bytes. */
 		.type = RTE_ACL_FIELD_TYPE_BITMASK,
 		.size = sizeof(uint32_t),
 		.field_index = TYPE_FIELD_ICMPV6,
-		.input_index = TYPE_FIELD_ICMPV6,
+		.input_index = TYPE_INPUT_ICMPV6,
 		.offset = sizeof(struct ipv6_hdr) +
 			offsetof(struct icmpv6_hdr, type),
 	},

@@ -74,7 +74,7 @@ struct gatekeeper_rss_config {
  * are circularly defined.
  */
 struct gatekeeper_if *iface;
-typedef int (*acl_cb_func)(struct rte_mbuf **pkts, int num_pkts,
+typedef int (*acl_cb_func)(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface);
 
 /*
@@ -145,6 +145,7 @@ struct gatekeeper_if {
 	/* IPv4 address and network mask. */
 	struct in_addr  ip4_addr;
 	struct in_addr  ip4_mask;
+	uint8_t         ip4_addr_plen;
 
 	/*
 	 * Global IPv6 address and network mask.
@@ -154,6 +155,7 @@ struct gatekeeper_if {
 	 */
 	struct in6_addr ip6_addr;
 	struct in6_addr ip6_mask;
+	uint8_t         ip6_addr_plen;
 
 	/*
 	 * Addresses related to Neighbor Discovery.
@@ -297,7 +299,9 @@ void lua_free_iface(struct gatekeeper_if *iface);
 int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
-	uint16_t src_port, uint16_t dst_port, uint16_t queue_id);
+	uint16_t src_port, uint16_t src_port_mask,
+	uint16_t dst_port, uint16_t dst_port_mask,
+	uint8_t proto, uint16_t queue_id, int ipv4_only);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);

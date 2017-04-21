@@ -22,8 +22,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_net.h"
 
-/* TODO Add fields and rules to match IPv6 BGP packets for the CPS block. */
-
 /* Fields that can be checked in an IPv6 ACL rule. */
 enum {
 	PROTO_FIELD_IPV6,
@@ -31,6 +29,8 @@ enum {
 	DST2_FIELD_IPV6,
 	DST3_FIELD_IPV6,
 	DST4_FIELD_IPV6,
+	SRCP_FIELD_IPV6,
+	DSTP_FIELD_IPV6,
 	TYPE_FIELD_ICMPV6,
 	NUM_FIELDS_IPV6,
 };

@@ -155,6 +155,13 @@ struct gt_config {
 	/* This struct has hidden fields. */
 };
 
+struct cps_config {
+	unsigned int lcore_id;
+	uint16_t     tcp_port_bgp;
+	int          debug;
+	/* This struct has hidden fields. */
+};
+
 ]]
 
 -- Functions and wrappers
@@ -183,6 +190,10 @@ int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 
 struct gt_config *alloc_gt_conf(void);
 int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
+
+struct cps_config *get_cps_conf(void);
+int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
+	struct lls_config *lls_conf, const char *kni_kmod_path);
 
 ]]
 
