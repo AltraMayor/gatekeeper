@@ -167,6 +167,15 @@ struct dynamic_config {
 	/* This struct has hidden fields. */
 };
 
+struct sol_config {
+	unsigned int lcore_id;
+	unsigned int pri_req_max_len;
+	double       req_bw_rate;
+	unsigned int enq_burst_size;
+	unsigned int deq_burst_size;
+	/* This struct has hidden fields. */
+};
+
 ]]
 
 -- Functions and wrappers
@@ -183,7 +192,8 @@ struct gatekeeper_if *get_if_back(struct net_config *net_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);
-int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
+int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct sol_config *sol_conf);
 
 struct ggu_config *alloc_ggu_conf(void);
 int run_ggu(struct net_config *net_conf,
@@ -204,6 +214,9 @@ void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
 int run_dynamic_config(const char *server_path,
 	struct dynamic_config *dy_conf);
+
+struct sol_config *alloc_sol_conf(void);
+int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 
 ]]
 

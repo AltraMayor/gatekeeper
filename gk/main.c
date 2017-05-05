@@ -34,6 +34,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_sol.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -305,9 +306,14 @@ drop_packet(struct rte_mbuf *pkt)
  * (1) compute the priority of the packet.
  * (2) encapsulate the packet as a request.
  * (3) put this encapsulated packet in the request queue.
+ *
+ * Returns a negative integer on error, or EINPROGRESS to indicate
+ * that the request is being processed by another lcore, and should
+ * not be forwarded or dropped on returning from this function.
  */
 static int
-gk_process_request(struct flow_entry *fe, struct ipacket *packet)
+gk_process_request(struct flow_entry *fe, struct ipacket *packet,
+	struct sol_config *sol_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -353,9 +359,8 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet)
 
 	/* TODO Fill up the Ethernet header of the packet. */
 
-	/* TODO Put this encapsulated packet in the request queue. */
-
-	return 0;
+	ret = gk_solicitor_enqueue(sol_conf, packet->pkt, priority);
+	return ret < 0 ? ret : EINPROGRESS;
 }
 
 static inline uint64_t
@@ -364,8 +369,18 @@ cycle_from_second(uint64_t time)
 	return (cycles_per_sec * time);
 }
 
+/*
+ * Returns:
+ *   * zero on success; the granted packet can be enqueued and forwarded
+ *   * a negative number on error or when the packet needs to be
+ *     otherwise dropped because it has exceeded its budget
+ *   * EINPROGRESS to indicate that the packet is now a request that
+ *     is being processed by another lcore, and should not
+ *     be forwarded or dropped on returning from this function.
+ */
 static int
-gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
+gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
+	struct sol_config *sol_conf)
 {
 	int ret;
 	bool renew_cap;
@@ -376,7 +391,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet);
+		return gk_process_request(fe, packet, sol_conf);
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
@@ -385,7 +400,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
 	}
 
 	if (pkt->data_len > fe->u.granted.budget_byte)
-		return drop_packet(pkt);
+		return -1;
 
 	fe->u.granted.budget_byte -= pkt->data_len;
 	renew_cap = now >= fe->u.granted.send_next_renewal_at;
@@ -410,22 +425,29 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet)
 
 	/* TODO Fill up the Ethernet header of the packet. */
 
-	/* TODO Put the encapsulated packet in the granted queue. */
-
 	return 0;
 }
 
+/*
+ * Returns:
+ *   * a negative number on error or when the packet needs to be
+ *     otherwise dropped because it is declined
+ *   * EINPROGRESS to indicate that the packet is now a request that
+ *     is being processed by another lcore, and should not
+ *     be forwarded or dropped on returning from this function.
+ */
 static int
-gk_process_declined(struct flow_entry *fe, struct ipacket *packet)
+gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
+	struct sol_config *sol_conf)
 {
 	uint64_t now = rte_rdtsc();
 
 	if (unlikely(now >= fe->u.declined.expire_at)) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet);
+		return gk_process_request(fe, packet, sol_conf);
 	}
 
-	return drop_packet(packet->pkt);
+	return -1;
 }
 
 static int
@@ -896,15 +918,18 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 
 		switch (fe->state) {
 		case GK_REQUEST:
-			ret = gk_process_request(fe, &packet);
+			ret = gk_process_request(fe, &packet,
+				gk_conf->sol_conf);
 			break;
 
 		case GK_GRANTED:
-			ret = gk_process_granted(fe, &packet);
+			ret = gk_process_granted(fe, &packet,
+				gk_conf->sol_conf);
 			break;
 
 		case GK_DECLINED:
-			ret = gk_process_declined(fe, &packet);
+			ret = gk_process_declined(fe, &packet,
+				gk_conf->sol_conf);
 			break;
 
 		default:
@@ -916,9 +941,15 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 		}
 
 		if (ret < 0)
-			rte_pktmbuf_free(pkt);
-		else
+			drop_packet(pkt);
+		else if (ret == EINPROGRESS) {
+			/* Request will be serviced by another lcore. */
+			continue;
+		} else if (likely(ret == 0))
 			tx_bufs[num_tx++] = pkt;
+		else
+			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
+				ret, fe->state);
 	}
 
 	/* Send burst of TX packets, to second port of pair. */
@@ -928,7 +959,7 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	/* XXX Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_tx)) {
 		for (i = num_tx_succ; i < num_tx; i++)
-			rte_pktmbuf_free(tx_bufs[i]);
+			drop_packet(tx_bufs[i]);
 	}
 
 	process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
@@ -1061,7 +1092,7 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 	/* XXX Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_tx)) {
 		for (i = num_tx_succ; i < num_tx; i++)
-			rte_pktmbuf_free(tx_bufs[i]);
+			drop_packet(tx_bufs[i]);
 	}
 
 	process_pkts_ipv6_acl(&gk_conf->net->back, lcore, &acl);
@@ -1239,10 +1270,8 @@ gk_stage1(void *arg)
 	 */
 	ret = setup_gk_lpm(gk_conf,
 		rte_lcore_to_socket_id(gk_conf->lcores[0]));
-	if (ret < 0) {
-		cleanup_gk(gk_conf);
-		return -1;
-	}
+	if (ret < 0)
+		goto cleanup;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
 		unsigned int lcore = gk_conf->lcores[i];
@@ -1262,7 +1291,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->tx_queue_front = ret;
 
@@ -1270,7 +1299,7 @@ gk_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gk: cannot assign an RX queue for the back interface for lcore %u\n",
 				lcore);
-			return -1;
+			goto cleanup;
 		}
 		inst_ptr->rx_queue_back = ret;
 
@@ -1319,11 +1348,12 @@ cleanup:
  * TODO Implement the addition of FIB entries in the dynamic configuration.
  */
 int
-run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
+run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct sol_config *sol_conf)
 {
 	int ret, i;
 
-	if (net_conf == NULL || gk_conf == NULL) {
+	if (net_conf == NULL || gk_conf == NULL || sol_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -1335,6 +1365,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf)
 	}
 
 	gk_conf->net = net_conf;
+	gk_conf->sol_conf = sol_conf;
 
 	if (gk_conf->num_lcores <= 0)
 		goto success;

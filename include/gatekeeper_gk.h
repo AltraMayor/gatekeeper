@@ -26,6 +26,7 @@
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_lpm.h"
+#include "gatekeeper_sol.h"
 
 /*
  * The LPM reserves 24-bit for the next-hop field.
@@ -232,6 +233,8 @@ struct gk_config {
 
 	struct gk_instance *instances;
 	struct net_config  *net;
+	struct sol_config  *sol_conf;
+
 	/*
 	 * The LPM table used by the GK instances.
 	 * We assume that all the GK instances are
@@ -265,7 +268,8 @@ struct gk_cmd_entry {
 
 struct gk_config *alloc_gk_conf(void);
 int gk_conf_put(struct gk_config *gk_conf);
-int run_gk(struct net_config *net_conf, struct gk_config *gk_conf);
+int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct sol_config *sol_conf);
 struct mailbox *get_responsible_gk_mailbox(
 	const struct ip_flow *flow, const struct gk_config *gk_conf);
 
