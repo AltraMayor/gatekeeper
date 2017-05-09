@@ -36,5 +36,8 @@ function gatekeeper_init()
 	local cpsf = require("cps")
 	local cps_conf = cpsf(net_conf, lls_conf, numa_table)
 
+	local dyf = require("dyn_cfg")
+	local dy_conf = dyf(numa_table)
+
 	return 0
 end
