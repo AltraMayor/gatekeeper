@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <netinet/ip.h>
+
 #include <rte_ip.h>
 #include <rte_mbuf.h>
 #include <rte_memcpy.h>
@@ -23,6 +25,21 @@
 
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_net.h"
+
+/*
+ * The Full-functionality Option for setting ECN bits in IP-in-IP packets.
+ * RFC 3168, section 9.1.1.
+ *
+ * If the ECN codepoint of the inside header is CE, set the ECN codepoint of
+ * the outside header to ECT(0). Otherwise (the inside ECN is not-ECT or ECT),
+ * copy the ECN codepoint of the inside header to the outside header.
+ */
+static inline uint8_t in_to_out_ecn(uint8_t inner_tos)
+{
+	return (inner_tos & IPTOS_ECN_MASK) == IPTOS_ECN_CE
+		? IPTOS_ECN_ECT0
+		: inner_tos & IPTOS_ECN_MASK;
+}
 
 int
 encapsulate(struct rte_mbuf *pkt, uint8_t priority,
@@ -33,6 +50,8 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 	struct ipv6_hdr *outer_ip6hdr;
 
 	if (gt_addr->proto == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *inner_ip4hdr;
+
 		/* Allocate space for outer IPv4 header. */
 		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
 			sizeof(struct ipv4_hdr));
@@ -43,10 +62,12 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		}
 
 		outer_ip4hdr = (struct ipv4_hdr *)&eth_hdr[1];
+		inner_ip4hdr = (struct ipv4_hdr *)&outer_ip4hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip4hdr->version_ihl = IP_VHL_DEF;
-		outer_ip4hdr->type_of_service = (priority << 2);
+		outer_ip4hdr->type_of_service = (priority << 2) |
+			in_to_out_ecn(inner_ip4hdr->type_of_service);
 		outer_ip4hdr->packet_id = 0;
 		outer_ip4hdr->fragment_offset = IP_DN_FRAGMENT_FLAG;
 		outer_ip4hdr->time_to_live = IP_DEFTTL;
@@ -69,6 +90,8 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		pkt->ol_flags |= (PKT_TX_IPV4 |
 			PKT_TX_IP_CKSUM | PKT_TX_OUTER_IPV4);
 	} else if (likely(gt_addr->proto == ETHER_TYPE_IPv6)) {
+		struct ipv6_hdr *inner_ip6hdr;
+
 		/* Allocate space for new IPv6 header. */
 		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
 			sizeof(struct ipv6_hdr));
@@ -79,10 +102,12 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		}
 
 		outer_ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
+		inner_ip6hdr = (struct ipv6_hdr *)&outer_ip6hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
-			IPv6_DEFAULT_VTC_FLOW | (priority << 22));
+			IPv6_DEFAULT_VTC_FLOW | (priority << 22) |
+			(in_to_out_ecn(inner_ip6hdr->vtc_flow >> 20) << 20));
 		outer_ip6hdr->proto = IPPROTO_IPIP; 
 		outer_ip6hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
 
