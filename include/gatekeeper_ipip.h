@@ -23,6 +23,7 @@
 
 #include "gatekeeper_main.h"
 #include "gatekeeper_flow.h"
+#include "gatekeeper_net.h"
 
 #define IP_VERSION              (0x40)
 /* Default IP header length == five 32-bits words. */
@@ -45,6 +46,7 @@
  * When allocating space for the outer IP header,
  * it only needs to allocate the extra needed space.
  */
-int encapsulate(struct rte_mbuf *pkt, uint8_t priority, struct ip_flow *fow);
+int encapsulate(struct rte_mbuf *pkt, uint8_t priority,
+	struct gatekeeper_if *iface, struct ipaddr *gt_addr);
 
 #endif /* _GATEKEEPER_IPIP_H_ */

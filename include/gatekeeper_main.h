@@ -21,6 +21,14 @@
 
 #include <stdint.h>
 
+#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+#include <rte_hash_crc.h>
+#define DEFAULT_HASH_FUNC       rte_hash_crc
+#else
+#include <rte_jhash.h>
+#define DEFAULT_HASH_FUNC       rte_jhash
+#endif
+
 /*
  * Custom log type for Gatekeeper-related log entries.
  * When using this logtype, the log string should include

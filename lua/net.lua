@@ -15,7 +15,7 @@ return function (gatekeeper_server)
 
 	local back_iface_enabled = gatekeeper_server
 	local back_ports = {"enp133s0f1"}
-	local back_ips  = {"10.0.0.2/24", "2001:db8::2/32"}
+	local back_ips  = {"10.0.1.1/24", "2002:db8::1/32"}
 	local back_arp_cache_timeout_sec = 7200
 	local back_nd_cache_timeout_sec = 7200
 	local back_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN

@@ -24,14 +24,6 @@
 #include "cache.h"
 #include "nd.h"
 
-#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
-#include <rte_hash_crc.h>
-#define DEFAULT_HASH_FUNC rte_hash_crc
-#else
-#include <rte_jhash.h>
-#define DEFAULT_HASH_FUNC rte_jhash
-#endif
-
 /* XXX Sample parameters, need to be tested for better performance. */
 #define LLS_CACHE_BURST_SIZE (32)
 

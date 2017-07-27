@@ -20,6 +20,8 @@ function gatekeeper_init()
 	local llsf = require("lls")
 	local lls_conf = llsf(net_conf, numa_table)
 
+	local gk_conf
+
 	if gatekeeper_server == true then
 		-- n_lcores + 2 on same NUMA: for GK-GT Unit and Solicitor.
 		local n_lcores = 2
@@ -33,7 +35,7 @@ function gatekeeper_init()
 		local sol_conf = solf(net_conf, sol_lcore)
 
 		local gkf = require("gk")
-		local gk_conf = gkf(net_conf, sol_conf, gk_lcores)
+		gk_conf = gkf(net_conf, sol_conf, gk_lcores)
 
 		local gguf = require("ggu")
 		local ggu_conf = gguf(net_conf, gk_conf, ggu_lcore)
@@ -48,7 +50,7 @@ function gatekeeper_init()
 	local cps_conf = cpsf(net_conf, lls_conf, numa_table)
 
 	local dyf = require("dyn_cfg")
-	local dy_conf = dyf(numa_table)
+	local dy_conf = dyf(gk_conf, numa_table)
 
 	return 0
 end

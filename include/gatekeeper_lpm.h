@@ -22,8 +22,6 @@
 #include <rte_lpm.h>
 #include <rte_lpm6.h>
 
-/* TODO Implement functions to edit IPv4/IPv6 routes. */
-
 /*
  * The API here aims to be general and allow developers
  * to create more than one LPM table on a single lcore id.

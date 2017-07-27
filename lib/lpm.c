@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <arpa/inet.h>
+
 #include <rte_log.h>
 #include <rte_debug.h>
 
@@ -46,13 +48,14 @@ init_ipv4_lpm(const char *tag,
 	return lpm;
 }
 
+/* @ip should be in network order. */
 int
 lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 {
 	int ret;
 	uint32_t next_hop;
 
-	ret = rte_lpm_lookup(lpm, ip, &next_hop);
+	ret = rte_lpm_lookup(lpm, ntohl(ip), &next_hop);
 	if (ret == -EINVAL) {
 		RTE_LOG(ERR, LPM,
 			"lpm: incorrect arguments for IPv4 lookup!\n");

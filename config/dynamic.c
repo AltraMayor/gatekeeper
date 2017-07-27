@@ -114,11 +114,6 @@ process_client_message(int conn_fd,
 	/*
 	 * TODO Implement the functionalities to process the clients' request.
 	 *
-	 * Gatekeeper: Adding, listing, and removing BP components;
-	 *
-	 * Gatekeeper: Adding, listing, removing IP ranges
-	 * handled by the global LPM table in GKs;
-	 *
 	 * Gatekeeper and Grantor: Listing the ARP and ND table.
 	 * This is important for network diagnosis.
 	 *
@@ -258,6 +253,11 @@ static void
 cleanup_dy(struct dynamic_config *dy_conf)
 {
 	int ret;
+
+	if (dy_conf->gk != NULL) {
+		gk_conf_put(dy_conf->gk);
+		dy_conf->gk = NULL;
+	}
 
 	if (dy_conf->sock_fd != -1) {
 		ret = close(dy_conf->sock_fd);
@@ -464,11 +464,21 @@ set_dyc_timeout(unsigned int sec,
 }
 
 int
-run_dynamic_config(const char *server_path, struct dynamic_config *dy_conf)
+run_dynamic_config(struct gk_config *gk_conf,
+	const char *server_path, struct dynamic_config *dy_conf)
 {
 	int ret;
 	struct sockaddr_un server_addr;
 
+	/*
+	 * When the dynamic configuration is run for Gatekeeper,
+	 * the gt_conf should be NULL.
+	 * When the dynamic configuration is run for Grantor,
+	 * the gk_conf should be NULL.
+	 * The code works fine with both being NULL as well.
+	 * This way, not only will the dynamic config block work for
+	 * the Grantor case, it could work for unforeseen cases as well.
+	 */
 	if (server_path == NULL || dy_conf == NULL) {
 		ret = -1;
 		goto out;
@@ -543,13 +553,24 @@ run_dynamic_config(const char *server_path, struct dynamic_config *dy_conf)
 		goto free_sock;
 	}
 
+	/*
+	 * TODO Add support for the dynamic configuration running as Grantor.
+	 */
+	if (gk_conf != NULL)
+		gk_conf_hold(gk_conf);
+	dy_conf->gk = gk_conf;
+
 	ret = launch_at_stage3("dynamic_conf",
 		dyn_cfg_proc, dy_conf, dy_conf->lcore_id);
 	if (ret < 0)
-		goto free_sock;
+		goto put_gk_config;
 
 	return 0;
 
+put_gk_config:
+	dy_conf->gk = NULL;
+	if (gk_conf != NULL)
+		gk_conf_put(gk_conf);
 free_sock:
 	close(dy_conf->sock_fd);
 	dy_conf->sock_fd = -1;
