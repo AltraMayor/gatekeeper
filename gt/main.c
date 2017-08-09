@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <lualib.h>
 #include <lauxlib.h>
+#include <netinet/ip.h>
 
 #include <rte_log.h>
 #include <rte_ether.h>
@@ -88,6 +89,8 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		outer_ipv4_hdr = (struct ipv4_hdr *)info->outer_l3_hdr;
 		parsed_len += sizeof(struct ipv4_hdr);
 		info->priority = (outer_ipv4_hdr->type_of_service >> 2);
+		info->outer_ecn =
+			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
 		encasulated_proto = outer_ipv4_hdr->next_proto_id;
 		break;
 	case ETHER_TYPE_IPv6:
@@ -98,6 +101,8 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		parsed_len += sizeof(struct ipv6_hdr);
 		info->priority = (((outer_ipv6_hdr->vtc_flow >> 20)
 			& 0xFF) >> 2);
+		info->outer_ecn =
+			(outer_ipv6_hdr->vtc_flow >> 20) & IPTOS_ECN_MASK;
 		encasulated_proto = outer_ipv6_hdr->proto;
 		break;
 	default:
@@ -241,11 +246,39 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 }
 
 static int
-fill_eth_hdr(struct rte_mbuf *m,
+decap_and_fill_eth(struct rte_mbuf *m,
 	struct gt_config *gt_conf, struct gt_packet_headers *pkt_info)
 {
 	uint16_t outer_ip_len;
 	struct ether_hdr *new_eth;
+
+	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
+		/*
+		 * The Full-functionality Option for setting ECN bits in
+		 * IP-in-IP packets. RFC 3168, section 9.1.1.
+		 *
+		 * If the outer header's ECN codepoint is CE and the inner
+		 * header's ECN codepoint is not CE, set it and clear the
+		 * checksum so that hardware can recompute it.
+		 */
+		struct ipv4_hdr *inner_ipv4_hdr = pkt_info->inner_l3_hdr;
+		if (((inner_ipv4_hdr->type_of_service & IPTOS_ECN_MASK) !=
+				IPTOS_ECN_CE) &&
+				(pkt_info->outer_ecn == IPTOS_ECN_CE)) {
+			inner_ipv4_hdr->type_of_service |= IPTOS_ECN_CE;
+			inner_ipv4_hdr->hdr_checksum = 0;
+		}
+	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
+		/*
+		 * Since there's no checksum in the IPv6 header, skip the
+		 * extra comparisons and set the ECN bits if needed
+		 * (even if it's redundant).
+		 */
+		struct ipv6_hdr *inner_ipv6_hdr = pkt_info->inner_l3_hdr;
+		if (pkt_info->outer_ecn == IPTOS_ECN_CE)
+			inner_ipv6_hdr->vtc_flow |= IPTOS_ECN_CE << 20;
+	} else
+		return -1;
 
 	if (pkt_info->outer_ip_ver == ETHER_TYPE_IPv4)
 		outer_ip_len = sizeof(struct ipv4_hdr);
@@ -524,7 +557,7 @@ gt_proc(void *arg)
 			}
 
 			if (pkt_info.priority <= 1) {
-				ret = fill_eth_hdr(m, gt_conf, &pkt_info);
+				ret = decap_and_fill_eth(m, gt_conf, &pkt_info);
 				if (ret < 0)
 					rte_pktmbuf_free(m);
 				else
@@ -558,7 +591,7 @@ gt_proc(void *arg)
 				rte_pktmbuf_free(notify_pkt);
 
 			if (policy.state == GK_GRANTED) {
-				ret = fill_eth_hdr(m, gt_conf, &pkt_info);
+				ret = decap_and_fill_eth(m, gt_conf, &pkt_info);
 				if (ret < 0)
 					rte_pktmbuf_free(m);
 				else

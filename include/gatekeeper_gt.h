@@ -33,6 +33,7 @@ struct gt_packet_headers {
 	uint16_t inner_ip_ver;
 	uint8_t l4_proto;
 	uint8_t priority;
+	uint8_t outer_ecn;
 
 	void *l2_hdr;
 	void *outer_l3_hdr;
