@@ -186,6 +186,9 @@ struct gk_lpm {
 
 struct gk_config;
 
+int clear_ether_cache(struct ether_cache *eth_cache);
+int setup_neighbor_tbl(unsigned int socket_id, int identifier,
+	int ip_ver, int ht_size, struct neighbor_hash_table *neigh);
 int setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id);
 void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 

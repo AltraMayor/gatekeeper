@@ -30,9 +30,9 @@
 
 #include "gatekeeper_flow.h"
 
-/* To mark whether Gatekeeper server configures IPv4 or IPv6. */
-#define GK_CONFIGURED_IPV4 (1)
-#define GK_CONFIGURED_IPV6 (2)
+/* To mark whether Gatekeeper/Grantor server configures IPv4 or IPv6. */
+#define CONFIGURED_IPV4 (1)
+#define CONFIGURED_IPV6 (2)
 
 #define IPv6_DEFAULT_VTC_FLOW   (0x60000000)
 #define IPv6_DEFAULT_HOP_LIMITS (0xFF)
@@ -330,13 +330,13 @@ bool ipv6_configured(struct net_config *net_conf);
 static inline bool
 ipv4_if_configured(struct gatekeeper_if *iface)
 {
-	return !!(iface->configured_proto & GK_CONFIGURED_IPV4);
+	return !!(iface->configured_proto & CONFIGURED_IPV4);
 }
 
 static inline bool
 ipv6_if_configured(struct gatekeeper_if *iface)
 {
-	return !!(iface->configured_proto & GK_CONFIGURED_IPV6);
+	return !!(iface->configured_proto & CONFIGURED_IPV6);
 }
 
 static inline int

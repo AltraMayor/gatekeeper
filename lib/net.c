@@ -578,12 +578,12 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		if (gk_type == AF_INET &&
 				inet_pton(AF_INET, ip_addr,
 				&iface->ip4_addr) == 1) {
-			iface->configured_proto |= GK_CONFIGURED_IPV4;
+			iface->configured_proto |= CONFIGURED_IPV4;
 		}
 		else if (gk_type == AF_INET6 &&
 				inet_pton(AF_INET6, ip_addr,
 				&iface->ip6_addr) == 1) {
-			iface->configured_proto |= GK_CONFIGURED_IPV6;
+			iface->configured_proto |= CONFIGURED_IPV6;
 		}
 		else
 			goto name;

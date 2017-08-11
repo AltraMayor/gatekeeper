@@ -285,7 +285,7 @@ drop_packet(struct rte_mbuf *pkt)
 /*
  * Return value indicates whether the cached Ethernet header is stale or not.
  */
-static int
+int
 pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache)
 {
 	unsigned seq;
