@@ -126,7 +126,7 @@ enqueue_req(struct sol_config *sol_conf, struct priority_req *req)
 	struct req_queue *req_queue = &sol_conf->req_queue;
 	uint8_t priority = req->priority;
 
-	if (req_queue->len == sol_conf->pri_req_max_len) {
+	if (req_queue->len >= sol_conf->pri_req_max_len) {
 		/* New packet is lowest priority, so drop it. */
 		if (req_queue->lowest_priority >= priority) {
 			rte_pktmbuf_free(req->pkt);
