@@ -32,6 +32,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_varip.h"
 
 static void
 process_single_policy(const struct ggu_policy *policy, const struct ggu_config *ggu_conf)
@@ -86,32 +87,16 @@ process_single_policy(const struct ggu_policy *policy, const struct ggu_config *
 	mb_send_entry(mb, entry);
 }
 
-static int
-validate_packet_len(struct rte_mbuf *pkt, uint16_t proto)
+static inline uint8_t
+ipv4_hdr_len(struct ipv4_hdr *ip4hdr)
 {
-	uint16_t minimum_size = sizeof(struct ether_hdr);
+	return ((ip4hdr->version_ihl & 0xf) << 2);
+}
 
-	if (proto == ETHER_TYPE_IPv4)
-		minimum_size += sizeof(struct ipv4_hdr);
-	else if (proto == ETHER_TYPE_IPv6)
-		minimum_size += sizeof(struct ipv6_hdr);
-	else {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: unknown packet type %hu\n",
-			proto);
-		return -1;
-	}
-
-	minimum_size += sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
-
-	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: the packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-			pkt->data_len, minimum_size);
-		return -1;
-	}
-
-	return 0;
+static inline uint8_t *
+ipv4_skip_exthdr(struct ipv4_hdr *ip4hdr)
+{
+	return ((uint8_t *)ip4hdr + ipv4_hdr_len(ip4hdr));
 }
 
 static void
@@ -128,14 +113,21 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 	uint16_t real_payload_len;
 	uint16_t expected_payload_len;
 	struct ggu_policy policy;
+	uint16_t minimum_size = sizeof(struct ether_hdr);
 
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
 
 	switch (ether_type) {
 	case ETHER_TYPE_IPv4:
-		if (validate_packet_len(pkt, ETHER_TYPE_IPv4) < 0)
+		minimum_size += sizeof(struct ipv4_hdr) +
+			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+		if (pkt->data_len < minimum_size) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"ggu: the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				pkt->data_len, minimum_size);
 			goto free_packet;
+		}
 
 		ip4hdr = rte_pktmbuf_mtod_offset(pkt, 
 			struct ipv4_hdr *, sizeof(struct ether_hdr));
@@ -151,20 +143,44 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		udphdr = (struct udp_hdr *)&ip4hdr[1];
-		break;
-
-	case ETHER_TYPE_IPv6:
-		if (validate_packet_len(pkt, ETHER_TYPE_IPv6) < 0)
-			goto free_packet;
-
-		ip6hdr = rte_pktmbuf_mtod_offset(pkt, 
-			struct ipv6_hdr *, sizeof(struct ether_hdr));
-		if (ip6hdr->proto != IPPROTO_UDP) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ggu: received non-UDP packets, IPv6 ntuple filter bug!\n");
+		minimum_size += ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr);
+		if (pkt->data_len < minimum_size) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"ggu: the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				pkt->data_len, minimum_size);
 			goto free_packet;
 		}
+
+		/*
+		 * The ntuple filter supports IPv4 variable headers.
+		 * The following code parses IPv4 variable headers.
+		 */
+		udphdr = (struct udp_hdr *)ipv4_skip_exthdr(ip4hdr);
+		break;
+
+	case ETHER_TYPE_IPv6: {
+		/*
+		 * The UDP header offset in terms of the
+		 * beginning of the IPv6 header.
+		 */
+		int udp_offset;
+		uint8_t nexthdr;
+
+		minimum_size += sizeof(struct ipv6_hdr) +
+			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+		if (pkt->data_len < minimum_size) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"ggu: the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				pkt->data_len, minimum_size);
+			goto free_packet;
+		}
+
+		/*
+		 * The ntuple filter supports IPv6 variable headers.
+		 * The following code parses IPv6 variable headers.
+		 */
+		ip6hdr = rte_pktmbuf_mtod_offset(pkt, 
+			struct ipv6_hdr *, sizeof(struct ether_hdr));
 
 		/*
 		 * TODO Given that IPv6 ntuple filter doesn't check
@@ -175,11 +191,36 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 		if (memcmp(ip6hdr->dst_addr,
 				ggu_conf->net->back.ip6_addr.s6_addr,
 				sizeof(ip6hdr->dst_addr)) != 0) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"ggu: received an IPv6 packet destinated to other host!\n");
 			return;
 		}
 
-		udphdr = (struct udp_hdr *)&ip6hdr[1];
+		udp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
+			sizeof(struct ether_hdr), &nexthdr);
+		if (udp_offset < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"ggu: failed to parse the IPv6 packet's extension headers!\n");
+			goto free_packet;
+		}
+
+		if (nexthdr != IPPROTO_UDP) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"ggu: received non-UDP packets, IPv6 ntuple filter bug!\n");
+			goto free_packet;
+		}
+
+		minimum_size += udp_offset - sizeof(*ip6hdr);
+		if (pkt->data_len < minimum_size) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"ggu: the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				pkt->data_len, minimum_size);
+			goto free_packet;
+		}
+
+		udphdr = (struct udp_hdr *)((uint8_t *)ip6hdr + udp_offset);
 		break;
+	}
 
 	default:
 		RTE_LOG(NOTICE, GATEKEEPER,

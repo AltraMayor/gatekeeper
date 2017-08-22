@@ -55,7 +55,7 @@ void destroy_ipv6_acls(struct gatekeeper_if *iface);
 
 /* Register IPv6 ACL rules and callback functions. */
 int register_ipv6_acl(struct ipv6_acl_rule *rules, unsigned int num_rules,
-	acl_cb_func cb_f, struct gatekeeper_if *iface);
+	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface);
 
 /* Build the ACL trie. This should be invoked after all ACL rules are added. */
 int build_ipv6_acls(struct gatekeeper_if *iface);

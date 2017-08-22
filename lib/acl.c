@@ -44,13 +44,32 @@ enum {
 };
 
 /* Callback function for when there's no classification match. */
-static inline int
-drop_ipv6_acl_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
+static int
+drop_unmatched_ipv6_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
 	unsigned int i;
-	for (i = 0; i < num_pkts; i++)
+	for (i = 0; i < num_pkts; i++) {
+		/*
+		 * WARNING
+		 *   A packet has reached a Gatekeeper server,
+		 *   and Gatekeeper doesn't know what to do with
+		 *   this packet. If attackers are able to send
+		 *   these packets, they may be able to slow
+		 *   Gatekeeper down since Gatekeeper does a lot of
+		 *   processing to eventually discard these packets.
+		 */
+		RTE_LOG(WARNING, GATEKEEPER,
+			"acl: an IPv6 packet failed to match any IPv6 ACL rules, the whole packet is dumped below:\n");
+		/*
+		 * XXX The default output used DPDK logging system
+		 * is stderr. The stream should be consistent with
+		 * the DPDK logging system.
+		 */
+		rte_pktmbuf_dump(stderr, pkts[i], pkts[i]->pkt_len);
 		rte_pktmbuf_free(pkts[i]);
+	}
+
 	return 0;
 }
 
@@ -125,9 +144,22 @@ struct rte_acl_field_def ipv6_defs[NUM_FIELDS_IPV6] = {
 	},
 };
 
+/*
+ * For each ACL rule set, register a match function that parses
+ * the unmatched IPv6 packets, and direct them to the corresponding
+ * blocks or drop them. This functionality is for the ext_cb_f parameter
+ * and that it's necessary because of variable IP headers that
+ * may not match the ACLs.
+ *
+ * WARNING
+ *   You must only register filters that are not subject to
+ *   the control of attackers. Otherwise, attackers can overwhelm
+ *   Gatekeeper servers since the current implementation of these filters
+ *   is not very efficient due to the variable header of IP.
+ */
 int
 register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
-	acl_cb_func cb_f, struct gatekeeper_if *iface)
+	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface)
 {
 	unsigned int numa_nodes = get_net_conf()->numa_nodes;
 	unsigned int i;
@@ -153,6 +185,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 	}
 
 	iface->acl_funcs[iface->acl_func_count] = cb_f;
+	iface->ext_funcs[iface->acl_func_count] = ext_cb_f;
 	iface->acl_func_count++;
 
 	return 0;
@@ -169,9 +202,8 @@ process_ipv6_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	int ret;
 
 	if (unlikely(!ipv6_if_configured(iface))) {
-		drop_ipv6_acl_pkts(acl->mbufs, acl->num, iface);
-		acl->num = 0;
-		return 0;
+		ret = 0;
+		goto drop_ipv6_acl_pkts;
 	}
 
 	ret = rte_acl_classify(iface->ipv6_acls[socket_id],
@@ -179,15 +211,29 @@ process_ipv6_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	if (unlikely(ret < 0)) {
 		RTE_LOG(ERR, ACL,
 			"invalid arguments given to rte_acl_classify()\n");
-		drop_ipv6_acl_pkts(acl->mbufs, acl->num, iface);
-		acl->num = 0;
-		return ret;
+		goto drop_ipv6_acl_pkts;
 	}
 
 	/* Split packets into separate buffers -- one for each type. */
 	memset(num_pkts, 0, sizeof(num_pkts));
 	for (i = 0; i < acl->num; i++) {
 		int type = acl->res[i];
+		if (type == RTE_ACL_INVALID_USERDATA) {
+			unsigned int j;
+			/*
+			 * @j starts at 1 to skip RTE_ACL_INVALID_USERDATA,
+			 * which has no matching function.
+			 */
+			for (j = 1; j < iface->acl_func_count; j++) {
+				int ret = iface->ext_funcs[j](
+					acl->mbufs[i], iface);
+				if (ret == 0) {
+					type = j;
+					break;
+				}
+			}
+		}
+
 		pkts[type][num_pkts[type]++] = acl->mbufs[i];
 	}
 
@@ -208,8 +254,17 @@ process_ipv6_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 		}
 	}
 
+	ret = 0;
+	goto out;
+
+drop_ipv6_acl_pkts:
+
+	for (i = 0; i < acl->num; i++)
+		rte_pktmbuf_free(acl->mbufs[i]);
+
+out:
 	acl->num = 0;
-	return 0;
+	return ret;
 }
 
 int
@@ -269,9 +324,10 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 		}
 	}
 
-	/* Add drop function for packets that have no match. */
+	/* Add drop function for packets that cannot be classified. */
 	RTE_VERIFY(RTE_ACL_INVALID_USERDATA == 0);
-	iface->acl_funcs[RTE_ACL_INVALID_USERDATA] = drop_ipv6_acl_pkts;
+	iface->acl_funcs[RTE_ACL_INVALID_USERDATA] = drop_unmatched_ipv6_pkts;
+	iface->ext_funcs[RTE_ACL_INVALID_USERDATA] = NULL;
 	iface->acl_func_count = 1;
 
 	return 0;

@@ -21,6 +21,7 @@
 
 #include <rte_ip.h>
 
+#include "gatekeeper_varip.h"
 #include "cache.h"
 #include "nd.h"
 
@@ -630,6 +631,13 @@ int
 process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *buf)
 {
+	/*
+	 * The ICMPv6 header offset in terms of the
+	 * beginning of the IPv6 header.
+	 */
+	int icmpv6_offset;
+	uint8_t nexthdr;
+
 	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(buf, struct ether_hdr *);
 	struct ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
@@ -641,14 +649,28 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t icmpv6_len;
 
 	if (pkt_len < ND_NEIGH_PKT_MIN_LEN) {
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
-			pkt_len, ND_NEIGH_PKT_MIN_LEN);
+		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+			pkt_len, ND_NEIGH_PKT_MIN_LEN, __func__);
 		return -1;
 	}
 
 	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
-	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
-	icmpv6_len = pkt_len - (sizeof(*eth_hdr) + sizeof(*ipv6_hdr));
+	icmpv6_offset = ipv6_skip_exthdr(ipv6_hdr, buf->data_len -
+		sizeof(struct ether_hdr), &nexthdr);
+	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)
+		return -1;
+
+	if (pkt_len < (ND_NEIGH_PKT_MIN_LEN +
+			icmpv6_offset - sizeof(*ipv6_hdr))) {
+		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+			pkt_len, ND_NEIGH_PKT_MIN_LEN +
+			icmpv6_offset - sizeof(*ipv6_hdr), __func__);
+		return -1;
+	}
+
+	icmpv6_hdr = (struct icmpv6_hdr *)
+		((uint8_t *)ipv6_hdr + icmpv6_offset);
+	icmpv6_len = pkt_len - (sizeof(struct ether_hdr) + icmpv6_offset);
 
 	if (unlikely(!nd_pkt_valid(ipv6_hdr, icmpv6_hdr, icmpv6_len)))
 		return -1;
