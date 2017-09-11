@@ -12,7 +12,8 @@ ffi.cdef[[
 enum gk_flow_state {
 	GK_REQUEST,
 	GK_GRANTED,
-	GK_DECLINED
+	GK_DECLINED,
+	GK_FLUSHED
 };
 
 enum protocols {
@@ -102,12 +103,17 @@ struct ggu_declined {
 	uint32_t expire_sec;
 } __attribute__ ((packed));
 
+struct ggu_flushed {
+	uint8_t prefix_len;
+} __attribute__ ((packed));
+
 struct ggu_policy {
 	uint8_t state;
 	struct ip_flow flow;
 	union {
 		struct ggu_granted granted;
 		struct ggu_declined declined;
+		struct ggu_flushed flushed;
 	} params;
 };
 

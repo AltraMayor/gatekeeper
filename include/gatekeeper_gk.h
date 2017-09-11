@@ -36,10 +36,12 @@ extern int gk_logtype;
 	rte_log(RTE_LOG_ ## level, gk_logtype, "GATEKEEPER GK: " __VA_ARGS__)
 
 /*
- * A flow entry can be in one of three states:
- * request, granted, or declined.
+ * A flow entry can be in one of four states:
+ * request, granted, declined, or flush.
+ * Note, the flush state is a special state that
+ * used for flushing policy decisions.
  */
-enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
+enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_FLUSHED };
 
 /* Structures for each GK instance. */
 struct gk_instance {
@@ -154,6 +156,7 @@ struct gk_config {
 /* Define the possible command operations for GK block. */
 enum gk_cmd_op {
 	GGU_POLICY_ADD,
+	GGU_POLICY_FLUSH,
 	GK_SYNCH_WITH_LPM,
 };
 

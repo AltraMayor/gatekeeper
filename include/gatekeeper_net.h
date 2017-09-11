@@ -452,6 +452,64 @@ max_prefix_len(int ip_type)
 		: sizeof(struct in6_addr) * 8;
 }
 
+static inline void
+ip4_prefix_mask(uint8_t prefix_len, struct in_addr *ip4_mask)
+{
+	RTE_VERIFY(prefix_len <= 32 && ip4_mask != NULL);
+
+	/*
+	 * Need to be careful in case @prefix_len == 0,
+	 * since in that case we will be shifting by 32
+	 * bits, which is undefined for a 32-bit quantity.
+	 * So shift using a 0ULL (at least 64 bits), and then
+	 * cast back down to a 32-bit unsigned integer
+	 * implicitly using rte_cpu_to_be_32().
+	 */
+	ip4_mask->s_addr = rte_cpu_to_be_32(~0ULL << (32 - prefix_len));
+}
+
+static inline void
+ip6_prefix_mask(uint8_t prefix_len, struct in6_addr *ip6_mask)
+{
+	uint64_t *paddr;
+
+	RTE_VERIFY(prefix_len <= 128 && ip6_mask != NULL);
+
+	/*
+	 * No portable way to do the same trick as IPv4,
+	 * so make @prefix_len == 0 into its own case.
+	 * Then, the other two cases shift by at most 63 bits.
+	 */
+	paddr = (uint64_t *)ip6_mask->s6_addr;
+	if (prefix_len == 0) {
+		paddr[0] = 0ULL;
+		paddr[1] = 0ULL;
+	} else if (prefix_len <= 64) {
+		paddr[0] = rte_cpu_to_be_64(~0ULL << (64 - prefix_len));
+		paddr[1] = 0ULL;
+	} else {
+		paddr[0] = ~0ULL;
+		paddr[1] = rte_cpu_to_be_64(~0ULL << (128 - prefix_len));
+	}
+}
+
+static inline bool
+ip4_same_subnet(uint32_t addr1, uint32_t addr2, uint32_t ip4_mask)
+{
+	return !((addr1 ^ addr2) & ip4_mask);
+}
+
+static inline bool
+ip6_same_subnet(const uint8_t *addr1, const uint8_t *addr2,
+	const uint8_t *ip6_mask)
+{
+	const uint64_t *paddr_p1 = (const uint64_t *)addr1;
+	const uint64_t *paddr_p2 = (const uint64_t *)addr2;
+	const uint64_t *pmask_p = (const uint64_t *)ip6_mask;
+	return (!((paddr_p1[0] ^ paddr_p2[0]) & pmask_p[0]) &&
+		!((paddr_p1[1] ^ paddr_p2[1]) & pmask_p[1]));
+}
+
 /*
  * Postpone the execution of f(arg) until the Lua configuration finishes,
  * but before the network devices start.

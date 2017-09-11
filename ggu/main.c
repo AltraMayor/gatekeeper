@@ -53,40 +53,79 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 {
 	const struct ggu_config *ggu_conf = arg;
 	struct gk_cmd_entry *entry;
-	/*
-	 * Obtain mailbox of that GK block,
-	 * and send the policy decision to the GK block.
-	 */
-	struct mailbox *mb =
-		get_responsible_gk_mailbox(&policy->flow, ggu_conf->gk);
 
-	if (mb == NULL)
-		return;
+	switch(policy->state) {
+	case GK_GRANTED: {
+		/*
+		 * Obtain mailbox of that GK block,
+		 * and send the policy decision to the GK block.
+		 */
+		struct mailbox *mb = get_responsible_gk_mailbox(
+			&policy->flow, ggu_conf->gk);
+		if (mb == NULL)
+			return;
 
-	entry = mb_alloc_entry(mb);
-	if (entry == NULL)
-		return;
+		entry = mb_alloc_entry(mb);
+		if (entry == NULL)
+			return;
 
-	entry->op = GGU_POLICY_ADD;
-	entry->u.ggu.state = policy->state;
-	rte_memcpy(&entry->u.ggu.flow, &policy->flow, sizeof(entry->u.ggu.flow));
-
-	switch (policy->state) {
-	case GK_GRANTED:
+		entry->op = GGU_POLICY_ADD;
+		entry->u.ggu.state = policy->state;
+		rte_memcpy(&entry->u.ggu.flow,
+			&policy->flow, sizeof(entry->u.ggu.flow));
 		entry->u.ggu.params.granted = policy->params.granted;
+		mb_send_entry(mb, entry);
 		break;
+	}
 
-	case GK_DECLINED:
+	case GK_DECLINED: {
+		/*
+		 * Obtain mailbox of that GK block,
+		 * and send the policy decision to the GK block.
+		 */
+		struct mailbox *mb = get_responsible_gk_mailbox(
+			&policy->flow, ggu_conf->gk);
+		if (mb == NULL)
+			return;
+
+		entry = mb_alloc_entry(mb);
+		if (entry == NULL)
+			return;
+
+		entry->op = GGU_POLICY_ADD;
+		entry->u.ggu.state = policy->state;
+		rte_memcpy(&entry->u.ggu.flow,
+			&policy->flow, sizeof(entry->u.ggu.flow));
 		entry->u.ggu.params.declined = policy->params.declined;
+		mb_send_entry(mb, entry);
 		break;
+	}
+
+	case GK_FLUSHED: {
+		/* This type is used for flushing policy decisions. */
+		int i;
+
+		for (i = 0; i < ggu_conf->gk->num_lcores; i++) {
+			entry = mb_alloc_entry(&ggu_conf->gk->instances[i].mb);
+			if (entry == NULL) {
+				GGU_LOG(WARNING, "Failed to allocate an entry from its mailbox\n");
+				continue;
+			}
+
+			entry->op = GGU_POLICY_FLUSH;
+			rte_memcpy(&entry->u.ggu.flow,
+				&policy->flow, sizeof(entry->u.ggu.flow));
+			entry->u.ggu.params.flushed = policy->params.flushed;
+			mb_send_entry(&ggu_conf->gk->instances[i].mb, entry);
+		}
+
+		break;
+	}
 
 	default:
 		GGU_LOG(ERR, "Impossible policy state %hhu\n", policy->state);
-		mb_free_entry(mb, entry);
 		return;
 	}
-
-	mb_send_entry(mb, entry);
 }
 
 void
@@ -171,6 +210,36 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				sizeof(policy.flow.f.v6));
 			params_offset = sizeof(policy.flow.f.v6);
 			break;
+		case GGU_DEC_IPV4_FLUSHED:
+			decision_len += sizeof(policy.flow.f.v4) +
+				sizeof(policy.params.flushed);
+			if (decision_list_len < decision_len) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed IPv4 flushed decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_FLUSHED;
+			policy.flow.proto = ETHER_TYPE_IPv4;
+			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v4));
+			params_offset = sizeof(policy.flow.f.v4);
+			break;
+		case GGU_DEC_IPV6_FLUSHED:
+			decision_len += sizeof(policy.flow.f.v6) +
+				sizeof(policy.params.flushed);
+			if (decision_list_len < decision_len) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed IPv6 flushed decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_FLUSHED;
+			policy.flow.proto = ETHER_TYPE_IPv6;
+			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v6));
+			params_offset = sizeof(policy.flow.f.v6);
+			break;
 		default:
 			GGU_LOG(WARNING,
 				"%s: %s: unexpected decision type: %hu\n",
@@ -204,6 +273,16 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				(ggu_decision->ip_flow + params_offset);
 			policy.params.declined.expire_sec =
 				rte_be_to_cpu_32(declined_be->expire_sec);
+			break;
+		}
+		case GGU_DEC_IPV4_FLUSHED:
+			/* FALLTHROUGH */
+		case GGU_DEC_IPV6_FLUSHED: {
+			struct ggu_flushed *flushed_be =
+				(struct ggu_flushed *)
+				(ggu_decision->ip_flow + params_offset);
+			policy.params.flushed.prefix_len =
+				flushed_be->prefix_len;
 			break;
 		}
 		default:

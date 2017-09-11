@@ -850,6 +850,66 @@ add_ggu_policy(struct ggu_policy *policy,
 	}
 }
 
+/*
+ * When a network administrator changes a policy in response to an attack,
+ * she may need to flush all policy decisions cached at the Gatekeeper servers
+ * associated to a given destination prefix in order to quickly re-establish the
+ * network. Function flush_ggu_policy() supports these flush requests.
+ */
+static void
+flush_ggu_policy(struct ggu_policy *policy, struct gk_instance *instance)
+{
+	uint8_t prefix_len = policy->params.flushed.prefix_len;
+	uint32_t next = 0;
+	int32_t index;
+	const struct ip_flow *key;
+	void *data;
+	struct in_addr ip4_mask;
+	struct in6_addr ip6_mask;
+
+	memset(&ip4_mask, 0, sizeof(ip4_mask));
+	memset(&ip6_mask, 0, sizeof(ip6_mask));
+
+	if (policy->flow.proto == ETHER_TYPE_IPv4)
+		ip4_prefix_mask(prefix_len, &ip4_mask);
+	else if (likely(policy->flow.proto == ETHER_TYPE_IPv6))
+		ip6_prefix_mask(prefix_len, &ip6_mask);
+	else {
+		GK_LOG(WARNING,
+			"The GK block received flow flushing policy with unknown IP type %u\n",
+			policy->flow.proto);
+		return;
+	}
+
+	index = rte_hash_iterate(instance->ip_flow_hash_table,
+		(void *)&key, &data, &next);
+	while (index >= 0) {
+		struct flow_entry *fe =
+			&instance->ip_flow_entry_table[index];
+
+		if (policy->flow.proto != fe->flow.proto)
+			goto next;
+
+		if ((policy->flow.proto == ETHER_TYPE_IPv4 &&
+				ip4_same_subnet(policy->flow.f.v4.dst,
+				fe->flow.f.v4.dst, ip4_mask.s_addr)) ||
+				(policy->flow.proto == ETHER_TYPE_IPv6 &&
+				ip6_same_subnet(policy->flow.f.v6.dst,
+				fe->flow.f.v6.dst, ip6_mask.s6_addr))) {
+			gk_del_flow_entry_from_hash(
+				instance->ip_flow_hash_table, fe);
+		}
+
+next:
+		index = rte_hash_iterate(instance->ip_flow_hash_table,
+			(void *)&key, &data, &next);
+	}
+
+	GK_LOG(NOTICE,
+		"The GK block finished flushing flow table at %s with lcore %u\n",
+		__func__, rte_lcore_id());
+}
+
 static void
 gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 {
@@ -913,6 +973,10 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 	switch (entry->op) {
 	case GGU_POLICY_ADD:
 		add_ggu_policy(&entry->u.ggu, instance, gk_conf);
+		break;
+
+	case GGU_POLICY_FLUSH:
+		flush_ggu_policy(&entry->u.ggu, instance);
 		break;
 
 	case GK_SYNCH_WITH_LPM:

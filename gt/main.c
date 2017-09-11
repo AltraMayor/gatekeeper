@@ -786,6 +786,11 @@ print_unsent_policy(struct ggu_policy *policy,
 			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
 			policy->state,
 			policy->params.declined.expire_sec);
+	} else if (policy->state == GK_FLUSHED) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, prefix_len: %hhu]",
+			policy->state,
+			policy->params.flushed.prefix_len);
 	} else {
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy\n",
@@ -1097,6 +1102,28 @@ fill_notify_pkt(struct ggu_policy *policy,
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
 		params_offset = sizeof(policy->flow.f.v6);
+	} else if (policy->flow.proto == ETHER_TYPE_IPv4
+			&& policy->state == GK_FLUSHED) {
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v4) +
+				sizeof(policy->params.flushed));
+		ggu_decision->type = GGU_DEC_IPV4_FLUSHED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
+			sizeof(policy->flow.f.v4));
+		params_offset = sizeof(policy->flow.f.v4);
+	} else if (policy->flow.proto == ETHER_TYPE_IPv6
+			&& policy->state == GK_FLUSHED) {
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v6) +
+				sizeof(policy->params.flushed));
+		ggu_decision->type = GGU_DEC_IPV6_FLUSHED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
+			sizeof(policy->flow.f.v6));
+		params_offset = sizeof(policy->flow.f.v6);
 	} else
 		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
 			policy->state);
@@ -1120,6 +1147,12 @@ fill_notify_pkt(struct ggu_policy *policy,
 			(ggu_decision->ip_flow + params_offset);
 		declined_be->expire_sec = rte_cpu_to_be_32(
 			policy->params.declined.expire_sec);
+		break;
+	}
+	case GK_FLUSHED: {
+		struct ggu_flushed *flushed_be = (struct ggu_flushed *)
+			(ggu_decision->ip_flow + params_offset);
+		flushed_be->prefix_len = policy->params.flushed.prefix_len;
 		break;
 	}
 	default:
@@ -1391,7 +1424,8 @@ gt_proc(void *arg)
 			 */
 			fill_notify_pkt(&policy, &pkt_info, instance, gt_conf);
 
-			if (policy.state == GK_GRANTED) {
+			if (policy.state == GK_GRANTED ||
+					policy.state == GK_FLUSHED) {
 				ret = decap_and_fill_eth(m, gt_conf,
 					&pkt_info, instance);
 				if (ret < 0)

@@ -97,7 +97,7 @@ function lookup_policy(pkt_info, policy)
 	if pl.state == policylib.c.GK_DECLINED then
 		pl.params.declined.expire_sec =
 			group["params"]["expire_sec"]
-	else
+	else if pl.state == policylib.c.GK_GRANTED then
 		pl.params.granted.tx_rate_kb_sec =
 			group["params"]["tx_rate_kb_sec"]
 		pl.params.granted.cap_expire_sec =
@@ -106,6 +106,9 @@ function lookup_policy(pkt_info, policy)
 			group["params"]["next_renewal_ms"]
 		pl.params.granted.renewal_step_ms =
 			group["params"]["renewal_step_ms"]
+	else
+		pl.params.flushed.prefix_len =
+			group["params"]["prefix_len"]
 	end
 end
 

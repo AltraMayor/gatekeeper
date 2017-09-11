@@ -73,6 +73,10 @@ enum {
 	GGU_DEC_IPV4_GRANTED,
 	/* Grant an IPv6 flow. */
 	GGU_DEC_IPV6_GRANTED,
+	/* Flush an IPv4 prefix. */
+	GGU_DEC_IPV4_FLUSHED,
+	/* Flush an IPv6 prefix. */
+	GGU_DEC_IPV6_FLUSHED,
 	__MAX_GGU_DEC
 };
 
@@ -165,8 +169,19 @@ struct ggu_declined {
 	uint32_t expire_sec;
 } __attribute__ ((packed));
 
+/* Parameters for declaring a flow flushed. */
+struct ggu_flushed {
+	/* The prefix length of the destination to be flushed. */
+	uint8_t prefix_len;
+} __attribute__ ((packed));
+
 struct ggu_policy {
 	uint8_t state;
+
+	/*
+	 * In case of flushing policy decisions,
+	 * only the destination will be used.
+	 */
 	struct ip_flow flow;
 
 	/*
@@ -179,6 +194,8 @@ struct ggu_policy {
 		struct ggu_granted granted;
 		/* Decision is to decline the flow. */
 		struct ggu_declined declined;
+		/* Decision is to flush the flow. */
+		struct ggu_flushed flushed;
 	} params;
 };
 
