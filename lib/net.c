@@ -37,11 +37,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 
-/* Number of attempts to wait for a link to come up. */
-#define NUM_ATTEMPTS_LINK_GET	(5)
-
-#define GATEKEEPER_PKT_DROP_QUEUE (127)
-
 static struct net_config config;
 /*
  * The secret key of the RSS hash (RSK) must be random in order
@@ -998,7 +993,8 @@ close_partial:
 }
 
 static int
-start_port(uint16_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
+start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
+	int wait_for_link, unsigned int num_attempts_link_get)
 {
 	struct rte_eth_link link;
 	uint8_t attempts = 0;
@@ -1037,7 +1033,7 @@ start_port(uint16_t port_id, uint8_t *pnum_succ_ports, int wait_for_link)
 		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
 			port_id);
 
-		if (!wait_for_link || attempts > NUM_ATTEMPTS_LINK_GET) {
+		if (!wait_for_link || attempts > num_attempts_link_get) {
 			RTE_LOG(ERR, PORT, "Giving up on port %hhu\n", port_id);
 			ret = -1;
 			return ret;
@@ -1119,21 +1115,22 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 }
 
 static int
-start_iface(struct gatekeeper_if *iface)
+start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 {
 	int ret;
 	uint8_t i;
 	uint8_t num_succ_ports = 0;
 
 	for (i = 0; i < iface->num_ports; i++) {
-		ret = start_port(iface->ports[i], &num_succ_ports, false);
+		ret = start_port(iface->ports[i],
+			&num_succ_ports, false, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
 	}
 
 	/* Bonding port(s). */
 	if (iface_bonded(iface)) {
-		ret = start_port(iface->id, NULL, true);
+		ret = start_port(iface->id, NULL, true, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
 	}
@@ -1264,12 +1261,12 @@ start_network_stage2(void *arg)
 	struct net_config *net = arg;
 	int ret;
 
-	ret = start_iface(&net->front);
+	ret = start_iface(&net->front, net->num_attempts_link_get);
 	if (ret < 0)
 		goto fail;
 
 	if (net->back_iface_enabled) {
-		ret = start_iface(&net->back);
+		ret = start_iface(&net->back, net->num_attempts_link_get);
 		if (ret < 0)
 			goto destroy_front;
 	}

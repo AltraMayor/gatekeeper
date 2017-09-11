@@ -799,7 +799,7 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 		notify_ipv6->vtc_flow =
 			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
 		notify_ipv6->proto = IPPROTO_UDP; 
-		notify_ipv6->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+		notify_ipv6->hop_limits = gt_conf->net->ipv6_default_hop_limits;
 
 		rte_memcpy(notify_ipv6->src_addr, ipv6_hdr->dst_addr,
 			sizeof(notify_ipv6->src_addr));

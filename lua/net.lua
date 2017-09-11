@@ -22,6 +22,8 @@ return function (gatekeeper_server)
 	-- passed to any call of getradom(2). This is relevant for production
 	-- environments to guarantee entropy while machines are booting up.
 	local guarantee_random_entropy = 0
+	local num_attempts_link_get = 5
+	local ipv6_default_hop_limits = 255
 
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
@@ -50,6 +52,9 @@ return function (gatekeeper_server)
 
 	local net_conf = gatekeeper.c.get_net_conf()
 	net_conf.guarantee_random_entropy = guarantee_random_entropy
+	net_conf.num_attempts_link_get = num_attempts_link_get
+	net_conf.ipv6_default_hop_limits = ipv6_default_hop_limits
+
 	local front_iface = gatekeeper.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec

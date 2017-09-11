@@ -127,9 +127,11 @@ struct gatekeeper_if {
 };
 
 struct net_config {
-	int  back_iface_enabled;
-	int  guarantee_random_entropy;
-	bool *numa_used;
+	int          back_iface_enabled;
+	int          guarantee_random_entropy;
+	unsigned int num_attempts_link_get;
+	uint8_t      ipv6_default_hop_limits;
+	bool         *numa_used;
 	/* This struct has hidden fields. */
 };
 

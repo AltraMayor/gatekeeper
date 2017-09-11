@@ -21,6 +21,7 @@
 
 #include <rte_ip.h>
 
+#include "gatekeeper_net.h"
 #include "gatekeeper_varip.h"
 #include "cache.h"
 #include "nd.h"
@@ -213,7 +214,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
 		(l2_len + sizeof(*ipv6_hdr)));
 	ipv6_hdr->proto = IPPROTO_ICMPV6;
-	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+	ipv6_hdr->hop_limits = lls_conf->net->ipv6_default_hop_limits;
 	rte_memcpy(ipv6_hdr->src_addr, iface->ll_ip6_addr.s6_addr,
 		sizeof(ipv6_hdr->src_addr));
 
@@ -642,8 +643,8 @@ static int
 nd_pkt_valid(struct ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 	uint16_t icmpv6_len)
 {
-	return ipv6_hdr->hop_limits == IPv6_DEFAULT_HOP_LIMITS &&
-		rte_be_to_cpu_16(ipv6_hdr->payload_len) == icmpv6_len &&
+	return ipv6_hdr->hop_limits == get_net_conf()->ipv6_default_hop_limits
+		&& rte_be_to_cpu_16(ipv6_hdr->payload_len) == icmpv6_len &&
 		icmpv6_hdr->code == 0 &&
 		rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr) == 0xFFFF;
 }
