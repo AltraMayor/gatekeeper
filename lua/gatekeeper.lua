@@ -178,6 +178,10 @@ struct cps_config {
 	/* This struct has hidden fields. */
 };
 
+struct gatekeeper_config {
+	uint16_t gatekeeper_max_pkt_burst;
+};
+
 struct dynamic_config {
 	unsigned int     lcore_id;
 	struct gk_config *gk;
@@ -230,6 +234,7 @@ struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct gt_config *gt_conf, struct cps_config *cps_conf,
 	struct lls_config *lls_conf, const char *kni_kmod_path);
+struct gatekeeper_config *get_gatekeeper_conf(void);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);

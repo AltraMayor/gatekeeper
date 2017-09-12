@@ -10,8 +10,8 @@ return function (net_conf, lcore)
 	sol_conf.pri_req_max_len = 1024
 	sol_conf.req_bw_rate = 0.05
 	-- These values should likely be set in accordance with
-	-- GATEKEEPER_MAX_PKT_BURST and should be tested to find
-	-- optimal values.
+	-- gatekeeper_max_pkt_burst in gatekeeper_config and
+	-- should be tested to find optimal values.
 	sol_conf.enq_burst_size = 32
 	sol_conf.deq_burst_size = 32
 

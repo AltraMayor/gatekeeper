@@ -305,9 +305,11 @@ static void
 process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 	uint16_t rx_queue)
 {
-	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
+	struct rte_mbuf *rx_bufs[gatekeeper_max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, rx_bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		gatekeeper_max_pkt_burst);
 	uint16_t num_kni;
 	uint16_t num_tx;
 	uint16_t i;
@@ -398,9 +400,12 @@ static void
 process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	struct rte_kni *kni, uint16_t tx_queue)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *forward_bufs[GATEKEEPER_MAX_PKT_BURST];
-	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, GATEKEEPER_MAX_PKT_BURST);
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
+	struct rte_mbuf *bufs[gatekeeper_max_pkt_burst];
+	struct rte_mbuf *forward_bufs[gatekeeper_max_pkt_burst];
+	uint16_t num_rx = rte_kni_rx_burst(
+		kni, bufs, gatekeeper_max_pkt_burst);
 	uint16_t num_forward = 0;
 	unsigned int num_tx;
 	unsigned int i;
@@ -538,9 +543,10 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct cps_request *req = mb_alloc_entry(&cps_conf->mailbox);
 	int ret;
 	unsigned int i;
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
 
-	RTE_VERIFY(num_pkts <=
-		(sizeof(req->u.bgp.pkts) / sizeof(*req->u.bgp.pkts)));
+	RTE_VERIFY(num_pkts <= gatekeeper_max_pkt_burst);
 
 	if (req == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -555,7 +561,7 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	req->u.bgp.kni = iface == &cps_conf->net->front
 		? cps_conf->front_kni
 		: cps_conf->back_kni;
-	rte_memcpy(req->u.bgp.pkts, pkts, sizeof(*req->u.bgp.pkts) * num_pkts);
+	req->u.bgp.pkts = pkts;
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {

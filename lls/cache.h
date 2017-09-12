@@ -51,7 +51,7 @@ struct lls_put_req {
 /* Information needed to submit ARP packets to the LLS block. */
 struct lls_arp_req {
 	/* ARP neighbor packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf      **pkts;
 
 	/* Number of packets stored in @pkts. */
 	int                  num_pkts;
@@ -63,7 +63,7 @@ struct lls_arp_req {
 /* Information needed to submit ND packets to the LLS block. */
 struct lls_nd_req {
 	/* ND neighbor packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf      **pkts;
 
 	/* Number of packets stored in @pkts. */
 	int                  num_pkts;

@@ -5,7 +5,19 @@
 package.loaded["gatekeeper"] = nil
 require "gatekeeper"
 
+local function gatekeeper_config_init()
+	-- Init the gatekeeper configuration structure.
+	local gatekeeper_conf = gatekeeper.c.get_gatekeeper_conf()
+	if gatekeeper_conf == nil then
+		error("Failed to allocate gatekeeper_conf")
+	end
+
+	gatekeeper_conf.gatekeeper_max_pkt_burst = 32
+end
+
 function gatekeeper_init()
+
+	gatekeeper_config_init()
 
 	-- When gatekeeper_server is true,
 	-- Gatekeeper will run as a Gatekeeper server.

@@ -39,7 +39,7 @@
  *    the number of slaves. This is so that the interface can receive
  *    any needed LACP messages flowing without the application's
  *    knowledge. This is enforced with the definition of
- *    GATEKEEPER_MAX_PKT_BURST.
+ *    gatekeeper_max_pkt_burst in gatekeeper_config.
  *
  *  - RX/TX burst functions must be invoked at least once every 100ms.
  *    To do so, the RX burst function is called with every iteration
@@ -218,7 +218,7 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 	};
 	int ret;
 
-	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
+	nd_req.pkts = pkts;
 
 	ret = lls_req(LLS_REQ_ND, &nd_req);
 	if (unlikely(ret < 0)) {
@@ -334,9 +334,11 @@ static int
 process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t rx_queue, uint16_t tx_queue)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
+	struct rte_mbuf *bufs[gatekeeper_max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		gatekeeper_max_pkt_burst);
 	int num_tx = 0;
 	uint16_t i;
 

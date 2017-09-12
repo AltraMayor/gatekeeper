@@ -50,10 +50,10 @@
  *
  * Need to provision enough memory for the worst case,
  * since each queue needs at least
- * GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC + GATEKEEPER_MAX_PKT_BURST
+ * GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC + gatekeeper_max_pkt_burst
  * descriptors. i.e., GATEKEEPER_DESC_PER_QUEUE =
  * (GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC \
- *		+ GATEKEEPER_MAX_PKT_BURST (let's say 32)) = 672.
+ *		+ gatekeeper_max_pkt_burst (let's say 32)) = 672.
  *
  * So, the pool size should be at least the maximum number of queues * 
  *		number of descriptors per queue, i.e., 
@@ -82,9 +82,12 @@
  */
 #define GATEKEEPER_CACHE_SIZE	(512)
 
-#define GATEKEEPER_MAX_PKT_BURST (32)
-
 extern const uint16_t LUA_MSG_MAX_LEN;
+
+/* Configuration for the Gatekeeper functional blocks. */
+struct gatekeeper_config {
+	uint16_t gatekeeper_max_pkt_burst;
+};
 
 /* Configuration for the Dynamic Config functional block. */
 struct dynamic_config {
@@ -112,6 +115,7 @@ struct dynamic_config {
 
 int config_gatekeeper(void);
 int set_lua_path(lua_State *l, const char *path);
+struct gatekeeper_config *get_gatekeeper_conf(void);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);

@@ -331,7 +331,7 @@ free_packet:
 /* Information needed to submit GGU packets to the GGU block. */
 struct ggu_request {
 	/* GT-GK Unit packets. */
-	struct rte_mbuf *pkts[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf **pkts;
 
 	/* Number of packets stored in @pkts. */
 	unsigned int    num_pkts;
@@ -345,7 +345,7 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	unsigned int i;
 	int ret;
 
-	RTE_VERIFY(num_pkts <= RTE_DIM(req->pkts));
+	RTE_VERIFY(num_pkts <= RTE_DIM(pkts));
 
 	if (req == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -356,7 +356,7 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	}
 
 	req->num_pkts = num_pkts;
-	rte_memcpy(req->pkts, pkts, sizeof(*req->pkts) * num_pkts);
+	req->pkts = pkts;
 
 	ret = mb_send_entry(&ggu_conf->mailbox, req);
 	if (ret < 0) {
@@ -382,6 +382,8 @@ ggu_proc(void *arg)
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	unsigned int i;
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"ggu: the GK-GT unit is running at lcore = %u\n", lcore);
@@ -392,9 +394,9 @@ ggu_proc(void *arg)
 	 */
 	if (ggu_conf->net->back.hw_filter_ntuple) {
 		while (likely(!exiting)) {
-			struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
+			struct rte_mbuf *bufs[gatekeeper_max_pkt_burst];
 			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
-				bufs, GATEKEEPER_MAX_PKT_BURST);
+				bufs, gatekeeper_max_pkt_burst);
 
 			if (unlikely(num_rx == 0))
 				continue;

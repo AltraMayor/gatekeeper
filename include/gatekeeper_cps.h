@@ -76,7 +76,7 @@ struct cps_config {
 /* Information needed to submit IPv6 BGP packets to the CPS block. */
 struct cps_bgp_req {
 	/* IPv6 BGP packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf      **pkts;
 
 	/* Number of packets stored in @pkts. */
 	unsigned int         num_pkts;

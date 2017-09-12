@@ -899,11 +899,13 @@ init_iface(struct gatekeeper_if *iface)
 	uint8_t i;
 	uint8_t num_succ_ports = 0;
 	uint8_t num_slaves_added = 0;
+	uint16_t gatekeeper_max_pkt_burst =
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst;
 
 	iface->alive = true;
 
 	if (iface->bonding_mode == BONDING_MODE_8023AD &&
-			GATEKEEPER_MAX_PKT_BURST < 2 * iface->num_ports) {
+			gatekeeper_max_pkt_burst < 2 * iface->num_ports) {
 		RTE_LOG(ERR, GATEKEEPER, "The %s interface is configured for LACP, but Gatekeeper must support packet bursts of at least twice the number of slaves (%d)\n",
 			iface->name, 2 * iface->num_ports);
 		destroy_iface(iface, IFACE_DESTROY_LUA);

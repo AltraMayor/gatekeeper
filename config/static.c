@@ -36,6 +36,8 @@
 #define LUA_BASE_DIR               "./lua"
 #define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
 
+struct gatekeeper_config gatekeeper_conf;
+
 /*
  * Return a table with all lcore ids but the lcore id of the master lcore.
  * Function to be called from Lua.
@@ -236,6 +238,12 @@ static const struct luaL_reg gatekeeper [] = {
 	{"gt_assign_lcores",		l_gt_assign_lcores},
 	{NULL,				NULL}	/* Sentinel. */
 };
+
+struct gatekeeper_config *
+get_gatekeeper_conf(void)
+{
+	return &gatekeeper_conf;
+}
 
 int
 set_lua_path(lua_State *l, const char *path)

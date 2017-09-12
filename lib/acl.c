@@ -25,6 +25,53 @@
 /* Result returned when the ACL does not find a matching rule. */
 #define ACL_NO_MATCH (0)
 
+struct acl_search *
+alloc_acl_search(uint8_t num_pkts)
+{
+	struct acl_search *acl = rte_calloc(
+		"acl", 1, sizeof(struct acl_search), 0);
+	if (acl == NULL)
+		return NULL;
+
+	acl->data = rte_calloc("acl_data", num_pkts, sizeof(uint8_t *), 0);
+	if (acl->data == NULL)
+		goto free_acl;
+
+	acl->mbufs = rte_calloc("acl_mbufs",
+		num_pkts, sizeof(struct rte_mbuf *), 0);
+	if (acl->mbufs == NULL)
+		goto free_acl_data;
+
+	acl->res = rte_calloc("acl_res", num_pkts, sizeof(uint32_t), 0);
+	if (acl->res == NULL)
+		goto free_acl_mbufs;
+
+	return acl;
+
+free_acl_mbufs:
+	rte_free(acl->mbufs);
+
+free_acl_data:
+	rte_free(acl->data);
+
+free_acl:
+	rte_free(acl);
+
+	return NULL;
+}
+
+void
+destroy_acl_search(struct acl_search *acl)
+{
+	if (acl == NULL)
+		return;
+
+	rte_free(acl->data);
+	rte_free(acl->mbufs);
+	rte_free(acl->res);
+	rte_free(acl);
+}
+
 /* Callback function for when there's no classification match. */
 static int
 drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -60,7 +107,8 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	struct acl_search *acl, struct acl_state *astate,
 	int acl_enabled, const char *proto_name)
 {
-	struct rte_mbuf *pkts[astate->func_count][GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *pkts[astate->func_count][
+		get_gatekeeper_conf()->gatekeeper_max_pkt_burst];
 	int num_pkts[astate->func_count];
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
 	unsigned int i;

@@ -43,8 +43,6 @@
  */
 #define RTE_LOGTYPE_LUA RTE_LOGTYPE_USER2
 
-#define GATEKEEPER_MAX_PKT_BURST (32)
-
 extern volatile int exiting;
 
 extern uint64_t cycles_per_sec;

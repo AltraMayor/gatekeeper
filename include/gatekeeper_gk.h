@@ -45,6 +45,10 @@ enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
 struct gk_instance {
 	struct rte_hash   *ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
+
+	struct acl_search *acl4;
+	struct acl_search *acl6;
+
 	/* RX queue on the front interface. */
 	uint16_t          rx_queue_front;
 	/* TX queue on the front interface. */
