@@ -12,7 +12,55 @@ local function gatekeeper_config_init()
 		error("Failed to allocate gatekeeper_conf")
 	end
 
+	-- XXX Sample parameters for test only.
 	gatekeeper_conf.gatekeeper_max_pkt_burst = 32
+	gatekeeper_conf.gatekeeper_max_ports = 4
+	gatekeeper_conf.gatekeeper_max_queues = 8
+
+	-- XXX They should be analyzed or tested further to find optimal values.
+	-- Larger queue size can mitigate bursty behavior, but can also increase
+	-- pressure on cache and lead to lower performance.
+	gatekeeper_conf.gatekeeper_num_rx_desc = 128
+	gatekeeper_conf.gatekeeper_num_tx_desc = 512
+
+	-- XXX Sample parameter for the number of elements in the mbuf pool.
+	-- This should be analyzed or tested further to find optimal value.
+	--
+	-- The optimum size (in terms of memory usage) for a mempool is when
+	-- it is a power of two minus one.
+	--
+	-- Need to provision enough memory for the worst case,
+	-- since each queue needs at least
+	-- gatekeeper_num_rx_desc + gatekeeper_num_tx_desc +
+	-- gatekeeper_max_pkt_burst descriptors. i.e.,
+	-- GATEKEEPER_DESC_PER_QUEUE = (gatekeeper_num_rx_desc +
+	-- gatekeeper_num_tx_desc + gatekeeper_max_pkt_burst (let's say 32))
+	-- = 672.
+	--
+	-- So, the pool size should be at least the maximum number of queues *
+	-- number of descriptors per queue, i.e.,
+	-- (gatekeeper_max_ports * gatekeeper_max_queues *
+	-- GATEKEEPER_DESC_PER_QUEUE - 1) = 5376.
+	gatekeeper_conf.gatekeeper_mbuf_size = 8191
+
+	-- XXX Sample parameter for the size of the per-core object cache,
+	-- i.e., number of struct rte_mbuf elements in the per-core object cache.
+	-- this should be analyzed or tested further to find optimal value.
+	--
+	-- Each core deals with at most gatekeeper_max_ports queues,
+	-- so the cache size should be at least
+	-- (number of ports * number of descriptors per queue), i.e.,
+	-- (gatekeeper_max_ports * GATEKEEPER_DESC_PER_QUEUE).
+	--
+	-- Notice that, this argument must be lower or equal to
+	-- CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE and n / 1.5.
+	-- It is advised to choose cache_size to have "n modulo cache_size == 0":
+	-- if this is not the case, some elements will always stay in the pool
+	-- and will never be used. Here, n is gatekeeper_mbuf_size.
+	--
+	-- The maximum cache size can be adjusted in DPDK's .config file:
+	-- CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE.
+	gatekeeper_conf.gatekeeper_cache_size = 512
 end
 
 function gatekeeper_init()

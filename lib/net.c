@@ -302,11 +302,15 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 	unsigned int numa_node, struct rte_mempool *mp)
 {
 	int ret;
+	uint16_t gatekeeper_num_rx_desc =
+		get_gatekeeper_conf()->gatekeeper_num_rx_desc;
+	uint16_t gatekeeper_num_tx_desc =
+		get_gatekeeper_conf()->gatekeeper_num_tx_desc;
 
 	switch (ty) {
 	case QUEUE_TYPE_RX:
 		ret = rte_eth_rx_queue_setup(port_id, queue_id,
-			GATEKEEPER_NUM_RX_DESC, numa_node, NULL, mp);
+			gatekeeper_num_rx_desc, numa_node, NULL, mp);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",
 				port_id, queue_id, ret);
@@ -315,7 +319,7 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 		break;
 	case QUEUE_TYPE_TX:
 		ret = rte_eth_tx_queue_setup(port_id, queue_id,
-			GATEKEEPER_NUM_TX_DESC, numa_node, NULL);
+			gatekeeper_num_tx_desc, numa_node, NULL);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",
 				port_id, queue_id, ret);
@@ -1184,6 +1188,10 @@ init_net_stage1(void *arg)
 {
 	struct net_config *net_conf = arg;
 	uint32_t i;
+	unsigned gatekeeper_mbuf_size =
+		get_gatekeeper_conf()->gatekeeper_mbuf_size;
+	unsigned gatekeeper_cache_size =
+		get_gatekeeper_conf()->gatekeeper_cache_size;
 
 	if (net_conf->gatekeeper_pktmbuf_pool == NULL) {
 		net_conf->gatekeeper_pktmbuf_pool =
@@ -1209,7 +1217,7 @@ init_net_stage1(void *arg)
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 		net_conf->gatekeeper_pktmbuf_pool[i] =
 			rte_pktmbuf_pool_create(pool_name,
-				GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
+				gatekeeper_mbuf_size, gatekeeper_cache_size, 0,
 				RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
 
 		/*
@@ -1240,10 +1248,12 @@ static int
 init_iface_stage1(void *arg)
 {
 	struct gatekeeper_if *iface = arg;
+	uint16_t gatekeeper_max_queues =
+		get_gatekeeper_conf()->gatekeeper_max_queues;
 
 	/* Make sure the interface has no more queues than permitted. */
-	RTE_VERIFY(iface->num_rx_queues <= GATEKEEPER_MAX_QUEUES);
-	RTE_VERIFY(iface->num_tx_queues <= GATEKEEPER_MAX_QUEUES);
+	RTE_VERIFY(iface->num_rx_queues <= gatekeeper_max_queues);
+	RTE_VERIFY(iface->num_tx_queues <= gatekeeper_max_queues);
 
 	return init_iface(iface);
 }
@@ -1305,6 +1315,8 @@ gatekeeper_init_network(struct net_config *net_conf)
 {
 	int num_ports;
 	int ret = -1;
+	uint8_t gatekeeper_max_ports =
+		get_gatekeeper_conf()->gatekeeper_max_ports;
 
 	if (net_conf == NULL)
 		return -1;
@@ -1337,9 +1349,9 @@ gatekeeper_init_network(struct net_config *net_conf)
 		ret = -1;
 		goto numa;
 	}
-	if (num_ports > GATEKEEPER_MAX_PORTS) {
+	if (num_ports > gatekeeper_max_ports) {
 		RTE_LOG(ERR, GATEKEEPER, "Gatekeeper was compiled to support at most %i network ports, but configuration is using %i ports\n",
-			GATEKEEPER_MAX_PORTS, num_ports);
+			gatekeeper_max_ports, num_ports);
 		ret = -1;
 		goto numa;
 	}

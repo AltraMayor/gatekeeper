@@ -32,10 +32,6 @@
 #include "gatekeeper_gt.h"
 #include "luajit-ffi-cdata.h"
 
-/* TODO Get the install-path via Makefile. */
-#define LUA_BASE_DIR               "./lua"
-#define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
-
 struct gatekeeper_config gatekeeper_conf;
 
 /*
