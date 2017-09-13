@@ -663,9 +663,9 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto stage3;
 	}
 
-	ret = init_mailbox("lls_req", MAILBOX_MAX_ENTRIES,
-		sizeof(struct lls_request), lls_conf->lcore_id,
-		&lls_conf->requests);
+	ret = init_mailbox("lls_req", lls_conf->mailbox_max_entries,
+		sizeof(struct lls_request), lls_conf->mailbox_mem_cache_size,
+		lls_conf->lcore_id, &lls_conf->requests);
 	if (ret < 0)
 		goto timer;
 

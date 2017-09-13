@@ -143,18 +143,27 @@ struct gk_config {
 	unsigned int gk_max_num_ipv4_fib_entries;
 	unsigned int gk_max_num_ipv6_fib_entries;
 	unsigned int flow_table_full_scan_ms;
+	unsigned int mailbox_max_entries;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
 struct ggu_config {
-	unsigned int      lcore_id;
-	uint16_t          ggu_src_port;
-	uint16_t          ggu_dst_port;
+	unsigned int lcore_id;
+	uint16_t     ggu_src_port;
+	uint16_t     ggu_dst_port;
+	unsigned int mailbox_max_entries;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
 struct lls_config {
 	unsigned int lcore_id;
+	unsigned int mailbox_max_entries;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	int          debug;
 	/* This struct has hidden fields. */
 };
@@ -174,6 +183,9 @@ struct gt_config {
 struct cps_config {
 	unsigned int lcore_id;
 	uint16_t     tcp_port_bgp;
+	unsigned int mailbox_max_entries;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	int          debug;
 	/* This struct has hidden fields. */
 };
@@ -200,6 +212,7 @@ struct sol_config {
 	double       req_bw_rate;
 	unsigned int enq_burst_size;
 	unsigned int deq_burst_size;
+	unsigned int mailbox_mem_cache_size;
 	/* This struct has hidden fields. */
 };
 

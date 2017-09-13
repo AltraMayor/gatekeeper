@@ -33,9 +33,6 @@
  */
 #define NUM_ACL_BGP_RULES (2)
 
-/* XXX Sample parameters, need to be tested for better performance. */
-#define CPS_REQ_BURST_SIZE (32)
-
 /* Period between scans of the outstanding resolution requests from KNIs. */
 #define CPS_SCAN_INTERVAL_SEC (5)
 
@@ -226,9 +223,10 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 static void
 process_reqs(struct cps_config *cps_conf)
 {
-	struct cps_request *reqs[CPS_REQ_BURST_SIZE];
+	unsigned int mailbox_burst_size = cps_conf->mailbox_burst_size;
+	struct cps_request *reqs[mailbox_burst_size];
 	unsigned int count = mb_dequeue_burst(&cps_conf->mailbox,
-		(void **)reqs, CPS_REQ_BURST_SIZE);
+		(void **)reqs, mailbox_burst_size);
 	unsigned int i;
 
 	for (i = 0; i < count; i++) {
@@ -1094,9 +1092,10 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto stage3;
 	}
 
-	ret = init_mailbox("cps_mb", MAILBOX_MAX_ENTRIES,
-		sizeof(struct cps_request), cps_conf->lcore_id,
-		&cps_conf->mailbox);
+	ret = init_mailbox("cps_mb", cps_conf->mailbox_max_entries,
+		sizeof(struct cps_request),
+		cps_conf->mailbox_mem_cache_size,
+		cps_conf->lcore_id, &cps_conf->mailbox);
 	if (ret < 0)
 		goto kni;
 

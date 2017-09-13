@@ -35,9 +35,6 @@
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 
-/* XXX Sample parameter, needs to be tested for better performance. */
-#define GGU_REQ_BURST_SIZE (32)
-
 static struct ggu_config *ggu_conf;
 
 static inline const char *
@@ -406,10 +403,12 @@ ggu_proc(void *arg)
 		}
 	} else {
 		while (likely(!exiting)) {
-			struct ggu_request *reqs[GGU_REQ_BURST_SIZE];
+			unsigned int mailbox_burst_size =
+				ggu_conf->mailbox_burst_size;
+			struct ggu_request *reqs[mailbox_burst_size];
 			unsigned int num_reqs =
 				mb_dequeue_burst(&ggu_conf->mailbox,
-				(void **)reqs, GGU_REQ_BURST_SIZE);
+				(void **)reqs, mailbox_burst_size);
 
 			if (unlikely(num_reqs == 0))
 				continue;
@@ -583,9 +582,9 @@ run_ggu(struct net_config *net_conf,
 	ggu_conf->ggu_src_port = rte_cpu_to_be_16(ggu_conf->ggu_src_port);
 	ggu_conf->ggu_dst_port = rte_cpu_to_be_16(ggu_conf->ggu_dst_port);
 
-	ret = init_mailbox("ggu_mb", MAILBOX_MAX_ENTRIES,
-		sizeof(struct ggu_request), ggu_conf->lcore_id,
-		&ggu_conf->mailbox);
+	ret = init_mailbox("ggu_mb", ggu_conf->mailbox_max_entries,
+		sizeof(struct ggu_request), ggu_conf->mailbox_mem_cache_size,
+		ggu_conf->lcore_id, &ggu_conf->mailbox);
 	if (ret < 0)
 		goto stage3;
 

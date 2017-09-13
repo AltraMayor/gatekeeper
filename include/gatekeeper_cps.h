@@ -33,6 +33,11 @@ struct cps_config {
 	/* Source and destination TCP ports to capture BGP traffic. */
 	uint16_t          tcp_port_bgp;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int      mailbox_max_entries;
+	unsigned int      mailbox_mem_cache_size;
+	unsigned int      mailbox_burst_size;
+
 	/*
 	 * When non-zero, routing table update information
 	 * from the KNI will be displayed.

@@ -181,6 +181,11 @@ struct lls_config {
 	/* lcore that the LLS block runs on. */
 	unsigned int      lcore_id;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int      mailbox_max_entries;
+	unsigned int      mailbox_mem_cache_size;
+	unsigned int      mailbox_burst_size;
+
 	/*
 	 * When non-zero, all caches will be dumped when
 	 * they are changed or periodically scanned.

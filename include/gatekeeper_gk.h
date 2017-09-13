@@ -95,6 +95,11 @@ struct gk_config {
 	/* Time for scanning the whole flow table in ms. */
 	unsigned int       flow_table_full_scan_ms;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int       mailbox_max_entries;
+	unsigned int       mailbox_mem_cache_size;
+	unsigned int       mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

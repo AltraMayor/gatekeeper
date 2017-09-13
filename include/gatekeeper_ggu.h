@@ -33,6 +33,11 @@ struct ggu_config {
 	uint16_t          ggu_src_port;
 	uint16_t          ggu_dst_port;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int      mailbox_max_entries;
+	unsigned int      mailbox_mem_cache_size;
+	unsigned int      mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

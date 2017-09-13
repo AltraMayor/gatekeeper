@@ -25,9 +25,6 @@
 #include "arp.h"
 #include "nd.h"
 
-/* XXX Sample parameters, need to be tested for better performance. */
-#define LLS_CACHE_BURST_SIZE (32)
-
 static void
 lls_send_request(struct lls_config *lls_conf, struct lls_cache *cache,
 	const uint8_t *ip_be, const struct ether_addr *ha)
@@ -299,9 +296,9 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 unsigned int
 lls_process_reqs(struct lls_config *lls_conf)
 {
-	struct lls_request *reqs[LLS_CACHE_BURST_SIZE];
+	struct lls_request *reqs[lls_conf->mailbox_burst_size];
 	unsigned int count = mb_dequeue_burst(&lls_conf->requests,
-		(void **)reqs, LLS_CACHE_BURST_SIZE);
+		(void **)reqs, lls_conf->mailbox_burst_size);
 	unsigned int i;
 
 	for (i = 0; i < count; i++) {
