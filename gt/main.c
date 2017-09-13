@@ -46,10 +46,6 @@
 #include "gatekeeper_varip.h"
 #include "luajit-ffi-cdata.h"
 
-/* TODO #14 Get the install-path via Makefile. */
-#define LUA_POLICY_BASE_DIR "./lua"
-#define GRANTOR_CONFIG_FILE "policy.lua"
-
 static int
 get_block_idx(struct gt_config *gt_conf, unsigned int lcore_id)
 {
@@ -1488,6 +1484,8 @@ cleanup_gt(struct gt_config *gt_conf)
 	for (i = 0; i < gt_conf->num_lcores; i++)
 		cleanup_gt_instance(gt_conf, &gt_conf->instances[i]);
 
+	rte_free(gt_conf->lua_policy_file);
+	rte_free(gt_conf->lua_base_directory);
 	rte_free(gt_conf->instances);
 	rte_free(gt_conf->lcores);
 	rte_free(gt_conf);
@@ -1509,14 +1507,14 @@ gt_conf_put(struct gt_config *gt_conf)
 }
 
 static lua_State *
-alloc_and_setup_lua_state(void)
+alloc_and_setup_lua_state(struct gt_config *gt_conf)
 {
 	int ret;
 	char lua_entry_path[128];
 	lua_State *lua_state;
 
-	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
-			"%s/%s", LUA_POLICY_BASE_DIR, GRANTOR_CONFIG_FILE);
+	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), "%s/%s",
+		gt_conf->lua_base_directory, gt_conf->lua_policy_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
 	lua_state = luaL_newstate();
@@ -1528,7 +1526,7 @@ alloc_and_setup_lua_state(void)
 	}
 
 	luaL_openlibs(lua_state);
-	set_lua_path(lua_state, LUA_POLICY_BASE_DIR);
+	set_lua_path(lua_state, gt_conf->lua_base_directory);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -1563,7 +1561,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		MS_PER_S * gt_conf->frag_max_flow_ttl_ms;
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
-	instance->lua_state = alloc_and_setup_lua_state();
+	instance->lua_state = alloc_and_setup_lua_state(gt_conf);
 	if (instance->lua_state == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: failed to create new Lua state at lcore %u!\n",
@@ -1766,46 +1764,67 @@ cleanup:
 	return ret;
 }
 
-int
-run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
+static char *
+gt_strdup(const char *type, const char *s)
 {
-	int ret, i;
-
-	if (net_conf == NULL || gt_conf == NULL) {
-		ret = -1;
+	char *res = rte_malloc(type, strlen(s) + 1, 0);
+	if (res == NULL) {
+		RTE_LOG(ERR, MALLOC, "gt: out of memory for duplicating the string: %s\n", s);
 		goto out;
 	}
+	strcpy(res, s);
 
-	if (!(gt_conf->gt_max_pkt_burst > 0)) {
-		ret = -1;
+out:
+	return res;
+}
+
+int
+run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
+	const char *lua_base_directory, const char *lua_policy_file)
+{
+	int ret = -1, i;
+
+	if (net_conf == NULL || gt_conf == NULL ||
+			lua_base_directory == NULL ||
+			lua_policy_file == NULL)
 		goto out;
-	}
+
+	gt_conf->lua_base_directory = gt_strdup("lua_base_directory",
+		lua_base_directory);
+	if (gt_conf->lua_base_directory == NULL)
+		goto out;
+
+	gt_conf->lua_policy_file = gt_strdup("lua_policy_file",
+		lua_policy_file);
+	if (gt_conf->lua_policy_file == NULL)
+		goto policy_dir;
+
+	if (!(gt_conf->gt_max_pkt_burst > 0))
+		goto gt_config_file;
 
 	if (gt_conf->batch_interval == 0) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: batch interval (%u) must be greater than 0\n",
 			gt_conf->batch_interval);
-		ret = -1;
-		goto out;
+		goto gt_config_file;
 	}
 
 	if (gt_conf->max_ggu_notify_pkts == 0) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: max number of GGU notification packets (%u) must be greater than 0\n",
 			gt_conf->max_ggu_notify_pkts);
-		ret = -1;
-		goto out;
+		goto gt_config_file;
 	}
 
 	gt_conf->net = net_conf;
 
 	if (gt_conf->num_lcores <= 0)
-		goto success;
+		goto gt_config_file;
 
 	ret = net_launch_at_stage1(net_conf, gt_conf->num_lcores,
 		gt_conf->num_lcores, 0, 0, gt_stage1, gt_conf);
 	if (ret < 0)
-		goto out;
+		goto gt_config_file;
 
 	ret = launch_at_stage2(gt_stage2, gt_conf);
 	if (ret < 0)
@@ -1827,18 +1846,21 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 	gt_conf->ggu_src_port = rte_cpu_to_be_16(gt_conf->ggu_src_port);
 	gt_conf->ggu_dst_port = rte_cpu_to_be_16(gt_conf->ggu_dst_port);
 
-	goto success;
+	rte_atomic32_init(&gt_conf->ref_cnt);
+	return 0;
 
 stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+gt_config_file:
+	rte_free(gt_conf->lua_policy_file);
+	gt_conf->lua_policy_file = NULL;
+policy_dir:
+	rte_free(gt_conf->lua_base_directory);
+	gt_conf->lua_base_directory = NULL;
 out:
 	return ret;
-
-success:
-	rte_atomic32_init(&gt_conf->ref_cnt);
-	return 0;
 }
 
 #define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
@@ -1873,7 +1895,7 @@ l_update_gt_lua_states(lua_State *l)
 		int ret;
 		struct gt_cmd_entry *entry;
 		struct gt_instance *instance = &gt_conf->instances[i];
-		lua_State *lua_state = alloc_and_setup_lua_state();
+		lua_State *lua_state = alloc_and_setup_lua_state(gt_conf);
 		if (lua_state == NULL) {
 			luaL_error(l, "gt: failed to allocate new lua state to GT block %u at lcore %u\n",
 				i, gt_conf->lcores[i]);
