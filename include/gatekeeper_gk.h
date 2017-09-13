@@ -30,12 +30,6 @@
 #include "gatekeeper_sol.h"
 
 /*
- * The LPM reserves 24-bit for the next-hop field.
- * TODO Drop the constant below and make it dynamic.
- */
-#define GK_MAX_NUM_FIB_ENTRIES (256)
-
-/*
  * A flow entry can be in one of three states:
  * request, granted, or declined.
  */
