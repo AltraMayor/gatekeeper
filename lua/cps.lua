@@ -24,6 +24,9 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	cps_conf.mailbox_burst_size = mailbox_burst_size
 	cps_conf.debug = false
+	cps_conf.num_attempts_kni_link_set = 5
+	cps_conf.max_cps_route_updates = 8
+	cps_conf.cps_scan_interval_sec = 5
 
 	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)

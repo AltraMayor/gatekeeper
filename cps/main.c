@@ -33,9 +33,6 @@
  */
 #define NUM_ACL_BGP_RULES (2)
 
-/* Period between scans of the outstanding resolution requests from KNIs. */
-#define CPS_SCAN_INTERVAL_SEC (5)
-
 static struct cps_config cps_conf;
 
 struct cps_config *
@@ -1106,8 +1103,8 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	rte_timer_init(&cps_conf->scan_timer);
 	ret = rte_timer_reset(&cps_conf->scan_timer,
-		CPS_SCAN_INTERVAL_SEC * rte_get_timer_hz(), PERIODICAL,
-		cps_conf->lcore_id, cps_scan, cps_conf);
+		get_cps_conf()->cps_scan_interval_sec * rte_get_timer_hz(),
+		PERIODICAL, cps_conf->lcore_id, cps_scan, cps_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, TIMER, "Cannot set CPS scan timer\n");
 		goto mailbox;

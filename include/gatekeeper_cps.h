@@ -44,6 +44,18 @@ struct cps_config {
 	 */
 	int               debug;
 
+	/* Number of times to attempt bring a KNI interface up or down. */
+	unsigned int      num_attempts_kni_link_set;
+
+	/* Maximum number of updates for LPM table to serve at once. */
+	unsigned int      max_cps_route_updates;
+
+	/*
+	 * Period between scans of the outstanding
+	 * resolution requests from KNIs.
+	 */
+	unsigned int      cps_scan_interval_sec;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
