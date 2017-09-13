@@ -21,9 +21,6 @@
 
 #include "gatekeeper_lls.h"
 
-/* Length of time (in seconds) to wait between scans of the cache. */
-#define LLS_CACHE_SCAN_INTERVAL 10
-
 /* Information needed to add a hold to a record. */
 struct lls_hold_req {
 	/* Cache that holds (or will hold) this map. */
