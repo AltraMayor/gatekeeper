@@ -45,10 +45,6 @@
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 
-/* TODO Get the install-path via Makefile. */
-#define LUA_POLICY_BASE_DIR "./lua"
-#define GRANTOR_CONFIG_FILE "policy.lua"
-
 static int
 get_block_idx(struct gt_config *gt_conf, unsigned int lcore_id)
 {
@@ -1192,6 +1188,8 @@ cleanup_gt(struct gt_config *gt_conf)
 	for (i = 0; i < gt_conf->num_lcores; i++)
 		cleanup_gt_instance(&gt_conf->instances[i]);
 
+	rte_free(gt_conf->lua_base_directory);
+	rte_free(gt_conf->lua_policy_file);
 	rte_free(gt_conf->instances);
 	rte_free(gt_conf->lcores);
 	rte_free(gt_conf);
@@ -1224,8 +1222,8 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		MS_PER_S * gt_conf->frag_max_flow_ttl_ms;
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
-	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
-			"%s/%s", LUA_POLICY_BASE_DIR, GRANTOR_CONFIG_FILE);
+	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), "%s/%s",
+		gt_conf->lua_base_directory, gt_conf->lua_policy_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
 	instance->lua_state = luaL_newstate();
@@ -1238,7 +1236,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	}
 
 	luaL_openlibs(instance->lua_state);
-	set_lua_path(instance->lua_state, LUA_POLICY_BASE_DIR);
+	set_lua_path(instance->lua_state, gt_conf->lua_base_directory);
 	ret = luaL_loadfile(instance->lua_state, lua_entry_path);
 	if (ret != 0) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -1433,14 +1431,37 @@ cleanup:
 }
 
 int
-run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
+run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
+	const char *lua_base_directory, const char *lua_policy_file)
 {
 	int ret, i;
 
-	if (net_conf == NULL || gt_conf == NULL) {
+	if (net_conf == NULL || gt_conf == NULL ||
+			lua_base_directory == NULL ||
+			lua_policy_file == NULL) {
 		ret = -1;
 		goto out;
 	}
+
+	gt_conf->lua_base_directory = rte_malloc(
+		"lua_base_directory", strlen(lua_base_directory) + 1, 0);
+	if (gt_conf->lua_base_directory == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: Out of memory for Lua policy base directory name\n",
+			__func__);
+		ret = -1;
+		goto out;
+	}
+	strcpy(gt_conf->lua_base_directory, lua_base_directory);
+
+	gt_conf->lua_policy_file = rte_malloc(
+		"lua_policy_file", strlen(lua_policy_file) + 1, 0);
+	if (gt_conf->lua_policy_file == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: Out of memory for Grantor configuration file name\n",
+			__func__);
+		ret = -1;
+		goto policy_dir;
+	}
+	strcpy(gt_conf->lua_policy_file, lua_policy_file);
 
 	gt_conf->net = net_conf;
 
@@ -1450,7 +1471,7 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 	ret = net_launch_at_stage1(net_conf, gt_conf->num_lcores,
 		gt_conf->num_lcores, 0, 0, gt_stage1, gt_conf);
 	if (ret < 0)
-		goto out;
+		goto gt_config_file;
 
 	ret = launch_at_stage2(gt_stage2, gt_conf);
 	if (ret < 0)
@@ -1478,6 +1499,12 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+gt_config_file:
+	rte_free(gt_conf->lua_policy_file);
+	gt_conf->lua_policy_file = NULL;
+policy_dir:
+	rte_free(gt_conf->lua_base_directory);
+	gt_conf->lua_base_directory = NULL;
 out:
 	return ret;
 

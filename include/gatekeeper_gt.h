@@ -109,6 +109,13 @@ struct gt_config {
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
+
+	/* Base directory of the Lua policies. */
+	char               *lua_base_directory;
+
+	/* Lua policy configuration file for Grantor. */
+	char               *lua_policy_file;
+
 	rte_atomic32_t	   ref_cnt;
 
 	/* The lcore ids at which each instance runs. */
@@ -126,7 +133,8 @@ struct gt_config {
 
 struct gt_config *alloc_gt_conf(void);
 int gt_conf_put(struct gt_config *gt_conf);
-int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
+int run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
+	const char *lua_base_directory, const char *lua_policy_file);
 
 static inline void
 gt_conf_hold(struct gt_config *gt_conf)
