@@ -34,9 +34,6 @@
  */
 #define LLS_MAX_KEY_LEN (16)
 
-/* Number of records that a LLS cache can hold. */
-#define LLS_CACHE_RECORDS (1024)
-
 /* Requests that can be made to the LLS block. */
 enum lls_req_ty {
 	/* Express interest in a map by registering a callback function. */
@@ -143,7 +140,7 @@ struct lls_cache {
 	const char        *name;
 
 	/* Array of cache records indexed using @hash. */
-	struct lls_record records[LLS_CACHE_RECORDS];
+	struct lls_record *records;
 
 	/* Hash instance that maps IP address keys to LLS cache records. */
 	struct rte_hash   *hash;
@@ -198,6 +195,12 @@ struct lls_config {
 	unsigned int      mailbox_max_entries_exp;
 	unsigned int      mailbox_mem_cache_size;
 	unsigned int      mailbox_burst_size;
+
+	/* Number of records that a LLS cache can hold. */
+	unsigned int      lls_cache_records;
+
+	/* Length of time (in seconds) to wait between scans of the cache. */
+	unsigned int      lls_cache_scan_interval_sec;
 
 	/*
 	 * The fields below are for internal use.
