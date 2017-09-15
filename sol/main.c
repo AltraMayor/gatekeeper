@@ -297,9 +297,6 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 	return 0;
 }
 
-/* Token bucket rate approximation error. */
-#define GATEKEEPER_TB_RATE_CONFIG_ERR (1e-7)
-
 /*
  * @sol_conf is allocated using rte_calloc(), so initializations
  * to 0 are not strictly necessary in this function.
@@ -347,7 +344,7 @@ req_queue_init(struct sol_config *sol_conf)
 	req_queue->cycles_per_byte_floor = cycles_per_byte_precise;
 	ret = rte_approx(
 		cycles_per_byte_precise - req_queue->cycles_per_byte_floor,
-		GATEKEEPER_TB_RATE_CONFIG_ERR, &a, &b);
+		sol_conf->tb_rate_config_err, &a, &b);
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER, "sol: could not approximate the request queue's allocated bandwidth\n");
 		return ret;

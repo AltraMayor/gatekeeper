@@ -220,6 +220,7 @@ struct sol_config {
 	unsigned int enq_burst_size;
 	unsigned int deq_burst_size;
 	unsigned int mailbox_mem_cache_size;
+	double       tb_rate_config_err;
 	/* This struct has hidden fields. */
 };
 
