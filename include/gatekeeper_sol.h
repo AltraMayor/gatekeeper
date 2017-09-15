@@ -109,6 +109,9 @@ struct sol_config {
 	unsigned int       enq_burst_size;
 	unsigned int       deq_burst_size;
 
+	/* Token bucket rate approximation error. */
+	double             tb_rate_approx_err;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
