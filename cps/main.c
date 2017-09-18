@@ -49,6 +49,14 @@ get_cps_conf(void)
 static int
 cleanup_cps(void)
 {
+	if (cps_conf.gt != NULL)
+		gt_conf_put(cps_conf.gt);
+	cps_conf.gt = NULL;
+
+	if (cps_conf.gk != NULL)
+		gk_conf_put(cps_conf.gk);
+	cps_conf.gk = NULL;
+
 	/*
 	 * route_event_sock_close() can be called even when the netlink
 	 * socket is not open, and rte_kni_release() can be passed NULL.
@@ -1026,12 +1034,14 @@ error:
 }
 
 int
-run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
+run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct gt_config *gt_conf, struct cps_config *cps_conf,
 	struct lls_config *lls_conf, const char *kni_kmod_path)
 {
 	int ret;
 
-	if (net_conf == NULL || cps_conf == NULL || lls_conf == NULL) {
+	if (net_conf == NULL || (gk_conf == NULL && gt_conf == NULL) ||
+			cps_conf == NULL || lls_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -1076,6 +1086,14 @@ run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
 		RTE_LOG(ERR, TIMER, "Cannot set CPS scan timer\n");
 		goto mailbox;
 	}
+
+	if (gk_conf != NULL)
+		gk_conf_hold(gk_conf);
+	cps_conf->gk = gk_conf;
+
+	if (gt_conf != NULL)
+		gt_conf_hold(gt_conf);
+	cps_conf->gt = gt_conf;
 
 	return 0;
 mailbox:

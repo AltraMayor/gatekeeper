@@ -189,6 +189,12 @@ struct gk_lpm {
 	struct gk_fib   *fib_tbl6;
 };
 
+struct ip_prefix {
+	const char    *str;
+	struct ipaddr addr;
+	int           len;
+};
+
 struct gk_config;
 
 int clear_ether_cache(struct ether_cache *eth_cache);
@@ -200,8 +206,13 @@ void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 /*
  * TODO Add support for listing GK FIB entries.
  */
+int add_fib_entry_numerical(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
+	enum gk_fib_action action, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
+int del_fib_entry_numerical(
+	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
 /* TODO Customize the hash function for IPv4. */
