@@ -57,8 +57,6 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-/* TODO Implement the configuration for Flow Director. */
-
 /*
  * TODO Add support for VLAN tags.
  *
