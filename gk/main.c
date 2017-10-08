@@ -263,23 +263,6 @@ initialize_flow_entry(struct flow_entry *fe,
 	fe->u.request.last_packet_seen_at = rte_rdtsc();
 	fe->u.request.last_priority = START_PRIORITY;
 	fe->u.request.allowance = START_ALLOWANCE - 1;
-
-	/*
-	 * TODO Flow entries should maintain the reference counter of
-	 * the grantor FIB entry to avoid the entry to go away before the flow.
-	 *
-	 * Notice that all GK blocks are calling this function, so a solution
-	 * needs to deal with concurrency.
-	 *
-	 * Moreover, the chose solution must be very efficient due to
-	 * the impact on the throughout of the GK blocks. For example,
-	 * a simple atomic counter will slow down all GK blocks;
-	 * especially if there is only one grantor FIB entry.
-	 *
-	 * Ideas for solution: trade the need to maintain the reference counter
-	 * of the grantor FIB entry for some expensive operation that is only
-	 * needed while editing the FIB table.
-	 */
 	fe->grantor_fib = grantor_fib;
 }
 
