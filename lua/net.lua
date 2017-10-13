@@ -49,6 +49,9 @@ return function (gatekeeper_server)
 	-- the --log-level EAL command line option.
 	local log_level = gatekeeper.c.RTE_LOG_DEBUG
 
+	-- How often the log file should be rotated. The unit is second.
+	local rotate_log_interval_sec = 60 * 60 -- 1h
+
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.
@@ -78,6 +81,7 @@ return function (gatekeeper_server)
 	net_conf.guarantee_random_entropy = guarantee_random_entropy
 	net_conf.num_attempts_link_get = num_attempts_link_get
 	net_conf.log_level = log_level
+	net_conf.rotate_log_interval_sec = rotate_log_interval_sec
 
 	local front_iface = gatekeeper.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec

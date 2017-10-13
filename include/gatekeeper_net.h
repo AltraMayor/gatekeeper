@@ -341,6 +341,9 @@ struct net_config {
 	/* Dynamic logging type, assigned at runtime. */
 	int                  log_type;
 
+	/* How often the log file should be rotated. The unit is second. */
+	uint32_t             rotate_log_interval_sec;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

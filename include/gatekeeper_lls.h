@@ -217,6 +217,9 @@ struct lls_config {
 	/* Timer to scan over LLS cache(s). */
 	struct rte_timer  scan_timer;
 
+	/* Timer to create new log files. */
+	struct rte_timer  log_timer;
+
 	/* Receive and transmit queues for both interfaces. */
 	uint16_t          rx_queue_front;
 	uint16_t          tx_queue_front;

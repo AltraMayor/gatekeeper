@@ -45,6 +45,9 @@ extern uint64_t cycles_per_sec;
 extern uint64_t cycles_per_ms;
 extern uint64_t picosec_per_cycle;
 
+extern FILE *log_file;
+
 char *rte_strdup(const char *type, const char *s);
+int gatekeeper_log_init(void);
 
 #endif /* _GATEKEEPER_MAIN_H_ */

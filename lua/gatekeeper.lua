@@ -146,6 +146,7 @@ struct net_config {
 	bool         *numa_used;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     rotate_log_interval_sec;
 	/* This struct has hidden fields. */
 };
 

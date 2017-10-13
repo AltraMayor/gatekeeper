@@ -286,6 +286,13 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 }
 
 static void
+rotate_log(__attribute__((unused)) struct rte_timer *timer,
+	__attribute__((unused)) void *arg)
+{
+	gatekeeper_log_init();
+}
+
+static void
 lls_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 {
 	struct lls_config *lls_conf = (struct lls_config *)arg;
@@ -506,6 +513,10 @@ lls_proc(void *arg)
 	struct gatekeeper_if *front = &net_conf->front;
 	struct gatekeeper_if *back = &net_conf->back;
 
+	uint64_t prev_tsc = rte_rdtsc(), cur_tsc, diff_tsc;
+	uint64_t timer_resolution_cycles =
+		net_conf->rotate_log_interval_sec * cycles_per_sec;
+
 	LLS_LOG(NOTICE, "The LLS block is running at lcore = %u\n",
 		lls_conf->lcore_id);
 
@@ -557,6 +568,16 @@ lls_proc(void *arg)
 			 * period but we never invoke the TX burst.
 			 */
 			rte_timer_manage();
+
+			prev_tsc = rte_rdtsc();
+			continue;
+		}
+
+		cur_tsc = rte_rdtsc();
+		diff_tsc = cur_tsc - prev_tsc;
+		if (diff_tsc >= timer_resolution_cycles) {
+			rte_timer_manage();
+			prev_tsc = cur_tsc;
 		}
 	}
 
@@ -834,13 +855,23 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto stage3;
 	}
 
+	/* Rotate log file every rotate_log_interval_sec seconds. */
+	rte_timer_init(&lls_conf->log_timer);
+	ret = rte_timer_reset(&lls_conf->log_timer,
+		net_conf->rotate_log_interval_sec * rte_get_timer_hz(),
+		PERIODICAL, lls_conf->lcore_id, rotate_log, NULL);
+	if (ret < 0) {
+		LLS_LOG(ERR, "Cannot set Gatekeeper log timer\n");
+		goto scan_timer;
+	}
+
 	lls_conf->net = net_conf;
 	if (arp_enabled(lls_conf)) {
 		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache,
 			sizeof(struct in_addr));
 		if (ret < 0) {
 			LLS_LOG(ERR, "ARP cache cannot be started\n");
-			goto timer;
+			goto log_timer;
 		}
 
 		/* Set timeouts for front and back (if needed). */
@@ -902,7 +933,9 @@ nd:
 arp:
 	if (arp_enabled(lls_conf))
 		lls_cache_destroy(&lls_conf->arp_cache);
-timer:
+log_timer:
+	rte_timer_stop(&lls_conf->log_timer);
+scan_timer:
 	rte_timer_stop(&lls_conf->scan_timer);
 stage3:
 	pop_n_at_stage3(1);

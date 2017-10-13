@@ -49,6 +49,9 @@ uint64_t cycles_per_sec;
 uint64_t cycles_per_ms;
 uint64_t picosec_per_cycle;
 
+const char *log_file_name_format;
+const char *log_base_dir;
+
 /* Argp's global variables. */
 const char *argp_program_version = "Gatekeeper 1.0";
 
@@ -63,12 +66,18 @@ static struct argp_option options[] = {
 		"Base directory DIR for Gatekeeper Lua files", 0},
 	{"gatekeeper-config-file", 'f', "FILE", 0,
 		"Lua configuration FILE to initialize Gatekeeper", 0},
+	{"log-file-name-format", 'l', "FORMAT", 0,
+		"The name format of log files", 0},
+	{"log-base-dir", 'g', "DIR", 0,
+		"Base directory DIR for Gatekeeper log files", 0},
 	{ 0 }
 };
 
 struct args {
 	const char *lua_base_dir;
 	const char *gatekeeper_config_file;
+	const char *log_file_name_format;
+	const char *log_base_dir;
 };
 
 static error_t
@@ -83,6 +92,14 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
 	case 'f':
 		args->gatekeeper_config_file = arg;
+		break;
+
+	case 'l':
+		args->log_file_name_format = arg;
+		break;
+
+	case 'g':
+		args->log_base_dir = arg;
 		break;
 
 	default:
@@ -103,6 +120,74 @@ rte_strdup(const char *type, const char *s)
 		return NULL;
 
 	return strcpy(res, s);
+}
+
+FILE *log_file;
+
+static void
+cleanup_log(void)
+{
+	if (log_file != NULL) {
+		if (log_file != stderr)
+			fclose(log_file);
+		log_file = NULL;
+	}
+}
+
+int
+gatekeeper_log_init(void)
+{
+	int ret;
+	time_t now;
+	struct tm time_info;
+	char log_file_name[128];
+	char log_file_path[512];
+	FILE *new_log_file;
+
+	if (log_file == NULL) {
+		/*
+		 * Initialize log_file with stderr to guarantee that log_file
+		 * has a valid value even before a file is open.
+		 */
+		log_file = stderr;
+	}
+
+	now = time(&now);
+	RTE_VERIFY(localtime_r(&now, &time_info) == &time_info);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+	ret = strftime(log_file_name, sizeof(log_file_name),
+		log_file_name_format, &time_info);
+#pragma GCC diagnostic pop
+	if (!(ret > 0 && ret < (int)sizeof(log_file_name))) {
+		G_LOG(ERR, "gatekeeper: Failed to call strftime() to format the log file name\n");
+		return -1;
+	}
+
+	ret = snprintf(log_file_path, sizeof(log_file_path),
+		"%s/%s", log_base_dir, log_file_name);
+	if (!(ret > 0 && ret < (int)sizeof(log_file_path))) {
+		G_LOG(ERR, "gatekeeper: Failed to call snprintf() to fill up the log file path\n");
+		return -1;
+	}
+
+	new_log_file = fopen(log_file_path, "a");
+	if (new_log_file == NULL) {
+		G_LOG(ERR, "gatekeeper: Failed to open log file %s - %s\n",
+			log_file_path, strerror(errno));
+		return -1;
+	}
+
+	ret = rte_openlog_stream(new_log_file);
+	if (ret != 0)
+		return -1;
+
+	if (log_file != stderr)
+		fclose(log_file);
+	log_file = new_log_file;
+
+	return 0;
 }
 
 /* Obtain the system time resolution. */
@@ -206,6 +291,8 @@ main(int argc, char **argv)
 		/* Defaults. */
 		.lua_base_dir = "./lua",
 		.gatekeeper_config_file = "gatekeeper_config.lua",
+		.log_file_name_format = "gatekeeper_%Y_%m_%d_%H_%M.log",
+		.log_base_dir = ".",
 	};
 	int ret;
 
@@ -225,13 +312,20 @@ main(int argc, char **argv)
 	if (ret != 0)
 		rte_exit(EXIT_FAILURE, "Invalid Gatekeeper parameters\n");
 
+	log_file_name_format = args.log_file_name_format;
+	log_base_dir = args.log_base_dir;
+
+	ret = gatekeeper_log_init();
+	if (ret < 0)
+		goto out;
+
 	/* Used by the LLS block. */
 	rte_timer_subsystem_init();
 
 	/* Given the nature of signal, it's okay to not have a cleanup for them. */
 	ret = run_signal_handler();
 	if (ret < 0)
-		goto out;
+		goto log;
 
 	/*
 	 * Given the nature of 'clock_gettime()' call, it's okay to not have a 
@@ -239,7 +333,7 @@ main(int argc, char **argv)
 	 */
 	ret = time_resolution_init();
 	if (ret < 0)
-		goto out;
+		goto log;
 
 	ret = config_gatekeeper(args.lua_base_dir, args.gatekeeper_config_file);
 	if (ret < 0) {
@@ -264,6 +358,8 @@ main(int argc, char **argv)
 	rte_eal_mp_wait_lcore();
 net:
 	gatekeeper_free_network();
+log:
+	cleanup_log();
 out:
 	return ret;
 }
