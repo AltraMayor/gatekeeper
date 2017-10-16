@@ -20,6 +20,7 @@
 #include <sys/time.h>
 
 #include "gatekeeper_gk.h"
+#include "gatekeeper_gt.h"
 
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
@@ -93,6 +94,9 @@ struct dynamic_config {
 	/* Reference to the gk configuration struct. */
 	struct gk_config *gk;
 
+	/* Reference to the gt configuration struct. */
+	struct gt_config *gt;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -106,6 +110,10 @@ struct dynamic_config {
 
 	/* Specify the receiving timeouts until reporting an error. */
 	struct timeval   rcv_time_out;
+
+	/* The lua states used to handle the dynamic configuration files. */
+	int              num_lua_states;
+	lua_State        **lua_states;
 };
 
 int config_gatekeeper(void);
@@ -113,7 +121,7 @@ int set_lua_path(lua_State *l, const char *path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(struct gk_config *gk_conf,
+int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

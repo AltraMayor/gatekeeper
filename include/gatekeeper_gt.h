@@ -102,6 +102,8 @@ struct gt_instance {
 
 	/* The number of valid entries in @ggu_pkts. */
 	unsigned int          num_ggu_pkts;
+
+	struct mailbox        mb;
 } __rte_cache_aligned;
 
 /* Configuration for the GT functional block. */
@@ -147,6 +149,11 @@ struct gt_config {
 	 */
 	unsigned int       max_ggu_notify_pkts;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int       mailbox_max_entries_exp;
+	unsigned int       mailbox_mem_cache_size;
+	unsigned int       mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -164,6 +171,20 @@ struct gt_config {
 
 	/* The gt instances. */
 	struct gt_instance *instances;
+};
+
+/* Define the possible command operations for GT block. */
+enum gt_cmd_op {
+	GT_UPDATE_POLICY,
+};
+
+/* Notice that, the writers of a GT mailbox: the Dynamic config. */
+struct gt_cmd_entry {
+	enum gt_cmd_op  op;
+
+	union {
+		lua_State *lua_state;
+	} u;
 };
 
 struct gt_config *alloc_gt_conf(void);

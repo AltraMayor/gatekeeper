@@ -1216,6 +1216,40 @@ gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
 	rte_pktmbuf_free(pkt);
 }
 
+static void
+process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
+{
+	switch (entry->op) {
+	case GT_UPDATE_POLICY:
+		lua_close(instance->lua_state);
+		instance->lua_state = entry->u.lua_state;
+		break;
+
+	default:
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: unknown command operation %u\n", entry->op);
+		break;
+	}
+}
+
+static void
+process_cmds_from_mailbox(struct gt_instance *instance,
+	struct gt_config *gt_conf)
+{
+	int i;
+	int num_cmd;
+	struct gt_cmd_entry *gt_cmds[gt_conf->mailbox_burst_size];
+
+	/* Load a set of commands from its mailbox ring. */
+        num_cmd = mb_dequeue_burst(&instance->mb,
+		(void **)gt_cmds, gt_conf->mailbox_burst_size);
+
+        for (i = 0; i < num_cmd; i++) {
+		process_gt_cmd(gt_cmds[i], instance);
+		mb_free_entry(&instance->mb, gt_cmds[i]);
+        }
+}
+
 static int
 gt_proc(void *arg)
 {
@@ -1385,6 +1419,8 @@ gt_proc(void *arg)
 		process_pkts_acl(&gt_conf->net->front, lcore, acl6,
 			ETHER_TYPE_IPv6);
 
+		process_cmds_from_mailbox(instance, gt_conf);
+
 		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
 			RTE_VERIFY(death_row.cnt == 0);
 			rte_frag_table_del_expired_entries(instance->frag_tbl,
@@ -1417,6 +1453,8 @@ alloc_gt_conf(void)
 static inline void
 cleanup_gt_instance(struct gt_config *gt_conf, struct gt_instance *instance)
 {
+	destroy_mailbox(&instance->mb);
+
 	flush_notify_pkts(gt_conf, instance);
 	rte_free(instance->ggu_pkts);
 	instance->ggu_pkts = NULL;
@@ -1588,6 +1626,12 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		ret = -1;
 		goto cleanup;
 	}
+
+	ret = init_mailbox("gt", gt_conf->mailbox_max_entries_exp,
+		sizeof(struct gt_cmd_entry), gt_conf->mailbox_mem_cache_size,
+		lcore_id, &instance->mb);
+	if (ret < 0)
+		goto cleanup;
 
 	goto out;
 

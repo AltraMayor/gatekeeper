@@ -53,7 +53,8 @@ static struct dynamic_config config;
 /*
  * Return values:
  * 	0: Write @nbytes successfully.
- * 	-1: Connection closed by the client.
+ * 	-1: Connection closed due to an error.
+ * 	-2: Connection closed by the client.
  */
 static int
 write_nbytes(int conn_fd, const char *msg_buff, int nbytes)
@@ -75,7 +76,7 @@ write_nbytes(int conn_fd, const char *msg_buff, int nbytes)
 	if (send_size == 0) {
 		RTE_LOG(WARNING, GATEKEEPER,
 			"dyn_cfg: Client disconnected\n");
-		return -1;
+		return -2;
 	}
 
 	if (send_size < 0) {
@@ -97,32 +98,30 @@ reply_client_message(int conn_fd, const char *reply_msg, uint16_t reply_len)
 	/* The first two bytes: the length of the message in network order. */
 	ret = write_nbytes(conn_fd, (char *)&nlen, sizeof(nlen));
 	if (ret != 0)
-		return -1;
+		return ret;
 
 	/* Sending the message. */
 	ret = write_nbytes(conn_fd, reply_msg, reply_len);
 	if (ret != 0)
-		return -1;
+		return ret;
 
 	return 0;
 }
 
 static int
-process_client_message(int conn_fd,
-	const char *msg, int msg_len, lua_State *lua_state)
+process_client_message(int conn_fd, const char *msg, int msg_len,
+	lua_State **lua_states, int num_lua_states)
 {
 	/*
 	 * TODO Implement the functionalities to process the clients' request.
 	 *
 	 * Gatekeeper and Grantor: Listing the ARP and ND table.
 	 * This is important for network diagnosis.
-	 *
-	 * Grantor: Updating the policy GTs run.
 	 */
 
-	int ret;
-	size_t reply_len;
-	const char *reply_msg;
+	int i, ret;
+	const char *reply_msg = "Dynamic configuration successfully processed client's requests.";
+	size_t reply_len = strlen(reply_msg);
 	const char *CLIENT_EMPTY_ERROR =
 		"Dynamic configuration cannot process the request: the request is empty.";
 	const char *CLIENT_PROC_ERROR =
@@ -135,36 +134,42 @@ process_client_message(int conn_fd,
 			CLIENT_EMPTY_ERROR, strlen(CLIENT_EMPTY_ERROR));
 	}
 
-	/* Load the client's Lua chunk, and run it. */
-	ret = luaL_loadbuffer(lua_state, msg, msg_len, "message")
-		|| lua_pcall(lua_state, 0, 1, 0);
-	if (ret != 0) {
-		reply_msg = luaL_checklstring(lua_state, -1, &reply_len);
+	for (i = 0; i < num_lua_states; i++) {
+		/* Load the client's Lua chunk, and run it. */
+		ret = luaL_loadbuffer(lua_states[i], msg, msg_len, "message")
+			|| lua_pcall(lua_states[i], 0, 1, 0);
+		if (ret != 0) {
+			reply_msg = luaL_checklstring(lua_states[i],
+				-1, &reply_len);
 
-		if (reply_len > MSG_MAX_LEN) {
-			char truncated_reply_msg[MSG_MAX_LEN];
-			strncpy(truncated_reply_msg, reply_msg, MSG_MAX_LEN);
-			truncated_reply_msg[MSG_MAX_LEN - 1] = '\0';
+			if (reply_len > MSG_MAX_LEN) {
+				char truncated_reply_msg[MSG_MAX_LEN];
+				strncpy(truncated_reply_msg,
+					reply_msg, MSG_MAX_LEN);
+				truncated_reply_msg[MSG_MAX_LEN - 1] = '\0';
 
-			RTE_LOG(ERR, LUA, "dyn_cfg: %s!\n", truncated_reply_msg);
+				RTE_LOG(ERR, LUA, "dyn_cfg: %s!\n",
+					truncated_reply_msg);
 
-			RTE_LOG(WARNING, LUA,
-				"dyn_cfg: The error message length (%lu) exceeds the limit!\n",
-				reply_len);
+				RTE_LOG(WARNING, LUA,
+					"dyn_cfg: The error message length (%lu) exceeds the limit!\n",
+					reply_len);
 
-			reply_len = MSG_MAX_LEN;
-		} else
-			RTE_LOG(ERR, LUA, "dyn_cfg: %s!\n", reply_msg);
+				reply_len = MSG_MAX_LEN;
+			} else
+				RTE_LOG(ERR, LUA, "dyn_cfg: %s!\n", reply_msg);
 
-		return reply_client_message(conn_fd, reply_msg, reply_len);
-	}
+			return reply_client_message(conn_fd,
+				reply_msg, reply_len);
+		}
 
-	reply_msg = luaL_checklstring(lua_state, -1, &reply_len);
-	if (reply_msg == NULL) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: The client request script returns a NULL string!\n");
-		return reply_client_message(conn_fd,
-			CLIENT_PROC_ERROR, strlen(CLIENT_PROC_ERROR));
+		reply_msg = luaL_checklstring(lua_states[i], -1, &reply_len);
+		if (reply_msg == NULL) {
+			RTE_LOG(ERR, LUA,
+				"dyn_cfg: The client request script returns a NULL string!\n");
+			return reply_client_message(conn_fd,
+				CLIENT_PROC_ERROR, strlen(CLIENT_PROC_ERROR));
+		}
 	}
 
 	if (reply_len > MSG_MAX_LEN) {
@@ -180,7 +185,8 @@ process_client_message(int conn_fd,
 /*
  * Return values:
  * 	0: Read @nbytes successfully.
- * 	-1: The client closed the connection or an error occurred.
+ * 	-1: The client closed due to an error.
+ * 	-2: The client closed the connection.
  */
 static int
 read_nbytes(int conn_fd, char *msg_buff, int nbytes)
@@ -199,7 +205,7 @@ read_nbytes(int conn_fd, char *msg_buff, int nbytes)
 	if (recv_size == 0) {
 		RTE_LOG(WARNING, GATEKEEPER,
 			"dyn_cfg: Client disconnected\n");
-		return -1;
+		return -2;
 	}
 
 	if (recv_size < 0) {
@@ -218,7 +224,8 @@ read_nbytes(int conn_fd, char *msg_buff, int nbytes)
  * 	0: Command successfully processed, may need to process further commands.
  */
 static int
-process_single_cmd(int conn_fd, lua_State *lua_state)
+process_single_cmd(int conn_fd, lua_State **lua_states,
+	int num_lua_states, bool *closed_by_client)
 {
 	int ret;
 	uint16_t msg_len;
@@ -231,20 +238,29 @@ process_single_cmd(int conn_fd, lua_State *lua_state)
 	 * first two bytes.
 	 */
 	ret = read_nbytes(conn_fd, (char *)&msg_len, 2);
-	if (ret != 0)
+	if (ret != 0) {
+		if (ret != -2)
+			*closed_by_client = false;
 		return -1;
+	}
 
 	msg_len = ntohs(msg_len);
 	RTE_VERIFY(msg_len <= MSG_MAX_LEN);
 
 	ret = read_nbytes(conn_fd, msg_buff, msg_len);
-	if (ret != 0)
+	if (ret != 0) {
+		if (ret != -2)
+			*closed_by_client = false;
 		return -1;
+	}
 
-	ret = process_client_message(
-		conn_fd, msg_buff, msg_len, lua_state);
-	if (ret < 0)
+	ret = process_client_message(conn_fd, msg_buff, msg_len,
+		lua_states, num_lua_states);
+	if (ret < 0) {
+		if (ret != -2)
+			*closed_by_client = false;
 		return -1;
+	}
 
 	return 0;
 }
@@ -252,11 +268,16 @@ process_single_cmd(int conn_fd, lua_State *lua_state)
 static void
 cleanup_dy(struct dynamic_config *dy_conf)
 {
-	int ret;
+	int i, ret;
 
 	if (dy_conf->gk != NULL) {
 		gk_conf_put(dy_conf->gk);
 		dy_conf->gk = NULL;
+	}
+
+	if (dy_conf->gt != NULL) {
+		gt_conf_put(dy_conf->gt);
+		dy_conf->gt = NULL;
 	}
 
 	if (dy_conf->sock_fd != -1) {
@@ -280,6 +301,16 @@ cleanup_dy(struct dynamic_config *dy_conf)
 		rte_free(dy_conf->server_path);
 		dy_conf->server_path = NULL;
 	}
+
+	for (i = 0; i < dy_conf->num_lua_states; i++) {
+		if (dy_conf->lua_states[i]) {
+			lua_close(dy_conf->lua_states[i]);
+			dy_conf->lua_states[i] = NULL;
+		}
+	}
+
+	rte_free(dy_conf->lua_states);
+	dy_conf->lua_states = NULL;
 }
 
 static int 
@@ -312,16 +343,55 @@ setup_dy_lua(lua_State *lua_state)
 }
 
 static void
+send_new_lua_states(lua_State **lua_states,
+	int num_lua_states, struct gt_config *gt_conf)
+{
+	int i;
+
+	for (i = 0; i < num_lua_states; i++) {
+		int ret;
+		struct gt_cmd_entry *entry;
+		struct gt_instance *instance = &gt_conf->instances[i];
+
+		entry = mb_alloc_entry(&instance->mb);
+		if (entry == NULL) {
+			lua_close(lua_states[i]);
+			lua_states[i] = NULL;
+
+			RTE_LOG(WARNING, GATEKEEPER,
+				"dyn_cfg: failed to send new lua state to GT block %u\n",
+				i);
+
+			continue;
+		}
+
+		entry->op = GT_UPDATE_POLICY;
+		entry->u.lua_state = lua_states[i];
+
+		ret = mb_send_entry(&instance->mb, entry);
+		if (ret != 0) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"dyn_cfg: failed to send new lua state to GT block %u\n",
+				i);
+			lua_close(lua_states[i]);
+		}
+		lua_states[i] = NULL;
+	}
+}
+
+static void
 handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 {
+	bool closed_by_client = true;
+	int i, num_succ_lua_states = 0;
 	int ret;
 	int conn_fd;
 	socklen_t len;
 	int rcv_buff_size;
 	struct sockaddr_un client_addr;
 
-	/* The lua state used to handle the dynamic configuration files. */
-	lua_State *lua_state;
+	int num_lua_states = dy_conf->num_lua_states;
+	lua_State **lua_states = dy_conf->lua_states;
 
 	len = sizeof(client_addr);
 	conn_fd = accept(server_socket_fd,
@@ -363,30 +433,44 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 		goto close_fd;
 	}
 
-	lua_state = luaL_newstate();
-	if (lua_state == NULL) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: failed to create new Lua state!\n");
-		goto close_fd;
-	}
+	for (i = 0; i < num_lua_states; i++) {
+		lua_states[i] = luaL_newstate();
+		if (lua_states[i] == NULL) {
+			RTE_LOG(ERR, LUA,
+				"dyn_cfg: failed to create the %d-th new Lua state!\n",
+				i);
+			goto close_lua;
+		}
 
-	/* Set up the Lua state while there is a connection. */
-	ret = setup_dy_lua(lua_state);
-	if (ret < 0) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: Failed to set up the lua state\n");
-		goto close_lua;
+		/* Set up the Lua state while there is a connection. */
+		ret = setup_dy_lua(lua_states[i]);
+		if (ret < 0) {
+			RTE_LOG(ERR, LUA,
+				"dyn_cfg: Failed to set up the %d-th lua state\n",
+				i);
+			goto close_lua;
+		}
+
+		num_succ_lua_states++;
 	}
 
 	while (1) {
-		ret = process_single_cmd(conn_fd, lua_state);
+		ret = process_single_cmd(conn_fd,
+			lua_states, num_lua_states, &closed_by_client);
 		if (ret != 0)
 			break;
 	}
 
-close_lua:
-	lua_close(lua_state);
+	if (dy_conf->gt && closed_by_client) {
+		send_new_lua_states(lua_states, num_lua_states, dy_conf->gt);
+		goto close_fd;
+	}
 
+close_lua:
+	for (i = 0; i < num_succ_lua_states; i++) {
+		lua_close(lua_states[i]);
+		lua_states[i] = NULL;
+	}
 close_fd:
 	ret = close(conn_fd);
 	if (ret < 0) {
@@ -464,10 +548,10 @@ set_dyc_timeout(unsigned int sec,
 }
 
 int
-run_dynamic_config(struct gk_config *gk_conf,
+run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, struct dynamic_config *dy_conf)
 {
-	int ret;
+	int i, ret;
 	struct sockaddr_un server_addr;
 
 	/*
@@ -553,24 +637,48 @@ run_dynamic_config(struct gk_config *gk_conf,
 		goto free_sock;
 	}
 
-	/*
-	 * TODO Add support for the dynamic configuration running as Grantor.
-	 */
 	if (gk_conf != NULL)
 		gk_conf_hold(gk_conf);
 	dy_conf->gk = gk_conf;
 
+	if (gt_conf != NULL)
+		gt_conf_hold(gt_conf);
+	dy_conf->gt = gt_conf;
+
+	if (dy_conf->gt != NULL)
+		dy_conf->num_lua_states = dy_conf->gt->num_lcores;
+	else
+		dy_conf->num_lua_states = 1;
+
+	dy_conf->lua_states = rte_calloc("lua_states", dy_conf->num_lua_states,
+		sizeof(lua_State *), 0);
+	if (dy_conf->lua_states == NULL) {
+		RTE_LOG(ERR, LUA,
+			"dyn_cfg: failed to create new Lua states!\n");
+		goto put_gk_gt_config;
+	}
+
 	ret = launch_at_stage3("dynamic_conf",
 		dyn_cfg_proc, dy_conf, dy_conf->lcore_id);
 	if (ret < 0)
-		goto put_gk_config;
+		goto free_lua_states;
 
 	return 0;
 
-put_gk_config:
+free_lua_states:
+	for (i = 0; i < dy_conf->num_lua_states; i++) {
+		lua_close(dy_conf->lua_states[i]);
+		dy_conf->lua_states[i] = NULL;
+	}
+	rte_free(dy_conf->lua_states);
+	dy_conf->lua_states = NULL;
+put_gk_gt_config:
 	dy_conf->gk = NULL;
 	if (gk_conf != NULL)
 		gk_conf_put(gk_conf);
+	dy_conf->gt = NULL;
+	if (gt_conf != NULL)
+		gt_conf_put(gt_conf);
 free_sock:
 	close(dy_conf->sock_fd);
 	dy_conf->sock_fd = -1;
