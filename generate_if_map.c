@@ -16,10 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define GATEKEEPER_IF_MAP	"./lua/if_map.lua"
-
 #include <stdio.h>
 #include <string.h>
+#include <argp.h>
 #include <unistd.h>
 #include <ifaddrs.h>
 #include <sys/ioctl.h>
@@ -27,15 +26,78 @@
 #include <linux/ethtool.h> 
 #include <linux/sockios.h>
 
+/* Argp's global variables. */
+const char *argp_program_version = "generate-if-map 1.0";
+
+/* Arguments. */
+static char adoc[] = "<IF_MAP_LUA>";
+
+static char doc[] = "generate-if-map -- generate the mapping "
+	"network interface device name to its bus information";
+
+
+static struct argp_option options[] = {
+	{"gatekeeper-if-map", 'o', "FILE", 0,
+	"Output the mapping to a Lua FILE"},
+	{ 0 }
+};
+
+
+struct args {
+	char *filename;
+};
+
+static error_t
+parse_opt(int key, char *arg, struct argp_state *state)
+{
+	struct args *args = state->input;
+
+	switch (key) {
+	case 'o':
+		args->filename = arg;
+		break;
+
+	case ARGP_KEY_INIT:
+		args->filename = NULL;
+		break;
+
+	case ARGP_KEY_ARG:
+		if (args->filename)
+			argp_error(state,
+				"Wrong number of arguments; only one is allowed");
+		args->filename = arg;
+		break;
+
+	case ARGP_KEY_END:
+		if (!args->filename)
+			argp_error(state,
+				"The mapping Lua file was not specified");
+		break;
+
+	default:
+		return ARGP_ERR_UNKNOWN;
+	}
+	return 0;
+}
+
+static struct argp argp = {options, parse_opt, adoc, doc, NULL, NULL, NULL};
+
 int
-main(void)
+main(int argc, char **argv)
 {
 	FILE *f;
 	struct ifaddrs *addrs, *iter;
 	int sock;
 	int ret;
+	struct args args = {
+		/* Defaults. */
+		.filename = "./lua/if_map.lua",
+	};
 
-	f = fopen(GATEKEEPER_IF_MAP, "w");
+	/* Read parameters. */
+	argp_parse(&argp, argc, argv, 0, NULL, &args);
+
+	f = fopen(args.filename, "w");
 	if (f == NULL) {
 		perror("fopen");
 		return -1;
