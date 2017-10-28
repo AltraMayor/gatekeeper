@@ -1390,7 +1390,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 			uint32_t fib_id;
 			ip_prefix_present = rte_lpm_is_rule_present(
 				ltbl->lpm, ntohl(prefix->addr.ip.v4.s_addr),
-				prefix->len, &fib_id);
+				i, &fib_id);
 			if (!ip_prefix_present)
 				continue;
 
@@ -1404,7 +1404,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 			uint8_t fib_id;
 			ip_prefix_present = rte_lpm6_is_rule_present(
 				ltbl->lpm6, prefix->addr.ip.v6.s6_addr,
-				prefix->len, &fib_id);
+				i, &fib_id);
 			if (!ip_prefix_present)
 				continue;
 
