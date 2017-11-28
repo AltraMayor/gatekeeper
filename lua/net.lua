@@ -5,6 +5,24 @@ return function (gatekeeper_server)
 	-- Change these parameters to configure the network.
 	--
 
+	-- In Linux, using /dev/random may require waiting for the result
+	-- as it uses the so-called entropy pool, where random data may not be
+	-- available at the moment. In contrast, /dev/urandom returns
+	-- as many bytes as user requested and thus it is less random than
+	-- /dev/random.
+	--
+	-- The flags parameter in getrandom() will alter the behavior of
+	-- the call. In the case where flags == 0, getrandom() will block
+	-- until the /dev/urandom pool has been initialized.
+	--
+	-- Alternatively, the GRND_RANDOM flag bit can be used to switch to the
+	-- /dev/random pool, subject to the entropy requirements of that pool.
+	--
+	-- This parameter is used to decide if flag GRND_RANDOM should be
+	-- passed to any call of getradom(2). This is relevant for production
+	-- environments to guarantee entropy while machines are booting up.
+	local guarantee_random_entropy = 0
+
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.
@@ -31,6 +49,7 @@ return function (gatekeeper_server)
 	--
 
 	local net_conf = gatekeeper.c.get_net_conf()
+	net_conf.guarantee_random_entropy = guarantee_random_entropy
 	local front_iface = gatekeeper.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec

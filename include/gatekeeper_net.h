@@ -308,6 +308,12 @@ struct net_config {
 	int                  back_iface_enabled;
 
 	/*
+	 * This parameter is used to decide if flag GRND_RANDOM
+	 * should be passed to any call of getradom(2).
+	 */
+	int                  guarantee_random_entropy;
+
+	/*
 	 * The NUMA nodes used in the host. Element i is true
 	 * if NUMA node i is being used; otherwise it is false.
 	 */
