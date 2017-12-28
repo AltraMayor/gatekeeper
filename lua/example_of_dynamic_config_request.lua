@@ -1,9 +1,15 @@
 -- TODO #67 Add examples for other operations. For example:
--- Functions to add/del/list the GK FIB entries.
 -- Functions to list the ARP table.
 -- Functions to list the ND table.
 -- Functions to process the GT policies.
 -- ......
+
+require "dylib"
+
+local ffi = require("ffi")
+
+local acc_start = ""
+local reply_msg = ""
 
 local dyc = gatekeeper.c.get_dy_conf()
 
@@ -55,6 +61,11 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
+reply_msg = reply_msg .. dylib.list_fib4_entries(dyc.gk,
+	dylib.print_fib_dump_entry, acc_start)
+reply_msg = reply_msg .. dylib.list_fib6_entries(dyc.gk,
+	dylib.print_fib_dump_entry, acc_start)
+
 ret = dylib.c.del_fib_entry("187.73.40.0/30", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
@@ -85,4 +96,9 @@ if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
 
-return "gk: successfully processed all the FIB entries\n"
+reply_msg = reply_msg .. dylib.list_fib4_entries(dyc.gk,
+	dylib.print_fib_dump_entry, acc_start)
+reply_msg = reply_msg .. dylib.list_fib6_entries(dyc.gk,
+	dylib.print_fib_dump_entry, acc_start)
+
+return "gk: successfully processed all the FIB entries\n" .. reply_msg

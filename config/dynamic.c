@@ -289,7 +289,11 @@ cleanup_dy(struct dynamic_config *dy_conf)
 
 const struct luaL_reg dylib_lua_c_funcs [] = {
 	{"update_gt_lua_states", l_update_gt_lua_states},
-	{NULL,                NULL}	/* Sentinel. */
+	{"list_fib4_entries",    l_list_fib4_entries},
+	{"list_fib6_entries",    l_list_fib6_entries},
+	{"ether_format_addr",    l_ether_format_addr},
+	{"ip_format_addr",       l_ip_format_addr},
+	{NULL,                   NULL}	/* Sentinel. */
 };
 
 static int 
