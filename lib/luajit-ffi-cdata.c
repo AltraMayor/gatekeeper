@@ -82,12 +82,12 @@ luaL_checkcdata(struct lua_State *l, int idx, uint32_t *ctypeid,
 	return (void *)cdataptr(cd);
 }
 
-static int
-protected_luaL_get_ctypeid(struct lua_State *l)
+uint32_t
+luaL_get_ctypeid(struct lua_State *l, const char *ctypename)
 {
-	const char *ctypename;
-
-	ctypename = lua_touserdata(l, 1);
+	int idx = lua_gettop(l);
+	CTypeID ctypeid;
+	GCcdata *cd;
 
 	/* Get a reference to ffi.typeof. */
 	luaL_loadstring(l, "return require('ffi').typeof");
@@ -96,35 +96,18 @@ protected_luaL_get_ctypeid(struct lua_State *l)
 		luaL_error(l,
 			"%s: can't get a reference to ffi.typeof", __func__);
 
-	/* Push the type to find the ctypeid. */
 	lua_pushstring(l, ctypename);
 
-	/* Call ffi.typeof() */
-	lua_call(l, 1, 1);
-	return 1;
-}
-
-uint32_t
-luaL_get_ctypeid(struct lua_State *l, const char *ctypename)
-{
-	int idx = lua_gettop(l);
-	CTypeID ctypeid;
-	GCcdata *cd;
-
-	/*
-	 * lua_cpcall() is needed due to the lua_call()'s in
-	 * protected_luaL_get_ctypeid().
-	 */
-	if (lua_cpcall(l, protected_luaL_get_ctypeid, (void *)ctypename)) {
+	if (lua_pcall(l, 1, 1, 0)) {
 		if (lua_isstring(l, -1))
 			lua_error(l);
 		goto fail;
 	}
 
 	/* Returned type should be LUA_TCDATA. */
-	if (lua_type(l, 1) != LUA_TCDATA)
+	if (lua_type(l, -1) != LUA_TCDATA)
 		goto fail;
-	cd = cdataV(l->base);
+	cd = cdataV(l->base + lua_gettop(l) - 1);
 	ctypeid = cd->ctypeid == CTID_CTYPEID
 		? *(CTypeID *)cdataptr(cd)
 		: cd->ctypeid;

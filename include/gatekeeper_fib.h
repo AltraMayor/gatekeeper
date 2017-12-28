@@ -19,6 +19,8 @@
 #ifndef _GATEKEEPER_GK_FIB_H_
 #define _GATEKEEPER_GK_FIB_H_
 
+#include <lauxlib.h>
+
 #include <rte_ether.h>
 #include <rte_hash.h>
 #include <rte_spinlock.h>
@@ -195,6 +197,28 @@ struct ip_prefix {
 	int           len;
 };
 
+struct gk_fib_dump_entry {
+
+	/* The IP prefix. */
+	struct ipaddr addr;
+
+	int           prefix_len;
+
+	/* The Grantor IP address. */
+	struct ipaddr grantor_ip;
+
+	bool          stale;
+
+	/* The IP address of the nexthop. */
+	struct ipaddr nexthop_ip;
+
+	/* The the MAC address of nexthop_ip. */
+	struct ether_addr d_addr;
+
+	/* The fib action. */
+	enum gk_fib_action action;
+};
+
 struct gk_config;
 
 int clear_ether_cache(struct ether_cache *eth_cache);
@@ -206,9 +230,6 @@ int setup_neighbor_tbl(unsigned int socket_id, int identifier,
 int setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id);
 void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 
-/*
- * TODO #65 Add support for listing GK FIB entries.
- */
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf);
@@ -217,6 +238,11 @@ int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 int del_fib_entry_numerical(
 	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
+
+int l_list_gk_fib4(lua_State *l);
+int l_list_gk_fib6(lua_State *l);
+int l_ether_format_addr(lua_State *l);
+int l_ip_format_addr(lua_State *l);
 
 static inline struct ether_cache *
 lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)

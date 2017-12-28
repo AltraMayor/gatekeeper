@@ -17,12 +17,14 @@
  */
 
 #include <stddef.h>
+#include <arpa/inet.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
+#include "luajit-ffi-cdata.h"
 
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
@@ -1663,4 +1665,289 @@ del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf)
 	prefix_info.len = parse_ip_prefix(ip_prefix, &prefix_info.addr);
 
 	return del_fib_entry_numerical(&prefix_info, gk_conf);
+}
+
+static void
+fillup_gk_fib_dump_entry_ether(struct gk_fib_dump_entry *dentry,
+	struct ether_cache *eth_cache)
+{
+	dentry->stale = eth_cache->stale;
+	rte_memcpy(&dentry->nexthop_ip, &eth_cache->ip_addr,
+		sizeof(dentry->nexthop_ip));
+	rte_memcpy(&dentry->d_addr, &eth_cache->l2_hdr.eth_hdr.d_addr,
+		sizeof(dentry->d_addr));
+}
+
+static void
+fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+{
+	dentry->action = fib->action;
+	switch (fib->action) {
+	case GK_FWD_GRANTOR:
+		rte_memcpy(&dentry->grantor_ip, &fib->u.grantor.gt_addr,
+			sizeof(dentry->grantor_ip));
+		fillup_gk_fib_dump_entry_ether(dentry,
+			fib->u.grantor.eth_cache);
+		break;
+
+	case GK_FWD_GATEWAY_FRONT_NET:
+		/* FALLTHROUGH */
+	case GK_FWD_GATEWAY_BACK_NET:
+		fillup_gk_fib_dump_entry_ether(dentry,
+			fib->u.gateway.eth_cache);
+		break;
+
+	case GK_FWD_NEIGHBOR_FRONT_NET:
+		/* FALLTHROUGH */
+	case GK_FWD_NEIGHBOR_BACK_NET:
+		/* FALLTHROUGH */
+	case GK_DROP:
+		break;
+
+	default:
+		rte_panic("Invalid FIB action (%u) at %s with lcore %u\n",
+			fib->action, __func__, rte_lcore_id());
+		break;
+	}
+}
+
+#define CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR "struct gk_fib_dump_entry *"
+
+static void
+list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
+{
+	int ret, index;
+
+	static bool assigned_type_fib_dump_entry = false;
+	static uint32_t correct_ctypeid_fib_dump_entry;
+
+	struct gk_fib *fib;
+	const struct rte_lpm_rule *re4;
+	struct rte_lpm_iterator_state state;
+	struct gk_fib_dump_entry dentry;
+	void *cdata;
+
+	if (!assigned_type_fib_dump_entry) {
+		correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
+		assigned_type_fib_dump_entry = true;
+	}
+
+	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
+	if (ret < 0)
+		luaL_error(l, "gk: failed to initialize the lpm rule iterator state at %s!",
+			__func__);
+
+	index = rte_lpm_rule_iterate(&state, &re4);
+	while (index >= 0) {
+		fib = &ltbl->fib_tbl[re4->next_hop];
+		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
+			index = rte_lpm_rule_iterate(&state, &re4);
+			continue;
+		}
+
+		memset(&dentry, 0, sizeof(dentry));
+		dentry.addr.proto = ETHER_TYPE_IPv4;
+		dentry.addr.ip.v4.s_addr = htonl(re4->ip);
+		dentry.prefix_len = state.depth;
+		fillup_gk_fib_dump_entry(&dentry, fib);
+
+		lua_pushvalue(l, 2);
+		lua_insert(l, 3);
+		cdata = luaL_pushcdata(l, correct_ctypeid_fib_dump_entry,
+			sizeof(struct gk_fib_dump_entry *));
+		*(struct gk_fib_dump_entry **)cdata = &dentry;
+		lua_insert(l, 4);
+
+		lua_call(l, 2, 1);
+
+		index = rte_lpm_rule_iterate(&state, &re4);
+	}
+}
+
+static void
+list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
+{
+	int ret, index;
+
+	static bool assigned_type_fib_dump_entry = false;
+	static uint32_t correct_ctypeid_fib_dump_entry;
+
+	struct gk_fib *fib;
+	struct rte_lpm6_rule re6;
+	struct rte_lpm6_iterator_state state6;
+	struct gk_fib_dump_entry dentry;
+	void *cdata;
+
+	if (!assigned_type_fib_dump_entry) {
+		correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
+		assigned_type_fib_dump_entry = true;
+	}
+
+	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
+	if (ret < 0)
+		luaL_error(l, "gk: failed to initialize the lpm6 rule iterator state at %s!",
+			__func__);
+
+	index = rte_lpm6_rule_iterate(&state6, &re6);
+	while (index >= 0) {
+		fib = &ltbl->fib_tbl6[re6.next_hop];
+		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
+			index = rte_lpm6_rule_iterate(&state6, &re6);
+			continue;
+		}
+
+		memset(&dentry, 0, sizeof(dentry));
+		dentry.addr.proto = ETHER_TYPE_IPv6;
+		rte_memcpy(&dentry.addr.ip.v6, re6.ip,
+			sizeof(dentry.addr.ip.v6));
+		dentry.prefix_len = re6.depth;
+		fillup_gk_fib_dump_entry(&dentry, fib);
+
+		lua_pushvalue(l, 2);
+		lua_insert(l, 3);
+		cdata = luaL_pushcdata(l, correct_ctypeid_fib_dump_entry,
+			sizeof(struct gk_fib_dump_entry *));
+		*(struct gk_fib_dump_entry **)cdata = &dentry;
+		lua_insert(l, 4);
+
+		lua_call(l, 2, 1);
+
+		index = rte_lpm6_rule_iterate(&state6, &re6);
+	}
+}
+
+typedef void (*list_fib_entries)(lua_State *l, struct gk_lpm *ltbl);
+
+#define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
+
+static void
+list_fib_for_lua(lua_State *l, list_fib_entries f)
+{
+	static bool assigned_type_gk_config = false;
+	static uint32_t correct_ctypeid_gk_config;
+
+	uint32_t ctypeid;
+	struct gk_config *gk_conf;
+	struct gk_lpm *ltbl;
+
+	if (!assigned_type_gk_config) {
+		correct_ctypeid_gk_config = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_GK_CONFIG_PTR);
+		assigned_type_gk_config = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gk_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	/* Second argument must be a Lua function. */
+	luaL_checktype(l, 2, LUA_TFUNCTION);
+
+	/* Third argument should be a Lua value. */
+	if (lua_gettop(l) != 3)
+		luaL_error(l, "Expected three arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	gk_conf = *(struct gk_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	ltbl = &gk_conf->lpm_tbl;
+
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	f(l, ltbl);
+	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+
+	lua_remove(l, 1);
+	lua_remove(l, 1);
+}
+
+int
+l_list_gk_fib4(lua_State *l)
+{
+	list_fib_for_lua(l, list_ipv4_fib_entries);
+	return 1;
+}
+
+int
+l_list_gk_fib6(lua_State *l)
+{
+	list_fib_for_lua(l, list_ipv6_fib_entries);
+	return 1;
+}
+
+#define CTYPE_STRUCT_ETHER_ADDR_REF "struct ether_addr &"
+
+int
+l_ether_format_addr(lua_State *l)
+{
+	static bool assigned_type_ether_addr = false;
+	static uint32_t correct_ctypeid_ether_addr;
+
+	uint32_t ctypeid;
+	struct ether_addr *d_addr;
+	char d_buf[ETHER_ADDR_FMT_SIZE];
+
+	if (!assigned_type_ether_addr) {
+		correct_ctypeid_ether_addr = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_ETHER_ADDR_REF);
+		assigned_type_ether_addr = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_ETHER_ADDR_REF. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+	if (ctypeid != correct_ctypeid_ether_addr)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_ETHER_ADDR_REF);
+
+	d_addr = *(struct ether_addr **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+
+	ether_format_addr(d_buf, sizeof(d_buf), d_addr);
+
+	lua_pushstring(l, d_buf);
+
+	return 1;
+}
+
+#define CTYPE_STRUCT_IP_ADDR_REF "struct ipaddr &"
+
+int
+l_ip_format_addr(lua_State *l)
+{
+	static bool assigned_type_ip_addr = false;
+	static uint32_t correct_ctypeid_ip_addr;
+
+	uint32_t ctypeid;
+	struct ipaddr *ip_addr;
+	char ip[128];
+	int ret;
+
+	if (!assigned_type_ip_addr) {
+		correct_ctypeid_ip_addr = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_IP_ADDR_REF);
+		assigned_type_ip_addr = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_IP_ADDR_REF. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+	if (ctypeid != correct_ctypeid_ip_addr)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_IP_ADDR_REF);
+
+	ip_addr = *(struct ipaddr **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+
+	ret = convert_ip_to_str(ip_addr, ip, sizeof(ip));
+	if (ret < 0)
+		luaL_error(l, "gk: failed to convert an IP address to string!");
+
+	lua_pushstring(l, ip);
+
+	return 1;
 }
