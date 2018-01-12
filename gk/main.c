@@ -19,6 +19,8 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <linux/icmp.h>
+#include <linux/icmpv6.h>
 
 #include <rte_ip.h>
 #include <rte_log.h>
@@ -28,6 +30,7 @@
 #include <rte_memcpy.h>
 #include <rte_cycles.h>
 #include <rte_malloc.h>
+#include <rte_icmp.h>
 
 #include "gatekeeper_acl.h"
 #include "gatekeeper_gk.h"
@@ -37,6 +40,7 @@
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_sol.h"
+#include "gatekeeper_lls.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -60,6 +64,8 @@ struct ipacket {
 	struct ip_flow  flow;
 	/* Pointer to the packet itself. */
 	struct rte_mbuf *pkt;
+	/* Pointer to the l3 header. */
+	void *l3_hdr;
 };
 
 struct flow_entry {
@@ -196,13 +202,13 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 	int ret = 0;
 	uint16_t ether_type;
 	struct ether_hdr *eth_hdr;
-	void *l3_hdr;
 	struct ipv4_hdr *ip4_hdr;
 	struct ipv6_hdr *ip6_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
 
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr, &l3_hdr));
+	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
+		&packet->l3_hdr));
 
 	switch (ether_type) {
 	case ETHER_TYPE_IPv4:
@@ -215,7 +221,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			goto out;
 		}
 
-		ip4_hdr = l3_hdr;
+		ip4_hdr = packet->l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv4;
 		packet->flow.f.v4.src = ip4_hdr->src_addr;
 		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
@@ -231,7 +237,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			goto out;
 		}
 
-		ip6_hdr = l3_hdr;
+		ip6_hdr = packet->l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv6;
 		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
 			sizeof(packet->flow.f.v6.src));
@@ -968,12 +974,216 @@ out:
 	return ret;
 }
 
+static inline unsigned short
+icmp_cksum(void *buf, unsigned int size)
+{
+	unsigned short *buffer = buf;
+	unsigned long cksum = 0;
+
+	while(size > 1) {
+		cksum += *buffer++;
+		size -= sizeof(*buffer);
+	}
+
+	if(size)
+		cksum += *(unsigned char*)buffer;
+
+	cksum = (cksum >> 16) + (cksum & 0xffff);
+	cksum += (cksum >> 16);
+
+	return (unsigned short)(~cksum);
+}
+
+static void
+xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+{
+	struct ether_addr eth_addr_tmp;
+	struct ether_hdr *icmp_eth;
+	struct ipv4_hdr *icmp_ipv4;
+	struct icmp_hdr *icmph;
+	struct rte_mbuf *pkt = packet->pkt;
+	int icmp_pkt_len = iface->l2_len_out + sizeof(struct ipv4_hdr) +
+		sizeof(struct icmp_hdr);
+	if (pkt->data_len >= icmp_pkt_len) {
+		int ret = rte_pktmbuf_trim(pkt, pkt->data_len - icmp_pkt_len);
+		if (ret < 0) {
+			RTE_LOG(ERR, MBUF,
+				"Failed to remove %d bytes of data at the end of the mbuf at %s.",
+				pkt->data_len - icmp_pkt_len, __func__);
+			drop_packet(pkt);
+			return;
+		}
+
+		icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	} else {
+		icmp_eth = (struct ether_hdr *)rte_pktmbuf_append(pkt,
+			icmp_pkt_len - pkt->data_len);
+		if (icmp_eth == NULL) {
+			RTE_LOG(ERR, MBUF,
+				"Failed to append %d bytes of new data: not enough headroom space in the first segment at %s!\n",
+				icmp_pkt_len - pkt->data_len, __func__);
+			drop_packet(pkt);
+			return;
+		}
+	}
+
+	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert)
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv4);
+
+	icmp_ipv4 = (struct ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv4->version_ihl = IP_VHL_DEF;
+	icmp_ipv4->type_of_service = 0;
+	icmp_ipv4->packet_id = 0;
+	icmp_ipv4->fragment_offset = IP_DN_FRAGMENT_FLAG;
+	icmp_ipv4->time_to_live = IP_DEFTTL;
+	icmp_ipv4->next_proto_id = IPPROTO_ICMP;
+	icmp_ipv4->src_addr = packet->flow.f.v4.dst;
+	icmp_ipv4->dst_addr = packet->flow.f.v4.src;
+	icmp_ipv4->total_length = rte_cpu_to_be_16(pkt->data_len -
+		iface->l2_len_out);
+	/*
+	 * The IP header checksum filed must be set to 0
+	 * in order to offload the checksum calculation.
+	 */
+	icmp_ipv4->hdr_checksum = 0;
+	pkt->l2_len = iface->l2_len_out;
+	pkt->l3_len = sizeof(struct ipv4_hdr);
+	pkt->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
+
+	icmph = (struct icmp_hdr *)&icmp_ipv4[1];
+	icmph->icmp_type = ICMP_TIME_EXCEEDED;
+	icmph->icmp_code = ICMP_EXC_TTL;
+	icmph->icmp_cksum = 0;
+	icmph->icmp_ident = 0;
+	icmph->icmp_seq_nb = 0;
+	icmph->icmp_cksum = icmp_cksum(icmph, sizeof(*icmph));
+
+	icmp_bufs[*num_pkts] = pkt;
+	(*num_pkts)++;
+}
+
+static void
+xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+{
+	struct ether_addr eth_addr_tmp;
+	struct ether_hdr *icmp_eth;
+	struct ipv6_hdr *icmp_ipv6;
+	struct icmpv6_hdr *icmpv6_hdr;
+	struct rte_mbuf *pkt = packet->pkt;
+	int icmpv6_pkt_len = iface->l2_len_out + sizeof(struct ipv6_hdr) +
+		sizeof(struct icmpv6_hdr);
+	if (pkt->data_len >= icmpv6_pkt_len) {
+		int ret = rte_pktmbuf_trim(pkt,
+			pkt->data_len - icmpv6_pkt_len);
+		if (ret < 0) {
+			RTE_LOG(ERR, MBUF,
+				"Failed to remove %d bytes of data at the end of the mbuf at %s.",
+				pkt->data_len - icmpv6_pkt_len, __func__);
+			drop_packet(pkt);
+			return;
+		}
+
+		icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	} else {
+		icmp_eth = (struct ether_hdr *)rte_pktmbuf_append(pkt,
+			icmpv6_pkt_len - pkt->data_len);
+		if (icmp_eth == NULL) {
+			RTE_LOG(ERR, MBUF,
+				"Failed to append %d bytes of new data: not enough headroom space in the first segment at %s!\n",
+				icmpv6_pkt_len - pkt->data_len, __func__);
+			drop_packet(pkt);
+			return;
+		}
+	}
+
+	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert)
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+
+	/* Set-up IPv6 header. */
+	icmp_ipv6 = (struct ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv6->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
+	icmp_ipv6->payload_len = rte_cpu_to_be_16(sizeof(*icmpv6_hdr));
+	icmp_ipv6->proto = IPPROTO_ICMPV6;
+	/*
+	 * The IP Hop Limit field must be 255 as required by
+	 * RFC 4861, sections 7.1.1 and 7.1.2.
+	 */
+	icmp_ipv6->hop_limits = 255;
+	rte_memcpy(icmp_ipv6->src_addr, packet->flow.f.v6.dst,
+		sizeof(icmp_ipv6->src_addr));
+	rte_memcpy(icmp_ipv6->dst_addr, packet->flow.f.v6.src,
+		sizeof(icmp_ipv6->dst_addr));
+
+	/* Set-up ICMPv6 header. */
+	icmpv6_hdr = (struct icmpv6_hdr *)&icmp_ipv6[1];
+	icmpv6_hdr->type = ICMPV6_TIME_EXCEED;
+	icmpv6_hdr->code = ICMPV6_EXC_HOPLIMIT;
+	icmpv6_hdr->cksum = 0; /* Calculated below. */
+
+	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(icmp_ipv6, icmpv6_hdr);
+
+	icmp_bufs[*num_pkts] = pkt;
+	(*num_pkts)++;
+}
+
+/*
+ * For IPv4, according to the RFC 1812 section 5.3.1 Time to Live (TTL),
+ * if the TTL is reduced to zero (or less), the packet MUST be
+ * discarded, and if the destination is not a multicast address the
+ * router MUST send an ICMP Time Exceeded message, Code 0 (TTL Exceeded
+ * in Transit) message to the source.
+ *
+ * For IPv6, according to the RFC 1883 section 4.4,
+ * if the IPv6 Hop Limit is less than or equal to 1, then the router needs to
+ * send an ICMP Time Exceeded -- Hop Limit Exceeded in Transit message to
+ * the Source Address and discard the packet.
+ */
+static int
+update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+{
+	if (packet->flow.proto == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *ipv4_hdr = packet->l3_hdr;
+		if (ipv4_hdr->time_to_live <= 1) {
+			xmit_icmp(iface, packet, num_pkts, icmp_bufs);
+			return -ETIMEDOUT;
+		}
+
+		--(ipv4_hdr->time_to_live);
+		++(ipv4_hdr->hdr_checksum);
+	} else if (likely(packet->flow.proto == ETHER_TYPE_IPv6)) {
+		struct ipv6_hdr *ipv6_hdr = packet->l3_hdr;
+		if (ipv6_hdr->hop_limits <= 1) {
+			xmit_icmpv6(iface, packet, num_pkts, icmp_bufs);
+			return -ETIMEDOUT;
+		}
+
+		--(ipv6_hdr->hop_limits);
+	} else {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"Unexpected condition at %s: unknown flow type %hu\n",
+			__func__, packet->flow.proto);
+		drop_packet(packet->pkt);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint16_t port_front, uint16_t port_back,
 	uint16_t rx_queue_front, uint16_t tx_queue_back,
-	unsigned int lcore, struct gk_instance *instance,
-	struct gk_config *gk_conf)
+	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	/* Get burst of RX packets, from first port of pair. */
 	int i;
@@ -988,6 +1198,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
+	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
@@ -1123,6 +1334,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 					continue;
 				}
 
+				if (update_ip_hop_count(front, &packet,
+						num_pkts, icmp_bufs) < 0)
+					continue;
+
 				tx_bufs[num_tx++] = pkt;
 				continue;
 			}
@@ -1152,6 +1367,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 					drop_packet(pkt);
 					continue;
 				}
+
+				if (update_ip_hop_count(front, &packet,
+						num_pkts, icmp_bufs) < 0)
+					continue;
 
 				tx_bufs[num_tx++] = pkt;
 				continue;
@@ -1222,8 +1441,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 static void
 process_pkts_back(uint16_t port_back, uint16_t port_front,
 	uint16_t rx_queue_back, uint16_t tx_queue_front,
-	unsigned int lcore, struct gk_instance *instance,
-	struct gk_config *gk_conf)
+	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	/* Get burst of RX packets, from first port of pair. */
 	int i;
@@ -1239,6 +1458,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
+	struct gatekeeper_if *back = &gk_conf->net->back;
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
@@ -1307,6 +1527,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 				continue;
 			}
 
+			if (update_ip_hop_count(back, &packet,
+					num_pkts, icmp_bufs) < 0)
+				continue;
+
 			tx_bufs[num_tx++] = pkt;
 			continue;
 		}
@@ -1336,6 +1560,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 				drop_packet(pkt);
 				continue;
 			}
+
+			if (update_ip_hop_count(back, &packet,
+					num_pkts, icmp_bufs) < 0)
+				continue;
 
 			tx_bufs[num_tx++] = pkt;
 			continue;
@@ -1386,6 +1614,25 @@ process_cmds_from_mailbox(
         }
 }
 
+static void
+send_pkts(uint8_t port, uint16_t tx_queue,
+	uint16_t num_pkts, struct rte_mbuf **bufs)
+{
+	uint16_t i, num_tx_succ;
+
+	if (num_pkts == 0)
+		return;
+
+	/* Send burst of TX packets, to second port of pair. */
+	num_tx_succ = rte_eth_tx_burst(port, tx_queue, bufs, num_pkts);
+
+	/* XXX Do something better here! For now, free any unsent packets. */
+	if (unlikely(num_tx_succ < num_pkts)) {
+		for (i = num_tx_succ; i < num_pkts; i++)
+			drop_packet(bufs[i]);
+	}
+}
+
 static int
 gk_proc(void *arg)
 {
@@ -1400,6 +1647,11 @@ gk_proc(void *arg)
 	uint16_t tx_queue_front = instance->tx_queue_front;
 	uint16_t rx_queue_back = instance->rx_queue_back;
 	uint16_t tx_queue_back = instance->tx_queue_back;
+
+	uint16_t front_num_pkts;
+	uint16_t back_num_pkts;
+	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
+	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
 
 	int num_buckets = rte_hash_get_num_buckets(
 		instance->ip_flow_hash_table);
@@ -1421,13 +1673,23 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
+		front_num_pkts = 0;
+		back_num_pkts = 0;
+
 		process_pkts_front(port_front, port_back,
 			rx_queue_front, tx_queue_back,
-			lcore, instance, gk_conf);
+			lcore, &front_num_pkts, front_icmp_bufs,
+			instance, gk_conf);
 
 		process_pkts_back(port_back, port_front,
-			rx_queue_back, tx_queue_front,
-			lcore, instance, gk_conf);
+			rx_queue_back, tx_queue_front, lcore,
+			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
+
+		send_pkts(port_front, rx_queue_front,
+			front_num_pkts, front_icmp_bufs);
+
+		send_pkts(port_back, rx_queue_back,
+			back_num_pkts, back_icmp_bufs);
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
