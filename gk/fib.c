@@ -16,8 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stddef.h>
+
 #include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 
 struct ip_prefix {
@@ -38,6 +41,8 @@ destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
 		rte_hash_free(neigh->hash_table);
 		neigh->hash_table = NULL;
 	}
+
+	neigh->tbl_size = 0;
 }
 
 static inline int
@@ -59,46 +64,115 @@ gk_lpm_add_ipv6_route(uint8_t *ip,
  * so we don't need a concurrencty mechanism here. However,
  * callers must ensure that the entry is not being used.
  */
-static inline int
-initialize_ether_cache(struct ether_cache *eth_cache)
+static int
+clear_ether_cache(struct ether_cache *eth_cache)
 {
-	memset(eth_cache, 0, sizeof(*eth_cache));
+	int ref_cnt;
+
+	memset(eth_cache->fields_to_clear, 0, sizeof(*eth_cache) -
+		offsetof(struct ether_cache, fields_to_clear));
+
+	if ((ref_cnt = rte_atomic32_read(&eth_cache->ref_cnt)) != 1) {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: the value of ref_cnt field in Ethernet cache entry is %d rather than 1 while calling function %s!\n",
+			ref_cnt, __func__);
+	}
+
+	rte_atomic32_init(&eth_cache->ref_cnt);
 
 	return 0;
 }
 
-/*
- * Fill up the Ethernet cached header.
- * Note that the destination MAC address should be filled up by LLS.
- */
-static inline void
-fill_up_ether_cache_locked(struct ether_cache *eth_cache,
+static void
+gk_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused))enum lls_reply_ty ty, int *pcall_again)
+{
+	struct ether_cache *eth_cache = arg;
+
+	if (pcall_again == NULL) {
+		clear_ether_cache(eth_cache);
+		return;
+	}
+
+	/*
+	 * Deal with concurrency control by sequential lock
+	 * on the nexthop entry.
+	 */
+	write_seqlock(&eth_cache->lock);
+	ether_addr_copy(&map->ha, &eth_cache->eth_hdr.d_addr);
+	eth_cache->stale = map->stale;
+	write_sequnlock(&eth_cache->lock);
+
+	*pcall_again = true;
+}
+
+/* Get a new Ethernet cached header, and fill up the header accordingly. */
+static struct ether_cache *
+get_new_ether_cache_locked(struct neighbor_hash_table *neigh,
 	struct ipaddr *addr, struct gatekeeper_if *iface)
 {
+	int i;
+	struct ether_cache *eth_cache = NULL;
+
+	for (i = 0; i < neigh->tbl_size; i++) {
+		if (rte_atomic32_read(&neigh->cache_tbl[i].ref_cnt) == 0) {
+			eth_cache = &neigh->cache_tbl[i];
+			break;
+		}
+	}
+
+	if (eth_cache == NULL)
+		return NULL;
+
+	/*
+	 * We are initializing @eth_cache, no one but us should be
+	 * reading/writing to @eth_cache, so it doesn't need a sequential lock
+	 * to protect the operations here.
+	 */
 	eth_cache->stale = true;
 	rte_memcpy(&eth_cache->ip_addr, addr, sizeof(eth_cache->ip_addr));
-	eth_cache->eth_hdr.ether_type = addr->proto;
+	eth_cache->eth_hdr.ether_type = rte_cpu_to_be_16(addr->proto);
 	ether_addr_copy(&iface->eth_addr, &eth_cache->eth_hdr.s_addr);
-	eth_cache->ref_cnt = 1;
+	rte_atomic32_set(&eth_cache->ref_cnt, 1);
+
+	return eth_cache;
 }
 
 static struct ether_cache *
 neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
-	struct ipaddr *addr, struct gatekeeper_if *iface)
+	struct ipaddr *addr, struct gatekeeper_if *iface, int lcore_id)
 {
 	int ret;
 	struct ether_cache *eth_cache = lookup_ether_cache(neigh, &addr->ip);
 	if (eth_cache != NULL) {
-		eth_cache->ref_cnt++;
+		rte_atomic32_inc(&eth_cache->ref_cnt);
 		return eth_cache;
 	}
 
-	ret = rte_hash_add_key(neigh->hash_table, &addr->ip);
-	if (ret >= 0) {
-		eth_cache = &neigh->cache_tbl[ret];
-		fill_up_ether_cache_locked(eth_cache, addr, iface);
+	eth_cache = get_new_ether_cache_locked(neigh, addr, iface);
+	if (eth_cache == NULL)
+		return NULL;
+
+	if (addr->proto == ETHER_TYPE_IPv4) {
+		ret = hold_arp(gk_arp_and_nd_req_cb,
+			eth_cache, &addr->ip.v4, lcore_id);
+	} else if (likely(addr->proto == ETHER_TYPE_IPv6)) {
+		ret = hold_nd(gk_arp_and_nd_req_cb,
+			eth_cache, &addr->ip.v6, lcore_id);
+	} else {
+		RTE_LOG(CRIT, GATEKEEPER,
+			"Unexpected condition at %s: unknown IP type %hu\n",
+			__func__, addr->proto);
+		ret = -1;
+	}
+
+	if (ret < 0)
+		goto eth_cache_cleanup;
+
+	ret = rte_hash_add_key_data(neigh->hash_table, &addr->ip, eth_cache);
+	if (ret == 0) {
 		/*
-		 * Function fill_up_ether_cache_locked() already
+		 * Function get_new_ether_cache_locked() already
 		 * sets @ref_cnt to 1.
 		 */
 		return eth_cache;
@@ -108,22 +182,21 @@ neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
 		"Failed to add a cache entry to the neighbor hash table at %s\n",
 		__func__);
 
+	if (addr->proto == ETHER_TYPE_IPv4)
+		put_arp(&addr->ip.v4, lcore_id);
+	else
+		put_nd(&addr->ip.v6, lcore_id);
+
+	/*
+	 * By calling put_xxx(), the LLS block will call
+	 * gk_arp_and_nd_req_cb(), which, in turn, will call
+	 * clear_ether_cache(), so we can return directly here.
+	 */
 	return NULL;
-}
 
-/* Warning: avoid calling this function directly, prefer ether_cache_put(). */
-static int
-neigh_del_ether_cache(struct neighbor_hash_table *neigh, void *key)
-{
-	int ret = rte_hash_del_key(neigh->hash_table, key);
-	if (ret >= 0)
-		return initialize_ether_cache(&neigh->cache_tbl[ret]);
-
-	RTE_LOG(ERR, HASH,
-		"Failed to delete a cache entry to the neighbor hash table at %s - %s\n",
-		__func__, strerror(-ret));
-
-	return -1;
+eth_cache_cleanup:
+	clear_ether_cache(eth_cache);
+	return NULL;
 }
 
 static int
@@ -295,7 +368,7 @@ static int
 setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	int ip_ver, int ht_size, struct neighbor_hash_table *neigh)
 {
-	int  ret;
+	int  i, ret;
 	char ht_name[64];
 	int key_len = ip_ver == ETHER_TYPE_IPv4 ?
 		sizeof(struct in_addr) : sizeof(struct in6_addr);
@@ -333,6 +406,12 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 		ret = -1;
 		goto neigh_hash;
 	}
+
+	/* Initialize the sequential lock for each Ethernet cache entry. */
+	for (i = 0; i < ht_size; i++)
+		seqlock_init(&neigh->cache_tbl[i].lock);
+
+	neigh->tbl_size = ht_size;
 
 	ret = 0;
 	goto out;
@@ -847,17 +926,17 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	enum gk_fib_action action, struct ether_cache *eth_cache,
 	struct ipaddr *addr, struct gk_config *gk_conf)
 {
+	int ret, ref_cnt;
 	struct gk_fib *neighbor_fib = neigh_fib;
 
-	if (eth_cache->ref_cnt == 0) {
-		rte_panic("Unexpected condition: the ref_cnt of the ether cache is 0 at %s\n",
+	ref_cnt = rte_atomic32_sub_return(&eth_cache->ref_cnt, 1);
+	if (ref_cnt < 0) {
+		rte_panic("Unexpected condition: the ref_cnt of the ether cache is negative at %s\n",
 			__func__);
 	}
 
-	if (eth_cache->ref_cnt > 1) {
-		eth_cache->ref_cnt--;
+	if (ref_cnt > 0)
 		return 0;
-	}
 
 	/*
 	 * Find the FIB entry for the @addr.
@@ -872,13 +951,35 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	}
 
 	if (addr->proto == ETHER_TYPE_IPv4) {
-		return neigh_del_ether_cache(
-			&neighbor_fib->u.neigh, &addr->ip.v4.s_addr);
+		ret = put_arp((struct in_addr *)
+			&addr->ip.v4, gk_conf->lcores[0]);
+		if (ret < 0)
+			return ret;
+
+		ret = rte_hash_del_key(neighbor_fib->u.neigh.hash_table,
+			&addr->ip.v4.s_addr);
+		if (ret < 0) {
+			RTE_LOG(CRIT, GATEKEEPER,
+				"gk: failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure!",
+				__func__);
+		}
+		return ret;
 	}
 
 	if (likely(addr->proto == ETHER_TYPE_IPv6)) {
-		return neigh_del_ether_cache(
-			&neighbor_fib->u.neigh6, addr->ip.v6.s6_addr);
+		ret = put_nd((struct in6_addr *)
+			&addr->ip.v6, gk_conf->lcores[0]);
+		if (ret < 0)
+			return ret;
+
+		ret = rte_hash_del_key(neighbor_fib->u.neigh6.hash_table,
+			addr->ip.v6.s6_addr);
+		if (ret < 0) {
+			RTE_LOG(CRIT, GATEKEEPER,
+				"gk: failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure!",
+				__func__);
+		}
+		return ret;
 	}
 
 	RTE_LOG(ERR, GATEKEEPER,
@@ -1025,7 +1126,8 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 
 	/* Find the Ethernet cached header entry for this gateway. */
 	neigh_ht = &neigh_fib->u.neigh;
-	eth_cache = neigh_get_ether_cache_locked(neigh_ht, gw_addr, iface);
+	eth_cache = neigh_get_ether_cache_locked(
+		neigh_ht, gw_addr, iface, gk_conf->lcores[0]);
 	if (eth_cache == NULL)
 		return NULL;
 
@@ -1091,7 +1193,8 @@ init_grantor_fib_locked(
 
 	/* Find the Ethernet cached header entry for this gateway. */
 	neigh_ht = &neigh_fib->u.neigh;
-	eth_cache = neigh_get_ether_cache_locked(neigh_ht, gw_addr, iface);
+	eth_cache = neigh_get_ether_cache_locked(
+		neigh_ht, gw_addr, iface, gk_conf->lcores[0]);
 	if (eth_cache == NULL)
 		return NULL;
 
@@ -1173,9 +1276,6 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 		if (gt_fib == NULL)
 			return -1;
 
-		/*
-	 	 * TODO The nexthop MAC address should be initialized.
-	 	 */
 		break;
 	}
 
@@ -1192,9 +1292,6 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 		if (gw_fib == NULL)
 			return -1;
 
-		/*
-	 	 * TODO The nexthop MAC address should be initialized.
-	 	 */
 		break;
 	}
 

@@ -282,6 +282,29 @@ drop_packet(struct rte_mbuf *pkt)
 	return 0;
 }
 
+/*
+ * Return value indicates whether the cached Ethernet header is stale or not.
+ */
+static int
+pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache)
+{
+	unsigned seq;
+	bool stale;
+
+	do {
+		seq = read_seqbegin(&eth_cache->lock);
+		stale = eth_cache->stale;
+		if (!stale) {
+			struct ether_hdr *eth_hdr =
+				rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+			rte_memcpy(eth_hdr,
+				&eth_cache->eth_hdr, sizeof(*eth_hdr));
+		}
+	} while (read_seqretry(&eth_cache->lock, seq));
+
+	return stale;
+}
+
 /* 
  * When a flow entry is at request state, all the GK block processing
  * that entry does is to:
@@ -302,6 +325,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	uint8_t priority = priority_from_delta_time(now,
 			fe->u.request.last_packet_seen_at);
 	struct gk_fib *fib = fe->grantor_fib;
+	struct ether_cache *eth_cache;
 
 	fe->u.request.last_packet_seen_at = now;
 
@@ -320,10 +344,6 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	}
 
 	/*
-	 * TODO If the nexthop MAC address is stale, then drop the packet.
-	 */
-
-	/*
 	 * Adjust @priority for the DSCP field.
 	 * DSCP 0 for legacy packets; 1 for granted packets; 
 	 * 2 for capability renew; 3-63 for requests.
@@ -340,7 +360,10 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	if (ret < 0)
 		return ret;
 
-	/* TODO Fill up the Ethernet header of the packet. */
+	eth_cache = fib->u.grantor.eth_cache;
+	RTE_VERIFY(eth_cache != NULL);
+	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache))
+		return -1;
 
 	ret = gk_solicitor_enqueue(sol_conf, packet->pkt, priority);
 	return ret < 0 ? ret : EINPROGRESS;
@@ -371,6 +394,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	uint64_t now = rte_rdtsc();
 	struct rte_mbuf *pkt = packet->pkt;
 	struct gk_fib *fib = fe->grantor_fib;
+	struct ether_cache *eth_cache;
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
@@ -394,10 +418,6 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	}
 
 	/*
-	 * TODO If the nexthop MAC address is stale, then drop the packet.
-	 */
-
-	/*
 	 * Encapsulate packet as a granted packet,
 	 * mark it as a capability renewal request if @renew_cap is true,
 	 * enter destination according to @fe->grantor_fib.
@@ -407,7 +427,10 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	if (ret < 0)
 		return ret;
 
-	/* TODO Fill up the Ethernet header of the packet. */
+	eth_cache = fib->u.grantor.eth_cache;
+	RTE_VERIFY(eth_cache != NULL);
+	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache))
+		return -1;
 
 	return 0;
 }
@@ -849,7 +872,6 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 			struct gk_fib *fib = look_up_fib(
 				&gk_conf->lpm_tbl, &packet.flow);
 			struct ether_cache *eth_cache;
-			struct ether_hdr *eth_hdr;
 
 		 	/* No entry for the destination, drop the packet. */
 			if (fib == NULL) {
@@ -900,21 +922,16 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 				 *
 				 * Notice that one needs to update
 				 * the Ethernet header.
-				 *
-				 * TODO Add sequential lock to deal with the
-				 * concurrency between GK and LLS on the cached
-				 * Ethernet header.
 				 */
+
 				eth_cache = fib->u.gateway.eth_cache;
-				if (eth_cache == NULL || eth_cache->stale) {
+				RTE_VERIFY(eth_cache != NULL);
+				if (pkt_copy_cached_eth_header(
+						pkt, eth_cache)) {
 					drop_packet(pkt);
 					continue;
 				}
 
-				eth_hdr = rte_pktmbuf_mtod(
-					pkt, struct ether_hdr *);
-				rte_memcpy(eth_hdr,
-					&eth_cache->eth_hdr, sizeof(*eth_hdr));
 				tx_bufs[num_tx++] = pkt;
 				continue;
 			}
@@ -935,15 +952,13 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 						packet.flow.f.v6.dst);
 				}
 
-				if (eth_cache == NULL || eth_cache->stale) {
+				RTE_VERIFY(eth_cache != NULL);
+				if (pkt_copy_cached_eth_header(
+						pkt, eth_cache)) {
 					drop_packet(pkt);
 					continue;
 				}
 
-				eth_hdr = rte_pktmbuf_mtod(
-					pkt, struct ether_hdr *);
-				rte_memcpy(eth_hdr,
-					&eth_cache->eth_hdr, sizeof(*eth_hdr));
 				tx_bufs[num_tx++] = pkt;
 				continue;
 			}
@@ -1033,7 +1048,6 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 		struct gk_fib *fib;
 		struct rte_mbuf *pkt = rx_bufs[i];
 		struct ether_cache *eth_cache;
-		struct ether_hdr *eth_hdr;
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
@@ -1069,20 +1083,14 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 			 *
 			 * Notice that one needs to update
 			 * the Ethernet header.
-			 *
-			 * TODO Add sequential lock to deal with the
-			 * concurrency between GK and LLS on the cached
-			 * Ethernet header.
 			 */
 			eth_cache = fib->u.gateway.eth_cache;
-			if (eth_cache == NULL || eth_cache->stale) {
+			RTE_VERIFY(eth_cache != NULL);
+			if (pkt_copy_cached_eth_header(pkt, eth_cache)) {
 				drop_packet(pkt);
 				continue;
 			}
 
-			eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-			rte_memcpy(eth_hdr,
-				&eth_cache->eth_hdr, sizeof(*eth_hdr));
 			tx_bufs[num_tx++] = pkt;
 			continue;
 		}
@@ -1103,14 +1111,12 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 					packet.flow.f.v6.dst);
 			}
 
-			if (eth_cache == NULL || eth_cache->stale) {
+			RTE_VERIFY(eth_cache != NULL);
+			if (pkt_copy_cached_eth_header(pkt, eth_cache)) {
 				drop_packet(pkt);
 				continue;
 			}
 
-			eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-			rte_memcpy(eth_hdr,
-				&eth_cache->eth_hdr, sizeof(*eth_hdr));
 			tx_bufs[num_tx++] = pkt;
 			continue;
 		}
