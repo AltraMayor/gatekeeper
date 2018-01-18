@@ -22,9 +22,11 @@
 #include <rte_ether.h>
 #include <rte_hash.h>
 #include <rte_spinlock.h>
+#include <rte_atomic.h>
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_lpm.h"
+#include "seqlock.h"
 
 enum gk_fib_action {
 
@@ -62,8 +64,37 @@ enum gk_fib_action {
 	GK_FIB_MAX,
 };
 
-/* The Ethernet header cache. */
+/*
+ * The Ethernet header cache.
+ * Fields @stale and @eth_hdr.d_addr are protected by the lock of
+ * the cached entry.
+ */
 struct ether_cache {
+
+	/*
+	 * The sequential lock to deal with the
+	 * concurrency between GK and LLS on the cached
+	 * Ethernet header.
+	 *
+	 * Notice that, the LLS block will only modify
+	 * the @stale and @eth_hdr.d_addr fields.
+	 * Therefore, @lock only applies to these two fields.
+	 */
+	seqlock_t        lock;
+
+	/*
+	 * The count of how many times the LPM tables refer to it,
+	 * so a neighbor entry can go away only when no one referring to it.
+	 * Notice, this field is atomic because it's handled by
+	 * the LLS block and the GK blocks.
+	 */
+	rte_atomic32_t   ref_cnt;
+
+	/*
+	 * The fields below field fields_to_clear are zeroed
+	 * when entry is released.
+	 */
+	int              fields_to_clear[0];
 
 	/* Indicate whether the MAC address is stale or not. */
 	bool             stale;
@@ -73,15 +104,10 @@ struct ether_cache {
 
 	/* The whole Ethernet header. */
 	struct ether_hdr eth_hdr;
-
-	/*
-	 * The count of how many times the LPM tables refer to it,
-	 * so a neighbor entry can go away only when no one referring to it.
-	 */
-	uint32_t         ref_cnt;
 };
 
 struct neighbor_hash_table {
+	int                tbl_size;
 
 	struct rte_hash    *hash_table;
 
@@ -175,11 +201,13 @@ int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 static inline struct ether_cache *
 lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)
 {
-	int ret = rte_hash_lookup(neigh_tbl->hash_table, key);
+	struct ether_cache *eth_cache;
+	int ret = rte_hash_lookup_data(neigh_tbl->hash_table,
+		key, (void **)&eth_cache);
 	if (ret < 0)
 		return NULL;
 
-	return &neigh_tbl->cache_tbl[ret];
+	return eth_cache;
 }
 
 #endif /* _GATEKEEPER_GK_FIB_H_ */

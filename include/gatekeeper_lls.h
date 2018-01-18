@@ -211,6 +211,20 @@ struct lls_config {
 };
 
 /*
+ * In LLS, it was a conscious design decision to push the task of
+ * avoiding duplicates to the individual blocks, instead of
+ * putting it in the LLS cache.
+ *
+ * For example, the CPS block maintains
+ * a linked list of ARP and ND holds that it has made so that
+ * it does not issue duplicate requests.
+ *
+ * For GK and GT blocks: GK blocks avoid the duplicates with the
+ * help of their hash tables of neighbors that leaves inside of the LPM table.
+ * And each GT block has a hash table of neighbors.
+ */
+
+/*
  * Interface for functional blocks to resolve IPv4 --> Ethernet addresses.
  *
  * To obtain a map, a functional block running on @lcore_id should invoke
