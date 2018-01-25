@@ -26,19 +26,20 @@
 #include <rte_udp.h>
 #include <rte_atomic.h>
 
+#include "gatekeeper_fib.h"
 #include "gatekeeper_config.h"
 
 struct gt_packet_headers {
 	uint16_t outer_ip_ver;
 	uint16_t inner_ip_ver;
-	uint8_t l4_proto;
-	uint8_t priority;
-	uint8_t outer_ecn;
+	uint8_t  l4_proto;
+	uint8_t  priority;
+	uint8_t  outer_ecn;
 
-	void *l2_hdr;
-	void *outer_l3_hdr;
-	void *inner_l3_hdr;
-	void *l4_hdr;
+	void     *l2_hdr;
+	void     *outer_l3_hdr;
+	void     *inner_l3_hdr;
+	void     *l4_hdr;
 };
 
 /* Structures for each GT instance. */
@@ -51,6 +52,10 @@ struct gt_instance {
 
 	/* The lua state that belongs to the instance. */
 	lua_State     *lua_state;
+
+	/* The neighbor hash tables that stores the Ethernet cached headers. */
+	struct neighbor_hash_table neigh;
+	struct neighbor_hash_table neigh6;
 };
 
 /* Configuration for the GT functional block. */
@@ -58,6 +63,9 @@ struct gt_config {
 	/* The UDP source and destination port numbers for GK-GT Unit. */
 	uint16_t           ggu_src_port;
 	uint16_t           ggu_dst_port;
+
+	/* The maximum number of neighbor entries for the GT. */
+	int                max_num_ipv6_neighbors;
 
 	/*
 	 * The fields below are for internal use.

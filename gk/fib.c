@@ -64,7 +64,7 @@ gk_lpm_add_ipv6_route(uint8_t *ip,
  * so we don't need a concurrencty mechanism here. However,
  * callers must ensure that the entry is not being used.
  */
-static int
+int
 clear_ether_cache(struct ether_cache *eth_cache)
 {
 	int ref_cnt;
@@ -364,7 +364,7 @@ lpm_del_route(struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
 	return -1;
 }
 
-static int
+int
 setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	int ip_ver, int ht_size, struct neighbor_hash_table *neigh)
 {

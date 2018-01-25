@@ -16,6 +16,8 @@ return function (net_conf, numa_table)
 		n_lcores)
 	gatekeeper.gt_assign_lcores(gt_conf, gt_lcores)
 
+	gt_conf.max_num_ipv6_neighbors = 1024
+
 	-- Setup the GT functional block.
 	local ret = gatekeeper.c.run_gt(net_conf, gt_conf)
 	if ret < 0 then

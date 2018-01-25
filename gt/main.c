@@ -26,7 +26,10 @@
 #include <rte_ether.h>
 #include <rte_lcore.h>
 #include <rte_malloc.h>
+#include <rte_random.h>
 
+#include "gatekeeper_fib.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_acl.h"
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_ipip.h"
@@ -244,13 +247,231 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		"gt: receiving a packet with IP source address %s, and destination address %s, whose destination IP address is not the Grantor server itself.!\n",
 		src, dst);
 }
+static void
+gt_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused))enum lls_reply_ty ty, int *pcall_again)
+{
+	struct ether_cache *eth_cache = arg;
+
+	if (pcall_again == NULL) {
+		clear_ether_cache(eth_cache);
+		return;
+	}
+
+	/*
+	 * Deal with concurrency control by sequential lock
+	 * on the nexthop entry.
+	 */
+	write_seqlock(&eth_cache->lock);
+	ether_addr_copy(&map->ha, &eth_cache->eth_hdr.d_addr);
+	eth_cache->stale = map->stale;
+	write_sequnlock(&eth_cache->lock);
+
+	*pcall_again = true;
+}
+
+/*
+ * Fill up the Ethernet cached header.
+ * Note that the destination MAC address should be filled up by LLS.
+ */
+static int
+gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
+	uint16_t inner_ip_ver, void *ip_dst, struct gatekeeper_if *iface)
+{
+	int ret;
+	unsigned lcore_id = rte_lcore_id();
+
+	eth_cache->stale = true;
+	eth_cache->ip_addr.proto = inner_ip_ver;
+
+	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+		rte_memcpy(&eth_cache->ip_addr.ip.v4,
+			ip_dst, sizeof(eth_cache->ip_addr.ip.v4));
+	} else {
+		rte_memcpy(&eth_cache->ip_addr.ip.v6,
+			ip_dst, sizeof(eth_cache->ip_addr.ip.v6));
+	}
+
+	eth_cache->eth_hdr.ether_type = rte_cpu_to_be_16(inner_ip_ver);
+	ether_addr_copy(&iface->eth_addr, &eth_cache->eth_hdr.s_addr);
+	rte_atomic32_set(&eth_cache->ref_cnt, 1);
+
+	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+		ret = hold_arp(gt_arp_and_nd_req_cb,
+			eth_cache, ip_dst, lcore_id);
+	} else {
+		ret = hold_nd(gt_arp_and_nd_req_cb,
+			eth_cache, ip_dst, lcore_id);
+	}
+
+	if (ret < 0)
+		clear_ether_cache(eth_cache);
+
+	return ret;
+}
 
 static int
-decap_and_fill_eth(struct rte_mbuf *m,
-	struct gt_config *gt_conf, struct gt_packet_headers *pkt_info)
+drop_cache_entry_randomly(struct neighbor_hash_table *neigh, uint16_t ip_ver)
+{
+	int ret;
+	uint32_t entry_id = rte_rand() % neigh->tbl_size;
+	struct ether_cache *eth_cache;
+	uint32_t entry_start_idx = entry_id;
+
+	while (true) {
+		eth_cache = &neigh->cache_tbl[entry_id];
+		if (rte_atomic32_read(&eth_cache->ref_cnt) == 0) {
+			entry_id = (entry_id + 1) % neigh->tbl_size;
+			eth_cache = NULL;
+		} else
+			break;
+
+		if (entry_start_idx == entry_id)
+			break;
+	}
+
+	if (eth_cache == NULL)
+		return -1;
+
+	if (ip_ver == ETHER_TYPE_IPv4) {
+		ret = put_arp(&eth_cache->ip_addr.ip.v4, rte_lcore_id());
+		if (ret < 0)
+			return ret;
+
+		ret = rte_hash_del_key(neigh->hash_table,
+			&eth_cache->ip_addr.ip.v4);
+		if (ret < 0) {
+			RTE_LOG(CRIT, GATEKEEPER,
+				"gt: failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure!",
+				__func__);
+		}
+		return ret;
+	}
+
+	if (likely(ip_ver == ETHER_TYPE_IPv6)) {
+		ret = put_nd(&eth_cache->ip_addr.ip.v6, rte_lcore_id());
+		if (ret < 0)
+			return ret;
+
+		ret = rte_hash_del_key(neigh->hash_table,
+			&eth_cache->ip_addr.ip.v6);
+		if (ret < 0) {
+			RTE_LOG(CRIT, GATEKEEPER,
+				"gt: failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure!",
+				__func__);
+		}
+		return ret;
+	}
+
+	return -1;
+}
+
+static struct ether_cache *
+get_new_ether_cache(struct neighbor_hash_table *neigh)
+{
+	int i;
+	for (i = 0; i < neigh->tbl_size; i++) {
+		if (rte_atomic32_read(&neigh->cache_tbl[i].ref_cnt) == 0)
+			return &neigh->cache_tbl[i];
+	}
+
+	return NULL;
+}
+
+static struct ether_cache *
+gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
+	uint16_t inner_ip_ver, void *ip_dst, struct gatekeeper_if *iface)
+{
+	int ret;
+	char ip[128];
+	struct lls_config *lls_conf;
+	struct ether_cache *eth_cache = lookup_ether_cache(neigh, ip_dst);
+	if (eth_cache != NULL)
+		return eth_cache;
+
+	lls_conf = get_lls_conf();
+	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+		if (!lls_conf->arp_cache.ip_in_subnet(iface, ip_dst)) {
+			if (inet_ntop(AF_INET, ip_dst,
+					ip, sizeof(ip)) == NULL) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"gt: %s: failed to convert a number to an IPv4 address (%s)\n",
+					__func__, strerror(errno));
+				return NULL;
+			}
+
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gt: %s: receiving an IPv4 packet with destination IP address %s, which is not on the same subnet as the GT server!\n",
+				__func__, ip);
+			return NULL;
+		}
+	} else if (likely(inner_ip_ver == ETHER_TYPE_IPv6)) {
+		if (!lls_conf->nd_cache.ip_in_subnet(iface, ip_dst)) {
+			if (inet_ntop(AF_INET6, ip_dst,
+					ip, sizeof(ip)) == NULL) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"gt: %s: failed to convert a number to an IPv6 address (%s)\n",
+					__func__, strerror(errno));
+				return NULL;
+			}
+
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gt: %s: receiving an IPv6 packet with destination IP address %s, which is not on the same subnet as the GT server!\n",
+				__func__, ip);
+			return NULL;
+		}
+	} else
+		return NULL;
+
+	eth_cache = get_new_ether_cache(neigh);
+	if (eth_cache == NULL) {
+		ret = drop_cache_entry_randomly(neigh, inner_ip_ver);
+		if (ret < 0)
+			return NULL;
+
+		eth_cache = get_new_ether_cache(neigh);
+		if (eth_cache == NULL) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gt: failed to get a new Ethernet cache entry from the neighbor hash table at %s, the cache is overflowing!\n",
+				__func__);
+			return NULL;
+		}
+	}
+
+	ret = gt_fill_up_ether_cache_locked(
+		eth_cache, inner_ip_ver, ip_dst, iface);
+	if (ret < 0)
+		return NULL;
+
+	ret = rte_hash_add_key_data(neigh->hash_table, ip_dst, eth_cache);
+	if (ret == 0)
+		return eth_cache;
+
+	RTE_LOG(ERR, HASH,
+		"Failed to add a cache entry to the neighbor hash table at %s\n",
+		__func__);
+
+	if (inner_ip_ver == ETHER_TYPE_IPv4)
+		put_arp(ip_dst, rte_lcore_id());
+	else
+		put_nd(ip_dst, rte_lcore_id());
+
+	/*
+	 * By calling put_xxx(), the LLS block will call
+	 * gt_arp_and_nd_req_cb(), which, in turn, will call
+	 * clear_ether_cache(), so we can return directly here.
+	 */
+	return NULL;
+}
+
+static int
+decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
+	struct gt_packet_headers *pkt_info, struct gt_instance *instance)
 {
 	uint16_t outer_ip_len;
-	struct ether_hdr *new_eth;
+	struct neighbor_hash_table *neigh;
+	struct ether_cache *eth_cache;
+	void *ip_dst;
 
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		/*
@@ -268,6 +489,9 @@ decap_and_fill_eth(struct rte_mbuf *m,
 			inner_ipv4_hdr->type_of_service |= IPTOS_ECN_CE;
 			inner_ipv4_hdr->hdr_checksum = 0;
 		}
+
+		neigh = &instance->neigh;
+		ip_dst = &inner_ipv4_hdr->dst_addr;
 	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
 		/*
 		 * Since there's no checksum in the IPv6 header, skip the
@@ -277,6 +501,9 @@ decap_and_fill_eth(struct rte_mbuf *m,
 		struct ipv6_hdr *inner_ipv6_hdr = pkt_info->inner_l3_hdr;
 		if (pkt_info->outer_ecn == IPTOS_ECN_CE)
 			inner_ipv6_hdr->vtc_flow |= IPTOS_ECN_CE << 20;
+
+		neigh = &instance->neigh6;
+		ip_dst = inner_ipv6_hdr->dst_addr;
 	} else
 		return -1;
 
@@ -289,19 +516,15 @@ decap_and_fill_eth(struct rte_mbuf *m,
 		return -1;
 
 	/*
-	 * Fill up the Ethernet header, and forward
-	 * the original packet to the destination.
+	 * The destination MAC address comes from LLS block.
 	 */
-	new_eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
-	ether_addr_copy(&gt_conf->net->front.eth_addr,
-		&new_eth->s_addr);
-	/*
-	 * TODO The destination MAC address
-	 * comes from LLS block.
-	 */
+	eth_cache = gt_neigh_get_ether_cache(neigh,
+		pkt_info->inner_ip_ver, ip_dst, &gt_conf->net->front);
+	if (eth_cache == NULL)
+		return -1;
 
-	new_eth->ether_type =
-		rte_cpu_to_be_16(pkt_info->inner_ip_ver);
+	if (pkt_copy_cached_eth_header(m, eth_cache))
+		return -1;
 
 	return 0;
 }
@@ -557,7 +780,8 @@ gt_proc(void *arg)
 			}
 
 			if (pkt_info.priority <= 1) {
-				ret = decap_and_fill_eth(m, gt_conf, &pkt_info);
+				ret = decap_and_fill_eth(m, gt_conf,
+					&pkt_info, instance);
 				if (ret < 0)
 					rte_pktmbuf_free(m);
 				else
@@ -591,7 +815,8 @@ gt_proc(void *arg)
 				rte_pktmbuf_free(notify_pkt);
 
 			if (policy.state == GK_GRANTED) {
-				ret = decap_and_fill_eth(m, gt_conf, &pkt_info);
+				ret = decap_and_fill_eth(m, gt_conf,
+					&pkt_info, instance);
 				if (ret < 0)
 					rte_pktmbuf_free(m);
 				else
@@ -631,6 +856,9 @@ alloc_gt_conf(void)
 static inline void
 cleanup_gt_instance(struct gt_instance *instance)
 {
+	destroy_neigh_hash_table(&instance->neigh6);
+	destroy_neigh_hash_table(&instance->neigh);
+
 	lua_close(instance->lua_state);
 	instance->lua_state = NULL;
 }
@@ -690,7 +918,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: %s!\n", lua_tostring(instance->lua_state, -1));
 		ret = -1;
-		goto free_lua_state;
+		goto cleanup;
 	}
 
 	/* Run the loaded chunk. */
@@ -699,14 +927,33 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: %s!\n", lua_tostring(instance->lua_state, -1));
 		ret = -1;
-		goto free_lua_state;
+		goto cleanup;
+	}
+
+	if (gt_conf->net->front.configured_proto & CONFIGURED_IPV4) {
+		ret = setup_neighbor_tbl(
+			rte_lcore_to_socket_id(gt_conf->lcores[0]),
+			lcore_id * RTE_MAX_LCORE + 0, ETHER_TYPE_IPv4,
+			(1 << (32 - gt_conf->net->front.ip4_addr_plen)),
+			&instance->neigh);
+		if (ret < 0)
+			goto cleanup;
+	}
+
+	if (gt_conf->net->front.configured_proto & CONFIGURED_IPV6) {
+		ret = setup_neighbor_tbl(
+			rte_lcore_to_socket_id(gt_conf->lcores[0]),
+			lcore_id * RTE_MAX_LCORE + 1, ETHER_TYPE_IPv6,
+			gt_conf->max_num_ipv6_neighbors, &instance->neigh6);
+		if (ret < 0)
+			goto cleanup;
 	}
 
 	goto out;
 
-free_lua_state:
-	lua_close(instance->lua_state);
-	instance->lua_state = NULL;
+cleanup:
+	cleanup_gt_instance(instance);
+
 out:
 	return ret;
 }
@@ -728,7 +975,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
-			goto free_lua_state;
+			goto free_gt_instance;
 		}
 		inst_ptr->rx_queue = ret;
 
@@ -736,17 +983,17 @@ init_gt_instances(struct gt_config *gt_conf)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
-			goto free_lua_state;
+			goto free_gt_instance;
 		}
 		inst_ptr->tx_queue = ret;
 
 		/*
-		 * Set up the lua state for each instance,
+		 * Set up the lua state and neighbor tables for each instance,
 		 * and initialize the policy tables.
 		 */
 		ret = config_gt_instance(gt_conf, lcore);
 		if (ret < 0)
-			goto free_lua_state;
+			goto free_gt_instance;
 
 		num_succ_instances++;
 	}
@@ -754,7 +1001,7 @@ init_gt_instances(struct gt_config *gt_conf)
 	ret = 0;
 	goto out;
 
-free_lua_state:
+free_gt_instance:
 	for (i = 0; i < num_succ_instances; i++)
 		cleanup_gt_instance(&gt_conf->instances[i]);
 out:
