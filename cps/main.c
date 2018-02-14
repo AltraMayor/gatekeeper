@@ -383,7 +383,6 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	num_tx = rte_eth_tx_burst(iface->id, tx_queue,
 		forward_bufs, num_forward);
 	if (unlikely(num_tx < num_forward)) {
-		uint16_t i;
 		for (i = num_tx; i < num_forward; i++)
 			rte_pktmbuf_free(forward_bufs[i]);
 	}
