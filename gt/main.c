@@ -35,6 +35,7 @@
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
@@ -81,10 +82,10 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	struct ipv6_hdr *inner_ipv6_hdr = NULL;
 
 	info->l2_hdr = eth_hdr;
-	info->outer_ip_ver = rte_be_to_cpu_16(eth_hdr->ether_type);
+	info->outer_ethertype = rte_be_to_cpu_16(eth_hdr->ether_type);
 	info->outer_l3_hdr = &eth_hdr[1];
 
-	switch (info->outer_ip_ver) {
+	switch (info->outer_ethertype) {
 	case ETHER_TYPE_IPv4:
 		if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr))
 			return -1;
@@ -191,12 +192,12 @@ static inline bool
 is_valid_dest_addr(struct gt_config *gt_conf,
 	struct gt_packet_headers *pkt_info)
 {
-	return (pkt_info->outer_ip_ver == ETHER_TYPE_IPv4 &&
+	return (pkt_info->outer_ethertype == ETHER_TYPE_IPv4 &&
 			((struct ipv4_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr
 			== gt_conf->net->front.ip4_addr.s_addr)
 			||
-			(pkt_info->outer_ip_ver == ETHER_TYPE_IPv6 &&
+			(pkt_info->outer_ethertype == ETHER_TYPE_IPv6 &&
 			memcmp(((struct ipv6_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr,
 			gt_conf->net->front.ip6_addr.s6_addr,
@@ -209,7 +210,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 	char src[128];
 	char dst[128];
 
-	if (pkt_info->outer_ip_ver == ETHER_TYPE_IPv4) {
+	if (pkt_info->outer_ethertype == ETHER_TYPE_IPv4) {
 		if (inet_ntop(AF_INET, &((struct ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
 				src, sizeof(struct in_addr)) == NULL) {
@@ -507,7 +508,7 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	} else
 		return -1;
 
-	if (pkt_info->outer_ip_ver == ETHER_TYPE_IPv4)
+	if (pkt_info->outer_ethertype == ETHER_TYPE_IPv4)
 		outer_ip_len = sizeof(struct ipv4_hdr);
 	else
 		outer_ip_len = sizeof(struct ipv6_hdr);
@@ -536,7 +537,7 @@ fill_eth_hdr_reverse(struct ether_hdr *eth_hdr,
 	struct ether_hdr *raw_eth = (struct ether_hdr *)pkt_info->l2_hdr;
 	ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
 	ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(pkt_info->outer_ip_ver);
+	eth_hdr->ether_type = rte_cpu_to_be_16(pkt_info->outer_ethertype);
 }
 
 static struct rte_mbuf *
@@ -544,7 +545,7 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	struct gt_packet_headers *pkt_info, struct gt_config *gt_conf)
 {
 	uint8_t *data;
-	uint16_t ethertype = pkt_info->outer_ip_ver;
+	uint16_t ethertype = pkt_info->outer_ethertype;
 	struct ether_hdr *notify_eth;
 	struct ipv4_hdr *notify_ipv4;
 	struct ipv6_hdr *notify_ipv6;
@@ -735,9 +736,12 @@ gt_proc(void *arg)
 		uint16_t num_rx;
 		uint16_t num_tx = 0;
 		uint16_t num_tx_succ;
+		uint16_t num_arp = 0;
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		IPV6_ACL_SEARCH_DEF(acl);
+		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
+		ACL_SEARCH_DEF(acl4);
+		ACL_SEARCH_DEF(acl6);
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
@@ -762,8 +766,15 @@ gt_proc(void *arg)
 			 */
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
-				if (pkt_info.outer_ip_ver == ETHER_TYPE_IPv6) {
-					add_pkt_ipv6_acl(&acl, m);
+				switch (pkt_info.outer_ethertype) {
+				case ETHER_TYPE_IPv4:
+					add_pkt_acl(&acl4, m);
+					continue;
+				case ETHER_TYPE_IPv6:
+					add_pkt_acl(&acl6, m);
+					continue;
+				case ETHER_TYPE_ARP:
+					arp_bufs[num_arp++] = m;
 					continue;
 				}
 
@@ -838,7 +849,13 @@ gt_proc(void *arg)
 				rte_pktmbuf_free(tx_bufs[i]);
 		}
 
-		process_pkts_ipv6_acl(&gt_conf->net->front, lcore, &acl);
+		if (num_arp > 0)
+			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
+
+		process_pkts_acl(&gt_conf->net->front, lcore, &acl4,
+			ETHER_TYPE_IPv4);
+		process_pkts_acl(&gt_conf->net->front, lcore, &acl6,
+			ETHER_TYPE_IPv6);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,

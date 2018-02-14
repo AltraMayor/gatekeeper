@@ -22,6 +22,7 @@
 
 #include <gatekeeper_lls.h>
 #include "cache.h"
+#include "arp.h"
 #include "nd.h"
 
 /* XXX Sample parameters, need to be tested for better performance. */
@@ -311,6 +312,22 @@ lls_process_reqs(struct lls_config *lls_conf)
 		case LLS_REQ_PUT:
 			lls_process_put(lls_conf, &reqs[i]->u.put);
 			break;
+		case LLS_REQ_ARP: {
+			struct lls_arp_req *arp = &reqs[i]->u.arp;
+			uint16_t tx_queue =
+				(arp->iface == &lls_conf->net->front)
+				? lls_conf->tx_queue_front
+				: lls_conf->tx_queue_back;
+			int i;
+			for (i = 0; i < arp->num_pkts; i++) {
+				if (process_arp(lls_conf, arp->iface,
+						tx_queue, arp->pkts[i],
+						rte_pktmbuf_mtod(arp->pkts[i],
+						    struct ether_hdr *)) == -1)
+					rte_pktmbuf_free(arp->pkts[i]);
+			}
+			break;
+		}
 		case LLS_REQ_ND: {
 			struct lls_nd_req *nd = &reqs[i]->u.nd;
 			int i;
@@ -354,6 +371,9 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 		break;
 	case LLS_REQ_PUT:
 		req->u.put = *(struct lls_put_req *)req_arg;
+		break;
+	case LLS_REQ_ARP:
+		req->u.arp = *(struct lls_arp_req *)req_arg;
 		break;
 	case LLS_REQ_ND:
 		req->u.nd = *(struct lls_nd_req *)req_arg;

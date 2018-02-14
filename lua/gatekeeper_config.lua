@@ -17,6 +17,12 @@ function gatekeeper_init()
 	local netf = require("net")
 	local net_conf = netf(gatekeeper_server)
 
+	-- LLS should be the first block initialized, since it should have
+	-- queue IDs of 0 so that when ARP filters are not supported ARP
+	-- packets are steered to the LLS block by the NIC. This occurs because
+	-- many NICs direct non-IP packets to queue 0. This is not necessary
+	-- when running Gatekeeper on Amazon, since the ENA distributes non-IP
+	-- packets to the first queue configured for RSS.
 	local llsf = require("lls")
 	local lls_conf = llsf(net_conf, numa_table)
 

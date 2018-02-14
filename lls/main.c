@@ -188,6 +188,26 @@ put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
 	return -1;
 }
 
+void
+submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct gatekeeper_if *iface)
+{
+	struct lls_arp_req arp_req = {
+		.num_pkts = num_pkts,
+		.iface = iface,
+	};
+	int ret;
+
+	rte_memcpy(arp_req.pkts, pkts, sizeof(*arp_req.pkts) * num_pkts);
+
+	ret = lls_req(LLS_REQ_ARP, &arp_req);
+	if (unlikely(ret < 0)) {
+		unsigned int i;
+		for (i = 0; i < num_pkts; i++)
+			rte_pktmbuf_free(pkts[i]);
+	}
+}
+
 static int
 submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
@@ -552,17 +572,40 @@ lls_stage2(void *arg)
 	int ret;
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = ethertype_filter_add(net_conf->front.id,
-			ETHER_TYPE_ARP, lls_conf->rx_queue_front);
-		if (ret < 0)
-			return ret;
+		if (net_conf->front.hw_filter_eth) {
+			ret = ethertype_filter_add(net_conf->front.id,
+				ETHER_TYPE_ARP, lls_conf->rx_queue_front);
+			if (ret < 0)
+				return ret;
+		} else if (lls_conf->rx_queue_front != 0) {
+			/*
+			 * RSS on most NICs seem to default to sending ARP
+			 * (and other non-IP packets) to queue 0, so the LLS
+			 * block should be listening on queue 0.
+			 *
+			 * On the Elastic Network Adapter (ENA) on Amazon,
+			 * non-IP packets seem to be given to the first
+			 * queue configured for RSS. Therefore, LLS does not
+			 * need to run on queue 0 in that case, but there's
+			 * no easy way of deciding whether it is needed
+			 * at runtime.
+			 */
+			RTE_LOG(ERR, GATEKEEPER, "lls: if EtherType filters are not supported, the LLS block needs to listen on queue 0 on the front iface\n");
+			return -1;
+		}
 	}
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = ethertype_filter_add(net_conf->back.id,
-			ETHER_TYPE_ARP, lls_conf->rx_queue_back);
-		if (ret < 0)
-			return ret;
+		if (net_conf->back.hw_filter_eth) {
+			ret = ethertype_filter_add(net_conf->back.id,
+				ETHER_TYPE_ARP, lls_conf->rx_queue_back);
+			if (ret < 0)
+				return ret;
+		} else if (lls_conf->rx_queue_back != 0) {
+			/* See comment above about LLS listening on queue 0. */
+			RTE_LOG(ERR, GATEKEEPER, "lls: if EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");
+			return -1;
+		}
 	}
 
 	/* Receive ND packets using IPv6 ACL filters. */

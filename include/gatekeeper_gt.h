@@ -30,7 +30,7 @@
 #include "gatekeeper_config.h"
 
 struct gt_packet_headers {
-	uint16_t outer_ip_ver;
+	uint16_t outer_ethertype;
 	uint16_t inner_ip_ver;
 	uint8_t  l4_proto;
 	uint8_t  priority;

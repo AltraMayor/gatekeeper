@@ -47,7 +47,9 @@ enum lls_req_ty {
 	 * be invoked again.
 	 */
 	LLS_REQ_PUT,
-	/* Request to handle an ND packet received from another block. */
+	/* Request to handle ARP packets received from another block. */
+	LLS_REQ_ARP,
+	/* Request to handle ND packets received from another block. */
 	LLS_REQ_ND,
 };
 
@@ -372,6 +374,10 @@ ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
 	const uint64_t *paddr2 = (const uint64_t *)addr2;
 	return (paddr1[0] == paddr2[0]) && (paddr1[1] == paddr2[1]);
 }
+
+/* Submit ARP packets to the LLS block (hardware filtering is not available). */
+void submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct gatekeeper_if *iface);
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);

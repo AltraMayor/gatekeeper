@@ -48,6 +48,18 @@ struct lls_put_req {
 	unsigned int     lcore_id;
 };
 
+/* Information needed to submit ARP packets to the LLS block. */
+struct lls_arp_req {
+	/* ARP neighbor packets. */
+	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
+
+	/* Number of packets stored in @pkts. */
+	int                  num_pkts;
+
+	/* Interface that received @pkt. */
+	struct gatekeeper_if *iface;
+};
+
 /* Information needed to submit ND packets to the LLS block. */
 struct lls_nd_req {
 	/* ND neighbor packets. */
@@ -94,6 +106,8 @@ struct lls_request {
 		struct lls_hold_req hold;
 		/* If @ty is LLS_REQ_PUT, use @put. */
 		struct lls_put_req  put;
+		/* If @ty is LLS_REQ_ARP, use @arp. */
+		struct lls_arp_req  arp;
 		/* If @ty is LLS_REQ_ND, use @nd. */
 		struct lls_nd_req   nd;
 	} u;
