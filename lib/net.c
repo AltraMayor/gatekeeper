@@ -148,7 +148,8 @@ int
 ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 	uint16_t src_port, uint16_t src_port_mask,
 	uint16_t dst_port, uint16_t dst_port_mask,
-	uint8_t proto, uint16_t queue_id, int ipv4_only)
+	uint8_t proto, uint16_t queue_id,
+	int ipv4_configured, int ipv6_configured)
 {
 	int ret = 0;
 	struct rte_eth_ntuple_filter filter_v4 = {
@@ -185,43 +186,38 @@ ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 		.queue = queue_id,
 	};
 
-	ret = rte_eth_dev_filter_supported(portid, RTE_ETH_FILTER_NTUPLE);
-	if (ret < 0) {
+	RTE_VERIFY(rte_eth_dev_filter_supported(portid,
+		RTE_ETH_FILTER_NTUPLE) == 0);
+
+	if (!ipv4_configured)
+		goto ipv6;
+
+	ret = rte_eth_dev_filter_ctrl(portid,
+		RTE_ETH_FILTER_NTUPLE,
+		RTE_ETH_FILTER_ADD,
+		&filter_v4);
+	if (ret == -ENOTSUP) {
 		RTE_LOG(ERR, PORT,
-			"Ntuple filter is not supported on port %hhu.\n",
+			"Hardware doesn't support adding an IPv4 ntuple filter on port %hhu!\n",
+			portid);
+		ret = -1;
+		goto out;
+	} else if (ret == -ENODEV) {
+		RTE_LOG(ERR, PORT,
+			"Port %hhu is invalid for adding an IPv4 ntuple filter!\n",
+			portid);
+		ret = -1;
+		goto out;
+	} else if (ret != 0) {
+		RTE_LOG(ERR, PORT,
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter!\n",
 			portid);
 		ret = -1;
 		goto out;
 	}
-
-	if (dst_ip != 0) {
-		ret = rte_eth_dev_filter_ctrl(portid,
-			RTE_ETH_FILTER_NTUPLE,
-			RTE_ETH_FILTER_ADD,
-			&filter_v4);
-		if (ret == -ENOTSUP) {
-			RTE_LOG(ERR, PORT,
-				"Hardware doesn't support adding an IPv4 ntuple filter on port %hhu!\n",
-				portid);
-			ret = -1;
-			goto out;
-		} else if (ret == -ENODEV) {
-			RTE_LOG(ERR, PORT,
-				"Port %hhu is invalid for adding an IPv4 ntuple filter!\n",
-				portid);
-			ret = -1;
-			goto out;
-		} else if (ret != 0) {
-			RTE_LOG(ERR, PORT,
-				"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter!\n",
-				portid);
-			ret = -1;
-			goto out;
-		}
-	}
-
-	if (ipv4_only)
-		return 0;
+ipv6:
+	if (!ipv6_configured)
+		goto out;
 
 	ret = rte_eth_dev_filter_ctrl(portid,
 		RTE_ETH_FILTER_NTUPLE,
@@ -404,13 +400,15 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 {
 	switch (cmd) {
 	case IFACE_DESTROY_ALL:
+		/* Destroy the ACLs for each socket. */
+		if (ipv6_if_configured(iface))
+			destroy_acls(&iface->ipv6_acls);
+		if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+			destroy_acls(&iface->ipv4_acls);
 		/* Stop interface ports (bonded port is stopped below). */
 		stop_iface_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_INIT:
-		/* Destroy the IPv6 ACL for each socket. */
-		if (ipv6_if_configured(iface))
-			destroy_ipv6_acls(iface);
 		/* Remove any slave ports added to a bonded port. */
 		if (iface->num_ports > 1 ||
 				iface->bonding_mode == BONDING_MODE_8023AD)
@@ -898,12 +896,6 @@ init_iface(struct gatekeeper_if *iface)
 			goto close_ports;
 	}
 
-	if (ipv6_if_configured(iface)) {
-		ret = init_ipv6_acls(iface);
-		if (ret < 0)
-			goto close_ports;
-	}
-
 	return 0;
 
 close_ports:
@@ -1066,11 +1058,31 @@ out:
 		"net: EtherType filters %s supported on the %s iface\n",
 		iface->hw_filter_eth ? "are" : "are NOT", iface->name);
 
+	iface->hw_filter_ntuple = rte_eth_dev_filter_supported(iface->id,
+		RTE_ETH_FILTER_NTUPLE) == 0;
+	RTE_LOG(NOTICE, PORT,
+		"net: ntuple filters %s supported on the %s iface\n",
+		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);
+
+	if (!iface->hw_filter_ntuple && ipv4_if_configured(iface)) {
+		ret = init_ipv4_acls(iface);
+		if (ret < 0)
+			goto stop_partial;
+	}
+
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
-	if (ipv6_if_configured(iface))
+	if (ipv6_if_configured(iface)) {
+		ret = init_ipv6_acls(iface);
+		if (ret < 0)
+			goto ipv4_acls;
 		setup_ipv6_addrs(iface);
+	}
+
 	return 0;
 
+ipv4_acls:
+	if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+		destroy_acls(&iface->ipv4_acls);
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
 	destroy_iface(iface, IFACE_DESTROY_INIT);
@@ -1117,6 +1129,18 @@ fail:
 int
 finalize_stage2(__attribute__((unused)) void *arg)
 {
+	if (!config.front.hw_filter_ntuple &&
+			ipv4_if_configured(&config.front)) {
+		int ret = build_ipv4_acls(&config.front);
+		if (ret < 0)
+			return ret;
+	}
+	if (!config.back.hw_filter_ntuple &&
+			ipv4_if_configured(&config.back)) {
+		int ret = build_ipv4_acls(&config.back);
+		if (ret < 0)
+			return ret;
+	}
 	if (ipv6_if_configured(&config.front)) {
 		int ret = build_ipv6_acls(&config.front);
 		if (ret < 0)

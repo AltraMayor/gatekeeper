@@ -66,7 +66,7 @@ struct gatekeeper_rss_config {
 };
 
 /* Maximum number of ACL classification types. */
-#define GATEKEEPER_IPV6_ACL_MAX (8)
+#define GATEKEEPER_ACL_MAX (8)
 
 /*
  * Format of function called when a rule matches in the IPv6 ACL.
@@ -78,6 +78,31 @@ typedef int (*acl_cb_func)(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface);
 /* Format of function called when no rule matches in the IPv6 ACL. */
 typedef int (*ext_cb_func)(struct rte_mbuf *pkt, struct gatekeeper_if *iface);
+
+struct acl_state {
+	/* Per-socket ACLs used for classifying packets. */
+	struct rte_acl_ctx *acls[RTE_MAX_NUMA_NODES];
+
+	/*
+	 * Callback functions for each ACL rule type.
+	 *
+	 * On error, these functions should return a negative value
+	 * and free all packets that have not already been handled.
+	 */
+	acl_cb_func        funcs[GATEKEEPER_ACL_MAX];
+
+	/*
+	 * Callback functions for each ACL rule type with
+	 * extension headers.
+	 *
+	 * Returning values: 0 means a match and a negative value
+	 * means an error or that there was no match.
+	 */
+	ext_cb_func        ext_funcs[GATEKEEPER_ACL_MAX];
+
+	/* Number of ACL types installed in @funcs. */
+	unsigned int       func_count;
+};
 
 /*
  * A Gatekeeper interface is specified by a set of PCI addresses
@@ -203,31 +228,15 @@ struct gatekeeper_if {
 	/* Timer to transmit from LLS block to fulfill LACP TX requirement. */
 	struct rte_timer  lacp_timer;
 
-	/* Per-socket ACLs used for classifying IPv6 packets. */
-	struct rte_acl_ctx *ipv6_acls[RTE_MAX_NUMA_NODES];
-
-	/*
-	 * Callback functions for each ACL rule type.
-	 *
-	 * On error, these functions should return a negative value
-	 * and free all packets that have not already been handled.
-	 */
-	acl_cb_func        acl_funcs[GATEKEEPER_IPV6_ACL_MAX];
-
-	/*
-	 * Callback functions for each ACL rule type with
-	 * IPv6 extension headers.
-	 *
-	 * Returning values: 0 means a match and a negative value
-	 * means an error or that there was no match.
-	 */
-	ext_cb_func        ext_funcs[GATEKEEPER_IPV6_ACL_MAX];
-
-	/* Number of ACL types installed in @acl_funcs. */
-	unsigned int       acl_func_count;
+	/* ACLs and associated callback functions for matching packets. */
+	struct acl_state  ipv4_acls;
+	struct acl_state  ipv6_acls;
 
 	/* Whether the EtherType filter can be used on this interface. */
-	bool               hw_filter_eth;
+	bool              hw_filter_eth;
+
+	/* Whether the ntuple filter can be used on this interface. */
+	bool              hw_filter_ntuple;
 };
 
 /*
@@ -318,7 +327,8 @@ int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
 int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 	uint16_t src_port, uint16_t src_port_mask,
 	uint16_t dst_port, uint16_t dst_port_mask,
-	uint8_t proto, uint16_t queue_id, int ipv4_only);
+	uint8_t proto, uint16_t queue_id,
+	int ipv4_configured, int ipv6_configured);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);

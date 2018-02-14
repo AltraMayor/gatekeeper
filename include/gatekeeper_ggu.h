@@ -19,6 +19,7 @@
 #ifndef _GATEKEEPER_GGU_H_
 #define _GATEKEEPER_GGU_H_
 
+#include "gatekeeper_mailbox.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_flow.h"
 
@@ -41,6 +42,9 @@ struct ggu_config {
 	uint16_t          rx_queue_back;
 	struct net_config *net;
 	struct gk_config  *gk;
+
+	/* Mailbox to hold requests from other blocks. */
+	struct mailbox    mailbox;
 };
 
 /*

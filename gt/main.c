@@ -740,7 +740,8 @@ gt_proc(void *arg)
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-		IPV6_ACL_SEARCH_DEF(acl);
+		ACL_SEARCH_DEF(acl4);
+		ACL_SEARCH_DEF(acl6);
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
@@ -766,8 +767,11 @@ gt_proc(void *arg)
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
 				switch (pkt_info.outer_ethertype) {
+				case ETHER_TYPE_IPv4:
+					add_pkt_acl(&acl4, m);
+					continue;
 				case ETHER_TYPE_IPv6:
-					add_pkt_ipv6_acl(&acl, m);
+					add_pkt_acl(&acl6, m);
 					continue;
 				case ETHER_TYPE_ARP:
 					arp_bufs[num_arp++] = m;
@@ -848,7 +852,10 @@ gt_proc(void *arg)
 		if (num_arp > 0)
 			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
 
-		process_pkts_ipv6_acl(&gt_conf->net->front, lcore, &acl);
+		process_pkts_acl(&gt_conf->net->front, lcore, &acl4,
+			ETHER_TYPE_IPv4);
+		process_pkts_acl(&gt_conf->net->front, lcore, &acl6,
+			ETHER_TYPE_IPv6);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,

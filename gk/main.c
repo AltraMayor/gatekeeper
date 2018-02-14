@@ -835,7 +835,8 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-	IPV6_ACL_SEARCH_DEF(acl);
+	ACL_SEARCH_DEF(acl4);
+	ACL_SEARCH_DEF(acl6);
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
@@ -888,8 +889,11 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 
 		 	/* No entry for the destination, drop the packet. */
 			if (fib == NULL) {
-				if (packet.flow.proto == ETHER_TYPE_IPv6)
-					add_pkt_ipv6_acl(&acl, pkt);
+				if (packet.flow.proto == ETHER_TYPE_IPv4)
+					add_pkt_acl(&acl4, pkt);
+				else if (likely(packet.flow.proto ==
+						ETHER_TYPE_IPv6))
+					add_pkt_acl(&acl6, pkt);
 				else {
 					print_flow_err_msg(&packet.flow,
 						"gk: failed to get the fib entry");
@@ -1033,7 +1037,8 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
 
-	process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
+	process_pkts_acl(&gk_conf->net->front, lcore, &acl4, ETHER_TYPE_IPv4);
+	process_pkts_acl(&gk_conf->net->front, lcore, &acl6, ETHER_TYPE_IPv6);
 }
 
 /* Process the packets on the back interface. */
@@ -1052,7 +1057,8 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-	IPV6_ACL_SEARCH_DEF(acl);
+	ACL_SEARCH_DEF(acl4);
+	ACL_SEARCH_DEF(acl6);
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
@@ -1083,8 +1089,11 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 
 		 /* No entry for the destination, drop the packet. */
 		if (fib == NULL) {
-			if (packet.flow.proto == ETHER_TYPE_IPv6)
-				add_pkt_ipv6_acl(&acl, pkt);
+			if (packet.flow.proto == ETHER_TYPE_IPv4)
+				add_pkt_acl(&acl4, pkt);
+			else if (likely(packet.flow.proto ==
+					ETHER_TYPE_IPv6))
+				add_pkt_acl(&acl6, pkt);
 			else {
 				print_flow_err_msg(&packet.flow,
 					"gk: failed to get the fib entry");
@@ -1167,7 +1176,8 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
-	process_pkts_ipv6_acl(&gk_conf->net->back, lcore, &acl);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl4, ETHER_TYPE_IPv4);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl6, ETHER_TYPE_IPv6);
 }
 
 static void

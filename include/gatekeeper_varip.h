@@ -28,6 +28,18 @@
  * use the functionality provided by this library.
  */
 
+static inline uint8_t
+ipv4_hdr_len(struct ipv4_hdr *ip4hdr)
+{
+	return ((ip4hdr->version_ihl & 0xf) << 2);
+}
+
+static inline uint8_t *
+ipv4_skip_exthdr(struct ipv4_hdr *ip4hdr)
+{
+	return ((uint8_t *)ip4hdr + ipv4_hdr_len(ip4hdr));
+}
+
 /*
  * Skip any extension headers.
  *

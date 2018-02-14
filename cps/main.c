@@ -278,6 +278,21 @@ process_reqs(struct cps_config *cps_conf)
 }
 
 static void
+process_kni_request(struct rte_kni *kni)
+{
+	/*
+	 * Userspace requests to change the device MTU or configure the
+	 * device up/down are forwarded from the kernel back to userspace
+	 * for DPDK to handle. rte_kni_handle_request() receives those
+	 * requests and allows them to be processed.
+	 */
+	if (rte_kni_handle_request(kni) < 0)
+		RTE_LOG(WARNING, KNI,
+			"%s: error in handling userspace request on KNI %s\n",
+			__func__, rte_kni_get_name(kni));
+}
+
+static void
 process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 	uint16_t rx_queue)
 {
@@ -291,17 +306,6 @@ process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 		for (i = num_tx; i < num_rx; i++)
 			rte_pktmbuf_free(bufs[i]);
 	}
-
-	/*
-	 * Userspace requests to change the device MTU or configure the
-	 * device up/down are forwarded from the kernel back to userspace
-	 * for DPDK to handle. rte_kni_handle_request() receives those
-	 * requests and allows them to be processed.
-	 */
-	if (rte_kni_handle_request(kni) < 0)
-		RTE_LOG(WARNING, KNI,
-			"%s: error in handling userspace request on KNI %s\n",
-			__func__, rte_kni_get_name(kni));
 }
 
 static int
@@ -405,15 +409,23 @@ cps_proc(void *arg)
 		 * Read in IPv4 BGP packets that arrive directly
 		 * on the Gatekeeper interfaces.
 		 */
-		process_ingress(front_iface, front_kni,
-			cps_conf->rx_queue_front);
-		if (net_conf->back_iface_enabled)
-			process_ingress(back_iface, back_kni,
-				cps_conf->rx_queue_back);
+		if (front_iface->hw_filter_ntuple) {
+			process_ingress(front_iface, front_kni,
+				cps_conf->rx_queue_front);
+		}
+		process_kni_request(front_kni);
+
+		if (net_conf->back_iface_enabled) {
+			if (back_iface->hw_filter_ntuple) {
+				process_ingress(back_iface, back_kni,
+					cps_conf->rx_queue_back);
+			}
+			process_kni_request(back_kni);
+		}
 
 		/*
 		 * Process any requests made to the CPS block, including
-		 * IPv6 BGP packets that arrived via an ACL.
+		 * IPv4 and IPv6 BGP packets that arrived via an ACL.
 		 */
 		process_reqs(cps_conf);
 
@@ -650,7 +662,31 @@ error:
 }
 
 static void
-fill_bgp_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
+fill_bgp4_rule(struct ipv4_acl_rule *rule, struct gatekeeper_if *iface,
+	int filter_source_port, uint16_t tcp_port_bgp)
+{
+	rule->data.category_mask = 0x1;
+	rule->data.priority = 1;
+	/* Userdata is filled in in register_ipv4_acl(). */
+
+	rule->field[PROTO_FIELD_IPV4].value.u8 = IPPROTO_TCP;
+	rule->field[PROTO_FIELD_IPV4].mask_range.u8 = 0xFF;
+
+	rule->field[DST_FIELD_IPV4].value.u32 =
+		rte_be_to_cpu_32(iface->ip4_addr.s_addr);
+	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
+
+	if (filter_source_port) {
+		rule->field[SRCP_FIELD_IPV4].value.u16 = tcp_port_bgp;
+		rule->field[SRCP_FIELD_IPV4].mask_range.u16 = 0xFFFF;
+	} else {
+		rule->field[DSTP_FIELD_IPV4].value.u16 = tcp_port_bgp;
+		rule->field[DSTP_FIELD_IPV4].mask_range.u16 = 0xFFFF;
+	}
+}
+
+static void
+fill_bgp6_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
 	int filter_source_port, uint16_t tcp_port_bgp)
 {
 	uint32_t *ptr32 = (uint32_t *)&iface->ip6_addr.s6_addr;
@@ -680,12 +716,65 @@ fill_bgp_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's a bgp packet, then submit it to the LLS block.
+ * If it's a bgp packet, then submit it to the CPS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_bgp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+{
+	/*
+	 * The TCP header offset in terms of the
+	 * beginning of the IPv4 header.
+	 */
+	const uint16_t BE_ETHER_TYPE_IPv4 = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+	struct ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct ipv4_hdr *ip4hdr;
+	struct tcp_hdr *tcp_hdr;
+	uint16_t minimum_size = sizeof(*eth_hdr) +
+		sizeof(struct ipv4_hdr) + sizeof(struct tcp_hdr);
+	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
+
+	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv4))
+		return -ENOENT;
+
+	if (pkt->data_len < minimum_size) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv4 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+			pkt->data_len, minimum_size);
+		return -ENOENT;
+	}
+
+	ip4hdr = (struct ipv4_hdr *)&eth_hdr[1];
+	if (ip4hdr->dst_addr != rte_cpu_to_be_32(iface->ip4_addr.s_addr))
+		return -ENOENT;
+	if (ip4hdr->next_proto_id != IPPROTO_TCP)
+		return -ENOENT;
+
+	minimum_size = sizeof(*eth_hdr) + ipv4_hdr_len(ip4hdr) +
+		sizeof(*tcp_hdr);
+	if (pkt->data_len < minimum_size) {
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv4 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+			pkt->data_len, minimum_size);
+		return -ENOENT;
+	}
+
+	tcp_hdr = (struct tcp_hdr *)ipv4_skip_exthdr(ip4hdr);
+	if (tcp_hdr->src_port != cps_bgp_port &&
+			tcp_hdr->dst_port != cps_bgp_port)
+		return -ENOENT;
+
+	return 0;
+}
+
+/*
+ * Match the packet if it fails to be classifed by ACL rules.
+ * If it's a bgp packet, then submit it to the CPS block.
+ *
+ * Return values: 0 for successful match, and -ENOENT for no matching.
+ */
+static int
+match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The TCP header offset in terms of the
@@ -706,12 +795,12 @@ match_bgp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 
 	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv6 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
 			pkt->data_len, minimum_size);
 		return -ENOENT;
 	}
 
- 	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
 
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0))
@@ -724,7 +813,7 @@ match_bgp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 
 	minimum_size += tcp_offset - sizeof(*ip6hdr);
 	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
+		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv6 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
 			pkt->data_len, minimum_size);
 		return -ENOENT;
 	}
@@ -742,26 +831,54 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 	uint16_t rx_queue)
 {
 	if (ipv4_if_configured(iface)) {
-		int ret;
-		/* Capture pkts for connections started by our BGP speaker. */
-		ret = ntuple_filter_add(iface->id, iface->ip4_addr.s_addr,
-			rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX, 0, 0,
-			IPPROTO_TCP, rx_queue, true);
-		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"cps: could not add source BGP filter on %s iface\n",
-				iface->name);
-			return ret;
-		}
-		/* Capture pkts for connections remote BGP speakers started. */
-		ret = ntuple_filter_add(iface->id, iface->ip4_addr.s_addr,
-			0, 0, rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
-			IPPROTO_TCP, rx_queue, true);
-		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"cps: could not add destination BGP filter on %s iface\n",
-				iface->name);
-			return ret;
+		if (iface->hw_filter_ntuple) {
+			/*
+			 * Capture pkts for connections
+			 * started by our BGP speaker.
+			 */
+			int ret = ntuple_filter_add(iface->id,
+				iface->ip4_addr.s_addr,
+				rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
+				0, 0, IPPROTO_TCP, rx_queue, true, false);
+			if (ret < 0) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"cps: could not add source IPv4 BGP filter on %s iface\n",
+					iface->name);
+				return ret;
+			}
+
+			/* Capture connections remote speakers started. */
+			ret = ntuple_filter_add(iface->id,
+				iface->ip4_addr.s_addr, 0, 0,
+				rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
+				IPPROTO_TCP, rx_queue, true, false);
+			if (ret < 0) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"cps: could not add destination IPv4 BGP filter on %s iface\n",
+					iface->name);
+				return ret;
+			}
+		} else {
+			struct ipv4_acl_rule ipv4_rules[NUM_ACL_BGP_RULES];
+			int ret;
+
+			memset(&ipv4_rules, 0, sizeof(ipv4_rules));
+
+			/* Capture connections started by our BGP speaker. */
+			fill_bgp4_rule(&ipv4_rules[0], iface,
+				true, tcp_port_bgp);
+			/* Capture connections remote BGP speakers started. */
+			fill_bgp4_rule(&ipv4_rules[1], iface,
+				false, tcp_port_bgp);
+
+			ret = register_ipv4_acl(ipv4_rules, NUM_ACL_BGP_RULES,
+				submit_bgp, match_bgp4, iface);
+			if (ret < 0) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"cps: could not register BGP IPv4 ACL on %s iface\n",
+					iface->name);
+				return ret;
+			}
 		}
 	}
 
@@ -772,12 +889,12 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 		memset(&ipv6_rules, 0, sizeof(ipv6_rules));
 
 		/* Capture pkts for connections started by our BGP speaker. */
-		fill_bgp_rule(&ipv6_rules[0], iface, true, tcp_port_bgp);
+		fill_bgp6_rule(&ipv6_rules[0], iface, true, tcp_port_bgp);
 		/* Capture pkts for connections remote BGP speakers started. */
-		fill_bgp_rule(&ipv6_rules[1], iface, false, tcp_port_bgp);
+		fill_bgp6_rule(&ipv6_rules[1], iface, false, tcp_port_bgp);
 
 		ret = register_ipv6_acl(ipv6_rules, NUM_ACL_BGP_RULES,
-			submit_bgp, match_bgp, iface);
+			submit_bgp, match_bgp6, iface);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"cps: could not register BGP IPv6 ACL on %s iface\n",
