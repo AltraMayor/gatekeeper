@@ -102,35 +102,29 @@ ethertype_filter_add(uint8_t port_id, uint16_t ether_type, uint16_t queue_id)
 		.flags = 0,
 		.queue = queue_id,
 	};
+	int ret;
 
-	int ret = rte_eth_dev_filter_supported(port_id,
-		RTE_ETH_FILTER_ETHERTYPE);
-	if (ret < 0) {
-		RTE_LOG(ERR, PORT,
-			"EtherType filters are not supported on port %hhu.\n",
-			port_id);
-		ret = -1;
-		goto out;
-	}
+	RTE_VERIFY(rte_eth_dev_filter_supported(port_id,
+		RTE_ETH_FILTER_ETHERTYPE) == 0);
 
 	ret = rte_eth_dev_filter_ctrl(port_id,
 		RTE_ETH_FILTER_ETHERTYPE,
 		RTE_ETH_FILTER_ADD,
 		&filter);
 	if (ret == -ENOTSUP) {
-		RTE_LOG(ERR, PORT,
+		RTE_LOG(NOTICE, PORT,
 			"Hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu!\n",
 			ether_type, port_id);
 		ret = -1;
 		goto out;
 	} else if (ret == -ENODEV) {
-		RTE_LOG(ERR, PORT,
+		RTE_LOG(NOTICE, PORT,
 			"Port %hhu is invalid for adding an EtherType filter for 0x%02hx!\n",
-			ether_type, port_id);
+			port_id, ether_type);
 		ret = -1;
 		goto out;
 	} else if (ret != 0) {
-		RTE_LOG(ERR, PORT,
+		RTE_LOG(NOTICE, PORT,
 			"Other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx!\n",
 			port_id, ether_type);
 		ret = -1;
@@ -1066,6 +1060,12 @@ start_iface(struct gatekeeper_if *iface)
 		goto stop_partial;
 
 out:
+	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,
+		RTE_ETH_FILTER_ETHERTYPE) == 0;
+	RTE_LOG(NOTICE, PORT,
+		"net: EtherType filters %s supported on the %s iface\n",
+		iface->hw_filter_eth ? "are" : "are NOT", iface->name);
+
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
 	if (ipv6_if_configured(iface))
 		setup_ipv6_addrs(iface);

@@ -225,6 +225,9 @@ struct gatekeeper_if {
 
 	/* Number of ACL types installed in @acl_funcs. */
 	unsigned int       acl_func_count;
+
+	/* Whether the EtherType filter can be used on this interface. */
+	bool               hw_filter_eth;
 };
 
 /*

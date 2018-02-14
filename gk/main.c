@@ -32,6 +32,7 @@
 #include "gatekeeper_acl.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_sol.h"
@@ -238,6 +239,11 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			sizeof(packet->flow.f.v6.src));
 		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
 			sizeof(packet->flow.f.v6.dst));
+		break;
+
+	case ETHER_TYPE_ARP:
+		packet->flow.proto = ETHER_TYPE_ARP;
+		ret = -1;
 		break;
 
 	default:
@@ -825,8 +831,10 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	uint16_t num_rx;
 	uint16_t num_tx = 0;
 	uint16_t num_tx_succ;
+	uint16_t num_arp = 0;
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
 	IPV6_ACL_SEARCH_DEF(acl);
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 
@@ -848,7 +856,12 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
-			/* Drop non-IP packets. */
+			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
+				arp_bufs[num_arp++] = pkt;
+				continue;
+			}
+
+			/* Drop non-IP and non-ARP packets. */
 			drop_packet(pkt);
 			continue;
 		}
@@ -1017,6 +1030,9 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 			drop_packet(tx_bufs[i]);
 	}
 
+	if (num_arp > 0)
+		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
+
 	process_pkts_ipv6_acl(&gk_conf->net->front, lcore, &acl);
 }
 
@@ -1032,8 +1048,10 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 	uint16_t num_rx;
 	uint16_t num_tx = 0;
 	uint16_t num_tx_succ;
+	uint16_t num_arp = 0;
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
 	IPV6_ACL_SEARCH_DEF(acl);
 
 	/* Load a set of packets from the back NIC. */
@@ -1051,7 +1069,12 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
-			/* Drop non-IP packets. */
+			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
+				arp_bufs[num_arp++] = pkt;
+				continue;
+			}
+
+			/* Drop non-IP and non-ARP packets. */
 			drop_packet(pkt);
 			continue;
 		}
@@ -1140,6 +1163,9 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 		for (i = num_tx_succ; i < num_tx; i++)
 			drop_packet(tx_bufs[i]);
 	}
+
+	if (num_arp > 0)
+		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
 	process_pkts_ipv6_acl(&gk_conf->net->back, lcore, &acl);
 }

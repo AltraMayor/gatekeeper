@@ -64,7 +64,7 @@ struct udp_hdr {
 } __attribute__((__packed__));
 
 struct gt_packet_headers {
-	uint16_t outer_ip_ver;
+	uint16_t outer_ethertype;
 	uint16_t inner_ip_ver;
 	uint8_t l4_proto;
 
