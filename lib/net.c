@@ -57,16 +57,6 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-/*
- * TODO Add support for VLAN tags.
- *
- * Assume for now that hardware support is available for
- * VLAN stripping -- then only this configuration needs
- * to be changed.
- *
- * For VLAN insertion, hardware support can't be
- * assumed, so it must be added in software.
- */
 static struct rte_eth_conf gatekeeper_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,

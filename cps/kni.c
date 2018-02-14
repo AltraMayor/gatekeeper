@@ -996,9 +996,9 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 		goto out;
 	}
 
-	if (pkt_len < ND_NEIGH_PKT_MIN_LEN) {
+	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr))) {
 		RTE_LOG(NOTICE, GATEKEEPER, "cps: ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
-			pkt_len, ND_NEIGH_PKT_MIN_LEN);
+			pkt_len, ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr)));
 		goto out;
 	}
 

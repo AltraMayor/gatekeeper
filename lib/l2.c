@@ -17,6 +17,7 @@
  */
 
 #include "gatekeeper_l2.h"
+#include "gatekeeper_main.h"
 
 /*
  * Return the difference in the size of the L2 header between
@@ -77,4 +78,53 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
 		eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 
 	return eth_hdr;
+}
+
+/*
+ * Verify a packet's L2 header with respect to
+ * the interface on which it was received.
+ */
+int
+verify_l2_hdr(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+	uint32_t l2_type, const char *proto_name)
+{
+	if (iface->vlan_insert) {
+		struct vlan_hdr *vlan_hdr;
+
+		/*
+		 * Drop packets that don't have room for VLAN, since
+		 * we would have to make space for a new header.
+		 */
+		if (unlikely(l2_type != RTE_PTYPE_L2_ETHER_VLAN)) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"lls: %s interface incorrectly received an %s packet without a VLAN header\n",
+				iface->name, proto_name);
+			return -1;
+		}
+
+		/*
+		 * Only warn if the VLAN tag is incorrect, but correct
+		 * the VLAN tag in case we reuse this packet.
+		 */
+		vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
+		if (unlikely(vlan_hdr->vlan_tci != iface->vlan_tag_be)) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"lls: %s interface received an %s packet with an incorrect VLAN tag (0x%02x but should be 0x%02x)\n",
+				iface->name, proto_name,
+				rte_be_to_cpu_16(vlan_hdr->vlan_tci),
+				rte_be_to_cpu_16(iface->vlan_tag_be));
+			vlan_hdr->vlan_tci = iface->vlan_tag_be;
+		}
+	} else if (unlikely(l2_type != RTE_PTYPE_UNKNOWN)) {
+		/*
+		 * Drop packets that have a VLAN header when we're not expecting
+		 * one, since we would have to remove space in the header.
+		 */
+		RTE_LOG(WARNING, GATEKEEPER,
+			"lls: %s interface incorrectly received an %s packet with a VLAN header\n",
+			iface->name, proto_name);
+		return -1;
+	}
+
+	return 0;
 }

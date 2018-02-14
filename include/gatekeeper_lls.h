@@ -322,12 +322,12 @@ struct nd_opt_lladdr {
 
 #define ND_NEIGH_HDR_MIN_LEN (sizeof(struct nd_neigh_msg))
 
-#define ND_NEIGH_PKT_MIN_LEN (sizeof(struct ether_hdr) + \
+#define ND_NEIGH_PKT_MIN_LEN(l2_len) (l2_len + \
 	sizeof(struct ipv6_hdr) + sizeof(struct icmpv6_hdr) + \
 	ND_NEIGH_HDR_MIN_LEN)
 
 /* Minimum size of a Neighbor Discovery packet with a link-layer option. */
-#define ND_NEIGH_PKT_LLADDR_MIN_LEN (ND_NEIGH_PKT_MIN_LEN + \
+#define ND_NEIGH_PKT_LLADDR_MIN_LEN(l2_len) (ND_NEIGH_PKT_MIN_LEN(l2_len) + \
 	sizeof(struct nd_opt_lladdr))
 
 /* Flags for Neighbor Advertisements. */

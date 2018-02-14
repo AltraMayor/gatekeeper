@@ -20,6 +20,7 @@
 #define _GATEKEEPER_ACL_H_
 
 #include "gatekeeper_config.h"
+#include "gatekeeper_l2.h"
 #include "gatekeeper_net.h"
 
 struct acl_search {
@@ -46,8 +47,9 @@ void destroy_acls(struct acl_state *astate);
 static inline void
 add_pkt_acl(struct acl_search *acl, struct rte_mbuf *pkt)
 {
+	/* pkt_in_skip_l2() was already called by GK or GT. */
 	acl->data[acl->num] = rte_pktmbuf_mtod_offset(pkt, uint8_t *,
-		sizeof(struct ether_hdr));
+		pkt_in_l2_hdr_len(pkt));
 	acl->mbufs[acl->num] = pkt;
 	acl->num++;
 }

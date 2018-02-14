@@ -320,11 +320,18 @@ lls_process_reqs(struct lls_config *lls_conf)
 				: lls_conf->tx_queue_back;
 			int i;
 			for (i = 0; i < arp->num_pkts; i++) {
+				struct rte_mbuf *pkt = arp->pkts[i];
+				struct ether_hdr *eth_hdr =
+					rte_pktmbuf_mtod(pkt,
+						struct ether_hdr *);
+				struct arp_hdr *arp_hdr =
+					rte_pktmbuf_mtod_offset(pkt,
+						struct arp_hdr *,
+						pkt_in_l2_hdr_len(pkt));
 				if (process_arp(lls_conf, arp->iface,
-						tx_queue, arp->pkts[i],
-						rte_pktmbuf_mtod(arp->pkts[i],
-						    struct ether_hdr *)) == -1)
-					rte_pktmbuf_free(arp->pkts[i]);
+						tx_queue, pkt,
+						eth_hdr, arp_hdr) == -1)
+					rte_pktmbuf_free(pkt);
 			}
 			break;
 		}
