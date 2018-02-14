@@ -39,6 +39,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_l2.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
@@ -74,7 +75,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 {
 	uint8_t inner_ip_ver;
 	uint8_t encasulated_proto;
-	uint16_t parsed_len = sizeof(struct ether_hdr);
+	uint16_t parsed_len;
 	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	struct ipv4_hdr *outer_ipv4_hdr = NULL;
 	struct ipv6_hdr *outer_ipv6_hdr = NULL;
@@ -82,8 +83,9 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	struct ipv6_hdr *inner_ipv6_hdr = NULL;
 
 	info->l2_hdr = eth_hdr;
-	info->outer_ethertype = rte_be_to_cpu_16(eth_hdr->ether_type);
-	info->outer_l3_hdr = &eth_hdr[1];
+	info->outer_ethertype = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
+		&info->outer_l3_hdr));
+	parsed_len = pkt_in_l2_hdr_len(pkt);
 
 	switch (info->outer_ethertype) {
 	case ETHER_TYPE_IPv4:
@@ -264,7 +266,7 @@ gt_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	ether_addr_copy(&map->ha, &eth_cache->eth_hdr.d_addr);
+	ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -293,8 +295,15 @@ gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
 			ip_dst, sizeof(eth_cache->ip_addr.ip.v6));
 	}
 
-	eth_cache->eth_hdr.ether_type = rte_cpu_to_be_16(inner_ip_ver);
-	ether_addr_copy(&iface->eth_addr, &eth_cache->eth_hdr.s_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr,
+			iface->vlan_tag_be, inner_ip_ver);
+	} else {
+		eth_cache->l2_hdr.eth_hdr.ether_type =
+			rte_cpu_to_be_16(inner_ip_ver);
+	}
+
+	ether_addr_copy(&iface->eth_addr, &eth_cache->l2_hdr.eth_hdr.s_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
 	if (inner_ip_ver == ETHER_TYPE_IPv4) {
@@ -469,10 +478,10 @@ static int
 decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	struct gt_packet_headers *pkt_info, struct gt_instance *instance)
 {
-	uint16_t outer_ip_len;
 	struct neighbor_hash_table *neigh;
 	struct ether_cache *eth_cache;
 	void *ip_dst;
+	int bytes_to_add;
 
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		/*
@@ -508,13 +517,16 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	} else
 		return -1;
 
-	if (pkt_info->outer_ethertype == ETHER_TYPE_IPv4)
-		outer_ip_len = sizeof(struct ipv4_hdr);
-	else
-		outer_ip_len = sizeof(struct ipv6_hdr);
+	bytes_to_add = pkt_info->outer_ethertype == ETHER_TYPE_IPv4
+		? -sizeof(struct ipv4_hdr)
+		: -sizeof(struct ipv6_hdr);
 
-	if (rte_pktmbuf_adj(m, outer_ip_len) == NULL)
+	if (adjust_pkt_len(m, &gt_conf->net->front,
+			bytes_to_add) == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: could not adjust packet length\n");
 		return -1;
+	}
 
 	/*
 	 * The destination MAC address comes from LLS block.
@@ -524,20 +536,27 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	if (eth_cache == NULL)
 		return -1;
 
-	if (pkt_copy_cached_eth_header(m, eth_cache))
+	if (pkt_copy_cached_eth_header(m, eth_cache,
+			gt_conf->net->front.l2_len_out))
 		return -1;
 
 	return 0;
 }
 
 static void
-fill_eth_hdr_reverse(struct ether_hdr *eth_hdr,
+fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
 	struct gt_packet_headers *pkt_info)
 {
 	struct ether_hdr *raw_eth = (struct ether_hdr *)pkt_info->l2_hdr;
 	ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
 	ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(pkt_info->outer_ethertype);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be,
+			pkt_info->outer_ethertype);
+	} else {
+		eth_hdr->ether_type =
+			rte_cpu_to_be_16(pkt_info->outer_ethertype);
+	}
 }
 
 static struct rte_mbuf *
@@ -547,10 +566,11 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	uint8_t *data;
 	uint16_t ethertype = pkt_info->outer_ethertype;
 	struct ether_hdr *notify_eth;
-	struct ipv4_hdr *notify_ipv4;
-	struct ipv6_hdr *notify_ipv6;
+	struct ipv4_hdr *notify_ipv4 = NULL;
+	struct ipv6_hdr *notify_ipv6 = NULL;
 	struct udp_hdr *notify_udp;
 	struct ggu_common_hdr *notify_ggu;
+	size_t l2_len;
 
 	struct rte_mbuf *notify_pkt = rte_pktmbuf_alloc(
 		gt_conf->net->gatekeeper_pktmbuf_pool[socket]);
@@ -560,18 +580,21 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 		return NULL;
 	}
 
+	l2_len = gt_conf->net->front.l2_len_out;
 	if (ethertype == ETHER_TYPE_IPv4) {
 		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
-			sizeof(struct ether_hdr) + sizeof(struct ipv4_hdr) +
+			l2_len + sizeof(struct ipv4_hdr) +
 			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
-		notify_ipv4 = (struct ipv4_hdr *)&notify_eth[1];
+		notify_ipv4 = (struct ipv4_hdr *)
+			((uint8_t *)notify_eth + l2_len);
 		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
 		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
 	} else if (ethertype == ETHER_TYPE_IPv6) {
 		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
-			sizeof(struct ether_hdr) + sizeof(struct ipv6_hdr) +
+			l2_len + sizeof(struct ipv6_hdr) +
 			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
-		notify_ipv6 = (struct ipv6_hdr *)&notify_eth[1];
+		notify_ipv6 = (struct ipv6_hdr *)
+			((uint8_t *)notify_eth + l2_len);
 		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
 		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
 	} else
@@ -629,9 +652,9 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
 			policy->state);
 
-	/* Fill up the Ethernet header. */
-	fill_eth_hdr_reverse(notify_eth, pkt_info);
-	notify_pkt->l2_len = sizeof(struct ether_hdr);
+	/* Fill up the link-layer header. */
+	fill_eth_hdr_reverse(&gt_conf->net->front, notify_eth, pkt_info);
+	notify_pkt->l2_len = l2_len;
 
 	/* Fill up the IP header. */
 	if (ethertype == ETHER_TYPE_IPv4) {
@@ -651,7 +674,7 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 		 */
 		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
 		notify_ipv4->total_length = rte_cpu_to_be_16(
-			notify_pkt->data_len - sizeof(struct ether_hdr));
+			notify_pkt->data_len - l2_len);
 
 		/*
 		 * The IP header checksum filed must be set to 0
@@ -682,7 +705,7 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 			sizeof(notify_ipv6->dst_addr));
 		notify_ipv6->payload_len =
 			rte_cpu_to_be_16(notify_pkt->data_len -
-			sizeof(struct ether_hdr) - sizeof(struct ipv6_hdr));
+			l2_len - sizeof(struct ipv6_hdr));
 
 		notify_pkt->ol_flags |= (PKT_TX_IPV6 |
 			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);

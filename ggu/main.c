@@ -32,6 +32,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 
 /* XXX Sample parameter, needs to be tested for better performance. */
@@ -105,6 +106,7 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 	uint8_t *policy_ptr;
 	uint16_t ether_type;
 	struct ether_hdr *eth_hdr;
+	void *l3_hdr;
 	struct ipv4_hdr *ip4hdr;
 	struct ipv6_hdr *ip6hdr;
 	struct udp_hdr *udphdr;
@@ -112,11 +114,14 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 	uint16_t real_payload_len;
 	uint16_t expected_payload_len;
 	struct ggu_policy policy;
-	uint16_t minimum_size = sizeof(struct ether_hdr);
 	struct gatekeeper_if *back = &ggu_conf->net->back;
+	uint16_t minimum_size;
+	size_t l2_len;
 
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr, &l3_hdr));
+	l2_len = pkt_in_l2_hdr_len(pkt);
+	minimum_size = l2_len;
 
 	switch (ether_type) {
 	case ETHER_TYPE_IPv4:
@@ -129,8 +134,7 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		ip4hdr = rte_pktmbuf_mtod_offset(pkt, 
-			struct ipv4_hdr *, sizeof(struct ether_hdr));
+		ip4hdr = l3_hdr;
 		if (ip4hdr->next_proto_id != IPPROTO_UDP) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"ggu: received non-UDP packets, IPv4 %s bug!\n",
@@ -181,8 +185,7 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 		 * The ntuple filter/ACL supports IPv6 variable headers.
 		 * The following code parses IPv6 variable headers.
 		 */
-		ip6hdr = rte_pktmbuf_mtod_offset(pkt, 
-			struct ipv6_hdr *, sizeof(struct ether_hdr));
+		ip6hdr = l3_hdr;
 
 		/*
 		 * TODO Given that IPv6 ntuple filter doesn't check
@@ -198,8 +201,8 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			return;
 		}
 
-		udp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
-			sizeof(struct ether_hdr), &nexthdr);
+		udp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
+			&nexthdr);
 		if (udp_offset < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"ggu: failed to parse the IPv6 packet's extension headers!\n");

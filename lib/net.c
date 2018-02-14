@@ -504,7 +504,7 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_cidrs, uint8_t num_ip_cidrs)
+	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag)
 {
 	uint8_t i, j;
 
@@ -638,6 +638,12 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			}
 			iface->ip6_addr_plen = prefix_len;
 		}
+	}
+
+	iface->l2_len_out = sizeof(struct ether_hdr);
+	if (iface->vlan_insert) {
+		iface->vlan_tag_be = rte_cpu_to_be_16(vlan_tag);
+		iface->l2_len_out += sizeof(struct vlan_hdr);
 	}
 
 	return 0;

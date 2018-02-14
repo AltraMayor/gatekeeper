@@ -35,6 +35,7 @@
 #include "gatekeeper_lls.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_l2.h"
 #include "gatekeeper_sol.h"
 
 #define	START_PRIORITY		 (38)
@@ -195,12 +196,13 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 	int ret = 0;
 	uint16_t ether_type;
 	struct ether_hdr *eth_hdr;
+	void *l3_hdr;
 	struct ipv4_hdr *ip4_hdr;
 	struct ipv6_hdr *ip6_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
 
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr, &l3_hdr));
 
 	switch (ether_type) {
 	case ETHER_TYPE_IPv4:
@@ -213,9 +215,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			goto out;
 		}
 
-		ip4_hdr = rte_pktmbuf_mtod_offset(pkt,
-					struct ipv4_hdr *,
-					sizeof(struct ether_hdr));
+		ip4_hdr = l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv4;
 		packet->flow.f.v4.src = ip4_hdr->src_addr;
 		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
@@ -231,9 +231,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			goto out;
 		}
 
-		ip6_hdr = rte_pktmbuf_mtod_offset(pkt,
-					struct ipv6_hdr *,
-					sizeof(struct ether_hdr));
+		ip6_hdr = l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv6;
 		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
 			sizeof(packet->flow.f.v6.src));
@@ -292,7 +290,8 @@ drop_packet(struct rte_mbuf *pkt)
  * Return value indicates whether the cached Ethernet header is stale or not.
  */
 int
-pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache)
+pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
+	size_t l2_hdr_len)
 {
 	unsigned seq;
 	bool stale;
@@ -304,7 +303,8 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache)
 			struct ether_hdr *eth_hdr =
 				rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 			rte_memcpy(eth_hdr,
-				&eth_cache->eth_hdr, sizeof(*eth_hdr));
+				&eth_cache->l2_hdr, l2_hdr_len);
+			pkt->outer_l2_len = l2_hdr_len;
 		}
 	} while (read_seqretry(&eth_cache->lock, seq));
 
@@ -324,7 +324,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache)
  */
 static int
 gk_process_request(struct flow_entry *fe, struct ipacket *packet,
-	struct gatekeeper_if *iface, struct sol_config *sol_conf)
+	struct sol_config *sol_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -362,13 +362,15 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 
 	/* Encapsulate the packet as a request. */
 	ret = encapsulate(packet->pkt, priority,
-		iface, &fib->u.grantor.gt_addr);
+		&sol_conf->net->back, &fib->u.grantor.gt_addr);
 	if (ret < 0)
 		return ret;
 
 	eth_cache = fib->u.grantor.eth_cache;
 	RTE_VERIFY(eth_cache != NULL);
-	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache))
+	/* If needed, packet header space was adjusted by encapsulate(). */
+	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
+			sol_conf->net->back.l2_len_out))
 		return -1;
 
 	ret = gk_solicitor_enqueue(sol_conf, packet->pkt, priority);
@@ -392,7 +394,7 @@ cycle_from_second(uint64_t time)
  */
 static int
 gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
-	struct gatekeeper_if *iface, struct sol_config *sol_conf)
+	struct sol_config *sol_conf)
 {
 	int ret;
 	bool renew_cap;
@@ -404,7 +406,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, iface, sol_conf);
+		return gk_process_request(fe, packet, sol_conf);
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
@@ -429,13 +431,15 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	 * enter destination according to @fe->grantor_fib.
 	 */
 	ret = encapsulate(packet->pkt, priority,
-		iface, &fib->u.grantor.gt_addr);
+		&sol_conf->net->back, &fib->u.grantor.gt_addr);
 	if (ret < 0)
 		return ret;
 
 	eth_cache = fib->u.grantor.eth_cache;
 	RTE_VERIFY(eth_cache != NULL);
-	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache))
+	/* If needed, packet header space was adjusted by encapsulate(). */
+	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
+			sol_conf->net->back.l2_len_out))
 		return -1;
 
 	return 0;
@@ -451,13 +455,13 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
-	struct gatekeeper_if *iface, struct sol_config *sol_conf)
+	struct sol_config *sol_conf)
 {
 	uint64_t now = rte_rdtsc();
 
 	if (unlikely(now >= fe->u.declined.expire_at)) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, iface, sol_conf);
+		return gk_process_request(fe, packet, sol_conf);
 	}
 
 	return -1;
@@ -837,7 +841,7 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
 	ACL_SEARCH_DEF(acl4);
 	ACL_SEARCH_DEF(acl6);
-	struct gatekeeper_if *iface = &gk_conf->net->back;
+	struct gatekeeper_if *back = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
@@ -943,8 +947,11 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 
 				eth_cache = fib->u.gateway.eth_cache;
 				RTE_VERIFY(eth_cache != NULL);
-				if (pkt_copy_cached_eth_header(
-						pkt, eth_cache)) {
+
+				if (adjust_pkt_len(pkt, iface, 0) == NULL ||
+						pkt_copy_cached_eth_header(pkt,
+							eth_cache,
+							back->l2_len_out)) {
 					drop_packet(pkt);
 					continue;
 				}
@@ -970,8 +977,11 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 				}
 
 				RTE_VERIFY(eth_cache != NULL);
-				if (pkt_copy_cached_eth_header(
-						pkt, eth_cache)) {
+
+				if (adjust_pkt_len(pkt, back, 0) == NULL ||
+						pkt_copy_cached_eth_header(pkt,
+							eth_cache,
+							back->l2_len_out)) {
 					drop_packet(pkt);
 					continue;
 				}
@@ -991,17 +1001,17 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 		switch (fe->state) {
 		case GK_REQUEST:
 			ret = gk_process_request(fe, &packet,
-				iface, gk_conf->sol_conf);
+				gk_conf->sol_conf);
 			break;
 
 		case GK_GRANTED:
 			ret = gk_process_granted(fe, &packet,
-				iface, gk_conf->sol_conf);
+				gk_conf->sol_conf);
 			break;
 
 		case GK_DECLINED:
 			ret = gk_process_declined(fe, &packet,
-				iface, gk_conf->sol_conf);
+				gk_conf->sol_conf);
 			break;
 
 		default:
@@ -1059,6 +1069,7 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
 	ACL_SEARCH_DEF(acl4);
 	ACL_SEARCH_DEF(acl6);
+	struct gatekeeper_if *front = &gk_conf->net->front;
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
@@ -1118,7 +1129,11 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 			 */
 			eth_cache = fib->u.gateway.eth_cache;
 			RTE_VERIFY(eth_cache != NULL);
-			if (pkt_copy_cached_eth_header(pkt, eth_cache)) {
+
+			if (adjust_pkt_len(pkt, front, 0) == NULL ||
+					pkt_copy_cached_eth_header(pkt,
+						eth_cache,
+						front->l2_len_out)) {
 				drop_packet(pkt);
 				continue;
 			}
@@ -1144,7 +1159,11 @@ process_pkts_back(uint8_t port_back, uint8_t port_front,
 			}
 
 			RTE_VERIFY(eth_cache != NULL);
-			if (pkt_copy_cached_eth_header(pkt, eth_cache)) {
+
+			if (adjust_pkt_len(pkt, front, 0) == NULL ||
+					pkt_copy_cached_eth_header(pkt,
+						eth_cache,
+						front->l2_len_out)) {
 				drop_packet(pkt);
 				continue;
 			}

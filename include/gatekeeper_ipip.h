@@ -34,17 +34,9 @@
 #define IP_DN_FRAGMENT_FLAG     (0x0040)
 
 /*
- * TODO The encapsulation function should not add the Ethernet header.
- * This way we can compose the Ethernet header copying it from a cache,
- * or by setting his fields.
- * Implement a way to add the Ethernet header.
- * Also, the function to add Ethernet header
- * needs to set the @outer_l2_len field of the packet.
- *
- * Notice that, the original packet should contain the Ethernet header,
- * while the function shouldn't add an Ethernet header.
- * When allocating space for the outer IP header,
- * it only needs to allocate the extra needed space.
+ * Encapsulates the packet to send to Grantor with the given
+ * priority. Adjusts the size of the Ethernet header, if
+ * needed, for a VLAN header.
  */
 int encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 	struct gatekeeper_if *iface, struct ipaddr *gt_addr);

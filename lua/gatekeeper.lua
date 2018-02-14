@@ -119,6 +119,7 @@ struct gatekeeper_if {
 	uint32_t arp_cache_timeout_sec;
 	uint32_t nd_cache_timeout_sec;
 	uint32_t bonding_mode;
+	int      vlan_insert;
 	/* This struct has hidden fields. */
 };
 
@@ -188,7 +189,7 @@ ffi.cdef[[
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_cidrs, uint8_t num_ip_cidrs);
+	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag);
 void lua_free_iface(struct gatekeeper_if *iface);
 
 bool ipv4_configured(struct net_config *net_conf);
@@ -235,7 +236,7 @@ c = ffi.C
 
 local ifaces = require("if_map")
 
-function init_iface(iface, name, ports, cidrs)
+function init_iface(iface, name, ports, cidrs, vlan_tag)
 	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
 	for i, v in ipairs(ports) do
 		local pci_addr = ifaces[v]
@@ -251,7 +252,7 @@ function init_iface(iface, name, ports, cidrs)
 	end
 
 	local ret = c.lua_init_iface(iface, name, pci_strs, #ports,
-		ip_cidrs, #cidrs)
+		ip_cidrs, #cidrs, vlan_tag)
 	if ret < 0 then
 		error("Failed to initilialize " .. name .. " interface")
 	end

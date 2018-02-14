@@ -24,7 +24,7 @@
 #include <rte_byteorder.h>
 
 #include "gatekeeper_ipip.h"
-#include "gatekeeper_net.h"
+#include "gatekeeper_l2.h"
 
 /*
  * The Full-functionality Option for setting ECN bits in IP-in-IP packets.
@@ -52,16 +52,15 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 	if (gt_addr->proto == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *inner_ip4hdr;
 
-		/* Allocate space for outer IPv4 header. */
-		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv4_hdr));
+		/* Allocate space for outer IPv4 header and L2 header. */
+		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv4_hdr));
 		if (eth_hdr == NULL) {
-			RTE_LOG(ERR, MBUF,
-				"Not enough headroom space in the first segment!\n");
+			RTE_LOG(ERR, GATEKEEPER,
+				"ipip: could not adjust IPv4 packet length\n");
 			return -1;
 		}
 
-		outer_ip4hdr = (struct ipv4_hdr *)&eth_hdr[1];
+		outer_ip4hdr = pkt_out_skip_l2(iface, eth_hdr);
 		inner_ip4hdr = (struct ipv4_hdr *)&outer_ip4hdr[1];
 
 		/* Fill up the outer IP header. */
@@ -92,16 +91,15 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 	} else if (likely(gt_addr->proto == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *inner_ip6hdr;
 
-		/* Allocate space for new IPv6 header. */
-		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
-			sizeof(struct ipv6_hdr));
+		/* Allocate space for new IPv6 header and L2 header. */
+		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv6_hdr));
 		if (eth_hdr == NULL) {
-			RTE_LOG(ERR, MBUF,
-				"Not enough headroom space in the first segment!\n");
+			RTE_LOG(ERR, GATEKEEPER,
+				"ipip: could not adjust IPv6 packet length\n");
 			return -1;
 		}
 
-		outer_ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
+		outer_ip6hdr = pkt_out_skip_l2(iface, eth_hdr);
 		inner_ip6hdr = (struct ipv6_hdr *)&outer_ip6hdr[1];
 
 		/* Fill up the outer IP header. */

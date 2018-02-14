@@ -12,6 +12,8 @@ return function (gatekeeper_server)
 	local front_arp_cache_timeout_sec = 7200
 	local front_nd_cache_timeout_sec = 7200
 	local front_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
+	local front_vlan_tag = 0x1234
+	local front_vlan_insert = true
 
 	local back_iface_enabled = gatekeeper_server
 	local back_ports = {"enp133s0f1"}
@@ -19,6 +21,8 @@ return function (gatekeeper_server)
 	local back_arp_cache_timeout_sec = 7200
 	local back_nd_cache_timeout_sec = 7200
 	local back_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
+	local back_vlan_tag = 0x5678
+	local back_vlan_insert = true
 
 	--
 	-- Code below this point should not need to be changed.
@@ -29,8 +33,9 @@ return function (gatekeeper_server)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec
 	front_iface.bonding_mode = front_bonding_mode
+	front_iface.vlan_insert = front_vlan_insert
 	local ret = gatekeeper.init_iface(front_iface, "front",
-		front_ports, front_ips)
+		front_ports, front_ips, front_vlan_tag)
 
 	net_conf.back_iface_enabled = back_iface_enabled
 	if back_iface_enabled then
@@ -38,8 +43,9 @@ return function (gatekeeper_server)
 		back_iface.arp_cache_timeout_sec = back_arp_cache_timeout_sec
 		back_iface.nd_cache_timeout_sec = back_nd_cache_timeout_sec
 		back_iface.bonding_mode = back_bonding_mode
+		back_iface.vlan_insert = back_vlan_insert
 		ret = gatekeeper.init_iface(back_iface, "back",
-			back_ports, back_ips)
+			back_ports, back_ips, back_vlan_tag)
 	end
 
 	-- Initialize the network.
