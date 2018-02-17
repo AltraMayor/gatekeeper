@@ -115,7 +115,8 @@ ipv6_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
 	return buf;
 }
 
-int ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
+int
+ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
 {
 	/* Check for both link-local and global subnets. */
 	const uint64_t *paddr_global =
@@ -164,6 +165,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
 	struct nd_opt_lladdr *nd_opt;
+	size_t l2_len;
 
 	struct rte_mempool *mp = lls_conf->net->gatekeeper_pktmbuf_pool[
 		rte_lcore_to_socket_id(lls_conf->lcore_id)];
@@ -175,8 +177,9 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	}
 
 	/* Solicitation will include source link layer address. */
-	created_pkt->data_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
-	created_pkt->pkt_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
+	l2_len = iface->l2_len_out;
+	created_pkt->data_len = ND_NEIGH_PKT_LLADDR_MIN_LEN(l2_len);
+	created_pkt->pkt_len = created_pkt->data_len;
 
 	/* Set-up Ethernet header. */
 	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
@@ -197,13 +200,18 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
 	} else
 		ether_addr_copy(ha, &eth_hdr->d_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+
+	/* Set-up VLAN header. */
+	if (iface->vlan_insert)
+		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+	else
+		eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
 
 	/* Set-up IPv6 header. */
-	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ipv6_hdr = pkt_out_skip_l2(iface, eth_hdr);
 	ipv6_hdr->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
-	ipv6_hdr->payload_len = rte_cpu_to_be_16(ND_NEIGH_PKT_LLADDR_MIN_LEN -
-		(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
+	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
+		(l2_len + sizeof(*ipv6_hdr)));
 	ipv6_hdr->proto = IPPROTO_ICMPV6;
 	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
 	rte_memcpy(ipv6_hdr->src_addr, iface->ll_ip6_addr.s6_addr,
@@ -303,14 +311,16 @@ parse_nd_opts(struct nd_opts *ndopts, uint8_t *opt, uint16_t opt_len)
 static int
 process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	struct ether_hdr *eth_hdr, struct ipv6_hdr *ipv6_hdr,
-	struct icmpv6_hdr *icmpv6_hdr, uint16_t pkt_len, uint16_t icmpv6_len,
-	struct gatekeeper_if *iface, uint16_t tx_queue)
+	struct icmpv6_hdr *icmpv6_hdr, uint16_t pkt_len, size_t l2_len,
+	uint16_t icmpv6_len, struct gatekeeper_if *iface, uint16_t tx_queue)
 {
 	struct nd_neigh_msg *nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
 	struct nd_opt_lladdr *nd_opt;
 	struct nd_opts ndopts;
 	int src_unspec = ipv6_addr_unspecified(ipv6_hdr->src_addr);
 	struct ether_addr *src_eth_addr = NULL;
+	size_t min_len;
+	int ret;
 
 	/*
 	 * Most of the checks required by RFC 4861, Section 7.1.1
@@ -395,20 +405,23 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	}
 
 	/* Make sure buffer is correct size. */
-	RTE_VERIFY(RTE_MBUF_DEFAULT_BUF_SIZE >= ND_NEIGH_PKT_LLADDR_MIN_LEN);
-	if (pkt_len > ND_NEIGH_PKT_LLADDR_MIN_LEN) {
-		if (rte_pktmbuf_trim(buf,
-				pkt_len - ND_NEIGH_PKT_LLADDR_MIN_LEN) < 0) {
+	min_len = ND_NEIGH_PKT_LLADDR_MIN_LEN(l2_len);
+	RTE_VERIFY(RTE_MBUF_DEFAULT_BUF_SIZE >= min_len);
+	if (pkt_len > min_len) {
+		if (rte_pktmbuf_trim(buf, pkt_len - min_len) < 0) {
 			RTE_LOG(ERR, GATEKEEPER, "lls: could not trim packet to correct size for response to a Neighbor Solicitation\n");
 			return -1;
 		}
-	} else if (pkt_len < ND_NEIGH_PKT_LLADDR_MIN_LEN) {
-		if (rte_pktmbuf_append(buf, ND_NEIGH_PKT_LLADDR_MIN_LEN -
-				pkt_len) == NULL) {
+	} else if (pkt_len < min_len) {
+		if (rte_pktmbuf_append(buf, min_len - pkt_len) == NULL) {
 			RTE_LOG(ERR, GATEKEEPER, "lls: could not append space to packet to correct size for response to a Neighbor Solicitation\n");
 			return -1;
 		}
 	}
+
+	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ND");
+	if (ret < 0)
+		return ret;
 
 	if (src_eth_addr != NULL) {
 		/*
@@ -418,6 +431,10 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 * Since we re-use the buffer, we skip over
 		 * any fields whose value should stay the
 		 * same from the Neighbor Solicitation.
+		 * Since the reply always goes out the same
+		 * interface that received it, the L2 space
+		 * of the packet is the same. If needed, the
+		 * correct VLAN tag was set in verify_l2_hdr().
 		 */
 
 		/* Set-up Ethernet header. */
@@ -427,8 +444,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		/* Set-up IPv6 header. */
 		nd_msg->flags = 0;
 		ipv6_hdr->payload_len =
-			rte_cpu_to_be_16(ND_NEIGH_PKT_LLADDR_MIN_LEN -
-				(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
+			rte_cpu_to_be_16(min_len -
+				(l2_len + sizeof(*ipv6_hdr)));
 		if (src_unspec) {
 			struct in6_addr all_nodes_addr = {
 				.s6_addr = {
@@ -485,6 +502,10 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 * Use the same approach as xmit_nd_req(), but don't use
 		 * that function directly since we already have a buffer
 		 * that has some of the fields correctly filled-in.
+		 * Since the new solicitation always goes out the same
+		 * interface that received the original, the L2 space
+		 * of the packet is the same. If needed, the correct VLAN
+		 * tag was set in verify_l2_hdr().
 		 */
 
 		uint8_t ip6_mc_daddr[16] = IPV6_SN_MC_ADDR(ipv6_hdr->src_addr);
@@ -508,8 +529,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 
 		/* Set-up IPv6 header. */
 		ipv6_hdr->payload_len =
-			rte_cpu_to_be_16(ND_NEIGH_PKT_LLADDR_MIN_LEN -
-				(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
+			rte_cpu_to_be_16(min_len -
+				(l2_len + sizeof(*ipv6_hdr)));
 		rte_memcpy(nd_msg->target, ipv6_hdr->src_addr,
 			sizeof(nd_msg->target));
 		rte_memcpy(ipv6_hdr->dst_addr, ip6_mc_daddr,
@@ -646,31 +667,34 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		? lls_conf->tx_queue_front
 		: lls_conf->tx_queue_back;
 	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
+	size_t l2_len;
 	uint16_t icmpv6_len;
 
-	if (pkt_len < ND_NEIGH_PKT_MIN_LEN) {
+	/* pkt_in_skip_l2() was already called by GK or GT. */
+	l2_len = pkt_in_l2_hdr_len(buf);
+	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(l2_len)) {
 		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt_len, ND_NEIGH_PKT_MIN_LEN, __func__);
+			pkt_len, ND_NEIGH_PKT_MIN_LEN(l2_len), __func__);
 		return -1;
 	}
 
-	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ipv6_hdr = rte_pktmbuf_mtod_offset(buf, struct ipv6_hdr *, l2_len);
 	icmpv6_offset = ipv6_skip_exthdr(ipv6_hdr, buf->data_len -
-		sizeof(struct ether_hdr), &nexthdr);
+		l2_len, &nexthdr);
 	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)
 		return -1;
 
-	if (pkt_len < (ND_NEIGH_PKT_MIN_LEN +
+	if (pkt_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			icmpv6_offset - sizeof(*ipv6_hdr))) {
 		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt_len, ND_NEIGH_PKT_MIN_LEN +
+			pkt_len, ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			icmpv6_offset - sizeof(*ipv6_hdr), __func__);
 		return -1;
 	}
 
 	icmpv6_hdr = (struct icmpv6_hdr *)
 		((uint8_t *)ipv6_hdr + icmpv6_offset);
-	icmpv6_len = pkt_len - (sizeof(struct ether_hdr) + icmpv6_offset);
+	icmpv6_len = pkt_len - (l2_len + icmpv6_offset);
 
 	if (unlikely(!nd_pkt_valid(ipv6_hdr, icmpv6_hdr, icmpv6_len)))
 		return -1;
@@ -678,7 +702,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	switch (icmpv6_hdr->type) {
 	case ND_NEIGHBOR_SOLICITATION:
 		return process_nd_neigh_solicitation(lls_conf, buf, eth_hdr,
-			ipv6_hdr, icmpv6_hdr, pkt_len, icmpv6_len,
+			ipv6_hdr, icmpv6_hdr, pkt_len, l2_len, icmpv6_len,
 			iface, tx_queue);
 	case ND_NEIGHBOR_ADVERTISEMENT:
 		return process_nd_neigh_advertisement(lls_conf,

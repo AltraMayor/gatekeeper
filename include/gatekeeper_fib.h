@@ -102,8 +102,13 @@ struct ether_cache {
 	/* The IP address of the nexthop. */
 	struct ipaddr    ip_addr;
 
-	/* The whole Ethernet header. */
-	struct ether_hdr eth_hdr;
+	/* The whole link-layer header. */
+	struct {
+		/* Ethernet header (required). */
+		struct ether_hdr eth_hdr;
+		/* VLAN header (optional). */
+		struct vlan_hdr  vlan_hdr;
+	} __attribute__((packed)) l2_hdr;
 };
 
 struct neighbor_hash_table {

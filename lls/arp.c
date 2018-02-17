@@ -83,7 +83,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		return;
 	}
 
-	pkt_size = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
+	pkt_size = iface->l2_len_out + sizeof(struct arp_hdr);
 	created_pkt->data_len = pkt_size;
 	created_pkt->pkt_len = pkt_size;
 
@@ -94,10 +94,15 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		memset(&eth_hdr->d_addr, 0xFF, ETHER_ADDR_LEN);
 	else
 		ether_addr_copy(ha, &eth_hdr->d_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
+
+	/* Set-up VLAN header. */
+	if (iface->vlan_insert)
+		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, ETHER_TYPE_ARP);
+	else
+		eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
 
 	/* Set-up ARP header. */
-	arp_hdr = (struct arp_hdr *)(eth_hdr + 1);
+	arp_hdr = pkt_out_skip_l2(iface, eth_hdr);
 	arp_hdr->arp_hrd = rte_cpu_to_be_16(ARP_HRD_ETHER);
 	arp_hdr->arp_pro = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
 	arp_hdr->arp_hln = ETHER_ADDR_LEN;
@@ -118,21 +123,25 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 
 int
 process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
-	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr)
+	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr,
+	struct arp_hdr *arp_hdr)
 {
 	struct lls_mod_req mod_req;
-	struct arp_hdr *arp_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
+	/* pkt_in_skip_l2() already called by LLS. */
+	size_t l2_len = pkt_in_l2_hdr_len(buf);
+	int ret;
 
-	if (pkt_len < sizeof(*eth_hdr) + sizeof(*arp_hdr)) {
+	if (pkt_len < l2_len + sizeof(*arp_hdr)) {
 		RTE_LOG(ERR, GATEKEEPER, "lls: %s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
 			iface->name, pkt_len,
-			sizeof(*eth_hdr) + sizeof(*arp_hdr));
+			l2_len + sizeof(*arp_hdr));
 		return -1;
 	}
 
-	arp_hdr = rte_pktmbuf_mtod_offset(buf, struct arp_hdr *,
-		sizeof(struct ether_hdr));
+	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ARP");
+	if (ret < 0)
+		return ret;
 
 	if (unlikely(arp_hdr->arp_hrd != rte_cpu_to_be_16(ARP_HRD_ETHER) ||
 		     arp_hdr->arp_pro != rte_cpu_to_be_16(ETHER_TYPE_IPv4) ||
@@ -165,6 +174,13 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	switch (rte_be_to_cpu_16(arp_hdr->arp_op)) {
 	case ARP_OP_REQUEST: {
 		uint16_t num_tx;
+
+		/*
+		 * We are reusing the frame, but an ARP reply always goes out
+		 * the same interface that received it. Therefore, the L2
+		 * space of the frame is the same. If needed, the correct
+		 * VLAN tag was set in verify_l2_hdr().
+		 */
 
 		/* Set-up Ethernet header. */
 		ether_addr_copy(&eth_hdr->s_addr, &eth_hdr->d_addr);

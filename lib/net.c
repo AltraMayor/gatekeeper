@@ -57,16 +57,6 @@ uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-/*
- * TODO Add support for VLAN tags.
- *
- * Assume for now that hardware support is available for
- * VLAN stripping -- then only this configuration needs
- * to be changed.
- *
- * For VLAN insertion, hardware support can't be
- * assumed, so it must be added in software.
- */
 static struct rte_eth_conf gatekeeper_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
@@ -504,7 +494,7 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_cidrs, uint8_t num_ip_cidrs)
+	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag)
 {
 	uint8_t i, j;
 
@@ -638,6 +628,12 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			}
 			iface->ip6_addr_plen = prefix_len;
 		}
+	}
+
+	iface->l2_len_out = sizeof(struct ether_hdr);
+	if (iface->vlan_insert) {
+		iface->vlan_tag_be = rte_cpu_to_be_16(vlan_tag);
+		iface->l2_len_out += sizeof(struct vlan_hdr);
 	}
 
 	return 0;

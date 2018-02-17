@@ -250,17 +250,17 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	struct ipv6_hdr *ip6hdr;
 	struct icmpv6_hdr *nd_hdr;
+	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
+	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
-	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv6))
+	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
 		return -ENOENT;
 
-	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN) {
+	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len)) {
 		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt->data_len, ND_NEIGH_PKT_MIN_LEN, __func__);
+			pkt->data_len, ND_NEIGH_PKT_MIN_LEN(l2_len), __func__);
 		return -ENOENT;
 	}
-
- 	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
 
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0) &&
@@ -273,15 +273,15 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			sizeof(iface->ll_ip6_mc_addr)) != 0))
 		return -ENOENT;
 
-	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
-		sizeof(*eth_hdr), &nexthdr);
+	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
+		&nexthdr);
 	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
 		return -ENOENT;
 
-	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN +
+	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			nd_offset - sizeof(*ip6hdr))) {
 		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt->data_len, ND_NEIGH_PKT_MIN_LEN +
+			pkt->data_len, ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			nd_offset - sizeof(*ip6hdr), __func__);
 		return -ENOENT;
 	}
@@ -343,6 +343,8 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	for (i = 0; i < num_rx; i++) {
 		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
 			struct ether_hdr *);
+		void *next_hdr;
+		uint16_t ether_type;
 
 		/*
 		 * The destination MAC address should be the broadcast
@@ -366,10 +368,13 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 				&iface->eth_addr)))
 			goto free_buf;
 
-		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
+		ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(bufs[i], eth_hdr,
+			&next_hdr));
+
+		switch (ether_type) {
 		case ETHER_TYPE_ARP:
 			if (process_arp(lls_conf, iface, tx_queue,
-					bufs[i], eth_hdr) == -1)
+					bufs[i], eth_hdr, next_hdr) == -1)
 				goto free_buf;
 
 			/* ARP reply was sent, so no free is needed. */
@@ -384,8 +389,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 
 		default:
 			RTE_LOG(ERR, GATEKEEPER, "lls: %s interface should not be seeing a packet with EtherType 0x%04hx\n",
-				iface->name,
-				rte_be_to_cpu_16(eth_hdr->ether_type));
+				iface->name, ether_type);
 			goto free_buf;
 		}
 free_buf:

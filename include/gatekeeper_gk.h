@@ -146,8 +146,8 @@ int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 struct mailbox *get_responsible_gk_mailbox(
 	const struct ip_flow *flow, const struct gk_config *gk_conf);
 
-int pkt_copy_cached_eth_header(
-	struct rte_mbuf *pkt, struct ether_cache *eth_cache);
+int pkt_copy_cached_eth_header(struct rte_mbuf *pkt,
+	struct ether_cache *eth_cache, size_t l2_len_out);
 
 static inline void
 gk_conf_hold(struct gk_config *gk_conf)

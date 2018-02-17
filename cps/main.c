@@ -157,8 +157,8 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	}
 
 	/* Advertisement will include target link layer address. */
-	created_pkt->data_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
-	created_pkt->pkt_len = ND_NEIGH_PKT_LLADDR_MIN_LEN;
+	created_pkt->data_len = ND_NEIGH_PKT_LLADDR_MIN_LEN(sizeof(*eth_hdr));
+	created_pkt->pkt_len = created_pkt->data_len;
 
 	/*
 	 * Set-up Ethernet header. The Ethernet address of the KNI is the
@@ -173,7 +173,7 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	/* Set-up IPv6 header. */
 	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
 	ipv6_hdr->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
-	ipv6_hdr->payload_len = rte_cpu_to_be_16(ND_NEIGH_PKT_LLADDR_MIN_LEN -
+	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
 		(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
 	ipv6_hdr->proto = IPPROTO_ICMPV6;
 	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
@@ -296,15 +296,59 @@ static void
 process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 	uint16_t rx_queue)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
-	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
+	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, rx_bufs,
 		GATEKEEPER_MAX_PKT_BURST);
-	unsigned int num_tx = rte_kni_tx_burst(kni, bufs, num_rx);
+	uint16_t num_kni;
+	uint16_t num_tx;
+	uint16_t i;
 
-	if (unlikely(num_tx < num_rx)) {
-		uint16_t i;
-		for (i = num_tx; i < num_rx; i++)
-			rte_pktmbuf_free(bufs[i]);
+	if (!iface->vlan_insert) {
+		num_kni = num_rx;
+		goto kni_tx;
+	}
+
+	/* Remove any VLAN headers before passing to the KNI. */
+	num_kni = 0;
+	for (i = 0; i < num_rx; i++) {
+		struct ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(rx_bufs[i], struct ether_hdr *);
+		struct vlan_hdr *vlan_hdr;
+
+		RTE_VERIFY(num_kni <= i);
+
+		if (unlikely(eth_hdr->ether_type !=
+				rte_cpu_to_be_16(ETHER_TYPE_VLAN))) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"cps: %s iface is configured for VLAN but received a non-VLAN packet\n",
+				iface->name);
+			goto to_kni;
+		}
+
+		/* Copy Ethernet header over VLAN header. */
+		vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
+		eth_hdr->ether_type = vlan_hdr->eth_proto;
+		memmove((uint8_t *)eth_hdr + sizeof(struct vlan_hdr), eth_hdr,
+			sizeof(*eth_hdr));
+
+		/* Remove the unneeded bytes from the front of the buffer. */
+		if (unlikely(rte_pktmbuf_adj(rx_bufs[i],
+				sizeof(struct vlan_hdr)) == NULL)) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"cps: can't remove VLAN header\n");
+			rte_pktmbuf_free(rx_bufs[i]);
+			continue;
+		}
+to_kni:
+		if (unlikely(num_kni < i))
+			rx_bufs[num_kni++] = rx_bufs[i];
+	}
+
+kni_tx:
+	num_tx = rte_kni_tx_burst(kni, rx_bufs, num_kni);
+	if (unlikely(num_tx < num_kni)) {
+		for (i = num_tx; i < num_kni; i++)
+			rte_pktmbuf_free(rx_bufs[i]);
 	}
 }
 
@@ -316,7 +360,7 @@ pkt_is_nd(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
 	struct icmpv6_hdr *icmpv6_hdr;
 
 	if (pkt_len < (sizeof(*eth_hdr) + sizeof(*ipv6_hdr) +
-			sizeof(icmpv6_hdr)))
+			sizeof(*icmpv6_hdr)))
 		return false;
 
 	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
@@ -356,6 +400,7 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 		return;
 
 	for (i = 0; i < num_rx; i++) {
+		/* Packets sent by the KNI do not have VLAN headers. */
 		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
 			struct ether_hdr *);
 		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
@@ -373,17 +418,40 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			}
 		}
 			/* FALLTHROUGH */
-		default:
-			/* Forward all other packets to the interface. */
+		default: {
+			/*
+			 * Forward all other packets to the interface,
+			 * adding a VLAN header if necessary.
+			 */
+			struct ether_hdr *new_eth_hdr;
+
+			if (!iface->vlan_insert)
+				goto to_eth;
+
+			/* Need to make room for a VLAN header. */
+			new_eth_hdr = (struct ether_hdr *)
+				rte_pktmbuf_prepend(bufs[i],
+					sizeof(struct vlan_hdr));
+			if (unlikely(new_eth_hdr == NULL)) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"cps: can't add a VLAN header\n");
+				rte_pktmbuf_free(bufs[i]);
+				continue;
+			}
+
+			memmove(new_eth_hdr, eth_hdr, sizeof(*new_eth_hdr));
+			fill_vlan_hdr(new_eth_hdr, iface->vlan_tag_be,
+				rte_be_to_cpu_16(eth_hdr->ether_type));
+to_eth:
 			forward_bufs[num_forward++] = bufs[i];
 			break;
+		}
 		}
 	}
 
 	num_tx = rte_eth_tx_burst(iface->id, tx_queue,
 		forward_bufs, num_forward);
 	if (unlikely(num_tx < num_forward)) {
-		uint16_t i;
 		for (i = num_tx; i < num_forward; i++)
 			rte_pktmbuf_free(forward_bufs[i]);
 	}
@@ -787,11 +855,13 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	struct ipv6_hdr *ip6hdr;
 	struct tcp_hdr *tcp_hdr;
-	uint16_t minimum_size = sizeof(*eth_hdr) +
+	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
+	size_t l2_len = pkt_in_l2_hdr_len(pkt);
+	uint16_t minimum_size = l2_len +
 		sizeof(struct ipv6_hdr) + sizeof(struct tcp_hdr);
 	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
 
-	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv6))
+	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
 		return -ENOENT;
 
 	if (pkt->data_len < minimum_size) {
@@ -800,14 +870,11 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 	}
 
-	ip6hdr = (struct ipv6_hdr *)&eth_hdr[1];
-
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0))
 		return -ENOENT;
 
-	tcp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len -
-		sizeof(*eth_hdr), &nexthdr);
+	tcp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len, &nexthdr);
 	if (tcp_offset < 0 || nexthdr != IPPROTO_TCP)
 		return -ENOENT;
 

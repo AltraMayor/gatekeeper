@@ -20,6 +20,7 @@
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
+#include "gatekeeper_l2.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 
@@ -99,7 +100,7 @@ gk_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	ether_addr_copy(&map->ha, &eth_cache->eth_hdr.d_addr);
+	ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -131,8 +132,14 @@ get_new_ether_cache_locked(struct neighbor_hash_table *neigh,
 	 */
 	eth_cache->stale = true;
 	rte_memcpy(&eth_cache->ip_addr, addr, sizeof(eth_cache->ip_addr));
-	eth_cache->eth_hdr.ether_type = rte_cpu_to_be_16(addr->proto);
-	ether_addr_copy(&iface->eth_addr, &eth_cache->eth_hdr.s_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr, iface->vlan_tag_be,
+			addr->proto);
+	} else {
+		eth_cache->l2_hdr.eth_hdr.ether_type =
+			rte_cpu_to_be_16(addr->proto);
+	}
+	ether_addr_copy(&iface->eth_addr, &eth_cache->l2_hdr.eth_hdr.s_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
 	return eth_cache;
