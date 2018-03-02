@@ -40,6 +40,7 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
+#include "gatekeeper_varip.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
@@ -76,6 +77,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	uint8_t inner_ip_ver;
 	uint8_t encasulated_proto;
 	uint16_t parsed_len;
+	int outer_ipv6_hdr_len = 0;
 	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	struct ipv4_hdr *outer_ipv4_hdr = NULL;
 	struct ipv6_hdr *outer_ipv6_hdr = NULL;
@@ -93,7 +95,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		outer_ipv4_hdr = (struct ipv4_hdr *)info->outer_l3_hdr;
-		parsed_len += sizeof(struct ipv4_hdr);
+		parsed_len += ipv4_hdr_len(outer_ipv4_hdr);
 		info->priority = (outer_ipv4_hdr->type_of_service >> 2);
 		info->outer_ecn =
 			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
@@ -104,12 +106,19 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		outer_ipv6_hdr = (struct ipv6_hdr *)info->outer_l3_hdr;
-		parsed_len += sizeof(struct ipv6_hdr);
+		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
+			pkt->data_len - parsed_len, &encasulated_proto);
+                if (outer_ipv6_hdr_len < 0) {
+                        RTE_LOG(ERR, GATEKEEPER,
+                                "gt: failed to parse the packet's outer IPv6 extension headers!\n");
+			return -1;
+                }
+
+		parsed_len += outer_ipv6_hdr_len;
 		info->priority = (((outer_ipv6_hdr->vtc_flow >> 20)
 			& 0xFF) >> 2);
 		info->outer_ecn =
 			(outer_ipv6_hdr->vtc_flow >> 20) & IPTOS_ECN_MASK;
-		encasulated_proto = outer_ipv6_hdr->proto;
 		break;
 	default:
 		return -1;
@@ -125,10 +134,13 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr) + 4)
 		return -1;
 
-	if (outer_ipv4_hdr != NULL)
- 		inner_ipv4_hdr = (struct ipv4_hdr *)&outer_ipv4_hdr[1];
-	else
- 		inner_ipv4_hdr = (struct ipv4_hdr *)&outer_ipv6_hdr[1];
+	if (outer_ipv4_hdr != NULL) {
+		inner_ipv4_hdr =
+			(struct ipv4_hdr *)ipv4_skip_exthdr(outer_ipv4_hdr);
+	} else {
+		inner_ipv4_hdr = (struct ipv4_hdr *)((uint8_t *)outer_ipv6_hdr
+			+ outer_ipv6_hdr_len);
+	}
 
  	inner_ip_ver = (inner_ipv4_hdr->version_ihl & 0xF0) >> 4;
 	info->inner_l3_hdr = inner_ipv4_hdr;
@@ -136,19 +148,28 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	if (inner_ip_ver == 4) {
 		info->inner_ip_ver = ETHER_TYPE_IPv4;
 		info->l4_proto = inner_ipv4_hdr->next_proto_id;
-		info->l4_hdr = &inner_ipv4_hdr[1];
+		info->l4_hdr = ipv4_skip_exthdr(inner_ipv4_hdr);
 	} else if (likely(inner_ip_ver == 6)) {
+		int l4_offset;
+
 		/*
-	 	 * Make sure that the packet has space for
+		 * Make sure that the packet has space for
 		 * at least 4 bytes for the l4 header.
-	 	 */
+		 */
 		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr) + 4)
 			return -1;
 
 		inner_ipv6_hdr = (struct ipv6_hdr *)info->inner_l3_hdr;
+		l4_offset = ipv6_skip_exthdr(inner_ipv6_hdr, pkt->data_len -
+			parsed_len, &info->l4_proto);
+                if (l4_offset < 0) {
+                        RTE_LOG(ERR, GATEKEEPER,
+                                "gt: failed to parse the packet's inner IPv6 extension headers!\n");
+			return -1;
+                }
+
 		info->inner_ip_ver = ETHER_TYPE_IPv6;
-		info->l4_proto = inner_ipv6_hdr->proto;
-		info->l4_hdr = &inner_ipv6_hdr[1];
+		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + l4_offset;
 	} else
 		return -1;
 
