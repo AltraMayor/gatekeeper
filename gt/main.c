@@ -21,12 +21,15 @@
 #include <lualib.h>
 #include <lauxlib.h>
 #include <netinet/ip.h>
+#include <math.h>
 
 #include <rte_log.h>
 #include <rte_ether.h>
 #include <rte_lcore.h>
 #include <rte_malloc.h>
 #include <rte_random.h>
+#include <rte_cycles.h>
+#include <rte_common.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_lls.h"
@@ -40,6 +43,7 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
+#include "gatekeeper_varip.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
@@ -76,12 +80,14 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	uint8_t inner_ip_ver;
 	uint8_t encasulated_proto;
 	uint16_t parsed_len;
+	int outer_ipv6_hdr_len = 0;
 	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	struct ipv4_hdr *outer_ipv4_hdr = NULL;
 	struct ipv6_hdr *outer_ipv6_hdr = NULL;
 	struct ipv4_hdr *inner_ipv4_hdr = NULL;
 	struct ipv6_hdr *inner_ipv6_hdr = NULL;
 
+	info->frag = false;
 	info->l2_hdr = eth_hdr;
 	info->outer_ethertype = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
 		&info->outer_l3_hdr));
@@ -93,7 +99,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		outer_ipv4_hdr = (struct ipv4_hdr *)info->outer_l3_hdr;
-		parsed_len += sizeof(struct ipv4_hdr);
+		parsed_len += ipv4_hdr_len(outer_ipv4_hdr);
 		info->priority = (outer_ipv4_hdr->type_of_service >> 2);
 		info->outer_ecn =
 			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
@@ -104,12 +110,19 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		outer_ipv6_hdr = (struct ipv6_hdr *)info->outer_l3_hdr;
-		parsed_len += sizeof(struct ipv6_hdr);
+		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
+			pkt->data_len - parsed_len, &encasulated_proto);
+                if (outer_ipv6_hdr_len < 0) {
+                        RTE_LOG(ERR, GATEKEEPER,
+                                "gt: failed to parse the packet's outer IPv6 extension headers!\n");
+			return -1;
+                }
+
+		parsed_len += outer_ipv6_hdr_len;
 		info->priority = (((outer_ipv6_hdr->vtc_flow >> 20)
 			& 0xFF) >> 2);
 		info->outer_ecn =
 			(outer_ipv6_hdr->vtc_flow >> 20) & IPTOS_ECN_MASK;
-		encasulated_proto = outer_ipv6_hdr->proto;
 		break;
 	default:
 		return -1;
@@ -118,17 +131,16 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	if (encasulated_proto != IPPROTO_IPIP)
 		return -1;
 
-	/*
-	 * Make sure that the packet has space for
-	 * at least 4 bytes for the l4 header.
-	 */
-	if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr) + 4)
+	if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr))
 		return -1;
 
-	if (outer_ipv4_hdr != NULL)
- 		inner_ipv4_hdr = (struct ipv4_hdr *)&outer_ipv4_hdr[1];
-	else
- 		inner_ipv4_hdr = (struct ipv4_hdr *)&outer_ipv6_hdr[1];
+	if (outer_ipv4_hdr != NULL) {
+		inner_ipv4_hdr =
+			(struct ipv4_hdr *)ipv4_skip_exthdr(outer_ipv4_hdr);
+	} else {
+		inner_ipv4_hdr = (struct ipv4_hdr *)((uint8_t *)outer_ipv6_hdr
+			+ outer_ipv6_hdr_len);
+	}
 
  	inner_ip_ver = (inner_ipv4_hdr->version_ihl & 0xF0) >> 4;
 	info->inner_l3_hdr = inner_ipv4_hdr;
@@ -136,23 +148,72 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	if (inner_ip_ver == 4) {
 		info->inner_ip_ver = ETHER_TYPE_IPv4;
 		info->l4_proto = inner_ipv4_hdr->next_proto_id;
-		info->l4_hdr = &inner_ipv4_hdr[1];
+		info->l4_hdr = ipv4_skip_exthdr(inner_ipv4_hdr);
+
+		if (rte_ipv4_frag_pkt_is_fragmented(inner_ipv4_hdr)) {
+			info->frag = true;
+			info->l2_outer_l3_len = parsed_len;
+			info->inner_l3_len = ipv4_hdr_len(inner_ipv4_hdr);
+			info->frag_hdr = NULL;
+		}
 	} else if (likely(inner_ip_ver == 6)) {
-		/*
-	 	 * Make sure that the packet has space for
-		 * at least 4 bytes for the l4 header.
-	 	 */
-		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr) + 4)
+		int l4_offset;
+
+		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr))
 			return -1;
 
 		inner_ipv6_hdr = (struct ipv6_hdr *)info->inner_l3_hdr;
+		l4_offset = ipv6_skip_exthdr(inner_ipv6_hdr, pkt->data_len -
+			parsed_len, &info->l4_proto);
+                if (l4_offset < 0) {
+                        RTE_LOG(ERR, GATEKEEPER,
+                                "gt: failed to parse the packet's inner IPv6 extension headers!\n");
+			return -1;
+                }
+
 		info->inner_ip_ver = ETHER_TYPE_IPv6;
-		info->l4_proto = inner_ipv6_hdr->proto;
-		info->l4_hdr = &inner_ipv6_hdr[1];
+		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + l4_offset;
+		info->frag_hdr =
+			rte_ipv6_frag_get_ipv6_fragment_header(inner_ipv6_hdr);
+
+		if (info->frag_hdr != NULL) {
+			info->frag = true;
+			info->l2_outer_l3_len = parsed_len;
+			info->inner_l3_len = l4_offset;
+		}
 	} else
 		return -1;
 
 	return 0;
+}
+
+static struct rte_mbuf *
+gt_reassemble_incoming_pkt(struct rte_mbuf *pkt,
+	uint64_t tms, struct gt_packet_headers *info,
+	struct rte_ip_frag_death_row *death_row, struct gt_instance *instance)
+{
+	/* Prepare mbuf: setup l2_len/l3_len. */
+	pkt->l2_len = info->l2_outer_l3_len;
+	pkt->l3_len = info->inner_l3_len;
+
+	if (info->inner_ip_ver == ETHER_TYPE_IPv4) {
+		/* Process this IPv4 fragment. */
+		return rte_ipv4_frag_reassemble_packet(
+			instance->frag_tbl, death_row,
+			pkt, tms, info->inner_l3_hdr);
+	}
+
+	if (likely(info->inner_ip_ver == ETHER_TYPE_IPv6)) {
+		/* Process this IPv6 fragment. */
+		return rte_ipv6_frag_reassemble_packet(
+			instance->frag_tbl, death_row,
+			pkt, tms, info->inner_l3_hdr, info->frag_hdr);
+	}
+
+	rte_panic("Unexpected condition: gt at lcore %u reassembles a packet with unknown IP version %hu\n",
+		rte_lcore_id(), info->inner_ip_ver);
+
+	return NULL;
 }
 
 static int
@@ -161,20 +222,23 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 {
 	policy->flow.proto = pkt_info->inner_ip_ver;
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ip4_hdr = (struct ipv4_hdr *)pkt_info->inner_l3_hdr;
+		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
 
 		policy->flow.f.v4.src = ip4_hdr->src_addr;
 		policy->flow.f.v4.dst = ip4_hdr->dst_addr;
 	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ip6_hdr = (struct ipv6_hdr *)pkt_info->inner_l3_hdr;
+		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
 
 		rte_memcpy(policy->flow.f.v6.src, ip6_hdr->src_addr,
 			sizeof(policy->flow.f.v6.src));
 		rte_memcpy(policy->flow.f.v6.dst, ip6_hdr->dst_addr,
 			sizeof(policy->flow.f.v6.dst));
-	} else
-		rte_panic("Unexpected condition: gt block at lcore %u lookups policy decision for an non-IP packet!\n",
-			rte_lcore_id());
+	} else {
+		RTE_LOG(ERR, GATEKEEPER,
+			"Unexpected condition: gt block at lcore %u lookups policy decision for an non-IP packet in function %s!\n",
+			rte_lcore_id(), __func__);
+		return -1;
+	}
 
 	lua_getglobal(instance->lua_state, "lookup_policy");
 	lua_pushlightuserdata(instance->lua_state, pkt_info);
@@ -183,6 +247,43 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	if (lua_pcall(instance->lua_state, 2, 0, 0) != 0) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: error running function `lookup_policy': %s, at lcore %u\n",
+			lua_tostring(instance->lua_state, -1), rte_lcore_id());
+		return -1;
+	}
+
+	return 0;
+}
+
+static int
+lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
+	struct ggu_policy *policy, struct gt_instance *instance)
+{
+	policy->flow.proto = pkt_info->inner_ip_ver;
+	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
+
+		policy->flow.f.v4.src = ip4_hdr->src_addr;
+		policy->flow.f.v4.dst = ip4_hdr->dst_addr;
+	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
+		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
+
+		rte_memcpy(policy->flow.f.v6.src, ip6_hdr->src_addr,
+			sizeof(policy->flow.f.v6.src));
+		rte_memcpy(policy->flow.f.v6.dst, ip6_hdr->dst_addr,
+			sizeof(policy->flow.f.v6.dst));
+	} else {
+		RTE_LOG(ERR, GATEKEEPER,
+			"Unexpected condition: gt block at lcore %u lookups policy decision for an non-IP packet in function %s!\n",
+			rte_lcore_id(), __func__);
+		return -1;
+	}
+
+	lua_getglobal(instance->lua_state, "lookup_frag_punish_policy");
+	lua_pushlightuserdata(instance->lua_state, policy);
+
+	if (lua_pcall(instance->lua_state, 1, 0, 0) != 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: error running function `lookup_frag_punish_policy': %s, at lcore %u\n",
 			lua_tostring(instance->lua_state, -1), rte_lcore_id());
 		return -1;
 	}
@@ -250,6 +351,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		"gt: receiving a packet with IP source address %s, and destination address %s, whose destination IP address is not the Grantor server itself.!\n",
 		src, dst);
 }
+
 static void
 gt_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	__attribute__((unused))enum lls_reply_ty ty, int *pcall_again)
@@ -736,6 +838,129 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	return notify_pkt;
 }
 
+static void
+print_unsent_policy(struct ggu_policy *policy)
+{
+	int ret;
+	char err_msg[1024];
+
+	if (policy->state == GK_REQUEST) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu]",
+			policy->state);
+	} else if (policy->state == GK_GRANTED) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
+			policy->state, policy->params.u.granted.tx_rate_kb_sec,
+			policy->params.u.granted.cap_expire_sec,
+			policy->params.u.granted.next_renewal_ms,
+			policy->params.u.granted.renewal_step_ms);
+	} else if (policy->state == GK_DECLINED) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
+			policy->state,
+			policy->params.u.declined.expire_sec);
+	} else {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy!\n",
+			policy->state, __func__);
+	}
+
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+	print_flow_err_msg(&policy->flow, err_msg);
+}
+
+/*
+ * Use the @dr to notify the GK
+ * about the punishment policies on declined flows
+ * with fragmented packets.
+ */
+static void 
+process_death_row(int socket_id, uint8_t port, uint16_t tx_queue,
+	int punish, struct rte_ip_frag_death_row *death_row,
+	struct gt_instance *instance, struct gt_config *gt_conf)
+{
+	uint32_t i;
+
+	for (i = 0; i < death_row->cnt; i++) {
+		int ret;
+		struct gt_packet_headers pkt_info;
+		struct ggu_policy policy;
+		struct rte_mbuf *notify_pkt;
+
+		if (!punish)
+			goto free_packet;
+
+		ret = gt_parse_incoming_pkt(death_row->row[i], &pkt_info);
+		if (ret < 0) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gt: failed to parse the fragments at %s, and the packet doesn't trigger any policy consultation at all!\n",
+				__func__);
+			rte_pktmbuf_free(death_row->row[i]);
+			continue;
+		}
+
+		/*
+		 * Given the gravity of the issue,
+		 * we must send a decline to the gatekeeper server
+		 * to expire in 10 minutes and log our failsafe
+		 * action here.
+		 * Otherwise, a misconfigured grantor server can put
+		 * a large deployment at risk.
+		 */
+		ret = lookup_frag_punish_policy_decision(
+			&pkt_info, &policy, instance);
+		if (ret < 0) {
+			policy.state = GK_DECLINED;
+			policy.params.u.declined.expire_sec = 600;
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gt: failed to lookup the punishment policy for the packet fragment! Our failsafe action is to decline the flow for 10 minutes!\n");
+		}
+
+		/*
+		 * TODO Reply in a batch.
+		 * Reply the policy decision to GK-GT unit.
+		 */
+		notify_pkt = alloc_and_fill_notify_pkt(
+			socket_id, &policy, &pkt_info, gt_conf);
+		if (notify_pkt == NULL)
+			print_unsent_policy(&policy);
+		else if (rte_eth_tx_burst(port, tx_queue,
+				&notify_pkt, 1) != 1) {
+			print_unsent_policy(&policy);
+			rte_pktmbuf_free(notify_pkt);
+		}
+
+free_packet:
+		rte_pktmbuf_free(death_row->row[i]);
+	}
+
+	death_row->cnt = 0;
+}
+
+static void
+gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
+	struct acl_search *acl6, uint16_t *num_arp, struct rte_mbuf **arp_bufs,
+	struct rte_mbuf *pkt, uint16_t outer_ethertype)
+{
+	switch (outer_ethertype) {
+	case ETHER_TYPE_IPv4:
+		add_pkt_acl(acl4, pkt);
+		return;
+	case ETHER_TYPE_IPv6:
+		add_pkt_acl(acl6, pkt);
+		return;
+	case ETHER_TYPE_ARP:
+		arp_bufs[(*num_arp)++] = pkt;
+		return;
+	}
+
+	RTE_LOG(ALERT, GATEKEEPER,
+		"gt: parsing an invalid packet with outer Ethernet type %hu!\n",
+		outer_ethertype);
+	rte_pktmbuf_free(pkt);
+}
+
 static int
 gt_proc(void *arg)
 {
@@ -745,9 +970,19 @@ gt_proc(void *arg)
 	unsigned int block_idx = get_block_idx(gt_conf, lcore);
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
+	uint64_t last_tsc = rte_rdtsc();
 	uint8_t port = get_net_conf()->front.id;
 	uint16_t rx_queue = instance->rx_queue;
 	uint16_t tx_queue = instance->tx_queue;
+	uint64_t frag_scan_timeout_cycles = round(
+		gt_conf->frag_scan_timeout_ms * rte_get_tsc_hz() / 1000.);
+	uint32_t next = 0;
+	/*
+	 * The mbuf death row contains
+	 * packets to be freed.
+	 */
+	struct rte_ip_frag_death_row death_row;
+	death_row.cnt = 0;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gt: the GT block is running at lcore = %u\n", lcore);
@@ -756,10 +991,12 @@ gt_proc(void *arg)
 
 	while (likely(!exiting)) {
 		int i;
+		int ret;
 		uint16_t num_rx;
 		uint16_t num_tx = 0;
 		uint16_t num_tx_succ;
 		uint16_t num_arp = 0;
+		uint64_t cur_tsc = rte_rdtsc();
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
@@ -774,7 +1011,6 @@ gt_proc(void *arg)
 			continue;
 
 		for (i = 0; i < num_rx; i++) {
-			int ret;
 			struct rte_mbuf *m = rx_bufs[i];
 			struct gt_packet_headers pkt_info;
 			struct ggu_policy policy;
@@ -789,22 +1025,38 @@ gt_proc(void *arg)
 			 */
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
-				switch (pkt_info.outer_ethertype) {
-				case ETHER_TYPE_IPv4:
-					add_pkt_acl(&acl4, m);
+				gt_process_unparsed_incoming_pkt(
+					&acl4, &acl6, &num_arp, arp_bufs,
+					m, pkt_info.outer_ethertype);
+				continue;
+			}
+
+			/*
+			 * If it is a fragmented packet,
+			 * then try to reassemble.
+			 */
+			if (pkt_info.frag) {
+				m = gt_reassemble_incoming_pkt(
+					m, cur_tsc, &pkt_info,
+					&death_row, instance);
+
+				/* Process the death packets. */
+				process_death_row(socket, port, tx_queue,
+					m == NULL, &death_row,
+					instance, gt_conf);
+
+				if (m == NULL)
 					continue;
-				case ETHER_TYPE_IPv6:
-					add_pkt_acl(&acl6, m);
-					continue;
-				case ETHER_TYPE_ARP:
-					arp_bufs[num_arp++] = m;
+
+				ret = gt_parse_incoming_pkt(
+					m, &pkt_info);
+				if (ret < 0) {
+					gt_process_unparsed_incoming_pkt(
+						&acl4, &acl6, &num_arp,
+						arp_bufs, m,
+						pkt_info.outer_ethertype);
 					continue;
 				}
-
-				RTE_LOG(ALERT, GATEKEEPER,
-					"gt: parsing an invalid packet!\n");
-				rte_pktmbuf_free(m);
-				continue;
 			}
 
 			if (unlikely(!is_valid_dest_addr(gt_conf, &pkt_info))) {
@@ -879,6 +1131,24 @@ gt_proc(void *arg)
 			ETHER_TYPE_IPv4);
 		process_pkts_acl(&gt_conf->net->front, lcore, &acl6,
 			ETHER_TYPE_IPv6);
+
+		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
+			RTE_VERIFY(death_row.cnt == 0);
+			ret = rte_ip_frag_table_iterate(
+				instance->frag_tbl, &death_row, &next);
+			if (ret != 0) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"gt: failed to call rte_ip_frag_table_iterate() to iterate over the fragmentation table at lcore %u\n",
+					lcore);
+			}
+
+			/* Process the death packets. */
+			process_death_row(socket, port,
+				tx_queue, true, &death_row,
+				instance, gt_conf);
+
+			last_tsc = rte_rdtsc();
+		}
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -896,6 +1166,10 @@ alloc_gt_conf(void)
 static inline void
 cleanup_gt_instance(struct gt_instance *instance)
 {
+	/* If the pointer is NULL, the function does nothing. */
+	rte_ip_frag_table_destroy(instance->frag_tbl);
+	instance->frag_tbl = NULL;
+
 	destroy_neigh_hash_table(&instance->neigh6);
 	destroy_neigh_hash_table(&instance->neigh);
 
@@ -936,6 +1210,10 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	int ret;
 	char lua_entry_path[128];
 	unsigned int block_idx = get_block_idx(gt_conf, lcore_id);
+
+	/* Maximum TTL in cycles for each fragmented packet. */
+	uint64_t frag_cycles = (rte_get_tsc_hz() + MS_PER_S - 1) /
+		MS_PER_S * gt_conf->frag_max_flow_ttl_ms;
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
 	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
@@ -989,6 +1267,37 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 			goto cleanup;
 	}
 
+	if (!rte_is_power_of_2(gt_conf->frag_bucket_entries)) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: configuration error - the number of entries per bucket should be a power of 2, while it is %u!\n",
+			gt_conf->frag_bucket_entries);
+		ret = -1;
+		goto cleanup;
+	}
+
+	if (gt_conf->frag_max_entries > gt_conf->frag_bucket_num *
+			gt_conf->frag_bucket_entries) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: configuration error - the maximum number of entries should be less than or equal to %u, while it is %u!\n",
+			gt_conf->frag_bucket_num *
+			gt_conf->frag_bucket_entries,
+			gt_conf->frag_max_entries);
+		ret = -1;
+		goto cleanup;
+	}
+
+	/* Setup the fragmentation table. */
+	instance->frag_tbl = rte_ip_frag_table_create(gt_conf->frag_bucket_num,
+		gt_conf->frag_bucket_entries, gt_conf->frag_max_entries,
+		frag_cycles, rte_lcore_to_socket_id(lcore_id));
+	if (instance->frag_tbl == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: failed to create fragmentation table at lcore %u!\n",
+			lcore_id);
+		ret = -1;
+		goto cleanup;
+	}
+
 	goto out;
 
 cleanup:
@@ -1028,8 +1337,9 @@ init_gt_instances(struct gt_config *gt_conf)
 		inst_ptr->tx_queue = ret;
 
 		/*
-		 * Set up the lua state and neighbor tables for each instance,
-		 * and initialize the policy tables.
+		 * Set up the lua state, neighbor tables, and
+		 * fragmentation table for each instance, and
+		 * initialize the policy tables.
 		 */
 		ret = config_gt_instance(gt_conf, lcore);
 		if (ret < 0)

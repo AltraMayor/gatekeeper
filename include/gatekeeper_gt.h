@@ -25,6 +25,7 @@
 #include <rte_tcp.h>
 #include <rte_udp.h>
 #include <rte_atomic.h>
+#include <rte_ip_frag.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_config.h"
@@ -40,6 +41,17 @@ struct gt_packet_headers {
 	void     *outer_l3_hdr;
 	void     *inner_l3_hdr;
 	void     *l4_hdr;
+
+	/*
+	 * The fields below are for internal use.
+	 * Configuration files should not refer to them.
+	 */
+
+	/* Fields for parsing fragmented packets. */
+	bool     frag;
+	uint32_t l2_outer_l3_len;
+	uint32_t inner_l3_len;
+	struct ipv6_extension_fragment *frag_hdr;
 };
 
 /* Structures for each GT instance. */
@@ -56,6 +68,12 @@ struct gt_instance {
 	/* The neighbor hash tables that stores the Ethernet cached headers. */
 	struct neighbor_hash_table neigh;
 	struct neighbor_hash_table neigh6;
+
+	/*
+	 * The fragment table maintains information about already
+	 * received fragments of the packet.
+	 */
+	struct rte_ip_frag_tbl *frag_tbl;
 };
 
 /* Configuration for the GT functional block. */
@@ -66,6 +84,24 @@ struct gt_config {
 
 	/* The maximum number of neighbor entries for the GT. */
 	int                max_num_ipv6_neighbors;
+
+	/* Timeout for scanning the fragmentation table in ms. */
+	uint32_t           frag_scan_timeout_ms;
+
+	/* Number of buckets in the fragmentation table. */
+	uint32_t           frag_bucket_num;
+
+	/* Number of entries per bucket. It should be a power of two. */
+	uint32_t           frag_bucket_entries;
+
+	/*
+	 * Maximum number of entries that could be stored in
+	 * the fragmentation table.
+	 */
+	uint32_t           frag_max_entries;
+
+	/* Maximum TTL numbers are in ms. */
+	uint32_t           frag_max_flow_ttl_ms;
 
 	/*
 	 * The fields below are for internal use.

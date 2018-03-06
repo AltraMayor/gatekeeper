@@ -9,6 +9,14 @@ return function (net_conf, numa_table)
 	-- Change these parameters to configure the Grantor.
 	gt_conf.ggu_src_port = 0xA0A0
 	gt_conf.ggu_dst_port = 0xB0B0
+	gt_conf.frag_bucket_num = 0x1000;
+	gt_conf.frag_bucket_entries = 4;
+	gt_conf.frag_max_entries = 0x1000;
+	gt_conf.frag_max_flow_ttl_ms = 1000;
+
+	-- Scan the whole fragment table in 2 minutes.
+	gt_conf.frag_scan_timeout_ms = math.floor(
+		2 * 60 * 1000 / gt_conf.frag_bucket_num + 0.5)
 
 	local n_lcores = 2
 

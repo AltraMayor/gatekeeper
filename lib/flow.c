@@ -16,12 +16,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <arpa/inet.h>
+
 #include <rte_thash.h>
 #include <rte_debug.h>
 #include <rte_ether.h>
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_flow.h"
+#include "gatekeeper_main.h"
 
 /*
  * Optimized generic implementation of RSS hash function.
@@ -108,4 +111,47 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 		return memcmp(&f1->f.v4, &f2->f.v4, sizeof(f1->f.v4));
 	else
 		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
+}
+
+void
+print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
+{
+	char src[128];
+	char dst[128];
+
+	if (flow->proto == ETHER_TYPE_IPv4) {
+		if (inet_ntop(AF_INET, &flow->f.v4.src,
+				src, sizeof(src)) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv4 address (%s)\n",
+				__func__, strerror(errno));
+			return;
+		}
+
+		if (inet_ntop(AF_INET, &flow->f.v4.dst,
+				dst, sizeof(dst)) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv4 address (%s)\n",
+				__func__, strerror(errno));
+			return;
+		}
+	} else if (likely(flow->proto == ETHER_TYPE_IPv6)) {
+		if (inet_ntop(AF_INET6, flow->f.v6.src,
+				src, sizeof(src)) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv6 address (%s)\n",
+				__func__, strerror(errno));
+			return;
+		}
+
+		if (inet_ntop(AF_INET6, flow->f.v6.dst,
+				dst, sizeof(dst)) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv6 address (%s)\n",
+				__func__, strerror(errno));
+			return;
+		}
+	} else
+		rte_panic("Unexpected condition at %s: unknown flow type %hu!\n",
+			__func__, flow->proto);
+
+	RTE_LOG(ERR, GATEKEEPER,
+		"%s for the flow with IP source address %s, and destination address %s!\n",
+		err_msg, src, dst);
 }
