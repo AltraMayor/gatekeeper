@@ -1120,6 +1120,63 @@ stop_partial:
 }
 
 static int
+init_net_stage1(void *arg)
+{
+	struct net_config *net_conf = arg;
+	uint32_t i;
+
+	if (net_conf->gatekeeper_pktmbuf_pool == NULL) {
+		net_conf->gatekeeper_pktmbuf_pool =
+			rte_calloc("mbuf_pool", net_conf->numa_nodes,
+				sizeof(struct rte_mempool *), 0);
+		if (net_conf->gatekeeper_pktmbuf_pool == NULL) {
+			RTE_LOG(ERR, MALLOC, "%s: Out of memory\n", __func__);
+			return -1;
+		}
+	}
+
+	/* Initialize pktmbuf pool on each used NUMA node. */
+	for (i = 0; i < net_conf->numa_nodes; i++) {
+		char pool_name[64];
+		int ret;
+
+		if (!net_conf->numa_used[i] ||
+				net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
+			continue;
+
+		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u",
+			i);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
+		net_conf->gatekeeper_pktmbuf_pool[i] =
+			rte_pktmbuf_pool_create(pool_name,
+				GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
+				RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
+
+		/*
+		 * No cleanup for this step, since DPDK
+		 * doesn't offer a way to deallocate pools.
+		 */
+		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
+			RTE_LOG(ERR, MEMPOOL,
+				"Failed to allocate mbuf for numa node %u!\n",
+				i);
+
+			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure!\n");
+			else if (rte_errno == E_RTE_SECONDARY) RTE_LOG(ERR, MEMPOOL, "Function was called from a secondary process instance!\n");
+			else if (rte_errno == EINVAL) RTE_LOG(ERR, MEMPOOL, "Cache size provided is too large!\n");
+			else if (rte_errno == ENOSPC) RTE_LOG(ERR, MEMPOOL, "The maximum number of memzones has already been allocated!\n");
+			else if (rte_errno == EEXIST) RTE_LOG(ERR, MEMPOOL, "A memzone with the same name already exists!\n");
+			else if (rte_errno == ENOMEM) RTE_LOG(ERR, MEMPOOL, "No appropriate memory area found in which to create memzone!\n");
+			else RTE_LOG(ERR, MEMPOOL, "Unknown error!\n");
+
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int
 init_iface_stage1(void *arg)
 {
 	struct gatekeeper_if *iface = arg;
@@ -1188,67 +1245,30 @@ finalize_stage2(__attribute__((unused)) void *arg)
 int
 gatekeeper_init_network(struct net_config *net_conf)
 {
-	int i, num_ports;
+	int num_ports;
 	int ret = -1;
 
 	if (net_conf == NULL)
 		return -1;
 
-	if (config.gatekeeper_pktmbuf_pool == NULL) {
-		config.numa_nodes = find_num_numa_nodes();
-		config.gatekeeper_pktmbuf_pool =
-			rte_calloc("mbuf_pool", config.numa_nodes,
-				sizeof(struct rte_mempool *), 0);
-		if (config.gatekeeper_pktmbuf_pool == NULL) {
-			RTE_LOG(ERR, MALLOC, "%s: Out of memory\n", __func__);
-			return -1;
-		}
+	net_conf->numa_nodes = find_num_numa_nodes();
+	net_conf->numa_used = rte_calloc("numas", net_conf->numa_nodes,
+		sizeof(*net_conf->numa_used), 0);
+	if (net_conf->numa_used == NULL) {
+		RTE_LOG(ERR, MALLOC, "%s: Out of memory for NUMA used array\n",
+			__func__);
+		return -1;
 	}
 
 	if (randomize_rss_key() < 0) {
 		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize RSS key.\n");
-		return -1;
+		ret = -1;
+		goto numa;
 	}
 
 	/* Convert RSS key. */
 	rte_convert_rss_key((uint32_t *)&default_rss_key,
 		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
-
-	/* Initialize pktmbuf pool on each numa node. */
-	for (i = 0; (uint32_t)i < net_conf->numa_nodes; i++) {
-		char pool_name[64];
-
-		if (net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
-			continue;
-
-		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u",
-			i);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
-		net_conf->gatekeeper_pktmbuf_pool[i] =
-			rte_pktmbuf_pool_create(pool_name,
-                		GATEKEEPER_MBUF_SIZE, GATEKEEPER_CACHE_SIZE, 0,
-                		RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
-
-		/* No cleanup for this step,
-		 * since DPDK doesn't offer a way to deallocate pools.
-		 */
-		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
-			RTE_LOG(ERR, MEMPOOL,
-				"Failed to allocate mbuf for numa node %u!\n",
-				i);
-
-			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure!\n");
-			else if (rte_errno == E_RTE_SECONDARY) RTE_LOG(ERR, MEMPOOL, "Function was called from a secondary process instance!\n");
-			else if (rte_errno == EINVAL) RTE_LOG(ERR, MEMPOOL, "Cache size provided is too large!\n");
-			else if (rte_errno == ENOSPC) RTE_LOG(ERR, MEMPOOL, "The maximum number of memzones has already been allocated!\n");
-			else if (rte_errno == EEXIST) RTE_LOG(ERR, MEMPOOL, "A memzone with the same name already exists!\n");
-			else if (rte_errno == ENOMEM) RTE_LOG(ERR, MEMPOOL, "No appropriate memory area found in which to create memzone!\n");
-			else RTE_LOG(ERR, MEMPOOL, "Unknown error!\n");
-
-			ret = -1;
-			goto out;
-		}
-	}
 
 	/* Check port limits. */
 	num_ports = net_conf->front.num_ports +
@@ -1257,20 +1277,25 @@ gatekeeper_init_network(struct net_config *net_conf)
 		RTE_LOG(ERR, GATEKEEPER, "There are only %i network ports available to DPDK/Gatekeeper, but configuration is using %i ports\n",
 			rte_eth_dev_count(), num_ports);
 		ret = -1;
-		goto out;
+		goto numa;
 	}
 	if (num_ports > GATEKEEPER_MAX_PORTS) {
 		RTE_LOG(ERR, GATEKEEPER, "Gatekeeper was compiled to support at most %i network ports, but configuration is using %i ports\n",
 			GATEKEEPER_MAX_PORTS, num_ports);
 		ret = -1;
-		goto out;
+		goto numa;
 	}
+
+	/* Initialize memory pools after figuring out which lcores are used. */
+	ret = launch_at_stage1(init_net_stage1, net_conf);
+	if (ret < 0)
+		goto numa;
 
 	/* Initialize interfaces. */
 
 	ret = launch_at_stage1(init_iface_stage1, &net_conf->front);
 	if (ret < 0)
-		goto out;
+		goto destroy_net;
 
 	ret = launch_at_stage2(start_network_stage2, net_conf);
 	if (ret < 0)
@@ -1288,6 +1313,11 @@ do_not_start_net:
 	pop_n_at_stage2(1);
 destroy_front:
 	pop_n_at_stage1(1);
+destroy_net:
+	pop_n_at_stage1(1);
+numa:
+	rte_free(net_conf->numa_used);
+	net_conf->numa_used = NULL;
 out:
 	return ret;
 }
@@ -1298,6 +1328,8 @@ gatekeeper_free_network(void)
 	if (config.back_iface_enabled)
 		destroy_iface(&config.back, IFACE_DESTROY_ALL);
 	destroy_iface(&config.front, IFACE_DESTROY_ALL);
+	rte_free(config.numa_used);
+	config.numa_used = NULL;
 }
 
 int

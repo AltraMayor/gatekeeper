@@ -4,7 +4,7 @@ module(..., package.seeall)
 -- Functions to allocate lcores
 --
 
-function get_numa_table ()
+function get_numa_table (net_conf)
 	local numa_table = {}
 	for _, lcore in ipairs(list_lcores()) do
 		local socket_id = rte_lcore_to_socket_id(lcore)
@@ -15,6 +15,7 @@ function get_numa_table ()
 			table.insert(t, lcore)
 		end
 	end
+	numa_table["__net_conf"] = net_conf
 	return numa_table
 end
 
@@ -58,6 +59,7 @@ function alloc_lcores_from_same_numa (numa_table, n)
 		if #lcores >= n then
 			local a1, a2 = split_array(lcores, n)
 			numa_table[numa] = a2
+			numa_table["__net_conf"].numa_used[numa] = true
 			return a1
 		end
 	end
@@ -124,7 +126,8 @@ struct gatekeeper_if {
 };
 
 struct net_config {
-	int back_iface_enabled;
+	int  back_iface_enabled;
+	bool *numa_used;
 	/* This struct has hidden fields. */
 };
 

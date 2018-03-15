@@ -279,6 +279,12 @@ struct net_config {
 	int                  back_iface_enabled;
 
 	/*
+	 * The NUMA nodes used in the host. Element i is true
+	 * if NUMA node i is being used; otherwise it is false.
+	 */
+	bool                 *numa_used;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
