@@ -21,6 +21,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <linux/random.h>
+#include <sys/syscall.h>
 
 #include <rte_mbuf.h>
 #include <rte_thash.h>
@@ -41,18 +43,50 @@
 #define GATEKEEPER_PKT_DROP_QUEUE (127)
 
 static struct net_config config;
-
 /*
- * XXX The secret key of the RSS hash must be random
- * in order to avoid hackers to know it.
+ * The secret key of the RSS hash (RSK) must be random in order
+ * to prevent hackers from knowing it.
  */
-uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN] = {
-	0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
-	0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
-	0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
-	0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
-	0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
-};
+uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
+
+static int
+randomize_rss_key(void)
+{
+	uint16_t final_set_count;
+
+	/*
+	 * To validate if the key generated is reasonable, the
+	 * number of bits set to 1 in the key must be greater than 
+	 * 10% and less than 90% of the total bits in the key.
+	 * min_num_set_bits and max_num_set_bits represent the lower 
+	 * and upper bound for the key.
+	 */
+	const uint16_t min_num_set_bits = sizeof(default_rss_key) * 8 * 0.1;
+	const uint16_t max_num_set_bits = sizeof(default_rss_key) * 8 * 0.9;
+
+	do {	
+		int number_of_bytes = 0;
+		uint8_t i;
+
+		/* 
+		 * When the last parameter of the system call  getrandom() (i.e flags)
+		 * is zero, getrandom() uses the /dev/urandom pool.
+		 */	
+		do {
+			int ret = syscall(SYS_getrandom, default_rss_key + number_of_bytes,
+					sizeof(default_rss_key) - number_of_bytes, 0);
+			if (ret < 0)
+				return -1;
+			number_of_bytes += ret;	
+		} while (number_of_bytes < (int)sizeof(default_rss_key));
+
+		final_set_count = 0;
+		for (i = 0; i < RTE_DIM(default_rss_key); i++)
+			final_set_count += __builtin_popcount(default_rss_key[i]);
+	} while (final_set_count < min_num_set_bits ||
+			final_set_count > max_num_set_bits);
+	return 0;
+}
 
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
@@ -1169,6 +1203,11 @@ gatekeeper_init_network(struct net_config *net_conf)
 			RTE_LOG(ERR, MALLOC, "%s: Out of memory\n", __func__);
 			return -1;
 		}
+	}
+
+	if (randomize_rss_key() < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize RSS key.\n");
+		return -1;
 	}
 
 	/* Convert RSS key. */
