@@ -27,6 +27,7 @@ function gatekeeper_init()
 	local lls_conf = llsf(net_conf, numa_table)
 
 	local gk_conf
+	local gt_conf
 
 	if gatekeeper_server == true then
 		-- n_lcores + 2 on same NUMA: for GK-GT Unit and Solicitor.
@@ -47,13 +48,13 @@ function gatekeeper_init()
 		local ggu_conf = gguf(net_conf, gk_conf, ggu_lcore)
 	else
 		local gtf = require("gt")
-		local gt_conf = gtf(net_conf, numa_table)
+		gt_conf = gtf(net_conf, numa_table)
 	end
 
 	-- Allocate CPS after to increase the change that the LLS block is
 	-- allocated in the same NUMA node as the GK/GT/GK-GT-unit blocks.
 	local cpsf = require("cps")
-	local cps_conf = cpsf(net_conf, lls_conf, numa_table)
+	local cps_conf = cpsf(net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 
 	local dyf = require("dyn_cfg")
 	local dy_conf = dyf(gk_conf, numa_table)

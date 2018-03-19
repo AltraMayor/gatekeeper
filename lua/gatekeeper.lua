@@ -220,7 +220,8 @@ struct gt_config *alloc_gt_conf(void);
 int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
 
 struct cps_config *get_cps_conf(void);
-int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
+int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct gt_config *gt_conf, struct cps_config *cps_conf,
 	struct lls_config *lls_conf, const char *kni_kmod_path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,

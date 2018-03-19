@@ -24,12 +24,6 @@
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 
-struct ip_prefix {
-	const char    *str;
-	struct ipaddr addr;
-	int           len;
-};
-
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
 {
@@ -1425,18 +1419,14 @@ check_prefix_locked(struct ip_prefix *prefix,
 }
 
 int
-add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
+add_fib_entry_numerical(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
 	int ret;
-	struct ip_prefix prefix_info;
 	struct gk_fib *neigh_fib;
-	struct ipaddr gt_addr, gw_addr;
-	struct ipaddr *gt_para = NULL, *gw_para = NULL;
 
-	prefix_info.str = prefix;
-	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
-	if (prefix_info.len < 0)
+	if (prefix_info->len < 0)
 		return -1;
 
 	/*
@@ -1449,14 +1439,52 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	 * would break the test.
 	 */
 	neigh_fib = find_fib_entry_for_neighbor_locked(
-		&prefix_info.addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
+		&prefix_info->addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
 	if (neigh_fib != NULL)
 		return -1;
 
 	neigh_fib = find_fib_entry_for_neighbor_locked(
-		&prefix_info.addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
+		&prefix_info->addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
 	if (neigh_fib != NULL)
 		return -1;
+
+	if (gw_addr != NULL) {
+		/*
+		 * Verify that the IP addresses of gateways FIB entries
+		 * are not included in their prefixes.
+		 */
+		ret = check_gateway_prefix(prefix_info, gw_addr);
+		if (ret < 0)
+			return -1;
+	}
+
+	/*
+	 * Only a drop or another grantor entry must be able to be longer than
+	 * a grantor or a drop prefix. This way we protect network operators of
+	 * accidentally create a security hole.
+	 */
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	ret = check_prefix_locked(prefix_info, action, gk_conf);
+	if (ret < 0) {
+		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+		return -1;
+	}
+
+	ret = add_fib_entry_locked(
+		prefix_info, gt_addr, gw_addr, action, gk_conf);
+	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+
+	return ret;
+}
+
+int
+add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
+	enum gk_fib_action action, struct gk_config *gk_conf)
+{
+	int ret;
+	struct ip_prefix prefix_info;
+	struct ipaddr gt_addr, gw_addr;
+	struct ipaddr *gt_para = NULL, *gw_para = NULL;
 
 	if (gt_ip != NULL) {
 		ret = convert_str_to_ip(gt_ip, &gt_addr);
@@ -1469,32 +1497,27 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 		ret = convert_str_to_ip(gw_ip, &gw_addr);
 		if (ret < 0)
 			return -1;
-
-		/*
-		 * Verify that the IP addresses of gateways FIB entries
-		 * are not included in their prefixes.
-		 */
-		ret = check_gateway_prefix(&prefix_info, &gw_addr);
-		if (ret < 0)
-			return -1;
-		
 		gw_para = &gw_addr;
 	}
 
-	/*
-	 * Only a drop or another grantor entry must be able to be longer than
-	 * a grantor or a drop prefix. This way we protect network operators of
-	 * accidentally create a security hole.
-	 */
-	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = check_prefix_locked(&prefix_info, action, gk_conf);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-		return -1;
-	}
+	prefix_info.str = prefix;
+	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
 
-	ret = add_fib_entry_locked(
-		&prefix_info, gt_para, gw_para, action, gk_conf);
+	return add_fib_entry_numerical(&prefix_info,
+		gt_para, gw_para, action, gk_conf);
+}
+
+int
+del_fib_entry_numerical(
+	struct ip_prefix *prefix_info, struct gk_config *gk_conf)
+{
+	int ret;
+
+	if (prefix_info->len < 0)
+		return -1;
+
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	ret = del_fib_entry_locked(prefix_info, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1503,17 +1526,10 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 int
 del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf)
 {
-	int ret;
 	struct ip_prefix prefix_info;
 
 	prefix_info.str = ip_prefix;
 	prefix_info.len = parse_ip_prefix(ip_prefix, &prefix_info.addr);
-	if (prefix_info.len < 0)
-		return -1;
 
-	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = del_fib_entry_locked(&prefix_info, gk_conf);
-	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-
-	return ret;
+	return del_fib_entry_numerical(&prefix_info, gk_conf);
 }

@@ -21,6 +21,8 @@
 
 #include <rte_timer.h>
 
+#include "gatekeeper_gk.h"
+#include "gatekeeper_gt.h"
 #include "gatekeeper_mailbox.h"
 #include "list.h"
 
@@ -66,6 +68,9 @@ struct cps_config {
 
 	/* Socket for receiving routing table updates. */
 	struct mnl_socket *nl;
+
+	struct gk_config  *gk;
+	struct gt_config  *gt;
 };
 
 /* Information needed to submit IPv6 BGP packets to the CPS block. */
@@ -126,20 +131,35 @@ struct cps_request {
 
 struct route_update {
 	/* Type of update: RTM_NEWROUTE or RTM_DELROUTE. */
-	int type;
+	int      type;
 
 	/* Address family of update: AF_INET or AF_INET6. */
-	int family;
+	int      family;
 
 	/*
 	 * Whether this update has all the fields and attributes
 	 * necessary to update the LPM table.
 	 */
-	int valid;
+	int      valid;
+
+	uint8_t  prefix_len;
+
+	uint32_t oif_index;
+
+	union {
+		struct in_addr  v4;
+		struct in6_addr v6;
+	} ip;
+
+	union {
+		struct in_addr  v4;
+		struct in6_addr v6;
+	} gw;
 };
 
 struct cps_config *get_cps_conf(void);
-int run_cps(struct net_config *net_conf, struct cps_config *cps_conf,
+int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
+	struct gt_config *gt_conf, struct cps_config *cps_conf,
 	struct lls_config *lls_conf, const char *kni_kmod_path);
 
 #endif /* _GATEKEEPER_CPS_H_ */
