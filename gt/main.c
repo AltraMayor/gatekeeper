@@ -316,7 +316,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 	if (pkt_info->outer_ethertype == ETHER_TYPE_IPv4) {
 		if (inet_ntop(AF_INET, &((struct ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
-				src, sizeof(struct in_addr)) == NULL) {
+				src, sizeof(src)) == NULL) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: %s: failed to convert a number to an IPv4 address (%s)\n",
 				__func__, strerror(errno));
 			return;
@@ -324,7 +324,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 
 		if (inet_ntop(AF_INET, &((struct ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
-				dst, sizeof(struct in_addr)) == NULL) {
+				dst, sizeof(dst)) == NULL) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: %s: failed to convert a number to an IPv4 address (%s)\n",
 				__func__, strerror(errno));
 			return;
@@ -332,7 +332,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 	} else {
 		if (inet_ntop(AF_INET6, &((struct ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
-				src, sizeof(struct in6_addr)) == NULL) {
+				src, sizeof(src)) == NULL) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: %s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
 			return;
@@ -340,7 +340,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 
 		if (inet_ntop(AF_INET6, &((struct ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
-				dst, sizeof(struct in6_addr)) == NULL) {
+				dst, sizeof(dst)) == NULL) {
 			RTE_LOG(ERR, GATEKEEPER, "gt: %s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
 			return;
