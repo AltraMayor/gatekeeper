@@ -16,9 +16,15 @@ return function (net_conf, sol_conf, gk_lcores)
 	gk_conf.max_num_ipv6_rules = 1024
 	gk_conf.num_ipv6_tbl8s = 65536
 
+	-- 48h.
+	gatekeeper.c.set_gk_request_timeout(48 * 60 * 60, gk_conf)
+
 	gk_conf.max_num_ipv6_neighbors = 65536
 	gk_conf.gk_max_num_ipv4_fib_entries = 256
 	gk_conf.gk_max_num_ipv6_fib_entries = 65536
+
+	-- Scan the whole flow table in 10 minutes.
+	gk_conf.flow_table_full_scan_ms = 10 * 60 * 1000
 
 	--
 	-- Code below this point should not need to be changed.

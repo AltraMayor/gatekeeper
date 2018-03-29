@@ -18,6 +18,7 @@
 
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include <rte_ip.h>
 #include <rte_log.h>
@@ -478,6 +479,72 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 	return 0;
 }
 
+static bool
+is_flow_expired(struct flow_entry *fe,
+	uint64_t now, uint64_t request_timeout_cycles)
+{
+	switch(fe->state) {
+	case GK_REQUEST:
+		if (fe->u.request.last_packet_seen_at > now) {
+			char err_msg[128];
+			int ret = snprintf(err_msg, sizeof(err_msg),
+				"gk: buggy condition at %s: wrong timestamp",
+				__func__);
+			RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+			print_flow_err_msg(&fe->flow, err_msg);
+			return true;
+		}
+
+		return now - fe->u.request.last_packet_seen_at >=
+			request_timeout_cycles;
+	case GK_GRANTED:
+		return now >= fe->u.granted.cap_expire_at;
+	case GK_DECLINED:
+		return now >= fe->u.declined.expire_at;
+	default:
+		return true;
+	}
+}
+
+static int
+gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
+{
+	int ret = rte_hash_del_key(h, &fe->flow);
+	if (likely(ret >= 0))
+		memset(fe, 0, sizeof(*fe));
+	else {
+		RTE_LOG(ERR, HASH,
+			"The GK block failed to delete a key from hash table at %s: %s!\n",
+			__func__, strerror(-ret));
+	}
+
+	return ret;
+}
+
+static void
+gk_flow_tbl_bucket_scan(uint32_t *bidx,
+	uint64_t request_timeout_cycles, struct gk_instance *instance)
+{
+	int32_t index;
+	const struct ip_flow *key;
+	void *data;
+	uint32_t next = 0;
+	uint64_t now = rte_rdtsc();
+
+	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
+		(void *)&key, &data, bidx, &next);
+	while (index >= 0) {
+		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
+		if (is_flow_expired(fe, now, request_timeout_cycles)) {
+			gk_del_flow_entry_from_hash(
+				instance->ip_flow_hash_table, fe);
+		}
+
+		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
+			(void *)&key, &data, bidx, &next);
+	}
+}
+
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
@@ -542,6 +609,105 @@ out:
 	return ret;
 }
 
+static struct flow_entry *
+find_flow_entry_candidate(struct gk_instance *instance,
+	uint32_t bidx, uint64_t request_timeout_cycles,
+	enum gk_flow_state state_to_add)
+{
+	int32_t index;
+	uint32_t next = 0;
+	const struct ip_flow *key;
+	struct flow_entry *last_fe = NULL;
+	void *data;
+	uint64_t now = rte_rdtsc();
+
+	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
+		(void *)&key, &data, &bidx, &next);
+	while (index >= 0) {
+		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
+
+		/* Expired flow entry. */
+		if (is_flow_expired(fe, now, request_timeout_cycles))
+			return fe;
+
+		/*
+		 * Only flow entries with state GK_REQUEST
+		 * will be possibly repaced, others have a higher priority.
+		 */
+		if (fe->state == GK_REQUEST) {
+			uint8_t priority = priority_from_delta_time(now,
+				fe->u.request.last_packet_seen_at);
+			/*
+			 * Do not favor request entries that are not doubling
+			 * its priority when a Gatekeeper server is overloaded.
+			 * We use +2 instead of +1 in the test below to account
+			 * for random delays in the network.
+			 */
+			if (priority > fe->u.request.last_priority + 2)
+				return fe;
+
+			if (state_to_add != GK_REQUEST && (last_fe == NULL ||
+					last_fe->u.request.last_packet_seen_at >
+					fe->u.request.last_packet_seen_at))
+				last_fe = fe;
+		}
+
+		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
+			(void *)&key, &data, &bidx, &next);
+	}
+
+	return last_fe;
+}
+
+static int
+drop_flow_entry_heuristically(struct gk_instance *instance,
+	hash_sig_t sig, uint64_t request_timeout_cycles,
+	enum gk_flow_state state_to_add)
+{
+	uint32_t primary_bidx = rte_hash_get_primary_bucket(
+		instance->ip_flow_hash_table, sig);
+	struct flow_entry *fe = find_flow_entry_candidate(
+		instance, primary_bidx, request_timeout_cycles, state_to_add);
+	if (fe == NULL)
+		return -ENOSPC;
+
+	return gk_del_flow_entry_from_hash(instance->ip_flow_hash_table, fe);
+}
+
+/*
+ * We heuristically drop entries to alleviate memory pressure
+ * when the table is full.
+ */
+static int
+gk_hash_add_flow_entry(struct gk_instance *instance,
+	struct ip_flow *flow, unsigned int request_timeout_cycles,
+	uint32_t rss_hash_val, enum gk_flow_state state_to_add)
+{
+	while (true) {
+		int ret = rte_hash_add_key_with_hash(
+			instance->ip_flow_hash_table, flow, rss_hash_val);
+		if (ret == -ENOSPC) {
+			RTE_LOG(WARNING, HASH,
+				"The GK block failed to add new key to hash table in %s due to lack of space!\n",
+				__func__);
+			ret = drop_flow_entry_heuristically(instance,
+				rss_hash_val, request_timeout_cycles,
+				state_to_add);
+			if (ret < 0)
+				return -ENOSPC;
+			continue;
+		}
+
+		if (ret < 0) {
+			RTE_LOG(ERR, HASH,
+				"The GK block failed to add a new key to hash table in %s: %s!\n",
+				__func__, strerror(-ret));
+		}
+
+		return ret;
+	}
+}
+
 /*
  * This function is only called when a policy from GGU block
  * tries to add a new flow entry in the flow table.
@@ -552,11 +718,12 @@ out:
 static struct flow_entry *
 add_new_flow_from_policy(
 	struct ggu_policy *policy, struct gk_instance *instance,
-	struct gk_lpm *ltbl, uint32_t rss_hash_val)
+	struct gk_config *gk_conf, uint32_t rss_hash_val)
 {
 	int ret;
 	struct gk_fib *fib;
 	struct flow_entry *fe;
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	fib = look_up_fib(ltbl, &policy->flow);
 	if (fib == NULL || fib->action != GK_FWD_GRANTOR) {
@@ -572,16 +739,10 @@ add_new_flow_from_policy(
 		return NULL;
 	}
 
-	/* Create a new flow entry. */
-	ret = rte_hash_add_key_with_hash(
-		instance->ip_flow_hash_table,
- 		&policy->flow, rss_hash_val);
-	if (ret < 0) {
-		RTE_LOG(ERR, HASH,
-			"The GK block failed to add new key to hash table in %s!\n",
-			__func__);
+	ret = gk_hash_add_flow_entry(instance, &policy->flow,
+		gk_conf->request_timeout_cycles, rss_hash_val, policy->state);
+	if (ret < 0)
 		return NULL;
-	}
 
 	fe = &instance->ip_flow_entry_table[ret];
 	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
@@ -593,7 +754,7 @@ add_new_flow_from_policy(
 
 static void
 add_ggu_policy(struct ggu_policy *policy,
-	struct gk_instance *instance, struct gk_lpm *ltbl)
+	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -614,7 +775,7 @@ add_ggu_policy(struct ggu_policy *policy,
 		 * need to call initialize_flow_entry().
 		 */
 		fe = add_new_flow_from_policy(
-			policy, instance, ltbl, rss_hash_val);
+			policy, instance, gk_conf, rss_hash_val);
 		if (fe == NULL)
 			return;
 	} else
@@ -671,16 +832,8 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 			struct flow_entry *fe =
 				&instance->ip_flow_entry_table[index];
 			if (fe->grantor_fib == fib) {
-				int ret = rte_hash_del_key(
-					instance->ip_flow_hash_table,
-					&fe->flow);
-				if (likely(ret >= 0))
-					memset(fe, 0, sizeof(*fe));
-				else {
-					RTE_LOG(ERR, HASH,
-						"gk: failed to call rte_hash_del_key() at %s - %s",
-						__func__, strerror(-ret));
-				}
+				gk_del_flow_entry_from_hash(
+					instance->ip_flow_hash_table, fe);
 			}
 
 			index = rte_hash_iterate(instance->ip_flow_hash_table,
@@ -720,11 +873,11 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 
 static void
 process_gk_cmd(struct gk_cmd_entry *entry,
-	struct gk_instance *instance, struct gk_lpm *ltbl)
+	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	switch (entry->op) {
 	case GGU_POLICY_ADD:
-		add_ggu_policy(&entry->u.ggu, instance, ltbl);
+		add_ggu_policy(&entry->u.ggu, instance, gk_conf);
 		break;
 
 	case GK_SYNCH_WITH_LPM:
@@ -865,6 +1018,10 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 			switch (fib->action) {
 			case GK_FWD_GRANTOR:
 				/*
+				 * We heuristically drop entries to
+				 * alleviate memory pressure
+				 * when the table is full.
+				 *
 				 * The entry instructs to enforce
 				 * policies over its packets,
 			 	 * initialize an entry in the
@@ -872,12 +1029,28 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 				 * brand-new entry instructs, and
 			 	 * go to the next packet.
 			 	 */
-				ret = rte_hash_add_key_with_hash(
-					instance->ip_flow_hash_table,
- 					&packet.flow, pkt->hash.rss);
-				if (ret < 0) {
-					RTE_LOG(ERR, HASH,
-						"The GK block failed to add new key to hash table!\n");
+				ret = gk_hash_add_flow_entry(
+					instance, &packet.flow,
+					gk_conf->request_timeout_cycles,
+					pkt->hash.rss, GK_REQUEST);
+				if (ret == -ENOSPC) {
+					/*
+					 * There is no room for a new
+					 * flow entry, but give this
+					 * flow a chance sending a
+					 * request to the grantor
+					 * server.
+					 */
+					struct flow_entry temp_fe;
+					initialize_flow_entry(&temp_fe,
+						&packet.flow, fib);
+					ret = gk_process_request(
+						&temp_fe, &packet,
+						gk_conf->sol_conf);
+					if (ret < 0)
+						drop_packet(pkt);
+					continue;
+				} else if (ret < 0) {
 					drop_packet(pkt);
 					continue;
 				}
@@ -1168,7 +1341,7 @@ process_cmds_from_mailbox(
                	(void **)gk_cmds, GK_CMD_BURST_SIZE);
 
         for (i = 0; i < num_cmd; i++) {
-		process_gk_cmd(gk_cmds[i], instance, &gk_conf->lpm_tbl);
+		process_gk_cmd(gk_cmds[i], instance, gk_conf);
 		mb_free_entry(&instance->mb, gk_cmds[i]);
         }
 }
@@ -1188,6 +1361,20 @@ gk_proc(void *arg)
 	uint16_t rx_queue_back = instance->rx_queue_back;
 	uint16_t tx_queue_back = instance->tx_queue_back;
 
+	int num_buckets = rte_hash_get_num_buckets(
+		instance->ip_flow_hash_table);
+	uint32_t bucket_idx = 0;
+	uint64_t last_tsc = rte_rdtsc();
+	uint64_t bucket_scan_timeout_cycles = round(
+		(double)(gk_conf->flow_table_full_scan_ms *
+		rte_get_tsc_hz()) / (num_buckets * 1000.));
+	if (bucket_scan_timeout_cycles == 0) {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: the value of the field flow_table_full_scan_ms in Gatekeeper configuration is too small!");
+		exiting = true;
+		return -1;
+	}
+
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gk: the GK block is running at lcore = %u\n", lcore);
 
@@ -1203,6 +1390,12 @@ gk_proc(void *arg)
 			lcore, gk_conf);
 
 		process_cmds_from_mailbox(instance, gk_conf);
+
+		if (rte_rdtsc() - last_tsc >= bucket_scan_timeout_cycles) {
+			gk_flow_tbl_bucket_scan(&bucket_idx,
+				gk_conf->request_timeout_cycles, instance);
+			last_tsc = rte_rdtsc();
+		}
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -1215,6 +1408,14 @@ struct gk_config *
 alloc_gk_conf(void)
 {
 	return rte_calloc("gk_config", 1, sizeof(struct gk_config), 0);
+}
+
+void
+set_gk_request_timeout(unsigned int request_timeout_sec,
+	struct gk_config *gk_conf)
+{
+	gk_conf->request_timeout_cycles =
+		request_timeout_sec * rte_get_tsc_hz();
 }
 
 static void
@@ -1248,7 +1449,7 @@ cleanup_gk(struct gk_config *gk_conf)
 				ip_flow_entry_table);
 		}
 
-                destroy_mailbox(&gk_conf->instances[i].mb);
+		destroy_mailbox(&gk_conf->instances[i].mb);
 	}
 
 	for (ui = 0; ui < gk_conf->gk_max_num_ipv4_fib_entries; ui++) {
