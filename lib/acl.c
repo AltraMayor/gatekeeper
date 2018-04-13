@@ -139,8 +139,10 @@ destroy_acls(struct acl_state *astate)
 	unsigned int numa_nodes = get_net_conf()->numa_nodes;
 	unsigned int i;
 	for (i = 0; i < numa_nodes; i++) {
-		rte_acl_free(astate->acls[i]);
-		astate->acls[i] = NULL;
+		if (astate->acls[i] != NULL) {
+			rte_acl_free(astate->acls[i]);
+			astate->acls[i] = NULL;
+		}
 	}
 }
 
@@ -237,7 +239,12 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
 		ipv4_rules[i].data.userdata = iface->ipv4_acls.func_count;
 
 	for (i = 0; i < numa_nodes; i++) {
-		int ret = rte_acl_add_rules(iface->ipv4_acls.acls[i],
+		int ret;
+
+		if (iface->ipv4_acls.acls[i] == NULL)
+			continue;
+
+		ret = rte_acl_add_rules(iface->ipv4_acls.acls[i],
 			(struct rte_acl_rule *)ipv4_rules, num_rules);
 		if (ret < 0) {
 			RTE_LOG(ERR, ACL, "Failed to add IPv4 ACL rules on the %s interface on socket %d\n",
@@ -266,7 +273,12 @@ build_ipv4_acls(struct gatekeeper_if *iface)
 	rte_memcpy(&acl_build_params.defs, ipv4_defs, sizeof(ipv4_defs));
 
 	for (i = 0; i < numa_nodes; i++) {
-		int ret = rte_acl_build(iface->ipv4_acls.acls[i],
+		int ret;
+
+		if (iface->ipv4_acls.acls[i] == NULL)
+			continue;
+
+		ret = rte_acl_build(iface->ipv4_acls.acls[i],
 			&acl_build_params);
 		if (ret < 0) {
 			RTE_LOG(ERR, ACL,
@@ -282,17 +294,22 @@ build_ipv4_acls(struct gatekeeper_if *iface)
 int
 init_ipv4_acls(struct gatekeeper_if *iface)
 {
-	unsigned int numa_nodes = get_net_conf()->numa_nodes;
+	struct net_config *net_conf = get_net_conf();
 	unsigned int i;
 
-	for (i = 0; i < numa_nodes; i++) {
+	for (i = 0; i < net_conf->numa_nodes; i++) {
 		char acl_name[64];
 		struct rte_acl_param acl_params = {
 			.socket_id = i,
 			.rule_size = RTE_ACL_RULE_SZ(RTE_DIM(ipv4_defs)),
 			.max_rule_num = MAX_NUM_ACL_RULES,
 		};
-		int ret = snprintf(acl_name, sizeof(acl_name),
+		int ret;
+
+		if (!net_conf->numa_used[i])
+			continue;
+
+		ret = snprintf(acl_name, sizeof(acl_name),
 			"%s_%u_v4", iface->name, i);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(acl_name));
 		acl_params.name = acl_name;
@@ -447,7 +464,12 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 		ipv6_rules[i].data.userdata = iface->ipv6_acls.func_count;
 
 	for (i = 0; i < numa_nodes; i++) {
-		int ret = rte_acl_add_rules(iface->ipv6_acls.acls[i],
+		int ret;
+
+		if (iface->ipv6_acls.acls[i] == NULL)
+			continue;
+
+		ret = rte_acl_add_rules(iface->ipv6_acls.acls[i],
 			(struct rte_acl_rule *)ipv6_rules, num_rules);
 		if (ret < 0) {
 			RTE_LOG(ERR, ACL, "Failed to add IPv6 ACL rules on the %s interface on socket %d\n",
@@ -476,7 +498,12 @@ build_ipv6_acls(struct gatekeeper_if *iface)
 	rte_memcpy(&acl_build_params.defs, ipv6_defs, sizeof(ipv6_defs));
 
 	for (i = 0; i < numa_nodes; i++) {
-		int ret = rte_acl_build(iface->ipv6_acls.acls[i],
+		int ret;
+
+		if (iface->ipv6_acls.acls[i] == NULL)
+			continue;
+
+		ret = rte_acl_build(iface->ipv6_acls.acls[i],
 			&acl_build_params);
 		if (ret < 0) {
 			RTE_LOG(ERR, ACL,
@@ -492,17 +519,22 @@ build_ipv6_acls(struct gatekeeper_if *iface)
 int
 init_ipv6_acls(struct gatekeeper_if *iface)
 {
-	unsigned int numa_nodes = get_net_conf()->numa_nodes;
+	struct net_config *net_conf = get_net_conf();
 	unsigned int i;
 
-	for (i = 0; i < numa_nodes; i++) {
+	for (i = 0; i < net_conf->numa_nodes; i++) {
 		char acl_name[64];
 		struct rte_acl_param acl_params = {
 			.socket_id = i,
 			.rule_size = RTE_ACL_RULE_SZ(RTE_DIM(ipv6_defs)),
 			.max_rule_num = MAX_NUM_ACL_RULES,
 		};
-		int ret = snprintf(acl_name, sizeof(acl_name),
+		int ret;
+
+		if (!net_conf->numa_used[i])
+			continue;
+
+		ret = snprintf(acl_name, sizeof(acl_name),
 			"%s_%u_v6", iface->name, i);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(acl_name));
 		acl_params.name = acl_name;

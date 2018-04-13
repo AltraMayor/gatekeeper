@@ -12,10 +12,10 @@ function gatekeeper_init()
 	-- Otherwise, it will run as a grantor server.
 	local gatekeeper_server = true
 
-	local numa_table = gatekeeper.get_numa_table()
-
 	local netf = require("net")
 	local net_conf = netf(gatekeeper_server)
+
+	local numa_table = gatekeeper.get_numa_table(net_conf)
 
 	-- LLS should be the first block initialized, since it should have
 	-- queue IDs of 0 so that when ARP filters are not supported ARP
