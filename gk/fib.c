@@ -1361,17 +1361,15 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 
 /*
  * This function makes sure that only a drop or another grantor entry
- * must be able to be longer than a grantor or a drop prefix.
+ * can have a longer prefix than a grantor or a drop entry.
  *
- * TODO A potential bug needs to be fixed here.
- * Assuming there's prefix 10.1.1.0/24 that leads to a gateway and
- * the prefix being added to a grantor is 10.1/16.
- * That is, the gateway entry would be a security hole.
- *
- * The solution is to extend RTE LPM table to have an iterator over
- * its entries. The iterator should require a prefix as parameter and
- * list all entries as long as a given prefix or longer.
- * To list all entries, the prefix would have length zero.
+ * The importance of this sanity check is illustrated in the following example:
+ * assume that the prefix 10.1.1.0/24 forwards to a gateway and
+ * the prefix 10.1/16 being added forwards to a grantor.
+ * Although the prefix 10.1/16 is intended to protect every host in that
+ * destination, the prefix 10.1.1.0/24 leaves some of those hosts unprotected.
+ * Without this sanity check, variations of this example could go unnoticed
+ * in deployments of Gatekeeper until it is too late.
  */
 static int
 check_prefix_locked(struct ip_prefix *prefix,
@@ -1382,37 +1380,115 @@ check_prefix_locked(struct ip_prefix *prefix,
 	struct gk_fib *ip_prefix_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
-	if (action == GK_DROP || action == GK_FWD_GRANTOR)
-		return 0;
+	if (action == GK_DROP || action == GK_FWD_GRANTOR) {
+		/* Ensure that all prefixes longer than @prefix are safe. */
+		if (prefix->addr.proto == ETHER_TYPE_IPv4) {
+			struct rte_lpm_iterator_state state;
+			const struct rte_lpm_rule *re;
+			int ret = rte_lpm_iterator_state_init(ltbl->lpm,
+				ntohl(prefix->addr.ip.v4.s_addr),
+				prefix->len, &state);
+			if (ret < 0) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"gk: failed to initialize the lpm rule iterator state at %s!\n",
+					__func__);
+				return -1;
+			}
 
+			ret = rte_lpm_rule_iterate(&state, &re);
+			while (ret >= 0) {
+				ip_prefix_fib = &ltbl->fib_tbl[re->next_hop];
+				if (ip_prefix_fib->action != GK_FWD_GRANTOR &&
+						ip_prefix_fib->action !=
+						GK_DROP) {
+					RTE_LOG(WARNING, GATEKEEPER,
+						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+						prefix->str, action, state.depth,
+						ip_prefix_fib->action);
+					return -1;
+				}
+				ret = rte_lpm_rule_iterate(&state, &re);
+			}
+		} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
+			struct rte_lpm6_iterator_state state;
+			const struct rte_lpm6_rule *re;
+			int ret = rte_lpm6_iterator_state_init(ltbl->lpm6,
+				prefix->addr.ip.v6.s6_addr,
+				prefix->len, &state);
+			if (ret < 0) {
+				RTE_LOG(ERR, GATEKEEPER,
+					"gk: failed to initialize the lpm6 rule iterator state at %s!\n",
+					__func__);
+				return -1;
+			}
+
+			ret = rte_lpm6_rule_iterate(&state, &re);
+			while (ret >= 0) {
+				ip_prefix_fib = &ltbl->fib_tbl6[re->next_hop];
+				if (ip_prefix_fib->action != GK_FWD_GRANTOR &&
+						ip_prefix_fib->action !=
+						GK_DROP) {
+					RTE_LOG(WARNING, GATEKEEPER,
+						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+						prefix->str, action, re->depth,
+						ip_prefix_fib->action);
+					return -1;
+				}
+				ret = rte_lpm6_rule_iterate(&state, &re);
+			}
+		} else {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"gk: unknown IP type %hu with prefix %s and action %u",
+				prefix->addr.proto, prefix->str, action);
+			return -1;
+		}
+
+		return 0;
+	}
+
+	/* Ensure that the new prefix does not create a security hole. */
 	if (prefix->addr.proto == ETHER_TYPE_IPv4) {
+		uint32_t prefix_ip4 = ntohl(prefix->addr.ip.v4.s_addr);
+
 		for (i = 0; i < prefix->len; i++) {
 			uint32_t fib_id;
 			ip_prefix_present = rte_lpm_is_rule_present(
-				ltbl->lpm, ntohl(prefix->addr.ip.v4.s_addr),
-				prefix->len, &fib_id);
+				ltbl->lpm, prefix_ip4, i, &fib_id);
 			if (!ip_prefix_present)
 				continue;
 
 			ip_prefix_fib = &ltbl->fib_tbl[fib_id];
 			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
-					ip_prefix_fib->action == GK_DROP)
+					ip_prefix_fib->action == GK_DROP) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+					prefix->str, action, i, ip_prefix_fib->action);
 				return -1;
+			}
 		}
-	} else {
+	} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
 		for (i = 0; i < prefix->len; i++) {
 			uint8_t fib_id;
 			ip_prefix_present = rte_lpm6_is_rule_present(
 				ltbl->lpm6, prefix->addr.ip.v6.s6_addr,
-				prefix->len, &fib_id);
+				i, &fib_id);
 			if (!ip_prefix_present)
 				continue;
 
 			ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
 			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
-					ip_prefix_fib->action == GK_DROP)
+					ip_prefix_fib->action == GK_DROP) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+					prefix->str, action, i, ip_prefix_fib->action);
 				return -1;
+			}
 		}
+	} else {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: unknown IP type %hu with prefix %s and action %u",
+			prefix->addr.proto, prefix->str, action);
+		return -1;
 	}
 
 	return 0;
@@ -1428,6 +1504,13 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 
 	if (prefix_info->len < 0)
 		return -1;
+
+	if (prefix_info->len == 0) {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!",
+			prefix_info->str, __func__);
+		return -1;
+	}
 
 	/*
 	 * One can only look up, without the lock, the LPM table to verify that
@@ -1515,6 +1598,13 @@ del_fib_entry_numerical(
 
 	if (prefix_info->len < 0)
 		return -1;
+
+	if (prefix_info->len == 0) {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!",
+			prefix_info->str, __func__);
+		return -1;
+	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	ret = del_fib_entry_locked(prefix_info, gk_conf);
