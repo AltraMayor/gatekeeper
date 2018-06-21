@@ -56,7 +56,7 @@ ln -s ${RTE_SDK}/build ${RTE_SDK}/${RTE_TARGET}
 cd ../luajit-2.0
 
 # Build and install.
-make
+make CFLAGS=-fPIC
 sudo make install
 
 cd ../../
