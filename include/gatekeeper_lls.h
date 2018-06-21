@@ -70,7 +70,7 @@ struct lls_map {
 	struct ether_addr ha;
 
 	/* Port on which this map exists. */
-	uint8_t           port_id;
+	uint16_t          port_id;
 
 	/* Whether this map has been marked as stale. */
 	int               stale;

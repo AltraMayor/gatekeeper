@@ -895,9 +895,9 @@ static int
 gk_setup_rss(struct gk_config *gk_conf)
 {
 	int i, ret = 0;
-	uint8_t port_front = gk_conf->net->front.id;
+	uint16_t port_front = gk_conf->net->front.id;
 	uint16_t gk_queues_front[gk_conf->num_lcores];
-	uint8_t port_back = gk_conf->net->back.id;
+	uint16_t port_back = gk_conf->net->back.id;
 	uint16_t gk_queues_back[gk_conf->num_lcores];
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
@@ -933,7 +933,7 @@ out:
 
 /* Process the packets on the front interface. */
 static void
-process_pkts_front(uint8_t port_front, uint8_t port_back,
+process_pkts_front(uint16_t port_front, uint16_t port_back,
 	uint16_t rx_queue_front, uint16_t tx_queue_back,
 	unsigned int lcore, struct gk_instance *instance,
 	struct gk_config *gk_conf)
@@ -1182,7 +1182,7 @@ process_pkts_front(uint8_t port_front, uint8_t port_back,
 
 /* Process the packets on the back interface. */
 static void
-process_pkts_back(uint8_t port_back, uint8_t port_front,
+process_pkts_back(uint16_t port_back, uint16_t port_front,
 	uint16_t rx_queue_back, uint16_t tx_queue_front,
 	unsigned int lcore, struct gk_config *gk_conf)
 {
@@ -1354,8 +1354,8 @@ gk_proc(void *arg)
 	unsigned int block_idx = get_block_idx(gk_conf, lcore);
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 
-	uint8_t port_front = get_net_conf()->front.id;
-	uint8_t port_back = get_net_conf()->back.id;
+	uint16_t port_front = get_net_conf()->front.id;
+	uint16_t port_back = get_net_conf()->back.id;
 	uint16_t rx_queue_front = instance->rx_queue_front;
 	uint16_t tx_queue_front = instance->tx_queue_front;
 	uint16_t rx_queue_back = instance->rx_queue_back;

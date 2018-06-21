@@ -35,8 +35,8 @@ struct nd_request {
 	int              stale;
 };
 
-int kni_change_mtu(uint8_t port_id, unsigned new_mtu);
-int kni_change_if(uint8_t port_id, uint8_t if_up);
+int kni_change_mtu(uint16_t port_id, unsigned int new_mtu);
+int kni_change_if(uint16_t port_id, uint8_t if_up);
 int kni_config(struct rte_kni *kni, struct gatekeeper_if *iface);
 int route_event_sock_open(struct cps_config *cps_conf);
 void route_event_sock_close(struct cps_config *cps_conf);

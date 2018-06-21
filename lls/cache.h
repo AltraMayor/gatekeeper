@@ -90,7 +90,7 @@ struct lls_mod_req {
 	 * Port of modification, possibly not
 	 * different from existing port ID in record.
 	 */
-	uint8_t           port_id;
+	uint16_t          port_id;
 
 	/* Timestamp of this modification. */
 	time_t            ts;
