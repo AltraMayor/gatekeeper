@@ -47,7 +47,7 @@ void destroy_mailbox(struct mailbox *mb);
 static inline int
 mb_dequeue_burst(struct mailbox *mb, void **obj_table, unsigned n)
 {
-	return rte_ring_sc_dequeue_burst(mb->ring, obj_table, n);
+	return rte_ring_sc_dequeue_burst(mb->ring, obj_table, n, NULL);
 }
 
 static inline void
