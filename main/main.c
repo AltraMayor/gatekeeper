@@ -136,7 +136,7 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization!\n");
 
 	/* XXX Set the global log level. Change it as needed. */
-	rte_set_log_level(RTE_LOG_DEBUG);
+	rte_log_set_global_level(RTE_LOG_DEBUG);
 
 	/* Used by the LLS block. */
 	rte_timer_subsystem_init();
