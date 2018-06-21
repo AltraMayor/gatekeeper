@@ -824,7 +824,7 @@ remove_prefix_from_lpm_locked(
 
 		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(ip_prefix->addr.proto == ETHER_TYPE_IPv6)) {
-		uint8_t fib_id;
+		uint32_t fib_id;
 
 		ip_prefix_present = rte_lpm6_is_rule_present(
 			ltbl->lpm6, ip_prefix->addr.ip.v6.s6_addr,
@@ -1468,7 +1468,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 		}
 	} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
 		for (i = 0; i < prefix->len; i++) {
-			uint8_t fib_id;
+			uint32_t fib_id;
 			ip_prefix_present = rte_lpm6_is_rule_present(
 				ltbl->lpm6, prefix->addr.ip.v6.s6_addr,
 				i, &fib_id);
