@@ -1262,9 +1262,9 @@ gatekeeper_init_network(struct net_config *net_conf)
 	/* Check port limits. */
 	num_ports = net_conf->front.num_ports +
 		(net_conf->back_iface_enabled ? net_conf->back.num_ports : 0);
-	if (num_ports > rte_eth_dev_count()) {
+	if (num_ports > rte_eth_dev_count_avail()) {
 		RTE_LOG(ERR, GATEKEEPER, "There are only %i network ports available to DPDK/Gatekeeper, but configuration is using %i ports\n",
-			rte_eth_dev_count(), num_ports);
+			rte_eth_dev_count_avail(), num_ports);
 		ret = -1;
 		goto numa;
 	}
