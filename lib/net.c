@@ -870,27 +870,16 @@ init_iface(struct gatekeeper_if *iface)
 
 	/* Initialize all ports on this interface. */
 	for (i = 0; i < iface->num_ports; i++) {
-		struct rte_pci_addr pci_addr;
-		uint8_t port_id;
-
-		ret = eal_parse_pci_DomBDF(iface->pci_addrs[i], &pci_addr);
-		if (ret < 0) {
-			RTE_LOG(ERR, PORT,
-				"Failed to parse PCI %s (err=%d)!\n",
-				iface->pci_addrs[i], ret);
-			goto close_partial;
-		}
-
-		ret = rte_eth_dev_get_port_by_addr(&pci_addr, &port_id);
+		ret = rte_eth_dev_get_port_by_name(iface->pci_addrs[i],
+			&iface->ports[i]);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
 				"Failed to map PCI %s to a port (err=%d)!\n",
 				iface->pci_addrs[i], ret);
 			goto close_partial;
 		}
-		iface->ports[i] = port_id;
 
-		ret = init_port(iface, port_id, &num_succ_ports);
+		ret = init_port(iface, iface->ports[i], &num_succ_ports);
 		if (ret < 0)
 			goto close_partial;
 	}
