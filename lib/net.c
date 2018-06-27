@@ -889,7 +889,11 @@ init_iface(struct gatekeeper_if *iface)
 	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
 		iface->id = iface->ports[0];
 	else {
-		ret = rte_eth_bond_create(iface->name, iface->bonding_mode, 0);
+		char dev_name[64];
+		ret = snprintf(dev_name, sizeof(dev_name), "net_bonding%s",
+			iface->name);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(dev_name));
+		ret = rte_eth_bond_create(dev_name, iface->bonding_mode, 0);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
 				"Failed to create bonded port (err=%d)!\n",
