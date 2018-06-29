@@ -19,23 +19,14 @@
 #ifndef _LIST_H_
 #define _LIST_H_
 
+#include <rte_common.h>
+
 /*
  * The code of this file is mostly a copy of the Linux kernel.
  */
 
 #undef offsetof
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
-
-/**
- * container_of - cast a member of a structure out to the containing structure
- * @ptr:        the pointer to the member.
- * @type:       the type of the container struct this is embedded in.
- * @member:     the name of the member within the struct.
- *
- */
-#define container_of(ptr, type, member) ({                \
-	typeof( ((type *)0)->member ) *__mptr = (ptr);    \
-	(type *)( (char *)__mptr - offsetof(type,member) );})
 
 struct list_head {
 	struct list_head *next, *prev;

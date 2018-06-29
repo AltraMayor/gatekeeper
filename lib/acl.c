@@ -22,6 +22,9 @@
 /* Maximum number of rules installed per ACL. */
 #define MAX_NUM_ACL_RULES (32)
 
+/* Result returned when the ACL does not find a matching rule. */
+#define ACL_NO_MATCH (0)
+
 /* Callback function for when there's no classification match. */
 static int
 drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -81,10 +84,10 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	memset(num_pkts, 0, sizeof(num_pkts));
 	for (i = 0; i < acl->num; i++) {
 		int type = acl->res[i];
-		if (type == RTE_ACL_INVALID_USERDATA) {
+		if (type == ACL_NO_MATCH) {
 			unsigned int j;
 			/*
-			 * @j starts at 1 to skip RTE_ACL_INVALID_USERDATA,
+			 * @j starts at 1 to skip ACL_NO_MATCH,
 			 * which has no matching function.
 			 */
 			for (j = 1; j < astate->func_count; j++) {
@@ -329,9 +332,9 @@ init_ipv4_acls(struct gatekeeper_if *iface)
 	}
 
 	/* Add drop function for packets that cannot be classified. */
-	RTE_VERIFY(RTE_ACL_INVALID_USERDATA == 0);
-	iface->ipv4_acls.funcs[RTE_ACL_INVALID_USERDATA] = drop_unmatched_pkts;
-	iface->ipv4_acls.ext_funcs[RTE_ACL_INVALID_USERDATA] = NULL;
+	RTE_VERIFY(ACL_NO_MATCH == 0);
+	iface->ipv4_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
+	iface->ipv4_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv4_acls.func_count = 1;
 
 	return 0;
@@ -554,9 +557,9 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 	}
 
 	/* Add drop function for packets that cannot be classified. */
-	RTE_VERIFY(RTE_ACL_INVALID_USERDATA == 0);
-	iface->ipv6_acls.funcs[RTE_ACL_INVALID_USERDATA] = drop_unmatched_pkts;
-	iface->ipv6_acls.ext_funcs[RTE_ACL_INVALID_USERDATA] = NULL;
+	RTE_VERIFY(ACL_NO_MATCH == 0);
+	iface->ipv6_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
+	iface->ipv6_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv6_acls.func_count = 1;
 
 	return 0;

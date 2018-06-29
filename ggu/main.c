@@ -379,7 +379,7 @@ ggu_proc(void *arg)
 {
 	uint32_t lcore = rte_lcore_id();
 	struct ggu_config *ggu_conf = (struct ggu_config *)arg;
-	uint8_t port_in = ggu_conf->net->back.id;
+	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	unsigned int i;
 

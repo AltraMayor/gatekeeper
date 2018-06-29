@@ -148,7 +148,7 @@ struct gatekeeper_if {
 	struct ether_addr eth_addr;
 
 	/* DPDK port IDs corresponding to each address in @pci_addrs. */
-	uint8_t         *ports;
+	uint16_t        *ports;
 
 	/*
 	 * The DPDK port ID for this interface.
@@ -336,10 +336,10 @@ void lua_free_iface(struct gatekeeper_if *iface);
 
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
-int ethertype_filter_add(uint8_t port_id, uint16_t ether_type,
+int ethertype_filter_add(uint16_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
 
-int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
+int ntuple_filter_add(uint16_t port_id, uint32_t dst_ip,
 	uint16_t src_port, uint16_t src_port_mask,
 	uint16_t dst_port, uint16_t dst_port_mask,
 	uint8_t proto, uint16_t queue_id,
@@ -347,8 +347,9 @@ int ntuple_filter_add(uint8_t portid, uint32_t dst_ip,
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
-int gatekeeper_setup_rss(uint8_t portid, uint16_t *queues, uint16_t num_queues);
-int gatekeeper_get_rss_config(uint8_t portid,
+int gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues,
+	uint16_t num_queues);
+int gatekeeper_get_rss_config(uint16_t port_id,
 	struct gatekeeper_rss_config *rss_conf);
 int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);

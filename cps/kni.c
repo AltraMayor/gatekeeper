@@ -48,7 +48,7 @@ extern long init_module(void *, unsigned long, const char *);
 extern long delete_module(const char *, unsigned int);
 
 int
-kni_change_if(uint8_t port_id, uint8_t if_up)
+kni_change_if(uint16_t port_id, uint8_t if_up)
 {
 	return (if_up)
 		? rte_eth_dev_set_link_up(port_id)
@@ -56,7 +56,7 @@ kni_change_if(uint8_t port_id, uint8_t if_up)
 }
 
 int
-kni_change_mtu(uint8_t port_id, unsigned new_mtu)
+kni_change_mtu(uint16_t port_id, unsigned int new_mtu)
 {
 	if (unlikely((new_mtu < ETHER_MIN_MTU) ||
 			(new_mtu > ETHER_MAX_JUMBO_FRAME_LEN -

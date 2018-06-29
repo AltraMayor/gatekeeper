@@ -101,7 +101,7 @@ int
 lpm_lookup_ipv6(struct rte_lpm6 *lpm, uint8_t *ip)
 {
 	int ret;
-	uint8_t next_hop;
+	uint32_t next_hop;
 
 	ret = rte_lpm6_lookup(lpm, ip, &next_hop);
 	if (ret == -EINVAL) {

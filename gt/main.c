@@ -65,7 +65,7 @@ static int
 gt_setup_rss(struct gt_config *gt_conf)
 {
 	int i;
-	uint8_t port_in = gt_conf->net->front.id;
+	uint16_t port_in = gt_conf->net->front.id;
 	uint16_t gt_queues[gt_conf->num_lcores];
 
 	for (i = 0; i < gt_conf->num_lcores; i++)
@@ -876,7 +876,7 @@ print_unsent_policy(struct ggu_policy *policy)
  * with fragmented packets.
  */
 static void 
-process_death_row(int socket_id, uint8_t port, uint16_t tx_queue,
+process_death_row(int socket_id, uint16_t port, uint16_t tx_queue,
 	int punish, struct rte_ip_frag_death_row *death_row,
 	struct gt_instance *instance, struct gt_config *gt_conf)
 {
@@ -971,7 +971,7 @@ gt_proc(void *arg)
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
 	uint64_t last_tsc = rte_rdtsc();
-	uint8_t port = get_net_conf()->front.id;
+	uint16_t port = get_net_conf()->front.id;
 	uint16_t rx_queue = instance->rx_queue;
 	uint16_t tx_queue = instance->tx_queue;
 	uint64_t frag_scan_timeout_cycles = round(
