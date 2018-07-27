@@ -31,14 +31,16 @@ the dependencies:
 
 While in the `gatekeeper` directory, run the setup script:
 
-    $ ./setup.sh
+    $ . setup.sh
 
 This script compiles DPDK and LuaJIT, and loads the needed kernel modules.
 Additionally, it saves the interface names and their respective PCI addresses
 in the file `lua/if_map.lua`, so that interface names can be used in
 the Gatekeeper configuration files.
+
 It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`.
 They must be set before `gatekeeper` will compile.
+
 After running the setup script, you may want to save
 the environmental variables in your shell's preferences file.
 For example, in Bash, you can do:
