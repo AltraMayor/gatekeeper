@@ -365,9 +365,26 @@ lpm_del_route(struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
 	return -1;
 }
 
+/*
+ * For IPv4, the hash table key (i.e., IPv4 address) used is
+ * in network byte order. Moreover, the DPDK's hash table
+ * implementation takes a mod over the hash.
+ * We convert the key to host order to make sure
+ * that the most important bits of the hash function are
+ * the least significant bits of the IP address.
+ */
+uint32_t
+custom_ipv4_hash_func(const void *key,
+	__attribute__((unused)) uint32_t length,
+	__attribute__((unused)) uint32_t initval)
+{
+        return ntohl(*(const uint32_t *)key);
+}
+
 int
 setup_neighbor_tbl(unsigned int socket_id, int identifier,
-	int ip_ver, int ht_size, struct neighbor_hash_table *neigh)
+	int ip_ver, int ht_size, struct neighbor_hash_table *neigh,
+	rte_hash_function hash_func)
 {
 	int  i, ret;
 	char ht_name[64];
@@ -377,7 +394,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	struct rte_hash_parameters neigh_hash_params = {
 		.entries = ht_size,
 		.key_len = key_len,
-		.hash_func = DEFAULT_HASH_FUNC,
+		.hash_func = hash_func,
 		.hash_func_init_val = 0,
 	};
 
@@ -467,7 +484,7 @@ setup_net_prefix_fib(int identifier,
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2),
 			ETHER_TYPE_IPv4, (1 << (32 - iface->ip4_addr_plen)),
-			&neigh_fib_ipv4->u.neigh);
+			&neigh_fib_ipv4->u.neigh, custom_ipv4_hash_func);
 		if (ret < 0)
 			goto init_fib_ipv4;
 
@@ -497,7 +514,7 @@ setup_net_prefix_fib(int identifier,
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2 + 1),
 			ETHER_TYPE_IPv6, gk_conf->max_num_ipv6_neighbors,
-			&neigh_fib_ipv6->u.neigh6);
+			&neigh_fib_ipv6->u.neigh6, DEFAULT_HASH_FUNC);
 		if (ret < 0)
 			goto init_fib_ipv6;
 
