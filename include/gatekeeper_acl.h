@@ -39,7 +39,7 @@ struct acl_search {
 /* Classify batches of packets in @acl and invoke callback functions. */
 int process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	struct acl_search *acl, struct acl_state *astate,
-	bool proto_if_configured, const char *proto_name);
+	int acl_enabled, const char *proto_name);
 /* Free ACLs. */
 void destroy_acls(struct acl_state *astate);
 
@@ -55,6 +55,23 @@ add_pkt_acl(struct acl_search *acl, struct rte_mbuf *pkt)
 }
 
 static inline int
+ipv4_acl_enabled(struct gatekeeper_if *iface)
+{
+	/*
+	 * The IPv4 ACL is only needed for interfaces that have
+	 * IPv4 addresses and don't support the ntuple filter.
+	 */
+	return !iface->hw_filter_ntuple && ipv4_if_configured(iface);
+}
+
+static inline int
+ipv6_acl_enabled(struct gatekeeper_if *iface)
+{
+	/* The IPv6 ACL is needed whenever an interface has an IPv6 address. */
+	return ipv6_if_configured(iface);
+}
+
+static inline int
 process_pkts_acl(struct gatekeeper_if *iface, unsigned int lcore,
 	struct acl_search *acl, uint16_t proto)
 {
@@ -64,10 +81,10 @@ process_pkts_acl(struct gatekeeper_if *iface, unsigned int lcore,
 	switch (proto) {
 	case ETHER_TYPE_IPv4:
 		return process_acl(iface, lcore, acl, &iface->ipv4_acls,
-			ipv4_if_configured(iface), "IPv4");
+			ipv4_acl_enabled(iface), "IPv4");
 	case ETHER_TYPE_IPv6:
 		return process_acl(iface, lcore, acl, &iface->ipv6_acls,
-			ipv6_if_configured(iface), "IPv6");
+			ipv6_acl_enabled(iface), "IPv6");
 	default:
 		rte_panic("%s: called on unknown protocol %hu\n",
 			__func__, proto);

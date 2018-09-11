@@ -58,7 +58,7 @@ drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 int
 process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	struct acl_search *acl, struct acl_state *astate,
-	bool proto_if_configured, const char *proto_name)
+	int acl_enabled, const char *proto_name)
 {
 	struct rte_mbuf *pkts[astate->func_count][GATEKEEPER_MAX_PKT_BURST];
 	int num_pkts[astate->func_count];
@@ -66,7 +66,7 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	unsigned int i;
 	int ret;
 
-	if (unlikely(!proto_if_configured)) {
+	if (!acl_enabled) {
 		ret = 0;
 		goto drop_acl_pkts;
 	}

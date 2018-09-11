@@ -1124,14 +1124,14 @@ out:
 		"net: ntuple filters %s supported on the %s iface\n",
 		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);
 
-	if (!iface->hw_filter_ntuple && ipv4_if_configured(iface)) {
+	if (ipv4_acl_enabled(iface)) {
 		ret = init_ipv4_acls(iface);
 		if (ret < 0)
 			goto stop_partial;
 	}
 
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
-	if (ipv6_if_configured(iface)) {
+	if (ipv6_acl_enabled(iface)) {
 		ret = init_ipv6_acls(iface);
 		if (ret < 0)
 			goto ipv4_acls;
