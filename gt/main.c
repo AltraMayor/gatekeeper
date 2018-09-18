@@ -665,13 +665,15 @@ static struct rte_mbuf *
 alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	struct gt_packet_headers *pkt_info, struct gt_config *gt_conf)
 {
-	uint8_t *data;
 	uint16_t ethertype = pkt_info->outer_ethertype;
 	struct ether_hdr *notify_eth;
 	struct ipv4_hdr *notify_ipv4 = NULL;
 	struct ipv6_hdr *notify_ipv6 = NULL;
 	struct udp_hdr *notify_udp;
 	struct ggu_common_hdr *notify_ggu;
+	struct ggu_decision *ggu_decision;
+	size_t decision_len = sizeof(*ggu_decision);
+	size_t params_offset;
 	size_t l2_len;
 
 	struct rte_mbuf *notify_pkt = rte_pktmbuf_alloc(
@@ -705,54 +707,79 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 
 	/* Fill up the policy decision. */
 	memset(notify_ggu, 0, sizeof(*notify_ggu));
-	notify_ggu->v1 = GGU_PD_VER1;
+	notify_ggu->version = GGU_PD_VER;
 	if (policy->flow.proto == ETHER_TYPE_IPv4
 			&& policy->state == GK_DECLINED) {
-		notify_ggu->n1 = 1;
-		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
-			sizeof(policy->flow.f.v4) +
-			sizeof(policy->params.u.declined));
-		rte_memcpy(data, &policy->flow.f.v4,
+		decision_len += sizeof(policy->flow.f.v4) +
+			sizeof(policy->params.declined);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(notify_pkt, decision_len);
+		ggu_decision->type = GGU_DEC_IPV4_DECLINED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
-		rte_memcpy(data + sizeof(policy->flow.f.v4),
-			&policy->params.u.declined,
-			sizeof(policy->params.u.declined));
+		params_offset = sizeof(policy->flow.f.v4);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv6
 			&& policy->state == GK_DECLINED) {
-		notify_ggu->n2 = 1;
-		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
-			sizeof(policy->flow.f.v6) +
-			sizeof(policy->params.u.declined));
-		rte_memcpy(data, &policy->flow.f.v6,
+		decision_len += sizeof(policy->flow.f.v6) +
+			sizeof(policy->params.declined);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(notify_pkt, decision_len);
+		ggu_decision->type = GGU_DEC_IPV6_DECLINED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
-		rte_memcpy(data + sizeof(policy->flow.f.v6),
-			&policy->params.u.declined,
-			sizeof(policy->params.u.declined));
+		params_offset = sizeof(policy->flow.f.v6);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv4
 			&& policy->state == GK_GRANTED) {
-		notify_ggu->n3 = 1;
-		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
-			sizeof(policy->flow.f.v4) +
-			sizeof(policy->params.u.granted));
-		rte_memcpy(data, &policy->flow.f.v4,
+		decision_len += sizeof(policy->flow.f.v4) +
+			sizeof(policy->params.granted);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(notify_pkt, decision_len);
+		ggu_decision->type = GGU_DEC_IPV4_GRANTED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
-		rte_memcpy(data + sizeof(policy->flow.f.v4),
-			&policy->params.u.granted,
-			sizeof(policy->params.u.granted));
+		params_offset = sizeof(policy->flow.f.v4);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv6
 			&& policy->state == GK_GRANTED) {
-		notify_ggu->n4 = 1;
-		data = (uint8_t *)rte_pktmbuf_append(notify_pkt,
-			sizeof(policy->flow.f.v6) +
-			sizeof(policy->params.u.granted));
-		rte_memcpy(data, &policy->flow.f.v6,
+		decision_len += sizeof(policy->flow.f.v6) +
+			sizeof(policy->params.granted);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(notify_pkt, decision_len);
+		ggu_decision->type = GGU_DEC_IPV6_GRANTED;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
-		rte_memcpy(data + sizeof(policy->flow.f.v6),
-			&policy->params.u.granted,
-			sizeof(policy->params.u.granted));
+		params_offset = sizeof(policy->flow.f.v6);
 	} else
-		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
+		rte_panic("Unexpected condition: gt fills up a notify packet flow with unexpected policy state %u\n",
 			policy->state);
+
+	switch (policy->state) {
+	case GK_GRANTED: {
+		struct ggu_granted *granted_be = (struct ggu_granted *)
+			(ggu_decision->ip_flow + params_offset);
+		granted_be->tx_rate_kb_sec = rte_cpu_to_be_32(
+			policy->params.granted.tx_rate_kb_sec);
+		granted_be->cap_expire_sec = rte_cpu_to_be_32(
+			policy->params.granted.cap_expire_sec);
+		granted_be->next_renewal_ms = rte_cpu_to_be_32(
+			policy->params.granted.next_renewal_ms);
+		granted_be->renewal_step_ms = rte_cpu_to_be_32(
+			policy->params.granted.renewal_step_ms);
+		break;
+	}
+	case GK_DECLINED: {
+		struct ggu_declined *declined_be = (struct ggu_declined *)
+			(ggu_decision->ip_flow + params_offset);
+		declined_be->expire_sec = rte_cpu_to_be_32(
+			policy->params.declined.expire_sec);
+		break;
+	}
+	default:
+		rte_panic("Unexpected condition: gt fills up a notify packet parameters with unexpected policy state %u\n",
+			policy->state);
+	}
+
+	ggu_decision->res1 = 0;
+	ggu_decision->res2 = 0;
 
 	/* Fill up the link-layer header. */
 	fill_eth_hdr_reverse(&gt_conf->net->front, notify_eth, pkt_info);
@@ -824,15 +851,7 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	notify_udp->src_port = gt_conf->ggu_src_port;
 	notify_udp->dst_port = gt_conf->ggu_dst_port;
 	notify_udp->dgram_len = rte_cpu_to_be_16((uint16_t)(
-		sizeof(*notify_udp) + sizeof(*notify_ggu) +
-		(notify_ggu->n1 + notify_ggu->n3) *
-		sizeof(policy->flow.f.v4) +
-		(notify_ggu->n2 + notify_ggu->n4) *
-		sizeof(policy->flow.f.v6) +
-		(notify_ggu->n1 + notify_ggu->n2) *
-		sizeof(policy->params.u.declined) + 
-		(notify_ggu->n3 + notify_ggu->n4) *
-		sizeof(policy->params.u.granted)));
+		sizeof(*notify_udp) + sizeof(*notify_ggu) + decision_len));
 
 	notify_pkt->l4_len = sizeof(struct udp_hdr);
 
@@ -852,15 +871,15 @@ print_unsent_policy(struct ggu_policy *policy)
 	} else if (policy->state == GK_GRANTED) {
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
-			policy->state, policy->params.u.granted.tx_rate_kb_sec,
-			policy->params.u.granted.cap_expire_sec,
-			policy->params.u.granted.next_renewal_ms,
-			policy->params.u.granted.renewal_step_ms);
+			policy->state, policy->params.granted.tx_rate_kb_sec,
+			policy->params.granted.cap_expire_sec,
+			policy->params.granted.next_renewal_ms,
+			policy->params.granted.renewal_step_ms);
 	} else if (policy->state == GK_DECLINED) {
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
 			policy->state,
-			policy->params.u.declined.expire_sec);
+			policy->params.declined.expire_sec);
 	} else {
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy!\n",
@@ -913,7 +932,7 @@ process_death_row(int socket_id, uint16_t port, uint16_t tx_queue,
 			&pkt_info, &policy, instance);
 		if (ret < 0) {
 			policy.state = GK_DECLINED;
-			policy.params.u.declined.expire_sec = 600;
+			policy.params.declined.expire_sec = 600;
 			RTE_LOG(WARNING, GATEKEEPER,
 				"gt: failed to lookup the punishment policy for the packet fragment! Our failsafe action is to decline the flow for 10 minutes!\n");
 		}

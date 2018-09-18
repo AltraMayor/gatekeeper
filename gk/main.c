@@ -813,15 +813,15 @@ add_ggu_policy(struct ggu_policy *policy,
 	case GK_GRANTED:
 		fe->state = GK_GRANTED;
 		fe->u.granted.cap_expire_at = now +
-			policy->params.u.granted.cap_expire_sec *
+			policy->params.granted.cap_expire_sec *
 			cycles_per_sec;
 		fe->u.granted.tx_rate_kb_cycle =
-			policy->params.u.granted.tx_rate_kb_sec;
+			policy->params.granted.tx_rate_kb_sec;
 		fe->u.granted.send_next_renewal_at = now +
-			policy->params.u.granted.next_renewal_ms *
+			policy->params.granted.next_renewal_ms *
 			cycles_per_ms;
 		fe->u.granted.renewal_step_cycle =
-			policy->params.u.granted.renewal_step_ms *
+			policy->params.granted.renewal_step_ms *
 			cycles_per_ms;
 		fe->u.granted.budget_renew_at =
 			now + cycle_from_second(1);
@@ -832,7 +832,7 @@ add_ggu_policy(struct ggu_policy *policy,
 	case GK_DECLINED:
 		fe->state = GK_DECLINED;
 		fe->u.declined.expire_at = now +
-			policy->params.u.declined.expire_sec * cycles_per_sec;
+			policy->params.declined.expire_sec * cycles_per_sec;
 		break;
 
 	default:
