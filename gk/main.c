@@ -1370,7 +1370,7 @@ gk_proc(void *arg)
 		rte_get_tsc_hz()) / (num_buckets * 1000.));
 	if (bucket_scan_timeout_cycles == 0) {
 		RTE_LOG(WARNING, GATEKEEPER,
-			"gk: the value of the field flow_table_full_scan_ms in Gatekeeper configuration is too small!");
+			"gk: the value of the field flow_table_full_scan_ms in Gatekeeper configuration is too small!\n");
 		exiting = true;
 		return -1;
 	}
