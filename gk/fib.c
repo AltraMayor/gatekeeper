@@ -815,9 +815,14 @@ remove_prefix_from_lpm_locked(
 		ip_prefix_present = rte_lpm_is_rule_present(
 			ltbl->lpm, ntohl(ip_prefix->addr.ip.v4.s_addr),
 			ip_prefix->len, &fib_id);
-		if (!ip_prefix_present) {
+		if (ip_prefix_present == 0) {
 			RTE_LOG(WARNING, GATEKEEPER,
 				"gk: delete an non-existent IP prefix (%s)\n",
+				ip_prefix->str);
+			return NULL;
+		} else if (ip_prefix_present < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"gk: failed to call rte_lpm_is_rule_present() for IP prefix (%s)\n",
 				ip_prefix->str);
 			return NULL;
 		}
@@ -829,9 +834,14 @@ remove_prefix_from_lpm_locked(
 		ip_prefix_present = rte_lpm6_is_rule_present(
 			ltbl->lpm6, ip_prefix->addr.ip.v6.s6_addr,
 			ip_prefix->len, &fib_id);
-		if (!ip_prefix_present) {
+		if (ip_prefix_present == 0) {
 			RTE_LOG(WARNING, GATEKEEPER,
 				"gk: delete an non-existent IP prefix (%s)\n",
+				ip_prefix->str);
+			return NULL;
+		} else if (ip_prefix_present < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"gk: failed to call rte_lpm6_is_rule_present() for IP prefix (%s)\n",
 				ip_prefix->str);
 			return NULL;
 		}
@@ -961,7 +971,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 			&addr->ip.v4.s_addr);
 		if (ret < 0) {
 			RTE_LOG(CRIT, GATEKEEPER,
-				"gk: failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure!",
+				"gk: failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure!\n",
 				__func__);
 		}
 		return ret;
@@ -977,14 +987,14 @@ ether_cache_put(struct gk_fib *neigh_fib,
 			addr->ip.v6.s6_addr);
 		if (ret < 0) {
 			RTE_LOG(CRIT, GATEKEEPER,
-				"gk: failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure!",
+				"gk: failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure!\n",
 				__func__);
 		}
 		return ret;
 	}
 
 	RTE_LOG(ERR, GATEKEEPER,
-		"gk: remove an invalid FIB entry with IP type %hu at %s",
+		"gk: remove an invalid FIB entry with IP type %hu at %s\n",
 		addr->proto, __func__);
 
 	return -1;
@@ -1402,7 +1412,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 						ip_prefix_fib->action !=
 						GK_DROP) {
 					RTE_LOG(WARNING, GATEKEEPER,
-						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
 						prefix->str, action, state.depth,
 						ip_prefix_fib->action);
 					return -1;
@@ -1429,7 +1439,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 						ip_prefix_fib->action !=
 						GK_DROP) {
 					RTE_LOG(WARNING, GATEKEEPER,
-						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
 						prefix->str, action, re->depth,
 						ip_prefix_fib->action);
 					return -1;
@@ -1438,7 +1448,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 			}
 		} else {
 			RTE_LOG(WARNING, GATEKEEPER,
-				"gk: unknown IP type %hu with prefix %s and action %u",
+				"gk: unknown IP type %hu with prefix %s and action %u\n",
 				prefix->addr.proto, prefix->str, action);
 			return -1;
 		}
@@ -1454,14 +1464,14 @@ check_prefix_locked(struct ip_prefix *prefix,
 			uint32_t fib_id;
 			ip_prefix_present = rte_lpm_is_rule_present(
 				ltbl->lpm, prefix_ip4, i, &fib_id);
-			if (!ip_prefix_present)
+			if (ip_prefix_present != 1)
 				continue;
 
 			ip_prefix_fib = &ltbl->fib_tbl[fib_id];
 			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
 					ip_prefix_fib->action == GK_DROP) {
 				RTE_LOG(WARNING, GATEKEEPER,
-					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
 					prefix->str, action, i, ip_prefix_fib->action);
 				return -1;
 			}
@@ -1472,21 +1482,21 @@ check_prefix_locked(struct ip_prefix *prefix,
 			ip_prefix_present = rte_lpm6_is_rule_present(
 				ltbl->lpm6, prefix->addr.ip.v6.s6_addr,
 				i, &fib_id);
-			if (!ip_prefix_present)
+			if (ip_prefix_present != 1)
 				continue;
 
 			ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
 			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
 					ip_prefix_fib->action == GK_DROP) {
 				RTE_LOG(WARNING, GATEKEEPER,
-					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u",
+					"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
 					prefix->str, action, i, ip_prefix_fib->action);
 				return -1;
 			}
 		}
 	} else {
 		RTE_LOG(WARNING, GATEKEEPER,
-			"gk: unknown IP type %hu with prefix %s and action %u",
+			"gk: unknown IP type %hu with prefix %s and action %u\n",
 			prefix->addr.proto, prefix->str, action);
 		return -1;
 	}
@@ -1507,7 +1517,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 
 	if (prefix_info->len == 0) {
 		RTE_LOG(WARNING, GATEKEEPER,
-			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!",
+			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!\n",
 			prefix_info->str, __func__);
 		return -1;
 	}
@@ -1601,7 +1611,7 @@ del_fib_entry_numerical(
 
 	if (prefix_info->len == 0) {
 		RTE_LOG(WARNING, GATEKEEPER,
-			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!",
+			"gk: Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s!\n",
 			prefix_info->str, __func__);
 		return -1;
 	}
