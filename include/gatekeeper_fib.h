@@ -198,8 +198,11 @@ struct ip_prefix {
 struct gk_config;
 
 int clear_ether_cache(struct ether_cache *eth_cache);
+uint32_t custom_ipv4_hash_func(const void *key,
+	uint32_t length, uint32_t initval);
 int setup_neighbor_tbl(unsigned int socket_id, int identifier,
-	int ip_ver, int ht_size, struct neighbor_hash_table *neigh);
+	int ip_ver, int ht_size, struct neighbor_hash_table *neigh,
+	rte_hash_function hash_func);
 int setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id);
 void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 
@@ -214,8 +217,6 @@ int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 int del_fib_entry_numerical(
 	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
-
-/* TODO Customize the hash function for IPv4. */
 
 static inline struct ether_cache *
 lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)

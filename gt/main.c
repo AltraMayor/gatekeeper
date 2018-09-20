@@ -1253,7 +1253,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
 			lcore_id * RTE_MAX_LCORE + 0, ETHER_TYPE_IPv4,
 			(1 << (32 - gt_conf->net->front.ip4_addr_plen)),
-			&instance->neigh);
+			&instance->neigh, custom_ipv4_hash_func);
 		if (ret < 0)
 			goto cleanup;
 	}
@@ -1262,7 +1262,8 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		ret = setup_neighbor_tbl(
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
 			lcore_id * RTE_MAX_LCORE + 1, ETHER_TYPE_IPv6,
-			gt_conf->max_num_ipv6_neighbors, &instance->neigh6);
+			gt_conf->max_num_ipv6_neighbors, &instance->neigh6,
+			DEFAULT_HASH_FUNC);
 		if (ret < 0)
 			goto cleanup;
 	}
