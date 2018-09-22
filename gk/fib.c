@@ -952,10 +952,11 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 static int
 ether_cache_put(struct gk_fib *neigh_fib,
 	enum gk_fib_action action, struct ether_cache *eth_cache,
-	struct ipaddr *addr, struct gk_config *gk_conf)
+	struct gk_config *gk_conf)
 {
 	int ret, ref_cnt;
 	struct gk_fib *neighbor_fib = neigh_fib;
+	struct ipaddr addr;
 
 	while ((ref_cnt = rte_atomic32_read(&eth_cache->ref_cnt)) >= 2) {
 		if (likely(rte_atomic32_cmpset((volatile uint32_t *)
@@ -969,25 +970,34 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	}
 
 	/*
+	 * We need a copy of the IP address of the nexthop,
+	 * because after calling put_xxx(), it's possible that
+	 * gk_arp_and_nd_req_cb() is called before rte_hash_del_key().
+	 * In this case, the 'eth_cache->ip_addr' (hash key) will be reset,
+	 * so that the hash key becomes invalid.
+	 */
+	addr = eth_cache->ip_addr;
+
+	/*
 	 * Find the FIB entry for the @addr.
 	 * We need to release the @eth_cache
 	 * Ethernet header entry from the neighbor hash table.
 	 */
 	if (neighbor_fib == NULL) {
 		neighbor_fib = find_fib_entry_for_neighbor_locked(
-			addr, action, gk_conf);
+			&addr, action, gk_conf);
 		if (neighbor_fib == NULL)
 			return -1;
 	}
 
-	if (addr->proto == ETHER_TYPE_IPv4) {
+	if (addr.proto == ETHER_TYPE_IPv4) {
 		ret = put_arp((struct in_addr *)
-			&addr->ip.v4, gk_conf->lcores[0]);
+			&addr.ip.v4, gk_conf->lcores[0]);
 		if (ret < 0)
 			return ret;
 
 		ret = rte_hash_del_key(neighbor_fib->u.neigh.hash_table,
-			&addr->ip.v4.s_addr);
+			&addr.ip.v4.s_addr);
 		if (ret < 0) {
 			RTE_LOG(CRIT, GATEKEEPER,
 				"gk: failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure!\n",
@@ -996,14 +1006,14 @@ ether_cache_put(struct gk_fib *neigh_fib,
 		return ret;
 	}
 
-	if (likely(addr->proto == ETHER_TYPE_IPv6)) {
+	if (likely(addr.proto == ETHER_TYPE_IPv6)) {
 		ret = put_nd((struct in6_addr *)
-			&addr->ip.v6, gk_conf->lcores[0]);
+			&addr.ip.v6, gk_conf->lcores[0]);
 		if (ret < 0)
 			return ret;
 
 		ret = rte_hash_del_key(neighbor_fib->u.neigh6.hash_table,
-			addr->ip.v6.s6_addr);
+			addr.ip.v6.s6_addr);
 		if (ret < 0) {
 			RTE_LOG(CRIT, GATEKEEPER,
 				"gk: failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure!\n",
@@ -1014,7 +1024,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 
 	RTE_LOG(ERR, GATEKEEPER,
 		"gk: remove an invalid FIB entry with IP type %hu at %s\n",
-		addr->proto, __func__);
+		addr.proto, __func__);
 
 	return -1;
 }
@@ -1029,10 +1039,7 @@ del_gateway_from_neigh_table_locked(
 	struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	struct ether_cache *eth_cache, struct gk_config *gk_conf)
 {
-	int ret;
-	struct ipaddr *gw_addr = &eth_cache->ip_addr;
-
-	ret = ether_cache_put(NULL, action, eth_cache, gw_addr, gk_conf);
+	int ret = ether_cache_put(NULL, action, eth_cache, gk_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gk: failed to release the Ethernet cached header of the Grantor FIB entry for the IP prefix %s at %s\n",
@@ -1190,7 +1197,7 @@ init_fib:
 	initialize_fib_entry(gw_fib);
 
 put_ether_cache:
-	ether_cache_put(neigh_fib, action, eth_cache, gw_addr, gk_conf);
+	ether_cache_put(neigh_fib, action, eth_cache, gk_conf);
 
 	return NULL;
 }
@@ -1258,7 +1265,7 @@ init_fib:
 
 put_ether_cache:
 	ether_cache_put(neigh_fib,
-		GK_FWD_GATEWAY_BACK_NET, eth_cache, gw_addr, gk_conf);
+		GK_FWD_GATEWAY_BACK_NET, eth_cache, gk_conf);
 
 	return NULL;
 }
