@@ -957,14 +957,16 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	int ret, ref_cnt;
 	struct gk_fib *neighbor_fib = neigh_fib;
 
-	ref_cnt = rte_atomic32_sub_return(&eth_cache->ref_cnt, 1);
-	if (ref_cnt < 0) {
-		rte_panic("Unexpected condition: the ref_cnt of the ether cache is negative at %s\n",
-			__func__);
+	while ((ref_cnt = rte_atomic32_read(&eth_cache->ref_cnt)) >= 2) {
+		if (likely(rte_atomic32_cmpset((volatile uint32_t *)
+				&eth_cache->ref_cnt.cnt,
+				ref_cnt, ref_cnt - 1) != 0))
+			return 0;
 	}
-
-	if (ref_cnt > 0)
-		return 0;
+	if (ref_cnt < 1) {
+		rte_panic("Unexpected condition: the ref_cnt of the ether cache should be 1 while it is %d at %s\n",
+			ref_cnt, __func__);
+	}
 
 	/*
 	 * Find the FIB entry for the @addr.
