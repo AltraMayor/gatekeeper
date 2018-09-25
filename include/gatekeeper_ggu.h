@@ -173,6 +173,24 @@ struct ggu_policy {
 	} params;
 };
 
+/*
+ * When iterating over policy decisions in a GGU packet, this
+ * function can be applied to the policy and some argument.
+ * A function of this type should be passed to ggu_policy_iterator().
+ */
+typedef void (*ggu_policy_fn)(struct ggu_policy *policy, void *arg);
+
+/*
+ * Iterate over a GGU notification packet's decision list, beginning
+ * with @ggu_decision and extending throughout @decision_list_len.
+ *
+ * For each policy decision found, apply @policy_fn to it along
+ * with an optional @policy_arg.
+ */
+void ggu_policy_iterator(struct ggu_decision *ggu_decision,
+	unsigned int decision_list_len, ggu_policy_fn policy_fn,
+	void *policy_arg, const char *block);
+
 struct ggu_config *alloc_ggu_conf(void);
 int run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf);

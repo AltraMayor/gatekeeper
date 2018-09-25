@@ -38,13 +38,6 @@
 /* XXX Sample parameter, needs to be tested for better performance. */
 #define GGU_REQ_BURST_SIZE (32)
 
-/*
- * When iterating over policy decisions in a GGU packet, this
- * function can be applied to the policy and some argument.
- * A function of this type should be passed to ggu_policy_iterator().
- */
-typedef void (*ggu_policy_fn)(struct ggu_policy *policy, void *arg);
-
 static struct ggu_config *ggu_conf;
 
 static inline const char *
@@ -95,7 +88,7 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 	mb_send_entry(mb, entry);
 }
 
-static void
+void
 ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	unsigned int decision_list_len, ggu_policy_fn policy_fn,
 	void *policy_arg, const char *block)

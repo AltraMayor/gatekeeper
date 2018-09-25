@@ -661,8 +661,14 @@ fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
 	}
 }
 
-static struct rte_mbuf *
-alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
+/*
+ * When creating a new notification packet, set all of the header
+ * fields from each layer as much as possible. Fields that need to
+ * wait to be filled until the packet is ready to be sent are
+ * filled in prep_notify_pkt().
+ */
+static void
+fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 	struct gt_packet_headers *pkt_info, struct gt_config *gt_conf)
 {
 	uint16_t ethertype = pkt_info->outer_ethertype;
@@ -671,24 +677,13 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	struct ipv6_hdr *notify_ipv6 = NULL;
 	struct udp_hdr *notify_udp;
 	struct ggu_common_hdr *notify_ggu;
-	struct ggu_decision *ggu_decision;
-	size_t decision_len = sizeof(*ggu_decision);
-	size_t params_offset;
-	size_t l2_len;
+	size_t l2_len = gt_conf->net->front.l2_len_out;
 
-	struct rte_mbuf *notify_pkt = rte_pktmbuf_alloc(
-		gt_conf->net->gatekeeper_pktmbuf_pool[socket]);
-	if (notify_pkt == NULL) {
-		RTE_LOG(ERR, MEMPOOL,
-			"gt: failed to allocate notification packet!");
-		return NULL;
-	}
-
-	l2_len = gt_conf->net->front.l2_len_out;
 	if (ethertype == ETHER_TYPE_IPv4) {
 		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
 			l2_len + sizeof(struct ipv4_hdr) +
-			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
+			sizeof(struct udp_hdr) +
+			sizeof(struct ggu_common_hdr));
 		notify_ipv4 = (struct ipv4_hdr *)
 			((uint8_t *)notify_eth + l2_len);
 		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
@@ -696,7 +691,8 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	} else if (ethertype == ETHER_TYPE_IPv6) {
 		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
 			l2_len + sizeof(struct ipv6_hdr) +
-			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr));
+			sizeof(struct udp_hdr) +
+			sizeof(struct ggu_common_hdr));
 		notify_ipv6 = (struct ipv6_hdr *)
 			((uint8_t *)notify_eth + l2_len);
 		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
@@ -705,51 +701,403 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 		rte_panic("Unexpected condition: gt fills up a notify packet with unknown ethernet type %hu\n",
 			ethertype);
 
-	/* Fill up the policy decision. */
 	memset(notify_ggu, 0, sizeof(*notify_ggu));
 	notify_ggu->version = GGU_PD_VER;
+
+	/* Fill up the link-layer header. */
+	fill_eth_hdr_reverse(&gt_conf->net->front, notify_eth, pkt_info);
+	notify_pkt->l2_len = l2_len;
+
+	/* Fill up the IP header. */
+	if (ethertype == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *ipv4_hdr =
+			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+		/* Fill up the IPv4 header. */
+		notify_ipv4->version_ihl = IP_VHL_DEF;
+		notify_ipv4->packet_id = 0;
+		notify_ipv4->fragment_offset = IP_DN_FRAGMENT_FLAG;
+		notify_ipv4->time_to_live = IP_DEFTTL;
+		notify_ipv4->next_proto_id = IPPROTO_UDP;
+		/* The source address is the Grantor server IP address. */
+		notify_ipv4->src_addr = ipv4_hdr->dst_addr;
+		/*
+		 * The destination address is the
+		 * Gatekeeper server IP address.
+		 */
+		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
+
+		/*
+		 * The IP header checksum filed must be set to 0
+		 * in order to offload the checksum calculation.
+		 */
+		notify_ipv4->hdr_checksum = 0;
+
+		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
+			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->l3_len = sizeof(struct ipv4_hdr);
+	} else if (ethertype == ETHER_TYPE_IPv6) {
+		struct ipv6_hdr *ipv6_hdr =
+			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+		/* Fill up the outer IPv6 header. */
+		notify_ipv6->vtc_flow =
+			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
+		notify_ipv6->proto = IPPROTO_UDP; 
+		notify_ipv6->hop_limits =
+			gt_conf->net->front.ipv6_default_hop_limits;
+
+		rte_memcpy(notify_ipv6->src_addr, ipv6_hdr->dst_addr,
+			sizeof(notify_ipv6->src_addr));
+		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
+			sizeof(notify_ipv6->dst_addr));
+
+		notify_pkt->ol_flags |= (PKT_TX_IPV6 |
+			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->l3_len = sizeof(struct ipv6_hdr);
+	}
+
+	/* Fill up the UDP header. */
+	notify_udp->src_port = gt_conf->ggu_src_port;
+	notify_udp->dst_port = gt_conf->ggu_dst_port;
+
+	notify_pkt->l4_len = sizeof(struct udp_hdr);
+}
+
+static void
+print_unsent_policy(struct ggu_policy *policy,
+	__attribute__((unused)) void *arg)
+{
+	int ret;
+	char err_msg[1024];
+
+	if (policy->state == GK_REQUEST) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu]",
+			policy->state);
+	} else if (policy->state == GK_GRANTED) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
+			policy->state, policy->params.granted.tx_rate_kb_sec,
+			policy->params.granted.cap_expire_sec,
+			policy->params.granted.next_renewal_ms,
+			policy->params.granted.renewal_step_ms);
+	} else if (policy->state == GK_DECLINED) {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
+			policy->state,
+			policy->params.declined.expire_sec);
+	} else {
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy!\n",
+			policy->state, __func__);
+	}
+
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+	print_flow_err_msg(&policy->flow, err_msg);
+}
+
+/* Print all unsent policy decisions in a notification packet. */
+static void
+print_unsent_policies(struct ggu_notify_pkt *ggu_pkt)
+{
+	unsigned int offset = ggu_pkt->buf->l2_len + ggu_pkt->buf->l3_len +
+		sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+	struct ggu_decision *ggu_decision = rte_pktmbuf_mtod_offset(
+		ggu_pkt->buf, struct ggu_decision *, offset);
+	unsigned int decision_list_len = ggu_pkt->buf->data_len - offset;
+	ggu_policy_iterator(ggu_decision, decision_list_len,
+		print_unsent_policy, NULL, "gt");
+}
+
+/*
+ * Find the notification packet being buffered for the Gatekeeper
+ * server specified in @pkt_info, if any.
+ */
+static struct ggu_notify_pkt *
+find_notify_pkt(struct gt_config *gt_conf, struct gt_packet_headers *pkt_info,
+	struct gt_instance *instance)
+{
+	unsigned int i;
+
+	if (instance->num_ggu_pkts == 0)
+		return NULL;
+
+	for (i = 0; i < gt_conf->max_ggu_notify_pkts; i++) {
+		struct ggu_notify_pkt *ggu_pkt = &instance->ggu_pkts[i];
+
+		if (ggu_pkt->buf == NULL)
+			continue;
+
+		if (pkt_info->outer_ethertype != ggu_pkt->ipaddr.proto)
+			continue;
+
+		if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
+			struct ipv4_hdr *ipv4_hdr =
+				(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+			if (ggu_pkt->ipaddr.ip.v4.s_addr ==
+					ipv4_hdr->src_addr)
+				return ggu_pkt;
+		} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
+			struct ipv6_hdr *ipv6_hdr =
+				(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+			if (ipv6_addrs_equal(ipv6_hdr->src_addr,
+					ggu_pkt->ipaddr.ip.v6.s6_addr))
+				return ggu_pkt;
+		}
+	}
+	return NULL;
+}
+
+static void
+prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt)
+{
+	/*
+	 * Complete the packet fields that can only be done
+	 * when the packet is ready to be transmitted.
+	 */
+	struct udp_hdr *notify_udp;
+
+	if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *notify_ipv4 =
+			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
+				struct ipv4_hdr *,
+				ggu_pkt->buf->l2_len);
+		notify_ipv4->total_length = rte_cpu_to_be_16(
+			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len);
+
+		/* Offload the UDP checksum. */
+		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
+		notify_udp->dgram_cksum =
+			rte_ipv4_phdr_cksum(notify_ipv4,
+				ggu_pkt->buf->ol_flags);
+	} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
+		struct ipv6_hdr *notify_ipv6 =
+			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
+				struct ipv6_hdr *, ggu_pkt->buf->l2_len);
+		notify_ipv6->payload_len = rte_cpu_to_be_16(
+			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len -
+			sizeof(struct ipv6_hdr));
+
+		/* Offload the UDP checksum. */
+		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
+		notify_udp->dgram_cksum =
+			rte_ipv6_phdr_cksum(notify_ipv6,
+				ggu_pkt->buf->ol_flags);
+	} else {
+		rte_panic("Unexpected condition: gt at lcore %u sending notification packet to Gatekeeper server with unknown IP version %hu\n",
+			rte_lcore_id(), ggu_pkt->ipaddr.proto);
+	}
+
+	notify_udp->dgram_len =
+		rte_cpu_to_be_16((uint16_t)(ggu_pkt->buf->data_len -
+			ggu_pkt->buf->l2_len - ggu_pkt->buf->l3_len));
+}
+
+static void
+send_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
+	struct ggu_notify_pkt *ggu_pkt)
+{
+	prep_notify_pkt(ggu_pkt);
+
+	if (rte_eth_tx_burst(gt_conf->net->front.id,
+			instance->tx_queue, &ggu_pkt->buf, 1) != 1) {
+		print_unsent_policies(ggu_pkt);
+		rte_pktmbuf_free(ggu_pkt->buf);
+	}
+
+	ggu_pkt->buf = NULL;
+	instance->num_ggu_pkts--;
+}
+
+/* Send all saved policy decision notification packets being buffered. */
+static void
+flush_notify_pkts(struct gt_config *gt_conf, struct gt_instance *instance)
+{
+	unsigned int max_pkts = gt_conf->max_ggu_notify_pkts;
+	struct rte_mbuf *bufs[max_pkts];
+	int num_to_send = 0;
+	int num_sent;
+	int sent_count = 0;
+	unsigned int i;
+
+	if (instance->ggu_pkts == NULL || instance->num_ggu_pkts == 0)
+		return;
+
+	for (i = 0; i < max_pkts; i++) {
+		struct ggu_notify_pkt *ggu_pkt = &instance->ggu_pkts[i];
+
+		if (ggu_pkt->buf == NULL)
+			continue;
+
+		prep_notify_pkt(ggu_pkt);
+		bufs[num_to_send++] = ggu_pkt->buf;
+	}
+
+	num_sent = rte_eth_tx_burst(gt_conf->net->front.id,
+		instance->tx_queue, bufs, num_to_send);
+
+	for (i = 0; i < max_pkts; i++) {
+		struct ggu_notify_pkt *ggu_pkt = &instance->ggu_pkts[i];
+
+		if (ggu_pkt->buf == NULL)
+			continue;
+
+		if (unlikely(num_sent != num_to_send)) {
+			if (sent_count < num_sent)
+				sent_count++;
+			else {
+				print_unsent_policies(ggu_pkt);
+				rte_pktmbuf_free(ggu_pkt->buf);
+			}
+		}
+
+		ggu_pkt->buf = NULL;
+		instance->num_ggu_pkts--;
+	}
+
+	RTE_VERIFY(instance->num_ggu_pkts == 0);
+}
+
+/*
+ * Start building a new notification packet for the Gatekeeper
+ * server indicated by @pkt_info.
+ *
+ * If there's no more room for a notification packet, then
+ * send a random one to make room.
+ */
+static struct ggu_notify_pkt *
+add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
+	struct gt_packet_headers *pkt_info)
+{
+	unsigned int max_pkts = gt_conf->max_ggu_notify_pkts;
+	struct ggu_notify_pkt *ggu_pkt = NULL;
+	unsigned int lcore_id = rte_lcore_id();
+	unsigned int i;
+
+	/* Find an available packet, sending a packet if necessary. */
+	if (instance->num_ggu_pkts == max_pkts) {
+		int idx = rte_rand() % max_pkts;
+		ggu_pkt = &instance->ggu_pkts[idx];
+		send_notify_pkt(gt_conf, instance, ggu_pkt);
+	} else {
+		for (i = 0; i < max_pkts; i++) {
+			if (instance->ggu_pkts[i].buf == NULL) {
+				ggu_pkt = &instance->ggu_pkts[i];
+				break;
+			}
+		}
+	}
+	RTE_VERIFY(ggu_pkt != NULL);
+
+	ggu_pkt->ipaddr.proto = pkt_info->outer_ethertype;
+	if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
+		struct ipv4_hdr *ipv4_hdr =
+			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+		ggu_pkt->ipaddr.ip.v4.s_addr = ipv4_hdr->src_addr;
+	} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
+		struct ipv6_hdr *ipv6_hdr =
+			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+		rte_memcpy(ggu_pkt->ipaddr.ip.v6.s6_addr, ipv6_hdr->src_addr,
+			sizeof(ggu_pkt->ipaddr.ip.v6.s6_addr));
+	} else {
+		rte_panic("Unexpected condition: gt at lcore %u adding to notification packet to Gatekeeper server with unknown IP version %hu\n",
+			lcore_id, ggu_pkt->ipaddr.proto);
+	}
+
+	ggu_pkt->buf = rte_pktmbuf_alloc(
+		gt_conf->net->gatekeeper_pktmbuf_pool[rte_socket_id()]);
+	if (ggu_pkt->buf == NULL) {
+		RTE_LOG(ERR, MEMPOOL,
+			"gt: failed to allocate notification packet on lcore %u!",
+			lcore_id);
+		return NULL;
+	}
+
+	fill_notify_pkt_hdr(ggu_pkt->buf, pkt_info, gt_conf);
+
+	instance->num_ggu_pkts++;
+	return ggu_pkt;
+}
+
+/*
+ * To estimate the maximum size of an on-the-wire policy decision,
+ * sum the size of the decision prefix (type and length fields) with
+ * the size of the in-memory GGU policy struct. This is a slight
+ * overestimate, which is acceptable for determining whether a
+ * packet has enough room for another decision.
+ */
+#define GGU_MAX_DECISION_LEN (sizeof(struct ggu_decision) + \
+	sizeof(struct ggu_policy))
+
+/*
+ * Add a policy decision to a notification packet. If a notification
+ * does not exist for this Gatekeeper server, then create one.
+ */
+static void
+fill_notify_pkt(struct ggu_policy *policy,
+	struct gt_packet_headers *pkt_info, struct gt_instance *instance,
+	struct gt_config *gt_conf)
+{
+	struct ggu_notify_pkt *ggu_pkt;
+	struct ggu_decision *ggu_decision;
+	size_t params_offset;
+
+	ggu_pkt = find_notify_pkt(gt_conf, pkt_info, instance);
+	if (ggu_pkt == NULL) {
+		ggu_pkt = add_notify_pkt(gt_conf, instance, pkt_info);
+		if (ggu_pkt == NULL) {
+			print_unsent_policy(policy, NULL);
+			return;
+		}
+	}
+
+	/* Fill up the policy decision. */
+
 	if (policy->flow.proto == ETHER_TYPE_IPv4
 			&& policy->state == GK_DECLINED) {
-		decision_len += sizeof(policy->flow.f.v4) +
-			sizeof(policy->params.declined);
 		ggu_decision = (struct ggu_decision *)
-			rte_pktmbuf_append(notify_pkt, decision_len);
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v4) +
+				sizeof(policy->params.declined));
 		ggu_decision->type = GGU_DEC_IPV4_DECLINED;
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
 		params_offset = sizeof(policy->flow.f.v4);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv6
 			&& policy->state == GK_DECLINED) {
-		decision_len += sizeof(policy->flow.f.v6) +
-			sizeof(policy->params.declined);
 		ggu_decision = (struct ggu_decision *)
-			rte_pktmbuf_append(notify_pkt, decision_len);
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v6) +
+				sizeof(policy->params.declined));
 		ggu_decision->type = GGU_DEC_IPV6_DECLINED;
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
 		params_offset = sizeof(policy->flow.f.v6);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv4
 			&& policy->state == GK_GRANTED) {
-		decision_len += sizeof(policy->flow.f.v4) +
-			sizeof(policy->params.granted);
 		ggu_decision = (struct ggu_decision *)
-			rte_pktmbuf_append(notify_pkt, decision_len);
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v4) +
+				sizeof(policy->params.granted));
 		ggu_decision->type = GGU_DEC_IPV4_GRANTED;
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
 		params_offset = sizeof(policy->flow.f.v4);
 	} else if (policy->flow.proto == ETHER_TYPE_IPv6
 			&& policy->state == GK_GRANTED) {
-		decision_len += sizeof(policy->flow.f.v6) +
-			sizeof(policy->params.granted);
 		ggu_decision = (struct ggu_decision *)
-			rte_pktmbuf_append(notify_pkt, decision_len);
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v6) +
+				sizeof(policy->params.granted));
 		ggu_decision->type = GGU_DEC_IPV6_GRANTED;
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
 		params_offset = sizeof(policy->flow.f.v6);
 	} else
-		rte_panic("Unexpected condition: gt fills up a notify packet flow with unexpected policy state %u\n",
+		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
 			policy->state);
 
 	switch (policy->state) {
@@ -781,113 +1129,12 @@ alloc_and_fill_notify_pkt(unsigned int socket, struct ggu_policy *policy,
 	ggu_decision->res1 = 0;
 	ggu_decision->res2 = 0;
 
-	/* Fill up the link-layer header. */
-	fill_eth_hdr_reverse(&gt_conf->net->front, notify_eth, pkt_info);
-	notify_pkt->l2_len = l2_len;
-
-	/* Fill up the IP header. */
-	if (ethertype == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ipv4_hdr =
-			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
-		/* Fill up the IPv4 header. */
-		notify_ipv4->version_ihl = IP_VHL_DEF;
-		notify_ipv4->packet_id = 0;
-		notify_ipv4->fragment_offset = IP_DN_FRAGMENT_FLAG;
-		notify_ipv4->time_to_live = IP_DEFTTL;
-		notify_ipv4->next_proto_id = IPPROTO_UDP;
-		/* The source address is the Grantor server IP address. */
-		notify_ipv4->src_addr = ipv4_hdr->dst_addr;
-		/*
-		 * The destination address is the
-		 * Gatekeeper server IP address.
-		 */
-		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
-		notify_ipv4->total_length = rte_cpu_to_be_16(
-			notify_pkt->data_len - l2_len);
-
-		/*
-		 * The IP header checksum filed must be set to 0
-		 * in order to offload the checksum calculation.
-		 */
-		notify_ipv4->hdr_checksum = 0;
-
-		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
-			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
-		notify_pkt->l3_len = sizeof(struct ipv4_hdr);
-
-		/* Offload the UDP checksum. */
-		notify_udp->dgram_cksum =
-			rte_ipv4_phdr_cksum(notify_ipv4,
-			notify_pkt->ol_flags);
-	} else if (ethertype == ETHER_TYPE_IPv6) {
-		struct ipv6_hdr *ipv6_hdr =
-			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
-		/* Fill up the outer IPv6 header. */
-		notify_ipv6->vtc_flow =
-			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
-		notify_ipv6->proto = IPPROTO_UDP; 
-		notify_ipv6->hop_limits =
-			gt_conf->net->front.ipv6_default_hop_limits;
-
-		rte_memcpy(notify_ipv6->src_addr, ipv6_hdr->dst_addr,
-			sizeof(notify_ipv6->src_addr));
-		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
-			sizeof(notify_ipv6->dst_addr));
-		notify_ipv6->payload_len =
-			rte_cpu_to_be_16(notify_pkt->data_len -
-			l2_len - sizeof(struct ipv6_hdr));
-
-		notify_pkt->ol_flags |= (PKT_TX_IPV6 |
-			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
-		notify_pkt->l3_len = sizeof(struct ipv6_hdr);
-
-		/* Offload the UDP checksum. */
-		notify_udp->dgram_cksum =
-			rte_ipv6_phdr_cksum(notify_ipv6,
-			notify_pkt->ol_flags);
-	}
-
-	/* Fill up the UDP header. */
-	notify_udp->src_port = gt_conf->ggu_src_port;
-	notify_udp->dst_port = gt_conf->ggu_dst_port;
-	notify_udp->dgram_len = rte_cpu_to_be_16((uint16_t)(
-		sizeof(*notify_udp) + sizeof(*notify_ggu) + decision_len));
-
-	notify_pkt->l4_len = sizeof(struct udp_hdr);
-
-	return notify_pkt;
-}
-
-static void
-print_unsent_policy(struct ggu_policy *policy)
-{
-	int ret;
-	char err_msg[1024];
-
-	if (policy->state == GK_REQUEST) {
-		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu]",
-			policy->state);
-	} else if (policy->state == GK_GRANTED) {
-		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
-			policy->state, policy->params.granted.tx_rate_kb_sec,
-			policy->params.granted.cap_expire_sec,
-			policy->params.granted.next_renewal_ms,
-			policy->params.granted.renewal_step_ms);
-	} else if (policy->state == GK_DECLINED) {
-		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
-			policy->state,
-			policy->params.declined.expire_sec);
-	} else {
-		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy!\n",
-			policy->state, __func__);
-	}
-
-	RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-	print_flow_err_msg(&policy->flow, err_msg);
+	/*
+	 * If we're close to the end of the packet, possibly
+	 * without room for another decision, send it now.
+	 */
+	if (rte_pktmbuf_tailroom(ggu_pkt->buf) < GGU_MAX_DECISION_LEN)
+		send_notify_pkt(gt_conf, instance, ggu_pkt);
 }
 
 /*
@@ -896,8 +1143,7 @@ print_unsent_policy(struct ggu_policy *policy)
  * with fragmented packets.
  */
 static void 
-process_death_row(int socket_id, uint16_t port, uint16_t tx_queue,
-	int punish, struct rte_ip_frag_death_row *death_row,
+process_death_row(int punish, struct rte_ip_frag_death_row *death_row,
 	struct gt_instance *instance, struct gt_config *gt_conf)
 {
 	uint32_t i;
@@ -906,7 +1152,6 @@ process_death_row(int socket_id, uint16_t port, uint16_t tx_queue,
 		int ret;
 		struct gt_packet_headers pkt_info;
 		struct ggu_policy policy;
-		struct rte_mbuf *notify_pkt;
 
 		if (!punish)
 			goto free_packet;
@@ -938,18 +1183,10 @@ process_death_row(int socket_id, uint16_t port, uint16_t tx_queue,
 		}
 
 		/*
-		 * TODO Reply in a batch.
-		 * Reply the policy decision to GK-GT unit.
+		 * Add the policy decision to the notification
+		 * packet to be sent to the GT-GK Unit.
 		 */
-		notify_pkt = alloc_and_fill_notify_pkt(
-			socket_id, &policy, &pkt_info, gt_conf);
-		if (notify_pkt == NULL)
-			print_unsent_policy(&policy);
-		else if (rte_eth_tx_burst(port, tx_queue,
-				&notify_pkt, 1) != 1) {
-			print_unsent_policy(&policy);
-			rte_pktmbuf_free(notify_pkt);
-		}
+		fill_notify_pkt(&policy, &pkt_info, instance, gt_conf);
 
 free_packet:
 		rte_pktmbuf_free(death_row->row[i]);
@@ -985,17 +1222,17 @@ static int
 gt_proc(void *arg)
 {
 	unsigned int lcore = rte_lcore_id();
-	unsigned int socket = rte_lcore_to_socket_id(lcore);
 	struct gt_config *gt_conf = (struct gt_config *)arg;
 	unsigned int block_idx = get_block_idx(gt_conf, lcore);
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
 	uint64_t last_tsc = rte_rdtsc();
-	uint16_t port = get_net_conf()->front.id;
+	uint16_t port = gt_conf->net->front.id;
 	uint16_t rx_queue = instance->rx_queue;
 	uint16_t tx_queue = instance->tx_queue;
 	uint64_t frag_scan_timeout_cycles = round(
 		gt_conf->frag_scan_timeout_ms * rte_get_tsc_hz() / 1000.);
+	unsigned int batch = 0;
 	/*
 	 * The mbuf death row contains
 	 * packets to be freed.
@@ -1029,14 +1266,15 @@ gt_proc(void *arg)
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
 			gt_max_pkt_burst);
 
-		if (unlikely(num_rx == 0))
+		if (unlikely(num_rx == 0)) {
+			flush_notify_pkts(gt_conf, instance);
 			continue;
+		}
 
 		for (i = 0; i < num_rx; i++) {
 			struct rte_mbuf *m = rx_bufs[i];
 			struct gt_packet_headers pkt_info;
 			struct ggu_policy policy;
-			struct rte_mbuf *notify_pkt;
 
 			/*
 			 * Only request packets and priority packets
@@ -1063,8 +1301,7 @@ gt_proc(void *arg)
 					&death_row, instance);
 
 				/* Process the death packets. */
-				process_death_row(socket, port, tx_queue,
-					m == NULL, &death_row,
+				process_death_row(m == NULL, &death_row,
 					instance, gt_conf);
 
 				if (m == NULL)
@@ -1113,14 +1350,10 @@ gt_proc(void *arg)
 			}
 
 			/*
-			 * TODO Reply in a batch.
-			 * Reply the policy decision to GK-GT unit.
+			 * Add the policy decision to the notification
+			 * packet to be sent to the GT-GK Unit.
 			 */
-			notify_pkt = alloc_and_fill_notify_pkt(
-				socket, &policy, &pkt_info, gt_conf);
-			if (notify_pkt != NULL && rte_eth_tx_burst(
-					port, tx_queue, &notify_pkt, 1) != 1)
-				rte_pktmbuf_free(notify_pkt);
+			fill_notify_pkt(&policy, &pkt_info, instance, gt_conf);
 
 			if (policy.state == GK_GRANTED) {
 				ret = decap_and_fill_eth(m, gt_conf,
@@ -1160,12 +1393,15 @@ gt_proc(void *arg)
 				&death_row, cur_tsc);
 
 			/* Process the death packets. */
-			process_death_row(socket, port,
-				tx_queue, true, &death_row,
+			process_death_row(true, &death_row,
 				instance, gt_conf);
 
 			last_tsc = rte_rdtsc();
 		}
+
+		batch = (batch + 1) % gt_conf->batch_interval;
+		if (batch == 0)
+			flush_notify_pkts(gt_conf, instance);
 	}
 
 	RTE_LOG(NOTICE, GATEKEEPER,
@@ -1181,8 +1417,12 @@ alloc_gt_conf(void)
 }
 
 static inline void
-cleanup_gt_instance(struct gt_instance *instance)
+cleanup_gt_instance(struct gt_config *gt_conf, struct gt_instance *instance)
 {
+	flush_notify_pkts(gt_conf, instance);
+	rte_free(instance->ggu_pkts);
+	instance->ggu_pkts = NULL;
+
 	/* If the pointer is NULL, the function does nothing. */
 	rte_ip_frag_table_destroy(instance->frag_tbl);
 	instance->frag_tbl = NULL;
@@ -1204,7 +1444,7 @@ cleanup_gt(struct gt_config *gt_conf)
 {
 	int i;
 	for (i = 0; i < gt_conf->num_lcores; i++)
-		cleanup_gt_instance(&gt_conf->instances[i]);
+		cleanup_gt_instance(gt_conf, &gt_conf->instances[i]);
 
 	rte_free(gt_conf->instances);
 	rte_free(gt_conf->lcores);
@@ -1336,7 +1576,17 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		RTE_LOG(ERR, MALLOC,
 			"The GT block can't create acl search for IPv6 at lcore %u!\n",
 			lcore_id);
+		ret = -1;
+		goto cleanup;
+	}
 
+	instance->num_ggu_pkts = 0;
+	instance->ggu_pkts = rte_calloc(__func__, gt_conf->max_ggu_notify_pkts,
+		sizeof(struct ggu_notify_pkt), 0);
+	if (instance->ggu_pkts == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: failed to allocate fixed array of Gatekeeper notification packets on lcore %u!\n",
+			lcore_id);
 		ret = -1;
 		goto cleanup;
 	}
@@ -1344,7 +1594,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	goto out;
 
 cleanup:
-	cleanup_gt_instance(instance);
+	cleanup_gt_instance(gt_conf, instance);
 
 out:
 	return ret;
@@ -1396,7 +1646,7 @@ init_gt_instances(struct gt_config *gt_conf)
 
 free_gt_instance:
 	for (i = 0; i < num_succ_instances; i++)
-		cleanup_gt_instance(&gt_conf->instances[i]);
+		cleanup_gt_instance(gt_conf, &gt_conf->instances[i]);
 out:
 	return ret;
 }
@@ -1459,6 +1709,22 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 	}
 
 	if (!(gt_conf->gt_max_pkt_burst > 0)) {
+		ret = -1;
+		goto out;
+	}
+
+	if (gt_conf->batch_interval == 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: batch interval (%u) must be greater than 0\n",
+			gt_conf->batch_interval);
+		ret = -1;
+		goto out;
+	}
+
+	if (gt_conf->max_ggu_notify_pkts == 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: max number of GGU notification packets (%u) must be greater than 0\n",
+			gt_conf->max_ggu_notify_pkts);
 		ret = -1;
 		goto out;
 	}

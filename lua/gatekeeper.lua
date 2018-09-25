@@ -177,6 +177,8 @@ struct gt_config {
 	uint32_t     frag_max_entries;
 	uint32_t     frag_max_flow_ttl_ms;
 	uint16_t     gt_max_pkt_burst;
+	unsigned int batch_interval;
+	unsigned int max_ggu_notify_pkts;
 	/* This struct has hidden fields. */
 };
 

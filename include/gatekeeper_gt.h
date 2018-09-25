@@ -54,6 +54,21 @@ struct gt_packet_headers {
 	struct ipv6_extension_fragment *frag_hdr;
 };
 
+/*
+ * Data for building policy decision notification packets for
+ * Gatekeeper servers seen by GT block instances.
+ */
+struct ggu_notify_pkt {
+	/* The IP address of the Gatekeeper server. */
+	struct ipaddr   ipaddr;
+
+	/*
+	 * The notification packet of policy decisions
+	 * being built to send to this Gatekeeper server.
+	 */
+	struct rte_mbuf *buf;
+};
+
 /* Structures for each GT instance. */
 struct gt_instance {
 	/* RX queue on the front interface. */
@@ -77,6 +92,16 @@ struct gt_instance {
 
 	struct acl_search *acl4;
 	struct acl_search *acl6;
+
+	/*
+	 * Fixed array of packet buffers for policy decision
+	 * notification packets for the last @max_ggu_pkts
+	 * Gatekeeper servers seen by this GT block instance.
+	 */
+	struct ggu_notify_pkt *ggu_pkts;
+
+	/* The number of valid entries in @ggu_pkts. */
+	unsigned int          num_ggu_pkts;
 };
 
 /* Configuration for the GT functional block. */
@@ -108,6 +133,19 @@ struct gt_config {
 
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t           gt_max_pkt_burst;
+
+	/*
+	 * Number of iterations of packets processed by each GT
+	 * block before flushing all policy decision notification
+	 * packets. Set to 1 to flush after every RX iteration.
+	 */
+	unsigned int       batch_interval;
+
+	/*
+	 * Maximum number of Gatekeeper servers for which to
+	 * keep policy decision notification packet buffers.
+	 */
+	unsigned int       max_ggu_notify_pkts;
 
 	/*
 	 * The fields below are for internal use.
