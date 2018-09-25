@@ -91,7 +91,7 @@ randomize_rss_key(void)
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-static struct rte_eth_conf gatekeeper_port_conf = {
+static const struct rte_eth_conf gatekeeper_template_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
 		.max_rx_pkt_len = ETHER_MAX_LEN,
@@ -822,6 +822,7 @@ static int
 init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	uint8_t *pnum_succ_ports)
 {
+	struct rte_eth_conf port_conf = gatekeeper_template_port_conf;
 	struct rte_eth_dev_info dev_info;
 	uint64_t configured_rss_hf;
 	int ret;
@@ -829,8 +830,8 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	rte_eth_dev_info_get(port_id, &dev_info);
 
 	/* Only use RSS hash functions this device can handle. */
-	configured_rss_hf = gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf;
-	gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf &=
+	configured_rss_hf = port_conf.rx_adv_conf.rss_conf.rss_hf;
+	port_conf.rx_adv_conf.rss_conf.rss_hf &=
 		dev_info.flow_type_rss_offloads;
 
 	/*
@@ -846,30 +847,25 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
 	 * Then, change this warning to an error.
 	 */
-	if (configured_rss_hf !=
-			gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf) {
+	if (configured_rss_hf != port_conf.rx_adv_conf.rss_conf.rss_hf) {
 		RTE_LOG(WARNING, PORT,
 			"Port %hu invalid configured rss_hf: 0x%"PRIx64", valid value: 0x%"PRIx64"\n",
 			port_id, configured_rss_hf,
-			gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf);
+			port_conf.rx_adv_conf.rss_conf.rss_hf);
 	}
 
 	ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
-		iface->num_tx_queues, &gatekeeper_port_conf);
+		iface->num_tx_queues, &port_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT,
 			"Failed to configure port %hhu (err=%d)!\n",
 			port_id, ret);
-		goto out;
+		return ret;
 	}
 	if (pnum_succ_ports != NULL)
 		(*pnum_succ_ports)++;
 
-	ret = 0;
-
-out:
-	gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf = configured_rss_hf;
-	return ret;
+	return 0;
 }
 
 static int
