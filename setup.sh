@@ -65,4 +65,10 @@ cd ../../
 gcc generate_if_map.c -o generate_if_map -Wall
 ./generate_if_map
 
+# Build client.
+cd ../gkctl
+gcc main.c -o client -Wall -Wextra -pedantic
+
+cd ../../
+
 echo "Environmental variables RTE_SDK and RTE_TARGET have been set, but not saved for future logins. You should save them to your shell's preferences file or set them after every login."
