@@ -1100,7 +1100,12 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		/* FALLTHROUGH */
+		RTE_LOG(WARNING, GATEKEEPER,
+			"gk: %s received a request to delete FIB entry %s with prefix action %u; Gatekeeper may need to restart\n",
+			__func__, ip_prefix->str, ip_prefix_fib->action);
+		ret = -1;
+		break;
+
 	default:
 		rte_panic("Unexpected condition at %s: unsupported prefix action %u\n",
 			__func__, ip_prefix_fib->action);
