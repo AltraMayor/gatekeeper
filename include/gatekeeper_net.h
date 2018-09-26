@@ -134,6 +134,35 @@ struct gatekeeper_if {
 	int             vlan_insert;
 
 	/*
+	 * Maximum permitted length of packets sent from and received on
+	 * this interface. It is used to configure both the MTU of the
+	 * device and the maximum RX packet length offload feature.
+	 *
+	 * Notes:
+	 *
+	 * The value here must conform to DPDK's limits (typically
+	 * 64-16128 bytes) and also to whatever limits are imposed by
+	 * the specific NIC being used.
+	 *
+	 * Before adjusting this value, you should take into account
+	 * the hardware capabilities and the configured mbuf segment size
+	 * in Gatekeeper. By default, the mbuf segment size and MTU are
+	 * both set to 2048.
+	 *
+	 * The KNI device type only supports an MTU up to 1500 bytes, so
+	 * any control plane packets that are above MTU will be dropped at
+	 * Gatekeeper.
+	 *
+	 * Gatekeeper servers do not fragment packets on the back interface.
+	 * If the back network does not support frame sizes sent by Gatekeeper,
+	 * the packet will be dropped. For example, if Gatekeeper receives
+	 * a frame close to 1500 bytes and encapsulates it (resulting in a
+	 * frame above 1500 bytes), then the back interface may be able to
+	 * transmit it but the network may drop it.
+	 */
+	uint16_t        mtu;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */

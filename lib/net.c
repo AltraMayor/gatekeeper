@@ -91,10 +91,16 @@ randomize_rss_key(void)
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-static struct rte_eth_conf gatekeeper_port_conf = {
+static const struct rte_eth_conf gatekeeper_template_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
-		.max_rx_pkt_len = ETHER_MAX_LEN,
+		/*
+		 * The field .max_rx_pkt_len is configurable via
+		 * the static config as the field mtu and is set
+		 * in init_port(). See the documentation of member
+		 * mtu of struct gatekeeper_if for more information.
+		 */
+		.offloads = DEV_RX_OFFLOAD_JUMBO_FRAME,
 	},
 
 	.rx_adv_conf = {
@@ -321,6 +327,13 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 	return 0;
 }
 
+static inline int
+iface_bonded(struct gatekeeper_if *iface)
+{
+	return iface->num_ports > 1 ||
+		iface->bonding_mode == BONDING_MODE_8023AD;
+}
+
 /*
  * Get a queue identifier for a given functional block instance (lcore),
  * using a certain interface for either RX or TX.
@@ -372,8 +385,7 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	}
 
 	/* If there's a bonded port, configure it too. */
-	if (iface->num_ports > 1 ||
-			iface->bonding_mode == BONDING_MODE_8023AD) {
+	if (iface_bonded(iface)) {
 		ret = configure_queue(iface->id, (uint16_t)new_queue_id,
 			ty, numa_node, mp);
 		if (ret < 0)
@@ -425,23 +437,21 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 	switch (cmd) {
 	case IFACE_DESTROY_ALL:
 		/* Destroy the ACLs for each socket. */
-		if (ipv6_if_configured(iface))
+		if (ipv6_acl_enabled(iface))
 			destroy_acls(&iface->ipv6_acls);
-		if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+		if (ipv4_acl_enabled(iface))
 			destroy_acls(&iface->ipv4_acls);
 		/* Stop interface ports (bonded port is stopped below). */
 		stop_iface_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_INIT:
 		/* Remove any slave ports added to a bonded port. */
-		if (iface->num_ports > 1 ||
-				iface->bonding_mode == BONDING_MODE_8023AD)
+		if (iface_bonded(iface))
 			rm_slave_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_PORTS:
 		/* Stop and close bonded port, if needed. */
-		if (iface->num_ports > 1 ||
-				iface->bonding_mode == BONDING_MODE_8023AD)
+		if (iface_bonded(iface))
 			rte_eth_bond_free(iface->name);
 
 		/* Close and free interface ports. */
@@ -822,6 +832,7 @@ static int
 init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	uint8_t *pnum_succ_ports)
 {
+	struct rte_eth_conf port_conf = gatekeeper_template_port_conf;
 	struct rte_eth_dev_info dev_info;
 	uint64_t configured_rss_hf;
 	int ret;
@@ -829,8 +840,8 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	rte_eth_dev_info_get(port_id, &dev_info);
 
 	/* Only use RSS hash functions this device can handle. */
-	configured_rss_hf = gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf;
-	gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf &=
+	configured_rss_hf = port_conf.rx_adv_conf.rss_conf.rss_hf;
+	port_conf.rx_adv_conf.rss_conf.rss_hf &=
 		dev_info.flow_type_rss_offloads;
 
 	/*
@@ -846,30 +857,34 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 	 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
 	 * Then, change this warning to an error.
 	 */
-	if (configured_rss_hf !=
-			gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf) {
+	if (configured_rss_hf != port_conf.rx_adv_conf.rss_conf.rss_hf) {
 		RTE_LOG(WARNING, PORT,
 			"Port %hu invalid configured rss_hf: 0x%"PRIx64", valid value: 0x%"PRIx64"\n",
 			port_id, configured_rss_hf,
-			gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf);
+			port_conf.rx_adv_conf.rss_conf.rss_hf);
 	}
 
+	port_conf.rxmode.max_rx_pkt_len = iface->mtu;
+
+	/*
+	 * If the MTU is set above the mbuf segment size, then hardware
+	 * support for transmitting multiple segments should be enabled.
+	 */
+	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
+		port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+
 	ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
-		iface->num_tx_queues, &gatekeeper_port_conf);
+		iface->num_tx_queues, &port_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT,
 			"Failed to configure port %hhu (err=%d)!\n",
 			port_id, ret);
-		goto out;
+		return ret;
 	}
 	if (pnum_succ_ports != NULL)
 		(*pnum_succ_ports)++;
 
-	ret = 0;
-
-out:
-	gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf = configured_rss_hf;
-	return ret;
+	return 0;
 }
 
 static int
@@ -922,7 +937,7 @@ init_iface(struct gatekeeper_if *iface)
 	}
 
 	/* Initialize bonded port, if needed. */
-	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
+	if (!iface_bonded(iface))
 		iface->id = iface->ports[0];
 	else {
 		char dev_name[64];
@@ -1103,15 +1118,21 @@ start_iface(struct gatekeeper_if *iface)
 			goto stop_partial;
 	}
 
-	/* If there's no bonded port, we're done. */
-	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
-		goto out;
+	/* Bonding port(s). */
+	if (iface_bonded(iface)) {
+		ret = start_port(iface->id, NULL, true);
+		if (ret < 0)
+			goto stop_partial;
+	}
 
-	ret = start_port(iface->id, NULL, true);
-	if (ret < 0)
+	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"net: cannot set the MTU on the %s iface (error %d)\n",
+			iface->name, -ret);
 		goto stop_partial;
+	}
 
-out:
 	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,
 		RTE_ETH_FILTER_ETHERTYPE) == 0;
 	RTE_LOG(NOTICE, PORT,
@@ -1141,7 +1162,7 @@ out:
 	return 0;
 
 ipv4_acls:
-	if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+	if (ipv4_acl_enabled(iface))
 		destroy_acls(&iface->ipv4_acls);
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
@@ -1246,24 +1267,22 @@ fail:
 int
 finalize_stage2(__attribute__((unused)) void *arg)
 {
-	if (!config.front.hw_filter_ntuple &&
-			ipv4_if_configured(&config.front)) {
+	if (ipv4_acl_enabled(&config.front)) {
 		int ret = build_ipv4_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
-	if (!config.back.hw_filter_ntuple &&
-			ipv4_if_configured(&config.back)) {
+	if (ipv4_acl_enabled(&config.back)) {
 		int ret = build_ipv4_acls(&config.back);
 		if (ret < 0)
 			return ret;
 	}
-	if (ipv6_if_configured(&config.front)) {
+	if (ipv6_acl_enabled(&config.front)) {
 		int ret = build_ipv6_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
-	if (ipv6_if_configured(&config.back)) {
+	if (ipv6_acl_enabled(&config.back)) {
 		int ret = build_ipv6_acls(&config.back);
 		if (ret < 0)
 			return ret;
