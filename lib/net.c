@@ -321,6 +321,13 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 	return 0;
 }
 
+static inline int
+iface_bonded(struct gatekeeper_if *iface)
+{
+	return iface->num_ports > 1 ||
+		iface->bonding_mode == BONDING_MODE_8023AD;
+}
+
 /*
  * Get a queue identifier for a given functional block instance (lcore),
  * using a certain interface for either RX or TX.
@@ -372,8 +379,7 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	}
 
 	/* If there's a bonded port, configure it too. */
-	if (iface->num_ports > 1 ||
-			iface->bonding_mode == BONDING_MODE_8023AD) {
+	if (iface_bonded(iface)) {
 		ret = configure_queue(iface->id, (uint16_t)new_queue_id,
 			ty, numa_node, mp);
 		if (ret < 0)
@@ -434,14 +440,12 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_INIT:
 		/* Remove any slave ports added to a bonded port. */
-		if (iface->num_ports > 1 ||
-				iface->bonding_mode == BONDING_MODE_8023AD)
+		if (iface_bonded(iface))
 			rm_slave_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_PORTS:
 		/* Stop and close bonded port, if needed. */
-		if (iface->num_ports > 1 ||
-				iface->bonding_mode == BONDING_MODE_8023AD)
+		if (iface_bonded(iface))
 			rte_eth_bond_free(iface->name);
 
 		/* Close and free interface ports. */
@@ -918,7 +922,7 @@ init_iface(struct gatekeeper_if *iface)
 	}
 
 	/* Initialize bonded port, if needed. */
-	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
+	if (!iface_bonded(iface))
 		iface->id = iface->ports[0];
 	else {
 		char dev_name[64];
@@ -1099,15 +1103,13 @@ start_iface(struct gatekeeper_if *iface)
 			goto stop_partial;
 	}
 
-	/* If there's no bonded port, we're done. */
-	if (iface->num_ports <= 1 && iface->bonding_mode != BONDING_MODE_8023AD)
-		goto out;
+	/* Bonding port(s). */
+	if (iface_bonded(iface)) {
+		ret = start_port(iface->id, NULL, true);
+		if (ret < 0)
+			goto stop_partial;
+	}
 
-	ret = start_port(iface->id, NULL, true);
-	if (ret < 0)
-		goto stop_partial;
-
-out:
 	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,
 		RTE_ETH_FILTER_ETHERTYPE) == 0;
 	RTE_LOG(NOTICE, PORT,
