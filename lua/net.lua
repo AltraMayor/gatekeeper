@@ -14,6 +14,7 @@ return function (gatekeeper_server)
 	local front_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
 	local front_vlan_tag = 0x1234
 	local front_vlan_insert = true
+	local front_mtu = 1500
 
 	local back_iface_enabled = gatekeeper_server
 	local back_ports = {"enp133s0f1"}
@@ -23,9 +24,10 @@ return function (gatekeeper_server)
 	local back_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
 	local back_vlan_tag = 0x5678
 	local back_vlan_insert = true
+	local back_mtu = 2048
 
 	--
-	-- Code below this point should not need to be changed.
+	-- Code below this point should not need to be changed by operators.
 	--
 
 	local net_conf = gatekeeper.c.get_net_conf()
@@ -34,6 +36,7 @@ return function (gatekeeper_server)
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec
 	front_iface.bonding_mode = front_bonding_mode
 	front_iface.vlan_insert = front_vlan_insert
+	front_iface.mtu = front_mtu
 	local ret = gatekeeper.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
 
@@ -44,6 +47,7 @@ return function (gatekeeper_server)
 		back_iface.nd_cache_timeout_sec = back_nd_cache_timeout_sec
 		back_iface.bonding_mode = back_bonding_mode
 		back_iface.vlan_insert = back_vlan_insert
+		back_iface.mtu = back_mtu
 		ret = gatekeeper.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
 	end

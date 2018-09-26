@@ -94,7 +94,13 @@ uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 static const struct rte_eth_conf gatekeeper_template_port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
-		.max_rx_pkt_len = ETHER_MAX_LEN,
+		/*
+		 * The field .max_rx_pkt_len is configurable via
+		 * the static config as the field mtu and is set
+		 * in init_port(). See the documentation of member
+		 * mtu of struct gatekeeper_if for more information.
+		 */
+		.offloads = DEV_RX_OFFLOAD_JUMBO_FRAME,
 	},
 
 	.rx_adv_conf = {
@@ -858,6 +864,15 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 			port_conf.rx_adv_conf.rss_conf.rss_hf);
 	}
 
+	port_conf.rxmode.max_rx_pkt_len = iface->mtu;
+
+	/*
+	 * If the MTU is set above the mbuf segment size, then hardware
+	 * support for transmitting multiple segments should be enabled.
+	 */
+	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
+		port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+
 	ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
 		iface->num_tx_queues, &port_conf);
 	if (ret < 0) {
@@ -1108,6 +1123,14 @@ start_iface(struct gatekeeper_if *iface)
 		ret = start_port(iface->id, NULL, true);
 		if (ret < 0)
 			goto stop_partial;
+	}
+
+	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
+	if (ret < 0) {
+		RTE_LOG(ERR, PORT,
+			"net: cannot set the MTU on the %s iface (error %d)\n",
+			iface->name, -ret);
+		goto stop_partial;
 	}
 
 	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,

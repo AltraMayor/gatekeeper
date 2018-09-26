@@ -122,6 +122,7 @@ struct gatekeeper_if {
 	uint32_t nd_cache_timeout_sec;
 	uint32_t bonding_mode;
 	int      vlan_insert;
+	uint16_t mtu;
 	/* This struct has hidden fields. */
 };
 
