@@ -425,9 +425,9 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 	switch (cmd) {
 	case IFACE_DESTROY_ALL:
 		/* Destroy the ACLs for each socket. */
-		if (ipv6_if_configured(iface))
+		if (ipv6_acl_enabled(iface))
 			destroy_acls(&iface->ipv6_acls);
-		if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+		if (ipv4_acl_enabled(iface))
 			destroy_acls(&iface->ipv4_acls);
 		/* Stop interface ports (bonded port is stopped below). */
 		stop_iface_ports(iface, iface->num_ports);
@@ -1137,7 +1137,7 @@ out:
 	return 0;
 
 ipv4_acls:
-	if (!iface->hw_filter_ntuple && ipv4_if_configured(iface))
+	if (ipv4_acl_enabled(iface))
 		destroy_acls(&iface->ipv4_acls);
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
@@ -1242,24 +1242,22 @@ fail:
 int
 finalize_stage2(__attribute__((unused)) void *arg)
 {
-	if (!config.front.hw_filter_ntuple &&
-			ipv4_if_configured(&config.front)) {
+	if (ipv4_acl_enabled(&config.front)) {
 		int ret = build_ipv4_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
-	if (!config.back.hw_filter_ntuple &&
-			ipv4_if_configured(&config.back)) {
+	if (ipv4_acl_enabled(&config.back)) {
 		int ret = build_ipv4_acls(&config.back);
 		if (ret < 0)
 			return ret;
 	}
-	if (ipv6_if_configured(&config.front)) {
+	if (ipv6_acl_enabled(&config.front)) {
 		int ret = build_ipv6_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
-	if (ipv6_if_configured(&config.back)) {
+	if (ipv6_acl_enabled(&config.back)) {
 		int ret = build_ipv6_acls(&config.back);
 		if (ret < 0)
 			return ret;
