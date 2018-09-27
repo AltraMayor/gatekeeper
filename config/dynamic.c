@@ -341,8 +341,8 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 	}
 
 	/*
-	 * XXX The request must be received under a specified timeout,
-	 * or the request is aborted. This code needs further test.
+	 * The request must be received under a specified timeout,
+	 * or the request is aborted.
 	 */
 	ret = setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO,
 		(const char*)&dy_conf->rcv_time_out, sizeof(struct timeval));
