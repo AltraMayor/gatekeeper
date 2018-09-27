@@ -97,7 +97,7 @@ signal_handler(int signum)
 	else if (signum == SIGTERM)
 		fprintf(stderr, "caught SIGTERM\n");
 	else
-		fprintf(stderr, "caught unknown signal\n");
+		fprintf(stderr, "caught unknown signal (%d)\n", signum);
 	exiting = true;
 }
 
@@ -105,8 +105,10 @@ static int
 run_signal_handler(void)
 {
 	int ret = -1;
+	sig_t pipe_handler;
 	struct sigaction new_action;
 	struct sigaction old_int_action;
+	struct sigaction old_term_action;
 
 	new_action.sa_handler = signal_handler;
 	sigemptyset(&new_action.sa_mask);
@@ -116,12 +118,21 @@ run_signal_handler(void)
 	if (ret < 0)
 		goto out;
 
-	ret = sigaction(SIGTERM, &new_action, NULL);
+	ret = sigaction(SIGTERM, &new_action, &old_term_action);
 	if (ret < 0)
 		goto int_action;
 
+	pipe_handler = signal(SIGPIPE, SIG_IGN);
+	if (pipe_handler == SIG_ERR) {
+		fprintf(stderr, "Error: failed to ignore SIGPIPE - %s\n",
+			strerror(errno));
+		goto term_action;
+	}
+
 	goto out;
 
+term_action:
+	sigaction(SIGTERM, &old_term_action, NULL);
 int_action:
 	sigaction(SIGINT, &old_int_action, NULL);
 out:
