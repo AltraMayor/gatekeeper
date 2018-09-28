@@ -275,6 +275,9 @@ struct gatekeeper_if {
 
 	/* Whether the ntuple filter can be used on this interface. */
 	bool              hw_filter_ntuple;
+
+	/* Whether the interface has been initialized. */
+	bool              alive;
 };
 
 /*
