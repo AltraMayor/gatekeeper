@@ -364,7 +364,6 @@ lacp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
 	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag);
-void lua_free_iface(struct gatekeeper_if *iface);
 
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);

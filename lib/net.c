@@ -484,12 +484,6 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 	}
 }
 
-void
-lua_free_iface(struct gatekeeper_if *iface)
-{
-	destroy_iface(iface, IFACE_DESTROY_LUA);
-}
-
 int
 get_ip_type(const char *ip_addr)
 {
