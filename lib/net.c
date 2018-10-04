@@ -50,9 +50,10 @@ static struct net_config config;
 uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
 
 static int
-randomize_rss_key(void)
+randomize_rss_key(int guarantee_random_entropy)
 {
 	uint16_t final_set_count;
+	unsigned int flags = guarantee_random_entropy == 0 ? 0 : GRND_RANDOM;
 
 	/*
 	 * To validate if the key generated is reasonable, the
@@ -69,20 +70,24 @@ randomize_rss_key(void)
 		uint8_t i;
 
 		/* 
-		 * When the last parameter of the system call  getrandom() (i.e flags)
-		 * is zero, getrandom() uses the /dev/urandom pool.
+		 * When the last parameter of the system call  getrandom()
+		 * (i.e flags) is zero, getrandom() uses the /dev/urandom pool.
 		 */	
 		do {
-			int ret = syscall(SYS_getrandom, default_rss_key + number_of_bytes,
-					sizeof(default_rss_key) - number_of_bytes, 0);
+			int ret = syscall(SYS_getrandom,
+				default_rss_key + number_of_bytes,
+				sizeof(default_rss_key) - number_of_bytes,
+				flags);
 			if (ret < 0)
 				return -1;
 			number_of_bytes += ret;	
 		} while (number_of_bytes < (int)sizeof(default_rss_key));
 
 		final_set_count = 0;
-		for (i = 0; i < RTE_DIM(default_rss_key); i++)
-			final_set_count += __builtin_popcount(default_rss_key[i]);
+		for (i = 0; i < RTE_DIM(default_rss_key); i++) {
+			final_set_count +=
+				__builtin_popcount(default_rss_key[i]);
+		}
 	} while (final_set_count < min_num_set_bits ||
 			final_set_count > max_num_set_bits);
 	return 0;
@@ -1311,7 +1316,7 @@ gatekeeper_init_network(struct net_config *net_conf)
 		return -1;
 	}
 
-	if (randomize_rss_key() < 0) {
+	if (randomize_rss_key(net_conf->guarantee_random_entropy) < 0) {
 		RTE_LOG(ERR, GATEKEEPER, "Failed to initialize RSS key.\n");
 		ret = -1;
 		goto numa;
