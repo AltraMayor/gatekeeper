@@ -434,6 +434,9 @@ enum iface_destroy_cmd {
 static void
 destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 {
+	if (!iface->alive)
+		return;
+
 	switch (cmd) {
 	case IFACE_DESTROY_ALL:
 		/* Destroy the ACLs for each socket. */
@@ -470,18 +473,15 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 		/* Free interface name. */
 		rte_free(iface->name);
 		iface->name = NULL;
+
+		iface->alive = false;
+
 		break;
 	}
 	default:
 		rte_panic("Unexpected condition\n");
 		break;
 	}
-}
-
-void
-lua_free_iface(struct gatekeeper_if *iface)
-{
-	destroy_iface(iface, IFACE_DESTROY_LUA);
 }
 
 int
@@ -894,6 +894,8 @@ init_iface(struct gatekeeper_if *iface)
 	uint8_t i;
 	uint8_t num_succ_ports = 0;
 	uint8_t num_slaves_added = 0;
+
+	iface->alive = true;
 
 	if (iface->bonding_mode == BONDING_MODE_8023AD &&
 			GATEKEEPER_MAX_PKT_BURST < 2 * iface->num_ports) {

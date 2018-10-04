@@ -200,7 +200,6 @@ ffi.cdef[[
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
 	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag);
-void lua_free_iface(struct gatekeeper_if *iface);
 
 bool ipv4_configured(struct net_config *net_conf);
 bool ipv6_configured(struct net_config *net_conf);
