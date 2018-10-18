@@ -50,9 +50,25 @@ extern long delete_module(const char *, unsigned int);
 int
 kni_change_if(uint16_t port_id, uint8_t if_up)
 {
-	return (if_up)
-		? rte_eth_dev_set_link_up(port_id)
-		: rte_eth_dev_set_link_down(port_id);
+	int ret = 0;
+
+	if (!rte_eth_dev_is_valid_port(port_id)) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: %s: invalid port ID %hu\n",
+			__func__, port_id);
+		return -EINVAL;
+	}
+
+	if (if_up != 0) {
+		rte_eth_dev_stop(port_id);
+		ret = rte_eth_dev_start(port_id);
+		if (ret < 0)
+			RTE_LOG(ERR, GATEKEEPER,
+				"cps: %s: Failed to start port %hu\n",
+				__func__, port_id);
+	} else
+		rte_eth_dev_stop(port_id);
+
+	return ret;
 }
 
 int
@@ -256,7 +272,7 @@ kill:
 }
 
 int
-kni_config(struct rte_kni *kni, struct gatekeeper_if *iface)
+kni_config_ip_addrs(struct rte_kni *kni, struct gatekeeper_if *iface)
 {
 	struct mnl_socket *nl;
 	const char *kni_name = rte_kni_get_name(kni);
@@ -289,6 +305,32 @@ kni_config(struct rte_kni *kni, struct gatekeeper_if *iface)
 			iface->ip6_addr_plen, kni_name);
 		if (ret < 0)
 			goto close;
+	}
+
+close:
+	mnl_socket_close(nl);
+	return ret;
+}
+
+int
+kni_config_link(struct rte_kni *kni)
+{
+	struct mnl_socket *nl;
+	const char *kni_name = rte_kni_get_name(kni);
+	int ret = 0;
+
+	nl = mnl_socket_open(NETLINK_ROUTE);
+	if (nl == NULL) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_open: %s\n",
+			strerror(errno));
+		return -1;
+	}
+
+	ret = mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_bind: %s\n",
+			strerror(errno));
+		goto close;
 	}
 
 	/* Bring interface up. */

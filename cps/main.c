@@ -617,18 +617,39 @@ fail:
 }
 
 /*
- * We create the KNIs in stage 1 because creating a KNI seems to
- * restart the PCI device on which the KNI is based, which removes
- * some (but not all) device-specific configuration that has already
- * happened (RETA, multicast Ethernet addresses, etc). Therefore, if
- * we put the KNI creation in stage 2 (after the devices are started),
- * we will have to re-do some of the configuration.
+ * Many NIC drivers apparently do not directly support the
+ * link up/link down functionality of DPDK's Ethernet library.
+ * Instead, the suggested way to bring a KNI's link up (shown in
+ * the KNI sample application) is to stop and start the device.
  *
- * Following the documentation strictly, the call to
- * rte_eth_dev_info_get() here should take place *after* the NIC is
- * started. However, this rule is widely broken throughout DPDK, and
- * breaking it here makes configuration much easier due to this
- * problem of restarting the devices. 
+ * Starting and stopping a device can make the NIC lose
+ * configuration related to RSS and filters, so we need to wait
+ * to do any of that configuration until after we are finished
+ * restarting the devices.
+ *
+ * During KNI initialization, the backing device for the KNI
+ * must be restarted twice: when the KNI is created and when
+ * the link for the KNI is configured to be up.
+ *
+ * This requires creating the KNI, modifying the KNI's link to
+ * be up, and starting the devices to be done in a careful
+ * sequential order:
+ *
+ * Stage 1
+ * =======
+ *  - Create the KNI(s)
+ *  - Modify the link status of the KNI(s) to be up
+ *
+ * Stage 2
+ * =======
+ *  - Start the port(s)
+ *  - Setup IPv6 addresses
+ *  - Individual blocks add IP addresses to the KNI(s),
+ *    setup filters, and setup RSS
+ *
+ * Because of this behavior, warnings on initialization about
+ * the devices already being stopped or already being started
+ * are expected.
  */
 static int
 kni_create(struct rte_kni **kni, struct rte_mempool *mp,
@@ -653,7 +674,8 @@ kni_create(struct rte_kni **kni, struct rte_mempool *mp,
 	memset(&dev_info, 0, sizeof(dev_info));
 	rte_eth_dev_info_get(conf.group_id, &dev_info);
 	if (dev_info.device != NULL) {
-		const struct rte_bus *bus = rte_bus_find_by_device(dev_info.device);
+		const struct rte_bus *bus =
+			rte_bus_find_by_device(dev_info.device);
 		if (bus != NULL && strcmp(bus->name, "pci") == 0) {
 			struct rte_pci_device *pci_dev =
 				RTE_DEV_TO_PCI(dev_info.device);
@@ -747,6 +769,13 @@ cps_stage1(void *arg)
 		goto error;
 	}
 
+	ret = kni_config_link(cps_conf->front_kni);
+	if (ret < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"cps: failed to configure KNI link on the front iface\n");
+		goto error;
+	}
+
 	if (cps_conf->net->back_iface_enabled) {
 		ret = kni_create(&cps_conf->back_kni,
 			cps_conf->net->gatekeeper_pktmbuf_pool[socket_id],
@@ -754,6 +783,13 @@ cps_stage1(void *arg)
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"cps: failed to create KNI for the back iface\n");
+			goto error;
+		}
+
+		ret = kni_config_link(cps_conf->back_kni);
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER,
+				"cps: failed to configure KNI link on the back iface\n");
 			goto error;
 		}
 	}
@@ -1023,10 +1059,10 @@ cps_stage2(void *arg)
 		goto error;
 	}
 
-	ret = kni_config(cps_conf->front_kni, &cps_conf->net->front);
+	ret = kni_config_ip_addrs(cps_conf->front_kni, &cps_conf->net->front);
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER,
-			"cps: failed to configure KNI on the front iface\n");
+			"cps: failed to configure KNI IP addresses on the front iface\n");
 		goto error;
 	}
 
@@ -1039,10 +1075,11 @@ cps_stage2(void *arg)
 			goto error;
 		}
 
-		ret = kni_config(cps_conf->back_kni, &cps_conf->net->back);
+		ret = kni_config_ip_addrs(cps_conf->back_kni,
+			&cps_conf->net->back);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
-				"cps: failed to configure KNI on the back iface\n");
+				"cps: failed to configure KNI IP addresses on the back iface\n");
 			goto error;
 		}
 	}
