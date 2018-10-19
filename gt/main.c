@@ -1212,9 +1212,7 @@ gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
 		return;
 	}
 
-	RTE_LOG(ALERT, GATEKEEPER,
-		"gt: parsing an invalid packet with outer Ethernet type %hu!\n",
-		outer_ethertype);
+	log_unknown_l2("gt", outer_ethertype);
 	rte_pktmbuf_free(pkt);
 }
 

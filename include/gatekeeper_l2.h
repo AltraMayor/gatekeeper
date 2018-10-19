@@ -23,7 +23,33 @@
 #include <rte_mbuf.h>
 #include <rte_mbuf_ptype.h>
 
+#include "gatekeeper_main.h"
 #include "gatekeeper_net.h"
+
+#define ETHERNET_II_ETHERTYPES (0x0600)
+
+static inline void
+log_unknown_l2(const char *name, uint16_t ether_type)
+{
+	/*
+	 * If this field is >= 0x0600, it is an EtherType
+	 * field from the Ethernet II standard.
+	 *
+	 * If this field is <= 0x05DC, it is a length
+	 * field from the 802.3 standard. Any other
+	 * value is invalid. We only log this when in
+	 * debug mode.
+	 */
+	if (ether_type < ETHERNET_II_ETHERTYPES) {
+		RTE_LOG(DEBUG, GATEKEEPER,
+			"%s: invalid Ethernet field or frame not Ethernet II:%" PRIu16 "!\n",
+			name, ether_type);
+	} else {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"%s: unknown EtherType %" PRIu16 "!\n",
+			name, ether_type);
+	}
+}
 
 /*
  * Return the L2 header length of a received packet.

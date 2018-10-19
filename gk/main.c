@@ -246,9 +246,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 
 	default:
 		packet->flow.proto = 0;
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"gk: unknown network layer protocol %" PRIu16 "!\n",
-			ether_type);
+		log_unknown_l2("gk", ether_type);
 		ret = -1;
 		break;
 	}
