@@ -278,6 +278,9 @@ struct gatekeeper_if {
 	/* Whether the ntuple filter can be used on this interface. */
 	bool              hw_filter_ntuple;
 
+	/* Whether this interface supports RSS. */
+	bool              rss;
+
 	/* Whether the interface has been initialized. */
 	bool              alive;
 };
@@ -411,6 +414,24 @@ static inline bool
 ipv6_if_configured(struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV6);
+}
+
+/*
+ * EtherType and ntuple filters can only be used if supported
+ * by the NIC (to steer matching packets) and if RSS is supported
+ * (to steer non-matching packets elsewhere).
+ */
+
+static inline bool
+hw_filter_ntuple_available(const struct gatekeeper_if *iface)
+{
+	return iface->hw_filter_ntuple && iface->rss;
+}
+
+static inline bool
+hw_filter_eth_available(const struct gatekeeper_if *iface)
+{
+	return iface->hw_filter_eth && iface->rss;
 }
 
 static inline int

@@ -96,7 +96,8 @@ uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 static const struct rte_eth_conf gatekeeper_template_port_conf = {
 	.rxmode = {
-		.mq_mode = ETH_MQ_RX_RSS,
+		/* Set to use RSS in init_port() if the device supports it. */
+		.mq_mode = ETH_MQ_RX_NONE,
 		/*
 		 * The field .max_rx_pkt_len is configurable via
 		 * the static config as the field mtu and is set
@@ -104,14 +105,6 @@ static const struct rte_eth_conf gatekeeper_template_port_conf = {
 		 * mtu of struct gatekeeper_if for more information.
 		 */
 		.offloads = DEV_RX_OFFLOAD_JUMBO_FRAME,
-	},
-
-	.rx_adv_conf = {
-		.rss_conf = {
-			.rss_key = default_rss_key,
-			.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
-			.rss_hf = ETH_RSS_IP,
-		},
 	},
 };
 
@@ -837,34 +830,51 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 {
 	struct rte_eth_conf port_conf = gatekeeper_template_port_conf;
 	struct rte_eth_dev_info dev_info;
-	uint64_t configured_rss_hf;
 	int ret;
 
 	rte_eth_dev_info_get(port_id, &dev_info);
 
-	/* Only use RSS hash functions this device can handle. */
-	configured_rss_hf = port_conf.rx_adv_conf.rss_conf.rss_hf;
-	port_conf.rx_adv_conf.rss_conf.rss_hf &=
-		dev_info.flow_type_rss_offloads;
+	if (dev_info.flow_type_rss_offloads != 0) {
+		uint64_t configured_rss_hf;
 
-	/*
-	 * Check whether this device supports the configured RSS hashes.
-	 *
-	 * It seems common that devices do not exactly support the
-	 * hashes in the DPDK macros such as ETH_RSS_IP, so until we choose
-	 * set of minimum hash functions required (instead of ETH_RSS_IP
-	 * which is overkill), issue a warning in that case.
-	 *
-	 * TODO Find the minimum set of hash functions (ETH_RSS_*) that
-	 * Gatekeeper needs and set
-	 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
-	 * Then, change this warning to an error.
-	 */
-	if (configured_rss_hf != port_conf.rx_adv_conf.rss_conf.rss_hf) {
-		RTE_LOG(WARNING, PORT,
-			"Port %hu invalid configured rss_hf: 0x%"PRIx64", valid value: 0x%"PRIx64"\n",
-			port_id, configured_rss_hf,
-			port_conf.rx_adv_conf.rss_conf.rss_hf);
+		iface->rss = true;
+
+		port_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
+
+		port_conf.rx_adv_conf.rss_conf.rss_key = default_rss_key;
+		port_conf.rx_adv_conf.rss_conf.rss_key_len =
+			GATEKEEPER_RSS_KEY_LEN;
+		port_conf.rx_adv_conf.rss_conf.rss_hf = ETH_RSS_IP;
+
+		/* Only use RSS hash functions this device can handle. */
+		configured_rss_hf = port_conf.rx_adv_conf.rss_conf.rss_hf;
+		port_conf.rx_adv_conf.rss_conf.rss_hf &=
+			dev_info.flow_type_rss_offloads;
+
+		/*
+		 * Check whether this device supports the configured RSS hashes.
+		 *
+		 * It seems common that devices do not exactly support the
+		 * hashes in the DPDK macros such as ETH_RSS_IP, so until we
+		 * choose set of minimum hash functions required (instead of
+		 * ETH_RSS_IP which is overkill), issue a warning in that case.
+		 *
+		 * TODO Find the minimum set of hash functions (ETH_RSS_*) that
+		 * Gatekeeper needs and set
+		 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
+		 * Then, change this warning to an error.
+		 */
+		if (configured_rss_hf !=
+				port_conf.rx_adv_conf.rss_conf.rss_hf) {
+			RTE_LOG(WARNING, PORT,
+				"Port %hu invalid configured rss_hf: 0x%"PRIx64", valid value: 0x%"PRIx64"\n",
+				port_id, configured_rss_hf,
+				port_conf.rx_adv_conf.rss_conf.rss_hf);
+		}
+	} else {
+		RTE_LOG(WARNING, GATEKEEPER, "net: the %s interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary.\n",
+			iface->name);
+		iface->num_rx_queues = 1;
 	}
 
 	port_conf.rxmode.max_rx_pkt_len = iface->mtu;

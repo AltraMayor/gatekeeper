@@ -411,15 +411,21 @@ lls_proc(void *arg)
 
 	while (likely(!exiting)) {
 		/* Read in packets on front and back interfaces. */
-		int num_tx = process_pkts(lls_conf, front,
-			lls_conf->rx_queue_front, lls_conf->tx_queue_front,
-			lls_conf->front_max_pkt_burst);
-		if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
-			if (lacp_timer_reset(lls_conf, front) < 0)
-				RTE_LOG(NOTICE, TIMER, "Can't reset front LACP timer to skip cycle\n");
+		int num_tx;
+
+		if (hw_filter_eth_available(front)) {
+			num_tx = process_pkts(lls_conf, front,
+				lls_conf->rx_queue_front,
+				lls_conf->tx_queue_front,
+				lls_conf->front_max_pkt_burst);
+			if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
+				if (lacp_timer_reset(lls_conf, front) < 0)
+					RTE_LOG(NOTICE, TIMER, "Can't reset front LACP timer to skip cycle\n");
+			}
 		}
 
-		if (net_conf->back_iface_enabled) {
+		if (net_conf->back_iface_enabled &&
+				hw_filter_eth_available(back)) {
 			num_tx = process_pkts(lls_conf, back,
 			    lls_conf->rx_queue_back, lls_conf->tx_queue_back,
 			    lls_conf->back_max_pkt_burst);
@@ -528,11 +534,30 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 static int
 assign_lls_queue_ids(struct lls_config *lls_conf)
 {
-	int ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_RX,
-		lls_conf->lcore_id);
-	if (ret < 0)
-		goto fail;
-	lls_conf->rx_queue_front = ret;
+	int ret;
+
+	/*
+	 * LLS should only get its own RX queue if RSS is enabled,
+	 * even if EtherType filter is not enabled.
+	 *
+	 * If RSS is disabled, then the network configuration can
+	 * tell that it should ignore all other blocks' requests
+	 * for queues and just allocate one RX queue.
+	 *
+	 * If RSS is enabled, then LLS has already informed the
+	 * network configuration that it will be using a queue.
+	 * The network configuration will crash if LLS doesn't
+	 * configure that queue, so it still should, even if
+	 * EtherType filter is not supported and LLS will not use it.
+	 */
+
+	if (lls_conf->net->front.rss) {
+		ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_RX,
+			lls_conf->lcore_id);
+		if (ret < 0)
+			goto fail;
+		lls_conf->rx_queue_front = ret;
+	}
 
 	ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_TX,
 		lls_conf->lcore_id);
@@ -541,11 +566,13 @@ assign_lls_queue_ids(struct lls_config *lls_conf)
 	lls_conf->tx_queue_front = ret;
 
 	if (lls_conf->net->back_iface_enabled) {
-		ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_RX,
-			lls_conf->lcore_id);
-		if (ret < 0)
-			goto fail;
-		lls_conf->rx_queue_back = ret;
+		if (lls_conf->net->back.rss) {
+			ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_RX,
+				lls_conf->lcore_id);
+			if (ret < 0)
+				goto fail;
+			lls_conf->rx_queue_back = ret;
+		}
 
 		ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_TX,
 			lls_conf->lcore_id);
@@ -600,7 +627,7 @@ lls_stage2(void *arg)
 	int ret;
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
-		if (net_conf->front.hw_filter_eth) {
+		if (hw_filter_eth_available(&net_conf->front)) {
 			ret = ethertype_filter_add(net_conf->front.id,
 				ETHER_TYPE_ARP, lls_conf->rx_queue_front);
 			if (ret < 0)
@@ -624,7 +651,7 @@ lls_stage2(void *arg)
 	}
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
-		if (net_conf->back.hw_filter_eth) {
+		if (hw_filter_eth_available(&net_conf->back)) {
 			ret = ethertype_filter_add(net_conf->back.id,
 				ETHER_TYPE_ARP, lls_conf->rx_queue_back);
 			if (ret < 0)
