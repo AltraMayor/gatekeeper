@@ -897,11 +897,8 @@ match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (unlikely(eth_hdr->ether_type != BE_ETHER_TYPE_IPv4))
 		return -ENOENT;
 
-	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv4 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
-			pkt->data_len, minimum_size);
+	if (pkt->data_len < minimum_size)
 		return -ENOENT;
-	}
 
 	ip4hdr = (struct ipv4_hdr *)&eth_hdr[1];
 	if (ip4hdr->dst_addr != rte_cpu_to_be_32(iface->ip4_addr.s_addr))
@@ -911,11 +908,8 @@ match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 
 	minimum_size = sizeof(*eth_hdr) + ipv4_hdr_len(ip4hdr) +
 		sizeof(*tcp_hdr);
-	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv4 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
-			pkt->data_len, minimum_size);
+	if (pkt->data_len < minimum_size)
 		return -ENOENT;
-	}
 
 	tcp_hdr = (struct tcp_hdr *)ipv4_skip_exthdr(ip4hdr);
 	if (tcp_hdr->src_port != cps_bgp_port &&
@@ -954,11 +948,8 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
 		return -ENOENT;
 
-	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv6 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
-			pkt->data_len, minimum_size);
+	if (pkt->data_len < minimum_size)
 		return -ENOENT;
-	}
 
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0))
@@ -969,11 +960,8 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 
 	minimum_size += tcp_offset - sizeof(*ip6hdr);
-	if (pkt->data_len < minimum_size) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: IPv6 BGP packet received is %"PRIx16" bytes but should be at least %hu bytes\n",
-			pkt->data_len, minimum_size);
+	if (pkt->data_len < minimum_size)
 		return -ENOENT;
-	}
 
 	tcp_hdr = (struct tcp_hdr *)((uint8_t *)ip6hdr + tcp_offset);
 	if (tcp_hdr->src_port != cps_bgp_port &&

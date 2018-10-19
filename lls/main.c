@@ -254,11 +254,8 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
 		return -ENOENT;
 
-	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len)) {
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt->data_len, ND_NEIGH_PKT_MIN_LEN(l2_len), __func__);
+	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len))
 		return -ENOENT;
-	}
 
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0) &&
@@ -277,12 +274,8 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 
 	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
-			nd_offset - sizeof(*ip6hdr))) {
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
-			pkt->data_len, ND_NEIGH_PKT_MIN_LEN(l2_len) +
-			nd_offset - sizeof(*ip6hdr), __func__);
+			nd_offset - sizeof(*ip6hdr)))
 		return -ENOENT;
-	}
 
 	nd_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + nd_offset);
 	if (nd_hdr->type != ND_NEIGHBOR_SOLICITATION &&
