@@ -40,8 +40,6 @@
 /* Number of attempts to wait for a link to come up. */
 #define NUM_ATTEMPTS_LINK_GET	(5)
 
-#define GATEKEEPER_PKT_DROP_QUEUE (127)
-
 static struct net_config config;
 /*
  * The secret key of the RSS hash (RSK) must be random in order
