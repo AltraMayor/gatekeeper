@@ -213,7 +213,11 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
 		(l2_len + sizeof(*ipv6_hdr)));
 	ipv6_hdr->proto = IPPROTO_ICMPV6;
-	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+	/*
+	 * The IP Hop Limit field must be 255 as required by
+	 * RFC 4861, sections 7.1.1 and 7.1.2.
+	 */
+	ipv6_hdr->hop_limits = 255;
 	rte_memcpy(ipv6_hdr->src_addr, iface->ll_ip6_addr.s6_addr,
 		sizeof(ipv6_hdr->src_addr));
 
@@ -642,7 +646,7 @@ static int
 nd_pkt_valid(struct ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 	uint16_t icmpv6_len)
 {
-	return ipv6_hdr->hop_limits == IPv6_DEFAULT_HOP_LIMITS &&
+	return ipv6_hdr->hop_limits == 255 &&
 		rte_be_to_cpu_16(ipv6_hdr->payload_len) == icmpv6_len &&
 		icmpv6_hdr->code == 0 &&
 		rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr) == 0xFFFF;

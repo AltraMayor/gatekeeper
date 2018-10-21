@@ -123,6 +123,7 @@ struct gatekeeper_if {
 	uint32_t bonding_mode;
 	int      vlan_insert;
 	uint16_t mtu;
+	uint8_t  ipv6_default_hop_limits;
 	/* This struct has hidden fields. */
 };
 

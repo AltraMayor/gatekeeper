@@ -37,6 +37,12 @@ return function (gatekeeper_server)
 	-- link to come up every 1 second.
 	local num_attempts_link_get = 5
 
+	-- The maximum packet lifetime specified by the "Hop Limit" in IPv6.
+	-- Decremented by 1 by each node that forwards the packet.
+	-- The packet is discarded if Hop Limit is decremented to zero.
+	local front_ipv6_default_hop_limits = 255
+	local back_ipv6_default_hop_limits = 255
+
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.
@@ -72,6 +78,7 @@ return function (gatekeeper_server)
 	front_iface.bonding_mode = front_bonding_mode
 	front_iface.vlan_insert = front_vlan_insert
 	front_iface.mtu = front_mtu
+	front_iface.ipv6_default_hop_limits = front_ipv6_default_hop_limits
 	local ret = gatekeeper.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
 
@@ -83,6 +90,8 @@ return function (gatekeeper_server)
 		back_iface.bonding_mode = back_bonding_mode
 		back_iface.vlan_insert = back_vlan_insert
 		back_iface.mtu = back_mtu
+		back_iface.ipv6_default_hop_limits =
+			back_ipv6_default_hop_limits
 		ret = gatekeeper.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
 	end
