@@ -23,6 +23,20 @@ return function (gatekeeper_server)
 	-- environments to guarantee entropy while machines are booting up.
 	local guarantee_random_entropy = 0
 
+	-- Number of attempts to wait for a link to come up.
+	--
+	-- By waiting for the link to come up before
+	-- continuing, it is useful for bonded ports where the
+	-- slaves must be activated after starting the bonded
+	-- device in order for the link to come up. The slaves
+	-- are activated on a timer, so this can take some time.
+	-- Once the link comes up, the device is ready for full
+	-- speed RX/TX.
+	--
+	-- In current implementation, it attempts to wait for a
+	-- link to come up every 1 second.
+	local num_attempts_link_get = 5
+
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.
@@ -50,6 +64,8 @@ return function (gatekeeper_server)
 
 	local net_conf = gatekeeper.c.get_net_conf()
 	net_conf.guarantee_random_entropy = guarantee_random_entropy
+	net_conf.num_attempts_link_get = num_attempts_link_get
+
 	local front_iface = gatekeeper.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec

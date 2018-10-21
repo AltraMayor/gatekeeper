@@ -317,6 +317,12 @@ struct net_config {
 	int                  guarantee_random_entropy;
 
 	/*
+	 * Number of attempts to wait for Gatekeeper links to
+	 * come up during initialization.
+	 */
+	unsigned int         num_attempts_link_get;
+
+	/*
 	 * The NUMA nodes used in the host. Element i is true
 	 * if NUMA node i is being used; otherwise it is false.
 	 */
