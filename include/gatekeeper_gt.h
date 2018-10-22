@@ -74,6 +74,9 @@ struct gt_instance {
 	 * received fragments of the packet.
 	 */
 	struct rte_ip_frag_tbl *frag_tbl;
+
+	struct acl_search *acl4;
+	struct acl_search *acl6;
 };
 
 /* Configuration for the GT functional block. */

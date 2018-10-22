@@ -1000,8 +1000,8 @@ gt_proc(void *arg)
 		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-		ACL_SEARCH_DEF(acl4);
-		ACL_SEARCH_DEF(acl6);
+		struct acl_search *acl4 = instance->acl4;
+		struct acl_search *acl6 = instance->acl6;
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
@@ -1026,7 +1026,7 @@ gt_proc(void *arg)
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
 				gt_process_unparsed_incoming_pkt(
-					&acl4, &acl6, &num_arp, arp_bufs,
+					acl4, acl6, &num_arp, arp_bufs,
 					m, pkt_info.outer_ethertype);
 				continue;
 			}
@@ -1052,7 +1052,7 @@ gt_proc(void *arg)
 					m, &pkt_info);
 				if (ret < 0) {
 					gt_process_unparsed_incoming_pkt(
-						&acl4, &acl6, &num_arp,
+						acl4, acl6, &num_arp,
 						arp_bufs, m,
 						pkt_info.outer_ethertype);
 					continue;
@@ -1127,9 +1127,9 @@ gt_proc(void *arg)
 		if (num_arp > 0)
 			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
 
-		process_pkts_acl(&gt_conf->net->front, lcore, &acl4,
+		process_pkts_acl(&gt_conf->net->front, lcore, acl4,
 			ETHER_TYPE_IPv4);
-		process_pkts_acl(&gt_conf->net->front, lcore, &acl6,
+		process_pkts_acl(&gt_conf->net->front, lcore, acl6,
 			ETHER_TYPE_IPv6);
 
 		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
@@ -1175,6 +1175,11 @@ cleanup_gt_instance(struct gt_instance *instance)
 
 	lua_close(instance->lua_state);
 	instance->lua_state = NULL;
+
+	destroy_acl_search(instance->acl4);
+	destroy_acl_search(instance->acl6);
+	instance->acl4 = NULL;
+	instance->acl6 = NULL;
 }
 
 static int
@@ -1295,6 +1300,26 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: failed to create fragmentation table at lcore %u!\n",
 			lcore_id);
+		ret = -1;
+		goto cleanup;
+	}
+
+	instance->acl4 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	if (instance->acl4 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GT block can't create acl search for IPv4 at lcore %u!\n",
+			lcore_id);
+
+		ret = -1;
+		goto cleanup;
+	}
+
+	instance->acl6 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	if (instance->acl6 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GT block can't create acl search for IPv6 at lcore %u!\n",
+			lcore_id);
+
 		ret = -1;
 		goto cleanup;
 	}

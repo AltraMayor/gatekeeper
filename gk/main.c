@@ -591,14 +591,40 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_hash;
 	}
 
+	instance->acl4 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	if (instance->acl4 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GK block can't create acl search for IPv4 at lcore %u!\n",
+			lcore_id);
+
+		ret = -1;
+		goto flow_entry;
+	}
+
+	instance->acl6 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	if (instance->acl6 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GK block can't create acl search for IPv6 at lcore %u!\n",
+			lcore_id);
+
+		ret = -1;
+		goto acl4_search;
+	}
+
 	ret = init_mailbox("gk", MAILBOX_MAX_ENTRIES,
 		sizeof(struct gk_cmd_entry), lcore_id, &instance->mb);
     	if (ret < 0)
-        	goto flow_entry;
+		goto acl6_search;
 
 	ret = 0;
 	goto out;
 
+acl6_search:
+	destroy_acl_search(instance->acl6);
+	instance->acl6 = NULL;
+acl4_search:
+	destroy_acl_search(instance->acl4);
+	instance->acl4 = NULL;
 flow_entry:
     	rte_free(instance->ip_flow_entry_table);
     	instance->ip_flow_entry_table = NULL;
@@ -948,8 +974,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-	ACL_SEARCH_DEF(acl4);
-	ACL_SEARCH_DEF(acl6);
+	struct acl_search *acl4 = instance->acl4;
+	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
@@ -1003,10 +1029,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		 	/* No entry for the destination, drop the packet. */
 			if (fib == NULL) {
 				if (packet.flow.proto == ETHER_TYPE_IPv4)
-					add_pkt_acl(&acl4, pkt);
+					add_pkt_acl(acl4, pkt);
 				else if (likely(packet.flow.proto ==
 						ETHER_TYPE_IPv6))
-					add_pkt_acl(&acl6, pkt);
+					add_pkt_acl(acl6, pkt);
 				else {
 					print_flow_err_msg(&packet.flow,
 						"gk: failed to get the fib entry");
@@ -1176,15 +1202,16 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
 
-	process_pkts_acl(&gk_conf->net->front, lcore, &acl4, ETHER_TYPE_IPv4);
-	process_pkts_acl(&gk_conf->net->front, lcore, &acl6, ETHER_TYPE_IPv6);
+	process_pkts_acl(&gk_conf->net->front, lcore, acl4, ETHER_TYPE_IPv4);
+	process_pkts_acl(&gk_conf->net->front, lcore, acl6, ETHER_TYPE_IPv6);
 }
 
 /* Process the packets on the back interface. */
 static void
 process_pkts_back(uint16_t port_back, uint16_t port_front,
 	uint16_t rx_queue_back, uint16_t tx_queue_front,
-	unsigned int lcore, struct gk_config *gk_conf)
+	unsigned int lcore, struct gk_instance *instance,
+	struct gk_config *gk_conf)
 {
 	/* Get burst of RX packets, from first port of pair. */
 	int i;
@@ -1196,8 +1223,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
 	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-	ACL_SEARCH_DEF(acl4);
-	ACL_SEARCH_DEF(acl6);
+	struct acl_search *acl4 = instance->acl4;
+	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
 
 	/* Load a set of packets from the back NIC. */
@@ -1230,10 +1257,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 		 /* No entry for the destination, drop the packet. */
 		if (fib == NULL) {
 			if (packet.flow.proto == ETHER_TYPE_IPv4)
-				add_pkt_acl(&acl4, pkt);
+				add_pkt_acl(acl4, pkt);
 			else if (likely(packet.flow.proto ==
 					ETHER_TYPE_IPv6))
-				add_pkt_acl(&acl6, pkt);
+				add_pkt_acl(acl6, pkt);
 			else {
 				print_flow_err_msg(&packet.flow,
 					"gk: failed to get the fib entry");
@@ -1324,8 +1351,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
-	process_pkts_acl(&gk_conf->net->back, lcore, &acl4, ETHER_TYPE_IPv4);
-	process_pkts_acl(&gk_conf->net->back, lcore, &acl6, ETHER_TYPE_IPv6);
+	process_pkts_acl(&gk_conf->net->back, lcore, acl4, ETHER_TYPE_IPv4);
+	process_pkts_acl(&gk_conf->net->back, lcore, acl6, ETHER_TYPE_IPv6);
 }
 
 static void
@@ -1387,7 +1414,7 @@ gk_proc(void *arg)
 
 		process_pkts_back(port_back, port_front,
 			rx_queue_back, tx_queue_front,
-			lcore, gk_conf);
+			lcore, instance, gk_conf);
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
@@ -1448,6 +1475,11 @@ cleanup_gk(struct gk_config *gk_conf)
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
 		}
+
+		if (gk_conf->instances[i].acl4 != NULL)
+			destroy_acl_search(gk_conf->instances[i].acl4);
+		if (gk_conf->instances[i].acl6 != NULL)
+			destroy_acl_search(gk_conf->instances[i].acl6);
 
 		destroy_mailbox(&gk_conf->instances[i].mb);
 	}

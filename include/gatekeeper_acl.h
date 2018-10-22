@@ -24,17 +24,16 @@
 #include "gatekeeper_net.h"
 
 struct acl_search {
-	/* References to the start of the IP header in each packet. */
-	const uint8_t   *data[GATEKEEPER_MAX_PKT_BURST];
-	/* References to each packet's mbuf. */
-	struct rte_mbuf *mbufs[GATEKEEPER_MAX_PKT_BURST];
-	/* The classification results for each packet. */
-	uint32_t        res[GATEKEEPER_MAX_PKT_BURST];
 	/* The number of packets held for classification. */
 	unsigned int    num;
+	/* Fixed field here. */
+	const uint8_t   **data;
+	/* List of references to each packet's mbuf. */
+	struct rte_mbuf *mbufs[0];
 };
 
-#define ACL_SEARCH_DEF(name) struct acl_search name = { .num = 0, }
+struct acl_search *alloc_acl_search(uint8_t num_pkts);
+void destroy_acl_search(struct acl_search *acl);
 
 /* Classify batches of packets in @acl and invoke callback functions. */
 int process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
