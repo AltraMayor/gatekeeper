@@ -152,6 +152,7 @@ struct ggu_config {
 	unsigned int      lcore_id;
 	uint16_t          ggu_src_port;
 	uint16_t          ggu_dst_port;
+	uint16_t          ggu_max_pkt_burst;
 	/* This struct has hidden fields. */
 };
 
