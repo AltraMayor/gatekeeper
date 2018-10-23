@@ -379,12 +379,20 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	case LLS_REQ_PUT:
 		req->u.put = *(struct lls_put_req *)req_arg;
 		break;
-	case LLS_REQ_ARP:
-		req->u.arp = *(struct lls_arp_req *)req_arg;
+	case LLS_REQ_ARP: {
+		struct lls_arp_req *arp_req = (struct lls_arp_req *)req_arg;
+		req->u.arp = *arp_req;
+		rte_memcpy(req->u.arp.pkts, arp_req->pkts,
+			sizeof(arp_req->pkts[0]) * arp_req->num_pkts);
 		break;
-	case LLS_REQ_ND:
-		req->u.nd = *(struct lls_nd_req *)req_arg;
+	}
+	case LLS_REQ_ND: {
+		struct lls_nd_req *nd_req = (struct lls_nd_req *)req_arg;
+		req->u.nd = *nd_req;
+		rte_memcpy(req->u.nd.pkts, nd_req->pkts,
+			sizeof(nd_req->pkts[0]) * nd_req->num_pkts);
 		break;
+	}
 	default:
 		mb_free_entry(&lls_conf->requests, req);
 		RTE_LOG(ERR, GATEKEEPER,

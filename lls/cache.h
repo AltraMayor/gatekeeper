@@ -50,26 +50,26 @@ struct lls_put_req {
 
 /* Information needed to submit ARP packets to the LLS block. */
 struct lls_arp_req {
-	/* ARP neighbor packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
-
 	/* Number of packets stored in @pkts. */
 	int                  num_pkts;
 
 	/* Interface that received @pkt. */
 	struct gatekeeper_if *iface;
+
+	/* ARP neighbor packets. */
+	struct rte_mbuf      *pkts[0];
 };
 
 /* Information needed to submit ND packets to the LLS block. */
 struct lls_nd_req {
-	/* ND neighbor packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
-
 	/* Number of packets stored in @pkts. */
 	int                  num_pkts;
 
 	/* Interface that received @pkt. */
 	struct gatekeeper_if *iface;
+
+	/* ND neighbor packets. */
+	struct rte_mbuf      *pkts[0];
 };
 
 /* A modification to an LLS map. */
@@ -100,6 +100,8 @@ struct lls_mod_req {
 struct lls_request {
 	/* Type of request. */
 	enum lls_req_ty ty;
+
+	int end_of_header[0];
 
 	union {
 		/* If @ty is LLS_REQ_HOLD, use @hold. */

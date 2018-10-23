@@ -1,4 +1,4 @@
-return function (net_conf, sol_conf, gk_lcores)
+return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	-- Init the GK configuration structure.
 	local gk_conf = gatekeeper.c.alloc_gk_conf()
@@ -48,6 +48,12 @@ return function (net_conf, sol_conf, gk_lcores)
 	gk_conf.back_max_pkt_burst =
 		gatekeeper.get_back_burst_config(
 			gk_max_pkt_burst_back, net_conf)
+	-- The maximum number of ARP or ND packets in LLS submitted by
+	-- GK or GT. The code below makes sure that the parameter should
+	-- be at least the same with the maximum configured value of GK.
+	lls_conf.mailbox_max_pkt_burst =
+		math.max(lls_conf.mailbox_max_pkt_burst,
+		gk_conf.front_max_pkt_burst, gk_conf.back_max_pkt_burst)
 
 	-- Setup the GK functional block.
 	local ret = gatekeeper.c.run_gk(net_conf, gk_conf, sol_conf)
