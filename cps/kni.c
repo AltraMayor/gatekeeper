@@ -82,6 +82,23 @@ kni_change_mtu(uint16_t port_id, unsigned int new_mtu)
 	return rte_eth_dev_set_mtu(port_id, new_mtu);
 }
 
+int
+kni_disable_change_mac_address(__attribute__((unused)) uint16_t port_id,
+	__attribute__((unused)) uint8_t *mac_addr)
+{
+	/*
+	 * Gatekeeper does not support changing the MAC addresses
+	 * of its NICs. For example, some blocks cache Ethernet
+	 * headers and are not prepared to change the source MAC
+	 * address in those cached headers.
+	 *
+	 * Therefore, we need to prevent any changes to the KNI's
+	 * MAC address because it must always match the MAC address
+	 * of its corresponding Gatekeeper interface.
+	 */
+	return -ENOTSUP;
+}
+
 static int
 modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 	int family, void *ipaddr, uint8_t prefixlen, const char *kni_name)

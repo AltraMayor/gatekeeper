@@ -695,10 +695,7 @@ nodev:
 	ops.port_id = conf.group_id;
 	ops.change_mtu = kni_change_mtu;
 	ops.config_network_if = kni_change_if;
-	/*
-	 * XXX This must be implemented to change KNI MAC address.
-	 * ops.config_mac_address = kni_config_mac_address;
-	 */
+	ops.config_mac_address = kni_disable_change_mac_address;
 
 	*kni = rte_kni_alloc(mp, &conf, &ops);
 	if (*kni == NULL) {
