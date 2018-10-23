@@ -39,6 +39,8 @@ enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
 struct gk_instance {
 	struct rte_hash   *ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
+	struct acl_search *acl4;
+	struct acl_search *acl6;
 	/* RX queue on the front interface. */
 	uint16_t          rx_queue_front;
 	/* TX queue on the front interface. */
@@ -84,6 +86,10 @@ struct gk_config {
 
 	/* Time for scanning the whole flow table in ms. */
 	unsigned int       flow_table_full_scan_ms;
+
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t           front_max_pkt_burst;
+	uint16_t           back_max_pkt_burst;
 
 	/*
 	 * The fields below are for internal use.

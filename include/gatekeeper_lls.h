@@ -187,6 +187,13 @@ struct lls_config {
 	 */
 	int               debug;
 
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t          front_max_pkt_burst;
+	uint16_t          back_max_pkt_burst;
+
+	/* The maximum number of ARP or ND packets submitted by GK or GT. */
+	unsigned int      mailbox_max_pkt_burst;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

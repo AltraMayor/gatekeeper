@@ -10,6 +10,9 @@ return function (net_conf, gk_conf, lcore)
 	ggu_conf.ggu_src_port = 0xA0A0
 	ggu_conf.ggu_dst_port = 0xB0B0
 
+	-- The maximum number of packets to retrieve/transmit.
+	ggu_conf.ggu_max_pkt_burst = 32
+
 	-- Setup the GGU functional block.
 	local ret = gatekeeper.c.run_ggu(net_conf, gk_conf, ggu_conf)
 	if ret < 0 then

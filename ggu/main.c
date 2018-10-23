@@ -330,11 +330,11 @@ free_packet:
 
 /* Information needed to submit GGU packets to the GGU block. */
 struct ggu_request {
-	/* GT-GK Unit packets. */
-	struct rte_mbuf *pkts[GATEKEEPER_MAX_PKT_BURST];
-
 	/* Number of packets stored in @pkts. */
 	unsigned int    num_pkts;
+
+	/* GT-GK Unit packets. */
+	struct rte_mbuf *pkts[0];
 };
 
 static int
@@ -345,7 +345,7 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	unsigned int i;
 	int ret;
 
-	RTE_VERIFY(num_pkts <= RTE_DIM(req->pkts));
+	RTE_VERIFY(num_pkts <= ggu_conf->mailbox_max_pkt_burst);
 
 	if (req == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -382,6 +382,7 @@ ggu_proc(void *arg)
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	unsigned int i;
+	uint16_t ggu_max_pkt_burst = ggu_conf->ggu_max_pkt_burst;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"ggu: the GK-GT unit is running at lcore = %u\n", lcore);
@@ -392,9 +393,9 @@ ggu_proc(void *arg)
 	 */
 	if (ggu_conf->net->back.hw_filter_ntuple) {
 		while (likely(!exiting)) {
-			struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
+			struct rte_mbuf *bufs[ggu_max_pkt_burst];
 			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
-				bufs, GATEKEEPER_MAX_PKT_BURST);
+				bufs, ggu_max_pkt_burst);
 
 			if (unlikely(num_rx == 0))
 				continue;
@@ -581,8 +582,16 @@ run_ggu(struct net_config *net_conf,
 	ggu_conf->ggu_src_port = rte_cpu_to_be_16(ggu_conf->ggu_src_port);
 	ggu_conf->ggu_dst_port = rte_cpu_to_be_16(ggu_conf->ggu_dst_port);
 
+	/*
+	 * When mailbox is used for processing packets submitted by GK,
+	 * it needs to make sure the packet burst size in the mailbox
+	 * should be at least equal to the packet burst size in GK.
+	 */
+	ggu_conf->mailbox_max_pkt_burst = gk_conf->back_max_pkt_burst;
+
 	ret = init_mailbox("ggu_mb", MAILBOX_MAX_ENTRIES,
-		sizeof(struct ggu_request), ggu_conf->lcore_id,
+		sizeof(struct ggu_request) + ggu_conf->mailbox_max_pkt_burst *
+		sizeof(struct rte_mbuf *), ggu_conf->lcore_id,
 		&ggu_conf->mailbox);
 	if (ret < 0)
 		goto stage3;

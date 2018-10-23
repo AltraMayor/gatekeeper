@@ -33,13 +33,7 @@
 #define LLS_CACHE_SCAN_INTERVAL_SEC 10
 
 /*
- * When using LACP, there are two requirements:
- *
- *  - For LACP to work best, RX burst size should be at least twice
- *    the number of slaves. This is so that the interface can receive
- *    any needed LACP messages flowing without the application's
- *    knowledge. This is enforced with the definition of
- *    GATEKEEPER_MAX_PKT_BURST.
+ * When using LACP, the requirement must be met:
  *
  *  - RX/TX burst functions must be invoked at least once every 100ms.
  *    To do so, the RX burst function is called with every iteration
@@ -198,6 +192,8 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	};
 	int ret;
 
+	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_burst);
+
 	rte_memcpy(arp_req.pkts, pkts, sizeof(*arp_req.pkts) * num_pkts);
 
 	ret = lls_req(LLS_REQ_ARP, &arp_req);
@@ -217,6 +213,8 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 		.iface = iface,
 	};
 	int ret;
+
+	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_burst);
 
 	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
 
@@ -332,11 +330,11 @@ lacp_timer_reset(struct lls_config *lls_conf, struct gatekeeper_if *iface)
 
 static int
 process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
-	uint16_t rx_queue, uint16_t tx_queue)
+	uint16_t rx_queue, uint16_t tx_queue, uint16_t max_pkt_burst)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *bufs[max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		max_pkt_burst);
 	int num_tx = 0;
 	uint16_t i;
 
@@ -414,7 +412,8 @@ lls_proc(void *arg)
 	while (likely(!exiting)) {
 		/* Read in packets on front and back interfaces. */
 		int num_tx = process_pkts(lls_conf, front,
-			lls_conf->rx_queue_front, lls_conf->tx_queue_front);
+			lls_conf->rx_queue_front, lls_conf->tx_queue_front,
+			lls_conf->front_max_pkt_burst);
 		if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
 			if (lacp_timer_reset(lls_conf, front) < 0)
 				RTE_LOG(NOTICE, TIMER, "Can't reset front LACP timer to skip cycle\n");
@@ -422,7 +421,8 @@ lls_proc(void *arg)
 
 		if (net_conf->back_iface_enabled) {
 			num_tx = process_pkts(lls_conf, back,
-			    lls_conf->rx_queue_back, lls_conf->tx_queue_back);
+			    lls_conf->rx_queue_back, lls_conf->tx_queue_back,
+			    lls_conf->back_max_pkt_burst);
 			if ((num_tx > 0) && lacp_enabled(net_conf, back)) {
 				if (lacp_timer_reset(lls_conf, back) < 0)
 					RTE_LOG(NOTICE, TIMER, "Can't reset back LACP timer to skip cycle\n");
@@ -565,7 +565,31 @@ static int
 lls_stage1(void *arg)
 {
 	struct lls_config *lls_conf = arg;
-	return assign_lls_queue_ids(lls_conf);
+	int ele_size = RTE_MAX(sizeof(struct lls_request),
+		RTE_MAX(offsetof(struct lls_request, end_of_header) +
+			sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) *
+			lls_conf->mailbox_max_pkt_burst,
+			offsetof(struct lls_request, end_of_header) +
+			sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) *
+			lls_conf->mailbox_max_pkt_burst));
+	int ret = assign_lls_queue_ids(lls_conf);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Since run_lls() in lua/lls.lua will be called before lua/gk.lua
+	 * or lua/gt.lua, if we put init_mailbox() in run_lls(), then we have
+	 * already initialized LLS' mailbox with the initial
+	 * lls_conf.mailbox_max_pkt_burst specified in lua/lls.lua, even if we
+	 * change the value of lls_conf.mailbox_max_pkt_burst in lua/gk.lua or
+	 * lua/gt.lua, it won't change the size of the entries in LLS mailbox.
+	 *
+	 * To initialize the LLS mailbox only after we get the final
+	 * configuration by considering GK or GT blocks, we initialize
+	 * LLS mailbox here.
+	 */
+	return init_mailbox("lls_req", MAILBOX_MAX_ENTRIES,
+		ele_size, lls_conf->lcore_id, &lls_conf->requests);
 }
 
 static int
@@ -639,6 +663,14 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto out;
 	}
 
+	if (!(lls_conf->front_max_pkt_burst > 0 &&
+			(net_conf->back_iface_enabled == 0 ||
+			(net_conf->back_iface_enabled &&
+			lls_conf->back_max_pkt_burst > 0)))) {
+		ret = -1;
+		goto out;
+	}
+
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
 	if (ret < 0)
 		goto out;
@@ -661,19 +693,13 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto stage3;
 	}
 
-	ret = init_mailbox("lls_req", MAILBOX_MAX_ENTRIES,
-		sizeof(struct lls_request), lls_conf->lcore_id,
-		&lls_conf->requests);
-	if (ret < 0)
-		goto timer;
-
 	lls_conf->net = net_conf;
 	if (arp_enabled(lls_conf)) {
 		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache);
 		if (ret < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"lls: ARP cache cannot be started\n");
-			goto requests;
+			goto timer;
 		}
 
 		/* Set timeouts for front and back (if needed). */
@@ -735,8 +761,6 @@ nd:
 arp:
 	if (arp_enabled(lls_conf))
 		lls_cache_destroy(&lls_conf->arp_cache);
-requests:
-	destroy_mailbox(&lls_conf->requests);
 timer:
 	rte_timer_stop(&lls_conf->scan_timer);
 stage3:

@@ -25,6 +25,27 @@
 /* Result returned when the ACL does not find a matching rule. */
 #define ACL_NO_MATCH (0)
 
+struct acl_search *
+alloc_acl_search(uint8_t num_pkts)
+{
+	struct acl_search *acl = rte_calloc(
+		"acl", 1, sizeof(struct acl_search) +
+		num_pkts * (sizeof(const uint8_t *) +
+			sizeof(struct rte_mbuf *)), 0);
+	if (acl == NULL)
+		return NULL;
+
+	acl->data = (const uint8_t **)&acl->mbufs[num_pkts];
+
+	return acl;
+}
+
+void
+destroy_acl_search(struct acl_search *acl)
+{
+	rte_free(acl);
+}
+
 /* Callback function for when there's no classification match. */
 static int
 drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -60,11 +81,13 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	struct acl_search *acl, struct acl_state *astate,
 	int acl_enabled, const char *proto_name)
 {
-	struct rte_mbuf *pkts[astate->func_count][GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *pkts[astate->func_count][acl->num];
 	int num_pkts[astate->func_count];
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
 	unsigned int i;
 	int ret;
+	/* The classification results for each packet. */
+	uint32_t res[acl->num];
 
 	if (!acl_enabled) {
 		ret = 0;
@@ -72,7 +95,7 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	}
 
 	ret = rte_acl_classify(astate->acls[socket_id],
-		acl->data, acl->res, acl->num, 1);
+		acl->data, res, acl->num, 1);
 	if (unlikely(ret < 0)) {
 		RTE_LOG(ERR, ACL,
 			"invalid arguments given to %s rte_acl_classify()\n",
@@ -83,7 +106,7 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	/* Split packets into separate buffers -- one for each type. */
 	memset(num_pkts, 0, sizeof(num_pkts));
 	for (i = 0; i < acl->num; i++) {
-		int type = acl->res[i];
+		int type = res[i];
 		if (type == ACL_NO_MATCH) {
 			unsigned int j;
 			/*

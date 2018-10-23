@@ -42,13 +42,13 @@ function gatekeeper_init()
 		local sol_conf = solf(net_conf, sol_lcore)
 
 		local gkf = require("gk")
-		gk_conf = gkf(net_conf, sol_conf, gk_lcores)
+		gk_conf = gkf(net_conf, lls_conf, sol_conf, gk_lcores)
 
 		local gguf = require("ggu")
 		local ggu_conf = gguf(net_conf, gk_conf, ggu_lcore)
 	else
 		local gtf = require("gt")
-		gt_conf = gtf(net_conf, numa_table)
+		gt_conf = gtf(net_conf, lls_conf, numa_table)
 	end
 
 	-- Allocate CPS after to increase the change that the LLS block is

@@ -33,10 +33,16 @@ struct ggu_config {
 	uint16_t          ggu_src_port;
 	uint16_t          ggu_dst_port;
 
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t          ggu_max_pkt_burst;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
+
+	/* The maximum number of packets submitted to GGU mailbox. */
+	uint16_t          mailbox_max_pkt_burst;
 
 	/* RX queue on the back interface. */
 	uint16_t          rx_queue_back;

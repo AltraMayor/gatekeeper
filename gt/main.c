@@ -982,7 +982,10 @@ gt_proc(void *arg)
 	 * packets to be freed.
 	 */
 	struct rte_ip_frag_death_row death_row;
+	uint16_t gt_max_pkt_burst;
+
 	death_row.cnt = 0;
+	gt_max_pkt_burst = gt_conf->gt_max_pkt_burst;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gt: the GT block is running at lcore = %u\n", lcore);
@@ -997,15 +1000,15 @@ gt_proc(void *arg)
 		uint16_t num_tx_succ;
 		uint16_t num_arp = 0;
 		uint64_t cur_tsc = rte_rdtsc();
-		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
-		ACL_SEARCH_DEF(acl4);
-		ACL_SEARCH_DEF(acl6);
+		struct rte_mbuf *rx_bufs[gt_max_pkt_burst];
+		struct rte_mbuf *tx_bufs[gt_max_pkt_burst];
+		struct rte_mbuf *arp_bufs[gt_max_pkt_burst];
+		struct acl_search *acl4 = instance->acl4;
+		struct acl_search *acl6 = instance->acl6;
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
-			GATEKEEPER_MAX_PKT_BURST);
+			gt_max_pkt_burst);
 
 		if (unlikely(num_rx == 0))
 			continue;
@@ -1026,7 +1029,7 @@ gt_proc(void *arg)
 			ret = gt_parse_incoming_pkt(m, &pkt_info);
 			if (ret < 0) {
 				gt_process_unparsed_incoming_pkt(
-					&acl4, &acl6, &num_arp, arp_bufs,
+					acl4, acl6, &num_arp, arp_bufs,
 					m, pkt_info.outer_ethertype);
 				continue;
 			}
@@ -1052,7 +1055,7 @@ gt_proc(void *arg)
 					m, &pkt_info);
 				if (ret < 0) {
 					gt_process_unparsed_incoming_pkt(
-						&acl4, &acl6, &num_arp,
+						acl4, acl6, &num_arp,
 						arp_bufs, m,
 						pkt_info.outer_ethertype);
 					continue;
@@ -1127,9 +1130,9 @@ gt_proc(void *arg)
 		if (num_arp > 0)
 			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
 
-		process_pkts_acl(&gt_conf->net->front, lcore, &acl4,
+		process_pkts_acl(&gt_conf->net->front, lcore, acl4,
 			ETHER_TYPE_IPv4);
-		process_pkts_acl(&gt_conf->net->front, lcore, &acl6,
+		process_pkts_acl(&gt_conf->net->front, lcore, acl6,
 			ETHER_TYPE_IPv6);
 
 		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
@@ -1175,6 +1178,11 @@ cleanup_gt_instance(struct gt_instance *instance)
 
 	lua_close(instance->lua_state);
 	instance->lua_state = NULL;
+
+	destroy_acl_search(instance->acl4);
+	destroy_acl_search(instance->acl6);
+	instance->acl4 = NULL;
+	instance->acl6 = NULL;
 }
 
 static int
@@ -1299,6 +1307,26 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
+	instance->acl4 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
+	if (instance->acl4 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GT block can't create acl search for IPv4 at lcore %u!\n",
+			lcore_id);
+
+		ret = -1;
+		goto cleanup;
+	}
+
+	instance->acl6 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
+	if (instance->acl6 == NULL) {
+		RTE_LOG(ERR, MALLOC,
+			"The GT block can't create acl search for IPv6 at lcore %u!\n",
+			lcore_id);
+
+		ret = -1;
+		goto cleanup;
+	}
+
 	goto out;
 
 cleanup:
@@ -1408,6 +1436,11 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 	int ret, i;
 
 	if (net_conf == NULL || gt_conf == NULL) {
+		ret = -1;
+		goto out;
+	}
+
+	if (!(gt_conf->gt_max_pkt_burst > 0)) {
 		ret = -1;
 		goto out;
 	}

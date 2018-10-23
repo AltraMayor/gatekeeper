@@ -50,10 +50,10 @@
  *
  * Need to provision enough memory for the worst case,
  * since each queue needs at least
- * GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC + GATEKEEPER_MAX_PKT_BURST
+ * GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC + max_pkt_burst
  * descriptors. i.e., GATEKEEPER_DESC_PER_QUEUE =
  * (GATEKEEPER_NUM_RX_DESC + GATEKEEPER_NUM_TX_DESC \
- *		+ GATEKEEPER_MAX_PKT_BURST (let's say 32)) = 672.
+ *		+ max_pkt_burst (let's say 32)) = 672.
  *
  * So, the pool size should be at least the maximum number of queues * 
  *		number of descriptors per queue, i.e., 
@@ -81,8 +81,6 @@
  * CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE.
  */
 #define GATEKEEPER_CACHE_SIZE	(512)
-
-#define GATEKEEPER_MAX_PKT_BURST (32)
 
 extern const uint16_t LUA_MSG_MAX_LEN;
 
