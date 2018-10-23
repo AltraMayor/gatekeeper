@@ -143,6 +143,8 @@ struct gk_config {
 	unsigned int gk_max_num_ipv4_fib_entries;
 	unsigned int gk_max_num_ipv6_fib_entries;
 	unsigned int flow_table_full_scan_ms;
+	uint16_t     front_max_pkt_burst;
+	uint16_t     back_max_pkt_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -271,4 +273,18 @@ function init_iface(iface, name, ports, cidrs, vlan_tag)
 		error("Failed to initilialize " .. name .. " interface")
 	end
 	return ret
+end
+
+function get_front_burst_config(max_pkt_burst_front, net_conf)
+	local front_iface = c.get_if_front(net_conf)
+	return math.max(max_pkt_burst_front, front_iface.num_ports)
+end
+
+function get_back_burst_config(max_pkt_burst_back, net_conf)
+	if not net_conf.back_iface_enabled then
+		error("One can only have max_pkt_burst_back when the back network is enabled")
+	end
+
+	local back_iface = c.get_if_back(net_conf)
+	return math.max(max_pkt_burst_back, back_iface.num_ports)
 end

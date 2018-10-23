@@ -26,6 +26,10 @@ return function (net_conf, sol_conf, gk_lcores)
 	-- Scan the whole flow table in 10 minutes.
 	gk_conf.flow_table_full_scan_ms = 10 * 60 * 1000
 
+	-- The maximum number of packets to retrieve/transmit.
+	local gk_max_pkt_burst_front = 32
+	local gk_max_pkt_burst_back = 32
+
 	--
 	-- Code below this point should not need to be changed.
 	--
@@ -37,6 +41,13 @@ return function (net_conf, sol_conf, gk_lcores)
 	if not gatekeeper.c.ipv6_configured(net_conf) then
 		gk_conf.gk_max_num_ipv6_fib_entries = 0
 	end
+
+	gk_conf.front_max_pkt_burst =
+		gatekeeper.get_front_burst_config(
+			gk_max_pkt_burst_front, net_conf)
+	gk_conf.back_max_pkt_burst =
+		gatekeeper.get_back_burst_config(
+			gk_max_pkt_burst_back, net_conf)
 
 	-- Setup the GK functional block.
 	local ret = gatekeeper.c.run_gk(net_conf, gk_conf, sol_conf)

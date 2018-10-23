@@ -87,6 +87,10 @@ struct gk_config {
 	/* Time for scanning the whole flow table in ms. */
 	unsigned int       flow_table_full_scan_ms;
 
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t           front_max_pkt_burst;
+	uint16_t           back_max_pkt_burst;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

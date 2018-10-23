@@ -552,6 +552,8 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	char ht_name[64];
 	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
+	unsigned int gk_max_pkt_burst = RTE_MAX(gk_conf->front_max_pkt_burst,
+		gk_conf->back_max_pkt_burst);
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 	struct rte_hash_parameters ip_flow_hash_params = {
@@ -591,7 +593,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_hash;
 	}
 
-	instance->acl4 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	instance->acl4 = alloc_acl_search(gk_max_pkt_burst);
 	if (instance->acl4 == NULL) {
 		RTE_LOG(ERR, MALLOC,
 			"The GK block can't create acl search for IPv4 at lcore %u!\n",
@@ -601,7 +603,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_entry;
 	}
 
-	instance->acl6 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	instance->acl6 = alloc_acl_search(gk_max_pkt_burst);
 	if (instance->acl6 == NULL) {
 		RTE_LOG(ERR, MALLOC,
 			"The GK block can't create acl search for IPv6 at lcore %u!\n",
@@ -971,16 +973,17 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	uint16_t num_tx = 0;
 	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
-	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t front_max_pkt_burst = gk_conf->front_max_pkt_burst;
+	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
+	struct rte_mbuf *tx_bufs[front_max_pkt_burst];
+	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		front_max_pkt_burst);
 
 	if (unlikely(num_rx == 0))
 		return;
@@ -1220,16 +1223,17 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	uint16_t num_tx = 0;
 	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
-	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
+	uint16_t back_max_pkt_burst = gk_conf->back_max_pkt_burst;
+	struct rte_mbuf *rx_bufs[back_max_pkt_burst];
+	struct rte_mbuf *tx_bufs[back_max_pkt_burst];
+	struct rte_mbuf *arp_bufs[back_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		back_max_pkt_burst);
 
 	if (unlikely(num_rx == 0))
 		return;
@@ -1642,6 +1646,12 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 		RTE_LOG(ERR, GATEKEEPER,
 			"gk: IPv6 is not configured, but the number of FIB entries for IPv6 is non-zero %u\n",
 			gk_conf->gk_max_num_ipv6_fib_entries);
+		ret = -1;
+		goto out;
+	}
+
+	if (!(gk_conf->front_max_pkt_burst > 0 &&
+			gk_conf->back_max_pkt_burst > 0)) {
 		ret = -1;
 		goto out;
 	}
