@@ -982,7 +982,10 @@ gt_proc(void *arg)
 	 * packets to be freed.
 	 */
 	struct rte_ip_frag_death_row death_row;
+	uint16_t gt_max_pkt_burst;
+
 	death_row.cnt = 0;
+	gt_max_pkt_burst = gt_conf->gt_max_pkt_burst;
 
 	RTE_LOG(NOTICE, GATEKEEPER,
 		"gt: the GT block is running at lcore = %u\n", lcore);
@@ -997,15 +1000,15 @@ gt_proc(void *arg)
 		uint16_t num_tx_succ;
 		uint16_t num_arp = 0;
 		uint64_t cur_tsc = rte_rdtsc();
-		struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct rte_mbuf *tx_bufs[GATEKEEPER_MAX_PKT_BURST];
-		struct rte_mbuf *arp_bufs[GATEKEEPER_MAX_PKT_BURST];
+		struct rte_mbuf *rx_bufs[gt_max_pkt_burst];
+		struct rte_mbuf *tx_bufs[gt_max_pkt_burst];
+		struct rte_mbuf *arp_bufs[gt_max_pkt_burst];
 		struct acl_search *acl4 = instance->acl4;
 		struct acl_search *acl6 = instance->acl6;
 
 		/* Load a set of packets from the front NIC. */
 		num_rx = rte_eth_rx_burst(port, rx_queue, rx_bufs,
-			GATEKEEPER_MAX_PKT_BURST);
+			gt_max_pkt_burst);
 
 		if (unlikely(num_rx == 0))
 			continue;
@@ -1304,7 +1307,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
-	instance->acl4 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	instance->acl4 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
 	if (instance->acl4 == NULL) {
 		RTE_LOG(ERR, MALLOC,
 			"The GT block can't create acl search for IPv4 at lcore %u!\n",
@@ -1314,7 +1317,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
-	instance->acl6 = alloc_acl_search(GATEKEEPER_MAX_PKT_BURST);
+	instance->acl6 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
 	if (instance->acl6 == NULL) {
 		RTE_LOG(ERR, MALLOC,
 			"The GT block can't create acl search for IPv6 at lcore %u!\n",
@@ -1433,6 +1436,11 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf)
 	int ret, i;
 
 	if (net_conf == NULL || gt_conf == NULL) {
+		ret = -1;
+		goto out;
+	}
+
+	if (!(gt_conf->gt_max_pkt_burst > 0)) {
 		ret = -1;
 		goto out;
 	}

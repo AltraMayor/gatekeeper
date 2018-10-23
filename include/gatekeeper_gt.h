@@ -57,13 +57,13 @@ struct gt_packet_headers {
 /* Structures for each GT instance. */
 struct gt_instance {
 	/* RX queue on the front interface. */
-	uint16_t      rx_queue;
+	uint16_t  rx_queue;
 
 	/* TX queue on the front interface. */
-	uint16_t      tx_queue;
+	uint16_t  tx_queue;
 
 	/* The lua state that belongs to the instance. */
-	lua_State     *lua_state;
+	lua_State *lua_state;
 
 	/* The neighbor hash tables that stores the Ethernet cached headers. */
 	struct neighbor_hash_table neigh;
@@ -105,6 +105,9 @@ struct gt_config {
 
 	/* Maximum TTL numbers are in ms. */
 	uint32_t           frag_max_flow_ttl_ms;
+
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t           gt_max_pkt_burst;
 
 	/*
 	 * The fields below are for internal use.

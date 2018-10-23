@@ -18,6 +18,9 @@ return function (net_conf, numa_table)
 	gt_conf.frag_scan_timeout_ms = math.floor(
 		2 * 60 * 1000 / gt_conf.frag_bucket_num + 0.5)
 
+	-- The maximum number of packets to retrieve/transmit.
+	local gt_max_pkt_burst = 32
+
 	local n_lcores = 2
 
 	local gt_lcores = gatekeeper.alloc_lcores_from_same_numa(numa_table,
@@ -25,6 +28,9 @@ return function (net_conf, numa_table)
 	gatekeeper.gt_assign_lcores(gt_conf, gt_lcores)
 
 	gt_conf.max_num_ipv6_neighbors = 1024
+
+	gt_conf.gt_max_pkt_burst = gatekeeper.get_front_burst_config(
+		gt_max_pkt_burst, net_conf)
 
 	-- Setup the GT functional block.
 	local ret = gatekeeper.c.run_gt(net_conf, gt_conf)

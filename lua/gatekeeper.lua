@@ -170,6 +170,7 @@ struct gt_config {
 	uint32_t     frag_bucket_entries;
 	uint32_t     frag_max_entries;
 	uint32_t     frag_max_flow_ttl_ms;
+	uint16_t     gt_max_pkt_burst;
 	/* This struct has hidden fields. */
 };
 
