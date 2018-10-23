@@ -179,6 +179,8 @@ struct cps_config {
 	unsigned int lcore_id;
 	uint16_t     tcp_port_bgp;
 	int          debug;
+	uint16_t     front_max_pkt_burst;
+	uint16_t     back_max_pkt_burst;
 	/* This struct has hidden fields. */
 };
 

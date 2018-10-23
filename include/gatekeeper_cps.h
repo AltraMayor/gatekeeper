@@ -39,10 +39,18 @@ struct cps_config {
 	 */
 	int               debug;
 
+	/* The maximum number of packets to retrieve/transmit. */
+	uint16_t          front_max_pkt_burst;
+	uint16_t          back_max_pkt_burst;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
+
+	/* The maximum number of packets submitted to CPS mailbox. */
+	unsigned int      mailbox_max_pkt_burst;
+
 	struct net_config *net;
 	struct lls_config *lls;
 
@@ -75,14 +83,14 @@ struct cps_config {
 
 /* Information needed to submit IPv6 BGP packets to the CPS block. */
 struct cps_bgp_req {
-	/* IPv6 BGP packets. */
-	struct rte_mbuf      *pkts[GATEKEEPER_MAX_PKT_BURST];
-
 	/* Number of packets stored in @pkts. */
 	unsigned int         num_pkts;
 
 	/* KNI that should receive @pkts. */
 	struct rte_kni       *kni;
+
+	/* IPv6 BGP packets. */
+	struct rte_mbuf      *pkts[0];
 };
 
 /*
@@ -118,6 +126,8 @@ enum cps_req_ty {
 struct cps_request {
 	/* Type of request. */
 	enum cps_req_ty ty;
+
+	int end_of_header[0];
 
 	union {
 		/* If @ty is CPS_REQ_BGP, use @bgp. */

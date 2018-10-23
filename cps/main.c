@@ -303,11 +303,11 @@ process_kni_request(struct rte_kni *kni)
 
 static void
 process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
-	uint16_t rx_queue)
+	uint16_t rx_queue, uint16_t cps_max_pkt_burst)
 {
-	struct rte_mbuf *rx_bufs[GATEKEEPER_MAX_PKT_BURST];
+	struct rte_mbuf *rx_bufs[cps_max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, rx_bufs,
-		GATEKEEPER_MAX_PKT_BURST);
+		cps_max_pkt_burst);
 	uint16_t num_kni;
 	uint16_t num_tx;
 	uint16_t i;
@@ -396,11 +396,11 @@ pkt_is_nd(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
 
 static void
 process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_kni *kni, uint16_t tx_queue)
+	struct rte_kni *kni, uint16_t tx_queue, uint16_t cps_max_pkt_burst)
 {
-	struct rte_mbuf *bufs[GATEKEEPER_MAX_PKT_BURST];
-	struct rte_mbuf *forward_bufs[GATEKEEPER_MAX_PKT_BURST];
-	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, GATEKEEPER_MAX_PKT_BURST);
+	struct rte_mbuf *bufs[cps_max_pkt_burst];
+	struct rte_mbuf *forward_bufs[cps_max_pkt_burst];
+	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, cps_max_pkt_burst);
 	uint16_t num_forward = 0;
 	unsigned int num_tx;
 	unsigned int i;
@@ -488,14 +488,16 @@ cps_proc(void *arg)
 		 */
 		if (front_iface->hw_filter_ntuple) {
 			process_ingress(front_iface, front_kni,
-				cps_conf->rx_queue_front);
+				cps_conf->rx_queue_front,
+				cps_conf->front_max_pkt_burst);
 		}
 		process_kni_request(front_kni);
 
 		if (net_conf->back_iface_enabled) {
 			if (back_iface->hw_filter_ntuple) {
 				process_ingress(back_iface, back_kni,
-					cps_conf->rx_queue_back);
+					cps_conf->rx_queue_back,
+					cps_conf->back_max_pkt_burst);
 			}
 			process_kni_request(back_kni);
 		}
@@ -511,10 +513,12 @@ cps_proc(void *arg)
 		 * transmit to respective Gatekeeper interfaces.
 		 */
 		process_egress(cps_conf, front_iface, front_kni,
-			cps_conf->tx_queue_front);
+			cps_conf->tx_queue_front,
+			cps_conf->front_max_pkt_burst);
 		if (net_conf->back_iface_enabled)
 			process_egress(cps_conf, back_iface, back_kni,
-				cps_conf->tx_queue_back);
+				cps_conf->tx_queue_back,
+				cps_conf->back_max_pkt_burst);
 
 		/* Periodically scan resolution requests from KNIs. */
 		rte_timer_manage();
@@ -539,8 +543,7 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	int ret;
 	unsigned int i;
 
-	RTE_VERIFY(num_pkts <=
-		(sizeof(req->u.bgp.pkts) / sizeof(*req->u.bgp.pkts)));
+	RTE_VERIFY(num_pkts <= cps_conf->mailbox_max_pkt_burst);
 
 	if (req == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
@@ -1060,6 +1063,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct lls_config *lls_conf, const char *kni_kmod_path)
 {
 	int ret;
+	int ele_size;
 
 	if (net_conf == NULL || (gk_conf == NULL && gt_conf == NULL) ||
 			cps_conf == NULL || lls_conf == NULL) {
@@ -1088,9 +1092,25 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto stage3;
 	}
 
+	if (gk_conf != NULL) {
+		cps_conf->mailbox_max_pkt_burst =
+			RTE_MAX(gk_conf->front_max_pkt_burst,
+				gk_conf->back_max_pkt_burst);
+	}
+
+	if (gt_conf != NULL) {
+		cps_conf->mailbox_max_pkt_burst =
+			RTE_MAX(cps_conf->mailbox_max_pkt_burst,
+				gt_conf->gt_max_pkt_burst);
+	}
+
+	ele_size = RTE_MAX(sizeof(struct cps_request),
+		offsetof(struct cps_request, end_of_header) +
+		sizeof(struct cps_bgp_req) + sizeof(struct rte_mbuf *) *
+		cps_conf->mailbox_max_pkt_burst);
+
 	ret = init_mailbox("cps_mb", MAILBOX_MAX_ENTRIES,
-		sizeof(struct cps_request), cps_conf->lcore_id,
-		&cps_conf->mailbox);
+		ele_size, cps_conf->lcore_id, &cps_conf->mailbox);
 	if (ret < 0)
 		goto kni;
 
