@@ -902,14 +902,6 @@ init_iface(struct gatekeeper_if *iface)
 
 	iface->alive = true;
 
-	if (iface->bonding_mode == BONDING_MODE_8023AD &&
-			GATEKEEPER_MAX_PKT_BURST < 2 * iface->num_ports) {
-		RTE_LOG(ERR, GATEKEEPER, "The %s interface is configured for LACP, but Gatekeeper must support packet bursts of at least twice the number of slaves (%d)\n",
-			iface->name, 2 * iface->num_ports);
-		destroy_iface(iface, IFACE_DESTROY_LUA);
-		return -1;
-	}
-
 	/* Initialize all potential queues on this interface. */
 	for (i = 0; i < RTE_MAX_LCORE; i++) {
 		iface->rx_queues[i] = GATEKEEPER_QUEUE_UNALLOCATED;
