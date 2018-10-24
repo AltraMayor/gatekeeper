@@ -16,6 +16,11 @@ return function (net_conf, lcore)
 	-- Token bucket rate approximation error.
 	sol_conf.tb_rate_approx_err = 1e-7
 
+	-- Only used when the NIC does not provide a
+	-- guaranteed bandwidth, such as Amazon ENA.
+	-- Otherwise, should be kept as 0.
+	sol_conf.req_channel_bw = 0.0
+
 	-- Setup the sol functional block.
 	local ret = gatekeeper.c.run_sol(net_conf, sol_conf)
 	if ret < 0 then
