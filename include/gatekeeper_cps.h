@@ -50,6 +50,12 @@ struct cps_config {
 	unsigned int      max_cps_route_updates;
 
 	/*
+	 * Period between scans of the outstanding
+	 * resolution requests from KNIs.
+	 */
+	unsigned int      cps_scan_interval_sec;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
