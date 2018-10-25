@@ -34,9 +34,6 @@
 #include "gatekeeper_main.h"
 #include "kni.h"
 
-/* Number of times to attempt bring a KNI interface up or down. */
-#define NUM_ATTEMPTS_KNI_LINK_SET (5)
-
 /* Maximum number of updates for LPM table to serve at once. */
 #define MAX_CPS_ROUTE_UPDATES (8)
 
@@ -247,7 +244,7 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 next:
 			attempts++;
 			sleep(1);
-		} while (attempts < NUM_ATTEMPTS_KNI_LINK_SET);
+		} while (attempts < get_cps_conf()->num_attempts_kni_link_set);
 	}
 kill:
 	/* Failed to wait for child or waited for too many attempts. */

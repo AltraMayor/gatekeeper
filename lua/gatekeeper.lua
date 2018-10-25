@@ -186,6 +186,7 @@ struct cps_config {
 	int          debug;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
+	unsigned int num_attempts_kni_link_set;
 	/* This struct has hidden fields. */
 };
 

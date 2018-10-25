@@ -21,6 +21,9 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.front_max_pkt_burst = 32
 	cps_conf.back_max_pkt_burst = 32
 
+	-- Number of times to attempt bring a KNI interface up or down.
+	cps_conf.num_attempts_kni_link_set = 5
+
 	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)
 	if ret < 0 then

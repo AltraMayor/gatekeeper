@@ -43,6 +43,9 @@ struct cps_config {
 	uint16_t          front_max_pkt_burst;
 	uint16_t          back_max_pkt_burst;
 
+	/* Number of times to attempt bring a KNI interface up or down. */
+	unsigned int      num_attempts_kni_link_set;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
