@@ -24,6 +24,9 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- Number of times to attempt bring a KNI interface up or down.
 	cps_conf.num_attempts_kni_link_set = 5
 
+	-- Maximum number of updates for LPM table to serve at once.
+	cps_conf.max_cps_route_updates = 8
+
 	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)
 	if ret < 0 then

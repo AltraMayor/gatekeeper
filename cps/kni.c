@@ -34,9 +34,6 @@
 #include "gatekeeper_main.h"
 #include "kni.h"
 
-/* Maximum number of updates for LPM table to serve at once. */
-#define MAX_CPS_ROUTE_UPDATES (8)
-
 /*
  * According to init_module(2) and delete_module(2), there
  * are no declarations for these functions in header files.
@@ -821,7 +818,8 @@ del_route(struct route_update *update, struct gk_config *gk_conf)
 void
 kni_cps_route_event(struct cps_config *cps_conf)
 {
-	struct route_update updates[MAX_CPS_ROUTE_UPDATES];
+	uint16_t max_cps_route_updates = cps_conf->max_cps_route_updates;
+	struct route_update updates[max_cps_route_updates];
 	unsigned int i;
 	unsigned int num_updates = 0;
 	char buf[MNL_SOCKET_BUFFER_SIZE];
@@ -844,7 +842,7 @@ kni_cps_route_event(struct cps_config *cps_conf)
 
 		if (updates[num_updates].valid)
 			num_updates++;
-	} while (num_updates < MAX_CPS_ROUTE_UPDATES);
+	} while (num_updates < max_cps_route_updates);
 
 	if (cps_conf->gk == NULL) {
 		RTE_LOG(WARNING, GATEKEEPER,
