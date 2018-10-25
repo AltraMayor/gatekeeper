@@ -185,7 +185,11 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
 		(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
 	ipv6_hdr->proto = IPPROTO_ICMPV6;
-	ipv6_hdr->hop_limits = IPv6_DEFAULT_HOP_LIMITS;
+	/*
+	 * The IP Hop Limit field must be 255 as required by
+	 * RFC 4861, sections 7.1.1 and 7.1.2.
+	 */
+	ipv6_hdr->hop_limits = 255;
 	rte_memcpy(ipv6_hdr->src_addr, nd->ip, sizeof(ipv6_hdr->dst_addr));
 	rte_memcpy(ipv6_hdr->dst_addr, iface->ll_ip6_addr.s6_addr,
 		sizeof(ipv6_hdr->dst_addr));

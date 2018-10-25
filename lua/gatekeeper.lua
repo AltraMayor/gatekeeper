@@ -123,13 +123,15 @@ struct gatekeeper_if {
 	uint32_t bonding_mode;
 	int      vlan_insert;
 	uint16_t mtu;
+	uint8_t  ipv6_default_hop_limits;
 	/* This struct has hidden fields. */
 };
 
 struct net_config {
-	int  back_iface_enabled;
-	int  guarantee_random_entropy;
-	bool *numa_used;
+	int          back_iface_enabled;
+	int          guarantee_random_entropy;
+	unsigned int num_attempts_link_get;
+	bool         *numa_used;
 	/* This struct has hidden fields. */
 };
 

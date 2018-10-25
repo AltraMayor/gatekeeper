@@ -35,7 +35,6 @@
 #define CONFIGURED_IPV6 (2)
 
 #define IPv6_DEFAULT_VTC_FLOW   (0x60000000)
-#define IPv6_DEFAULT_HOP_LIMITS (0xFF)
 
 struct ipaddr {
 	/* The network layer protocol of the nexthop. */
@@ -161,6 +160,9 @@ struct gatekeeper_if {
 	 * transmit it but the network may drop it.
 	 */
 	uint16_t        mtu;
+
+	/* The maximum packet lifetime. */
+	uint8_t         ipv6_default_hop_limits;
 
 	/*
 	 * The fields below are for internal use.
@@ -315,6 +317,12 @@ struct net_config {
 	 * should be passed to any call of getradom(2).
 	 */
 	int                  guarantee_random_entropy;
+
+	/*
+	 * Number of attempts to wait for Gatekeeper links to
+	 * come up during initialization.
+	 */
+	unsigned int         num_attempts_link_get;
 
 	/*
 	 * The NUMA nodes used in the host. Element i is true
