@@ -113,6 +113,19 @@ struct sol_config {
 	double             tb_rate_approx_err;
 
 	/*
+	 * Bandwidth of request channel in Mbps.
+	 *
+	 * Used only in the case when the Solicitor
+	 * block cannot read the back interface's
+	 * available bandwidth, such as is the case
+	 * with the Amazon ENA. Should be calculated
+	 * by the operator.
+	 *
+	 * Should be set to 0 if not needed.
+	 */
+	double             req_channel_bw_mbps;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */

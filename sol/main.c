@@ -266,6 +266,12 @@ out:
 	}
 }
 
+static inline double
+mbits_to_bytes(double mbps)
+{
+	return mbps * (1000 * 1000 / 8);
+}
+
 /*
  * Retrieve the link speed of a Gatekeeper interface. If it
  * is a bonded interface, the link speeds are summed.
@@ -283,9 +289,7 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 		rte_eth_link_get(iface->ports[i], &link);
 
 		if (link.link_speed == ETH_SPEED_NUM_NONE) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"sol: link speed for port %hhu on the back interface is undefined\n",
-				iface->ports[i]);
+			*link_speed_bytes = 0;
 			return -1;
 		}
 
@@ -293,7 +297,7 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 	}
 
 	/* Convert to bytes per second. */
-	*link_speed_bytes = link_speed_mbits * (1000 * 1000 / 8);
+	*link_speed_bytes = mbits_to_bytes(link_speed_mbits);
 	return 0;
 }
 
@@ -317,14 +321,24 @@ req_queue_init(struct sol_config *sol_conf)
 
 	/* Find link speed in bytes, even for a bonded interface. */
 	ret = iface_speed_bytes(&sol_conf->net->back, &link_speed_bytes);
-	if (ret < 0)
-		return ret;
-	RTE_LOG(NOTICE, GATEKEEPER,
-		"sol: back interface link speed: %"PRIu64" bytes per second\n",
-		link_speed_bytes);
+	if (ret == 0) {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"sol: back interface link speed: %"PRIu64" bytes per second\n",
+			link_speed_bytes);
+		/* Keep max number of bytes a float for later calculations. */
+		max_credit_bytes_precise =
+			sol_conf->req_bw_rate * link_speed_bytes;
+	} else {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"sol: back interface link speed: undefined\n");
+		if (sol_conf->req_channel_bw_mbps == 0) {
+			RTE_LOG(ERR, GATEKEEPER, "sol: when link speed on back interface is undefined, parameter req_channel_bw_mbps must be calculated and defined\n");
+			return -1;
+		}
+		max_credit_bytes_precise =
+			mbits_to_bytes(sol_conf->req_channel_bw_mbps);
+	}
 
-	/* Keep maximum number of bytes as a float for later calculations. */
-	max_credit_bytes_precise = sol_conf->req_bw_rate * link_speed_bytes;
 
 	/* Initialize token bucket as full. */
 	req_queue->tb_max_credit_bytes = round(max_credit_bytes_precise);
@@ -482,6 +496,14 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 		RTE_LOG(ERR, GATEKEEPER,
 			"sol: request queue bandwidth must be in range (0, 1), but it has been specified as %f\n",
 			sol_conf->req_bw_rate);
+		ret = -1;
+		goto out;
+	}
+
+	if (sol_conf->req_channel_bw_mbps < 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"sol: request channel bandwidth in Mbps must be greater than 0 when the NIC doesn't supply guaranteed bandwidth, but is %f\n",
+			sol_conf->req_channel_bw_mbps);
 		ret = -1;
 		goto out;
 	}
