@@ -19,7 +19,7 @@ return function (net_conf, lcore)
 	-- Only used when the NIC does not provide a
 	-- guaranteed bandwidth, such as Amazon ENA.
 	-- Otherwise, should be kept as 0.
-	sol_conf.req_channel_bw = 0.0
+	sol_conf.req_channel_bw_mbps = 0.0
 
 	-- Setup the sol functional block.
 	local ret = gatekeeper.c.run_sol(net_conf, sol_conf)
