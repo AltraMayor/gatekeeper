@@ -32,10 +32,6 @@
 #include "gatekeeper_gt.h"
 #include "luajit-ffi-cdata.h"
 
-/* TODO #14 Get the install-path via Makefile. */
-#define LUA_BASE_DIR               "./lua"
-#define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
-
 /*
  * Return a table with all lcore ids but the lcore id of the master lcore.
  * Function to be called from Lua.
