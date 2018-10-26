@@ -850,8 +850,16 @@ kni_cps_route_event(struct cps_config *cps_conf)
 	} while (num_updates < MAX_CPS_ROUTE_UPDATES);
 
 	if (cps_conf->gk == NULL) {
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps: the system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration!\n");
+		/*
+		 * Grantor only runs CPS for ECMP support and
+		 * shouldn't be receiving route updates.
+		 */
+		if (unlikely(num_updates != 0)) {
+			RTE_LOG(WARNING, GATEKEEPER,
+				"cps: the system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving %u route update messages!\n",
+				num_updates);
+		}
+
 		return;
 	}
 
