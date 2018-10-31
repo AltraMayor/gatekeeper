@@ -1452,7 +1452,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 			}
 		} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
 			struct rte_lpm6_iterator_state state;
-			const struct rte_lpm6_rule *re;
+			struct rte_lpm6_rule re;
 			int ret = rte_lpm6_iterator_state_init(ltbl->lpm6,
 				prefix->addr.ip.v6.s6_addr,
 				prefix->len, &state);
@@ -1465,13 +1465,13 @@ check_prefix_locked(struct ip_prefix *prefix,
 
 			ret = rte_lpm6_rule_iterate(&state, &re);
 			while (ret >= 0) {
-				ip_prefix_fib = &ltbl->fib_tbl6[re->next_hop];
+				ip_prefix_fib = &ltbl->fib_tbl6[re.next_hop];
 				if (ip_prefix_fib->action != GK_FWD_GRANTOR &&
 						ip_prefix_fib->action !=
 						GK_DROP) {
 					RTE_LOG(WARNING, GATEKEEPER,
 						"gk: adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-						prefix->str, action, re->depth,
+						prefix->str, action, re.depth,
 						ip_prefix_fib->action);
 					return -1;
 				}

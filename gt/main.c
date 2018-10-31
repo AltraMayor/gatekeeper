@@ -977,7 +977,6 @@ gt_proc(void *arg)
 	uint16_t tx_queue = instance->tx_queue;
 	uint64_t frag_scan_timeout_cycles = round(
 		gt_conf->frag_scan_timeout_ms * rte_get_tsc_hz() / 1000.);
-	uint32_t next = 0;
 	/*
 	 * The mbuf death row contains
 	 * packets to be freed.
@@ -1138,13 +1137,8 @@ gt_proc(void *arg)
 
 		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
 			RTE_VERIFY(death_row.cnt == 0);
-			ret = rte_ip_frag_table_iterate(
-				instance->frag_tbl, &death_row, &next);
-			if (ret != 0) {
-				RTE_LOG(WARNING, GATEKEEPER,
-					"gt: failed to call rte_ip_frag_table_iterate() to iterate over the fragmentation table at lcore %u\n",
-					lcore);
-			}
+			rte_frag_table_del_expired_entries(instance->frag_tbl,
+				&death_row, cur_tsc);
 
 			/* Process the death packets. */
 			process_death_row(socket, port,
