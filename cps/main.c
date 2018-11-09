@@ -490,7 +490,7 @@ cps_proc(void *arg)
 		 * Read in IPv4 BGP packets that arrive directly
 		 * on the Gatekeeper interfaces.
 		 */
-		if (front_iface->hw_filter_ntuple) {
+		if (hw_filter_ntuple_available(front_iface)) {
 			process_ingress(front_iface, front_kni,
 				cps_conf->rx_queue_front,
 				cps_conf->front_max_pkt_burst);
@@ -498,7 +498,7 @@ cps_proc(void *arg)
 		process_kni_request(front_kni);
 
 		if (net_conf->back_iface_enabled) {
-			if (back_iface->hw_filter_ntuple) {
+			if (hw_filter_ntuple_available(back_iface)) {
 				process_ingress(back_iface, back_kni,
 					cps_conf->rx_queue_back,
 					cps_conf->back_max_pkt_burst);
@@ -583,11 +583,30 @@ free_pkts:
 static int
 assign_cps_queue_ids(struct cps_config *cps_conf)
 {
-	int ret = get_queue_id(&cps_conf->net->front, QUEUE_TYPE_RX,
-		cps_conf->lcore_id);
-	if (ret < 0)
-		goto fail;
-	cps_conf->rx_queue_front = ret;
+	int ret;
+
+	/*
+	 * CPS should only get its own RX queue if RSS is enabled,
+	 * even if ntuple filter is not enabled.
+	 *
+	 * If RSS is disabled, then the network configuration can
+	 * tell that it should ignore all other blocks' requests
+	 * for queues and just allocate one RX queue.
+	 *
+	 * If RSS is enabled, then CPS has already informed the
+	 * network configuration that it will be using a queue.
+	 * The network configuration will crash if CPS doesn't
+	 * configure that queue, so it still should, even if
+	 * ntuple filter is not supported and CPS will not use it.
+	 */
+
+	if (cps_conf->net->front.rss) {
+		ret = get_queue_id(&cps_conf->net->front, QUEUE_TYPE_RX,
+			cps_conf->lcore_id);
+		if (ret < 0)
+			goto fail;
+		cps_conf->rx_queue_front = ret;
+	}
 
 	ret = get_queue_id(&cps_conf->net->front, QUEUE_TYPE_TX,
 		cps_conf->lcore_id);
@@ -596,11 +615,13 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 	cps_conf->tx_queue_front = ret;
 
 	if (cps_conf->net->back_iface_enabled) {
-		ret = get_queue_id(&cps_conf->net->back, QUEUE_TYPE_RX,
-			cps_conf->lcore_id);
-		if (ret < 0)
-			goto fail;
-		cps_conf->rx_queue_back = ret;
+		if (cps_conf->net->back.rss) {
+			ret = get_queue_id(&cps_conf->net->back, QUEUE_TYPE_RX,
+				cps_conf->lcore_id);
+			if (ret < 0)
+				goto fail;
+			cps_conf->rx_queue_back = ret;
+		}
 
 		ret = get_queue_id(&cps_conf->net->back, QUEUE_TYPE_TX,
 			cps_conf->lcore_id);
@@ -967,7 +988,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 	uint16_t rx_queue)
 {
 	if (ipv4_if_configured(iface)) {
-		if (iface->hw_filter_ntuple) {
+		if (hw_filter_ntuple_available(iface)) {
 			/*
 			 * Capture pkts for connections
 			 * started by our BGP speaker.

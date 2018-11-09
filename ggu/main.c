@@ -43,7 +43,7 @@ static struct ggu_config *ggu_conf;
 static inline const char *
 filter_name(const struct gatekeeper_if *iface)
 {
-	return iface->hw_filter_ntuple ? "ntuple filter" : "ACL";
+	return hw_filter_ntuple_available(iface) ? "ntuple filter" : "ACL";
 }
 
 static void
@@ -193,9 +193,10 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 		 * If the IPv6 packet is not destined to
 		 * the Gatekeeper server, redirect the packet properly.
 		 */
-		if (back->hw_filter_ntuple && memcmp(ip6hdr->dst_addr,
-				back->ip6_addr.s6_addr,
-				sizeof(ip6hdr->dst_addr)) != 0) {
+		if (hw_filter_ntuple_available(back) &&
+				memcmp(ip6hdr->dst_addr,
+					back->ip6_addr.s6_addr,
+					sizeof(ip6hdr->dst_addr)) != 0) {
 			RTE_LOG(NOTICE, GATEKEEPER,
 				"ggu: received an IPv6 packet destinated to other host!\n");
 			return;
@@ -391,7 +392,7 @@ ggu_proc(void *arg)
 	 * Load a set of GK-GT packets from the back NIC
 	 * or from the GGU mailbox.
 	 */
-	if (ggu_conf->net->back.hw_filter_ntuple) {
+	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
 		while (likely(!exiting)) {
 			struct rte_mbuf *bufs[ggu_max_pkt_burst];
 			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
@@ -432,14 +433,33 @@ static int
 ggu_stage1(void *arg)
 {
 	struct ggu_config *ggu_conf = arg;
-	int ret = get_queue_id(&ggu_conf->net->back, QUEUE_TYPE_RX,
-		ggu_conf->lcore_id);
-	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "ggu: cannot assign an RX queue for the back interface for lcore %u\n",
+	int ret;
+
+	/*
+	 * GGU should only get its own RX queue if RSS is enabled,
+	 * even if ntuple filter is not enabled.
+	 *
+	 * If RSS is disabled, then the network configuration can
+	 * tell that it should ignore all other blocks' requests
+	 * for queues and just allocate one RX queue.
+	 *
+	 * If RSS is enabled, then GGU has already informed the
+	 * network configuration that it will be using a queue.
+	 * The network configuration will crash if GGU doesn't
+	 * configure that queue, so it still should, even if
+	 * ntuple filter is not supported and GGU will not use it.
+	 */
+
+	if (ggu_conf->net->back.rss) {
+		ret = get_queue_id(&ggu_conf->net->back, QUEUE_TYPE_RX,
 			ggu_conf->lcore_id);
-		return ret;
+		if (ret < 0) {
+			RTE_LOG(ERR, GATEKEEPER, "ggu: cannot assign an RX queue for the back interface for lcore %u\n",
+				ggu_conf->lcore_id);
+			return ret;
+		}
+		ggu_conf->rx_queue_back = ret;
 	}
-	ggu_conf->rx_queue_back = ret;
 	return 0;
 }
 
@@ -502,7 +522,7 @@ ggu_stage2(void *arg)
 	 * Setup the ntuple filters that assign the GK-GT packets
 	 * to its queue for both IPv4 and IPv6 addresses.
 	 */
-	if (ggu_conf->net->back.hw_filter_ntuple) {
+	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
 		return ntuple_filter_add(ggu_conf->net->back.id,
 			ggu_conf->net->back.ip4_addr.s_addr,
 			ggu_conf->ggu_src_port, UINT16_MAX,

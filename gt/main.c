@@ -1414,9 +1414,13 @@ static int
 gt_stage2(void *arg)
 {
 	struct gt_config *gt_conf = arg;
-	int ret = gt_setup_rss(gt_conf);
-	if (ret < 0)
-		goto cleanup;
+	int ret;
+
+	if (gt_conf->net->front.rss) {
+		ret = gt_setup_rss(gt_conf);
+		if (ret < 0)
+			goto cleanup;
+	}
 
 	return 0;
 

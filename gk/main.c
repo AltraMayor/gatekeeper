@@ -922,36 +922,47 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 static int
 gk_setup_rss(struct gk_config *gk_conf)
 {
-	int i, ret = 0;
-	uint16_t port_front = gk_conf->net->front.id;
-	uint16_t gk_queues_front[gk_conf->num_lcores];
-	uint16_t port_back = gk_conf->net->back.id;
-	uint16_t gk_queues_back[gk_conf->num_lcores];
+	int i, ret;
 
-	for (i = 0; i < gk_conf->num_lcores; i++) {
-		gk_queues_front[i] = gk_conf->instances[i].rx_queue_front;
-		gk_queues_back[i] = gk_conf->instances[i].rx_queue_back;
+	if (gk_conf->net->front.rss) {
+		uint16_t port_front = gk_conf->net->front.id;
+		uint16_t gk_queues_front[gk_conf->num_lcores];
+
+		for (i = 0; i < gk_conf->num_lcores; i++) {
+			gk_queues_front[i] =
+				gk_conf->instances[i].rx_queue_front;
+		}
+
+		ret = gatekeeper_setup_rss(port_front,
+			gk_queues_front, gk_conf->num_lcores);
+		if (ret < 0)
+			goto out;
+
+		ret = gatekeeper_get_rss_config(port_front,
+			&gk_conf->rss_conf_front);
+		if (ret < 0)
+			goto out;
 	}
 
-	ret = gatekeeper_setup_rss(
-		port_front, gk_queues_front, gk_conf->num_lcores);
-	if (ret < 0)
-		goto out;
+	if (gk_conf->net->back.rss) {
+		uint16_t port_back = gk_conf->net->back.id;
+		uint16_t gk_queues_back[gk_conf->num_lcores];
 
-	ret = gatekeeper_get_rss_config(
-		port_front, &gk_conf->rss_conf_front);
-	if (ret < 0)
-		goto out;
+		for (i = 0; i < gk_conf->num_lcores; i++) {
+			gk_queues_back[i] =
+				gk_conf->instances[i].rx_queue_back;
+		}
 
-	ret = gatekeeper_setup_rss(
-		port_back, gk_queues_back, gk_conf->num_lcores);
-	if (ret < 0)
-		goto out;
+		ret = gatekeeper_setup_rss(port_back,
+			gk_queues_back, gk_conf->num_lcores);
+		if (ret < 0)
+			goto out;
 
-	ret = gatekeeper_get_rss_config(
-		port_back, &gk_conf->rss_conf_back);
-	if (ret < 0)
-		goto out;
+		ret = gatekeeper_get_rss_config(port_back,
+			&gk_conf->rss_conf_back);
+		if (ret < 0)
+			goto out;
+	}
 
 	ret = 0;
 
