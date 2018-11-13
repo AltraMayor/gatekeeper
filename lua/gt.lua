@@ -13,6 +13,8 @@ return function (net_conf, lls_conf, numa_table)
 	gt_conf.frag_bucket_entries = 4;
 	gt_conf.frag_max_entries = 0x1000;
 	gt_conf.frag_max_flow_ttl_ms = 1000;
+	gt_conf.batch_interval = 2;
+	gt_conf.max_ggu_notify_pkts = 8;
 
 	-- Scan the whole fragment table in 2 minutes.
 	gt_conf.frag_scan_timeout_ms = math.floor(

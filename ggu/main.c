@@ -47,8 +47,9 @@ filter_name(const struct gatekeeper_if *iface)
 }
 
 static void
-process_single_policy(const struct ggu_policy *policy, const struct ggu_config *ggu_conf)
+process_single_policy(struct ggu_policy *policy, void *arg)
 {
+	const struct ggu_config *ggu_conf = arg;
 	struct gk_cmd_entry *entry;
 	/*
 	 * Obtain mailbox of that GK block,
@@ -68,25 +69,13 @@ process_single_policy(const struct ggu_policy *policy, const struct ggu_config *
 	entry->u.ggu.state = policy->state;
 	rte_memcpy(&entry->u.ggu.flow, &policy->flow, sizeof(entry->u.ggu.flow));
 
-	switch(policy->state) {
+	switch (policy->state) {
 	case GK_GRANTED:
-		entry->u.ggu.params.u.granted.tx_rate_kb_sec =
-			rte_be_to_cpu_32(
-			policy->params.u.granted.tx_rate_kb_sec);
-		entry->u.ggu.params.u.granted.cap_expire_sec =
-			rte_be_to_cpu_32(
-			policy->params.u.granted.cap_expire_sec);
-		entry->u.ggu.params.u.granted.next_renewal_ms =
-			rte_be_to_cpu_32(
-			policy->params.u.granted.next_renewal_ms);
-		entry->u.ggu.params.u.granted.renewal_step_ms =
-			rte_be_to_cpu_32(
-			policy->params.u.granted.renewal_step_ms);
+		entry->u.ggu.params.granted = policy->params.granted;
 		break;
 
 	case GK_DECLINED:
-		entry->u.ggu.params.u.declined.expire_sec =
-			rte_be_to_cpu_32(policy->params.u.declined.expire_sec);
+		entry->u.ggu.params.declined = policy->params.declined;
 		break;
 
 	default:
@@ -99,24 +88,157 @@ process_single_policy(const struct ggu_policy *policy, const struct ggu_config *
 	mb_send_entry(mb, entry);
 }
 
-static void
-process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
+void
+ggu_policy_iterator(struct ggu_decision *ggu_decision,
+	unsigned int decision_list_len, ggu_policy_fn policy_fn,
+	void *policy_arg, const char *block)
 {
-	uint8_t j;
-	uint8_t *policy_ptr;
+	while (decision_list_len >= sizeof(*ggu_decision)) {
+		struct ggu_policy policy;
+		uint8_t decision_type = ggu_decision->type;
+		size_t decision_len = sizeof(*ggu_decision);
+		size_t params_offset;
+
+		if (ggu_decision->res1 != 0 || ggu_decision->res2 != 0) {
+			RTE_LOG(NOTICE, GATEKEEPER,
+				"%s: %s: reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
+				block, __func__,
+				ggu_decision->res1,
+				rte_be_to_cpu_16(ggu_decision->res2));
+			return;
+		}
+
+		/* Verify decision length and read in flow information. */
+		switch (decision_type) {
+		case GGU_DEC_IPV4_DECLINED:
+			decision_len += sizeof(policy.flow.f.v4) +
+				sizeof(policy.params.declined);
+			if (decision_list_len < decision_len) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"%s: %s: malformed IPv4 declined decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_DECLINED;
+			policy.flow.proto = ETHER_TYPE_IPv4;
+			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v4));
+			params_offset = sizeof(policy.flow.f.v4);
+			break;
+		case GGU_DEC_IPV6_DECLINED:
+			decision_len += sizeof(policy.flow.f.v6) +
+				sizeof(policy.params.declined);
+			if (decision_list_len < decision_len) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"%s: %s: malformed IPv6 declined decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_DECLINED;
+			policy.flow.proto = ETHER_TYPE_IPv6;
+			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v6));
+			params_offset = sizeof(policy.flow.f.v6);
+			break;
+		case GGU_DEC_IPV4_GRANTED:
+			decision_len += sizeof(policy.flow.f.v4) +
+				sizeof(policy.params.granted);
+			if (decision_list_len < decision_len) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"%s: %s: malformed IPv4 granted decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_GRANTED;
+			policy.flow.proto = ETHER_TYPE_IPv4;
+			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v4));
+			params_offset = sizeof(policy.flow.f.v4);
+			break;
+		case GGU_DEC_IPV6_GRANTED:
+			decision_len += sizeof(policy.flow.f.v6) +
+				sizeof(policy.params.granted);
+			if (decision_list_len < decision_len) {
+				RTE_LOG(WARNING, GATEKEEPER,
+					"%s: %s: malformed IPv6 granted decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_GRANTED;
+			policy.flow.proto = ETHER_TYPE_IPv6;
+			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v6));
+			params_offset = sizeof(policy.flow.f.v6);
+			break;
+		default:
+			RTE_LOG(WARNING, GATEKEEPER,
+				"%s: %s: unexpected decision type: %hu\n",
+				block, __func__, decision_type);
+			return;
+		}
+
+		/* Read in decision parameters. */
+		switch (decision_type) {
+		case GGU_DEC_IPV4_GRANTED:
+			/* FALLTHROUGH */
+		case GGU_DEC_IPV6_GRANTED: {
+			struct ggu_granted *granted_be =
+				(struct ggu_granted *)
+				(ggu_decision->ip_flow + params_offset);
+			policy.params.granted.tx_rate_kb_sec =
+				rte_be_to_cpu_32(granted_be->tx_rate_kb_sec);
+			policy.params.granted.cap_expire_sec =
+				rte_be_to_cpu_32(granted_be->cap_expire_sec);
+			policy.params.granted.next_renewal_ms =
+				rte_be_to_cpu_32(granted_be->next_renewal_ms);
+			policy.params.granted.renewal_step_ms =
+				rte_be_to_cpu_32(granted_be->renewal_step_ms);
+			break;
+		}
+		case GGU_DEC_IPV4_DECLINED:
+			/* FALLTHROUGH */
+		case GGU_DEC_IPV6_DECLINED: {
+			struct ggu_declined *declined_be =
+				(struct ggu_declined *)
+				(ggu_decision->ip_flow + params_offset);
+			policy.params.declined.expire_sec =
+				rte_be_to_cpu_32(declined_be->expire_sec);
+			break;
+		}
+		default:
+			rte_panic("ggu: found an unknown decision type after previously verifying it: %hhu\n",
+				decision_type);
+		}
+
+		policy_fn(&policy, policy_arg);
+		ggu_decision = (struct ggu_decision *)
+			(((uint8_t *)ggu_decision) + decision_len);
+		decision_list_len -= decision_len;
+	}
+
+	if (decision_list_len != 0) {
+		RTE_LOG(WARNING, GATEKEEPER,
+			"%s: %s: notification packet had partial decision list\n",
+			block, __func__);
+	}
+}
+
+static void
+process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
+{
 	uint16_t ether_type;
 	struct ether_hdr *eth_hdr;
 	void *l3_hdr;
-	struct ipv4_hdr *ip4hdr;
-	struct ipv6_hdr *ip6hdr;
 	struct udp_hdr *udphdr;
 	struct ggu_common_hdr *gguhdr;
+	struct ggu_decision *ggu_decision;
 	uint16_t real_payload_len;
 	uint16_t expected_payload_len;
-	struct ggu_policy policy;
+	uint16_t decision_list_len;
 	struct gatekeeper_if *back = &ggu_conf->net->back;
 	uint16_t minimum_size;
 	size_t l2_len;
+	int l3_len;
 
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr, &l3_hdr));
@@ -124,7 +246,9 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 	minimum_size = l2_len;
 
 	switch (ether_type) {
-	case ETHER_TYPE_IPv4:
+	case ETHER_TYPE_IPv4: {
+		struct ipv4_hdr *ip4hdr;
+
 		minimum_size += sizeof(struct ipv4_hdr) +
 			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
@@ -149,7 +273,13 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		minimum_size += ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr);
+		l3_len = ipv4_hdr_len(ip4hdr);
+
+		/*
+		 * Base IPv4 header length was already accounted for,
+		 * so add in any extra bytes from extension header(s).
+		 */
+		minimum_size += l3_len - sizeof(*ip4hdr);
 		if (pkt->data_len < minimum_size) {
 			RTE_LOG(NOTICE, GATEKEEPER,
 				"ggu: the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
@@ -163,13 +293,9 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 		 */
 		udphdr = (struct udp_hdr *)ipv4_skip_exthdr(ip4hdr);
 		break;
-
+	}
 	case ETHER_TYPE_IPv6: {
-		/*
-		 * The UDP header offset in terms of the
-		 * beginning of the IPv6 header.
-		 */
-		int udp_offset;
+		struct ipv6_hdr *ip6hdr;
 		uint8_t nexthdr;
 
 		minimum_size += sizeof(struct ipv6_hdr) +
@@ -202,9 +328,9 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			return;
 		}
 
-		udp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
+		l3_len = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 			&nexthdr);
-		if (udp_offset < 0) {
+		if (l3_len < 0) {
 			RTE_LOG(ERR, GATEKEEPER,
 				"ggu: failed to parse the IPv6 packet's extension headers!\n");
 			goto free_packet;
@@ -217,7 +343,11 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		minimum_size += udp_offset - sizeof(*ip6hdr);
+		/*
+		 * Base IPv6 header length was already accounted for,
+		 * so add in any extra bytes from extension header(s).
+		 */
+		minimum_size += l3_len - sizeof(*ip6hdr);
 		if (pkt->data_len < minimum_size) {
 			RTE_LOG(NOTICE, GATEKEEPER,
 				"ggu: the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
@@ -225,7 +355,7 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		udphdr = (struct udp_hdr *)((uint8_t *)ip6hdr + udp_offset);
+		udphdr = (struct udp_hdr *)((uint8_t *)ip6hdr + l3_len);
 		break;
 	}
 
@@ -247,83 +377,38 @@ process_single_packet(struct rte_mbuf *pkt, const struct ggu_config *ggu_conf)
 		goto free_packet;
 	}
 
-	/* XXX Check the UDP checksum. */
-
-	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
-	if (gguhdr->v1 != GGU_PD_VER1) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: unknown policy decision format %hhu\n",
-			gguhdr->v1);
-		goto free_packet;
-	}
-
-	policy_ptr = (uint8_t *)&gguhdr[1];
-
-	real_payload_len = rte_be_to_cpu_16(udphdr->dgram_len);
-	expected_payload_len = sizeof(*udphdr) + sizeof(*gguhdr) +
-		(gguhdr->n1 + gguhdr->n3) * sizeof(policy.flow.f.v4) +
-		(gguhdr->n2 + gguhdr->n4) * sizeof(policy.flow.f.v6) +
-		(gguhdr->n1 + gguhdr->n2) * sizeof(policy.params.u.declined) + 
-		(gguhdr->n3 + gguhdr->n4) * sizeof(policy.params.u.granted);
-	if (real_payload_len < expected_payload_len) {
+	real_payload_len = pkt->data_len - l2_len - l3_len;
+	expected_payload_len = rte_be_to_cpu_16(udphdr->dgram_len);
+	if (real_payload_len != expected_payload_len) {
 		RTE_LOG(NOTICE, GATEKEEPER,
 			"ggu: the size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)!\n",
 			real_payload_len, expected_payload_len);
 		goto free_packet;
 	}
 
-	/* Loop over each policy decision on the packet. */
+	/* XXX Check the UDP checksum. */
 
-	/* Process the IPv4 decline decisions. */
-	memset(&policy, 0, sizeof(policy));
-	policy.state = GK_DECLINED;
-	policy.flow.proto = ETHER_TYPE_IPv4;
-	for (j = 0; j < gguhdr->n1; j++) {
-		rte_memcpy(&policy.flow.f.v4, policy_ptr,
-			sizeof(policy.flow.f.v4));
-		policy_ptr += sizeof(policy.flow.f.v4);
-		rte_memcpy(&policy.params.u.declined, policy_ptr,
-			sizeof(policy.params.u.declined));
-		policy_ptr += sizeof(policy.params.u.declined);
-		process_single_policy(&policy, ggu_conf);
+	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
+	if (gguhdr->version != GGU_PD_VER) {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"ggu: unknown policy decision format %hhu\n",
+			gguhdr->version);
+		goto free_packet;
+	}
+	if (gguhdr->res1 != 0 || gguhdr->res2 != 0) {
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"ggu: reserved fields of GGU header should be 0 but are %hhu and %hu\n",
+			gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
+		goto free_packet;
 	}
 
-	/* Process the IPv6 decline decisions. */
-	policy.flow.proto = ETHER_TYPE_IPv6;
-	for (j = 0; j < gguhdr->n2; j++) {
-		rte_memcpy(&policy.flow.f.v6, policy_ptr,
-			sizeof(policy.flow.f.v6));
-		policy_ptr += sizeof(policy.flow.f.v6);
-		rte_memcpy(&policy.params.u.declined, policy_ptr,
-			sizeof(policy.params.u.declined));
-		policy_ptr += sizeof(policy.params.u.declined);
-		process_single_policy(&policy, ggu_conf);
-	}
+	/* @minimum_size is length of all headers, including GGU. */
+	decision_list_len = pkt->data_len - minimum_size;
+	ggu_decision = gguhdr->decisions;
 
-	/* Process the IPv4 granted decisions. */
-	policy.state = GK_GRANTED;
-	policy.flow.proto = ETHER_TYPE_IPv4;
-	for (j = 0; j < gguhdr->n3; j++) {
-		rte_memcpy(&policy.flow.f.v4, policy_ptr,
-			sizeof(policy.flow.f.v4));
-		policy_ptr += sizeof(policy.flow.f.v4);
-		rte_memcpy(&policy.params.u.granted, policy_ptr,
-			sizeof(policy.params.u.granted));
-		policy_ptr += sizeof(policy.params.u.granted);
-		process_single_policy(&policy, ggu_conf);
-	}
-
-	/* Process the IPv6 granted decisions. */
-	policy.flow.proto = ETHER_TYPE_IPv6;
-	for (j = 0; j < gguhdr->n4; j++) {
-		rte_memcpy(&policy.flow.f.v6, policy_ptr,
-			sizeof(policy.flow.f.v6));
-		policy_ptr += sizeof(policy.flow.f.v6);
-		rte_memcpy(&policy.params.u.granted, policy_ptr,
-			sizeof(policy.params.u.granted));
-		policy_ptr += sizeof(policy.params.u.granted);
-		process_single_policy(&policy, ggu_conf);
-	}
+	/* Loop over each policy decision in the packet. */
+	ggu_policy_iterator(ggu_decision, decision_list_len,
+		process_single_policy, ggu_conf, "ggu");
 
 free_packet:
 	rte_pktmbuf_free(pkt);
