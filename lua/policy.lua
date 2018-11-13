@@ -95,16 +95,16 @@ function lookup_policy(pkt_info, policy)
 	pl.state = group["params"]["action"]
 
 	if pl.state == policylib.c.GK_DECLINED then
-		pl.params.u.declined.expire_sec =
+		pl.params.declined.expire_sec =
 			group["params"]["expire_sec"]
 	else
-		pl.params.u.granted.tx_rate_kb_sec =
+		pl.params.granted.tx_rate_kb_sec =
 			group["params"]["tx_rate_kb_sec"]
-		pl.params.u.granted.cap_expire_sec =
+		pl.params.granted.cap_expire_sec =
 			group["params"]["cap_expire_sec"]
-		pl.params.u.granted.next_renewal_ms =
+		pl.params.granted.next_renewal_ms =
 			group["params"]["next_renewal_ms"]
-		pl.params.u.granted.renewal_step_ms =
+		pl.params.granted.renewal_step_ms =
 			group["params"]["renewal_step_ms"]
 	end
 end
@@ -121,5 +121,5 @@ to be applied to these cases. For example, decline the flow for 10 minutes.
 function lookup_frag_punish_policy(policy)
 	local pl = ffi.cast("struct ggu_policy *", policy)
 	pl.state = policylib.c.GK_DECLINED
-	pl.params.u.declined.expire_sec = 600
+	pl.params.declined.expire_sec = 600
 end
