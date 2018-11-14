@@ -91,24 +91,24 @@ struct ip_flow {
 	} f;
 };
 
+struct ggu_granted {
+	uint32_t tx_rate_kb_sec;
+	uint32_t cap_expire_sec;
+	uint32_t next_renewal_ms;
+	uint32_t renewal_step_ms;
+} __attribute__ ((packed));
+
+struct ggu_declined {
+	uint32_t expire_sec;
+} __attribute__ ((packed));
+
 struct ggu_policy {
-	uint8_t  state;
+	uint8_t state;
 	struct ip_flow flow;
-
-	struct {
-		union {
-			struct {
-				uint32_t tx_rate_kb_sec;
-				uint32_t cap_expire_sec;
-				uint32_t next_renewal_ms;
-				uint32_t renewal_step_ms;
-			} granted;
-
-			struct {
-				uint32_t expire_sec;
-			} declined;
-		} u;
-	}__attribute__((packed)) params;
+	union {
+		struct ggu_granted granted;
+		struct ggu_declined declined;
+	} params;
 };
 
 ]]
