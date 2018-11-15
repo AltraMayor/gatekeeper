@@ -6,6 +6,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 		error("Failed to allocate gk_conf")
 	end
 	
+	local num_lcores = #gk_lcores
+
 	-- Change these parameters to configure the Gatekeeper.
 	gk_conf.flow_ht_size = 1024
 
@@ -30,6 +32,12 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local gk_max_pkt_burst_front = 32
 	local gk_max_pkt_burst_back = 32
 
+	-- The rate and burst size of the icmp messages.
+	local front_icmp_msgs_per_sec = 1000
+	local front_icmp_msgs_burst = 50
+	local back_icmp_msgs_per_sec = 1000
+	local back_icmp_msgs_burst = 50
+
 	--
 	-- Code below this point should not need to be changed.
 	--
@@ -48,6 +56,14 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.back_max_pkt_burst =
 		gatekeeper.get_back_burst_config(
 			gk_max_pkt_burst_back, net_conf)
+
+	gk_conf.front_icmp_msgs_per_sec = math.floor(front_icmp_msgs_per_sec /
+		num_lcores + 0.5)
+	gk_conf.front_icmp_msgs_burst = front_icmp_msgs_burst
+	gk_conf.back_icmp_msgs_per_sec = math.floor(back_icmp_msgs_per_sec /
+		num_lcores + 0.5)
+	gk_conf.back_icmp_msgs_burst = back_icmp_msgs_burst
+
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
 	-- be at least the same with the maximum configured value of GK.

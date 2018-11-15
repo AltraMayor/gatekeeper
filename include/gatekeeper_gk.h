@@ -28,6 +28,7 @@
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_lpm.h"
 #include "gatekeeper_sol.h"
+#include "gatekeeper_ratelimit.h"
 
 /*
  * A flow entry can be in one of three states:
@@ -50,6 +51,9 @@ struct gk_instance {
 	/* TX queue on the back interface. */
 	uint16_t          tx_queue_back;
 	struct mailbox    mb;
+	/* Data structures used to limit the rate of icmp messages. */
+	struct token_bucket_ratelimit_state front_icmp_rs;
+	struct token_bucket_ratelimit_state back_icmp_rs;
 } __rte_cache_aligned;
 
 /* Configuration for the GK functional block. */
@@ -90,6 +94,12 @@ struct gk_config {
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t           front_max_pkt_burst;
 	uint16_t           back_max_pkt_burst;
+
+	/* The rate and burst size of the icmp messages. */
+	uint32_t           front_icmp_msgs_per_sec;
+	uint32_t           front_icmp_msgs_burst;
+	uint32_t           back_icmp_msgs_per_sec;
+	uint32_t           back_icmp_msgs_burst;
 
 	/*
 	 * The fields below are for internal use.

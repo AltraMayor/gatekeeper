@@ -622,6 +622,13 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
     	if (ret < 0)
 		goto acl6_search;
 
+	tb_ratelimit_state_init(&instance->front_icmp_rs,
+		gk_conf->front_icmp_msgs_per_sec,
+		gk_conf->front_icmp_msgs_burst);
+	tb_ratelimit_state_init(&instance->back_icmp_rs,
+		gk_conf->back_icmp_msgs_per_sec,
+		gk_conf->back_icmp_msgs_burst);
+
 	ret = 0;
 	goto out;
 
@@ -1148,12 +1155,14 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
  */
 static int
 update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
-	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+	struct token_bucket_ratelimit_state *rs)
 {
 	if (packet->flow.proto == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ipv4_hdr = packet->l3_hdr;
 		if (ipv4_hdr->time_to_live <= 1) {
-			xmit_icmp(iface, packet, num_pkts, icmp_bufs);
+			if (tb_ratelimit_allow(rs))
+				xmit_icmp(iface, packet, num_pkts, icmp_bufs);
 			return -ETIMEDOUT;
 		}
 
@@ -1162,7 +1171,8 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	} else if (likely(packet->flow.proto == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *ipv6_hdr = packet->l3_hdr;
 		if (ipv6_hdr->hop_limits <= 1) {
-			xmit_icmpv6(iface, packet, num_pkts, icmp_bufs);
+			if (tb_ratelimit_allow(rs))
+				xmit_icmpv6(iface, packet, num_pkts, icmp_bufs);
 			return -ETIMEDOUT;
 		}
 
@@ -1335,7 +1345,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				}
 
 				if (update_ip_hop_count(front, &packet,
-						num_pkts, icmp_bufs) < 0)
+						num_pkts, icmp_bufs,
+						&instance->front_icmp_rs) < 0)
 					continue;
 
 				tx_bufs[num_tx++] = pkt;
@@ -1369,7 +1380,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				}
 
 				if (update_ip_hop_count(front, &packet,
-						num_pkts, icmp_bufs) < 0)
+						num_pkts, icmp_bufs,
+						&instance->front_icmp_rs) < 0)
 					continue;
 
 				tx_bufs[num_tx++] = pkt;
@@ -1528,7 +1540,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			}
 
 			if (update_ip_hop_count(back, &packet,
-					num_pkts, icmp_bufs) < 0)
+					num_pkts, icmp_bufs,
+					&instance->back_icmp_rs) < 0)
 				continue;
 
 			tx_bufs[num_tx++] = pkt;
@@ -1562,7 +1575,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			}
 
 			if (update_ip_hop_count(back, &packet,
-					num_pkts, icmp_bufs) < 0)
+					num_pkts, icmp_bufs,
+					&instance->back_icmp_rs) < 0)
 				continue;
 
 			tx_bufs[num_tx++] = pkt;
