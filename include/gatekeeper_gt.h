@@ -102,7 +102,7 @@ struct gt_instance {
 
 	/* The number of valid entries in @ggu_pkts. */
 	unsigned int          num_ggu_pkts;
-};
+} __rte_cache_aligned;
 
 /* Configuration for the GT functional block. */
 struct gt_config {

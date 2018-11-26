@@ -50,7 +50,7 @@ struct gk_instance {
 	/* TX queue on the back interface. */
 	uint16_t          tx_queue_back;
 	struct mailbox    mb;
-};
+} __rte_cache_aligned;
 
 /* Configuration for the GK functional block. */
 struct gk_config {
