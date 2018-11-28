@@ -188,6 +188,9 @@ struct cps_config {
 	int          debug;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
+	unsigned int num_attempts_kni_link_set;
+	unsigned int max_cps_route_updates;
+	unsigned int cps_scan_interval_sec;
 	/* This struct has hidden fields. */
 };
 
