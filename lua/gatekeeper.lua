@@ -172,6 +172,8 @@ struct lls_config {
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int mailbox_max_pkt_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 

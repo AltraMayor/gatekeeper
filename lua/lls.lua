@@ -9,6 +9,10 @@ return function (net_conf, numa_table)
 	-- Change these parameters to configure the LLS block.
 	lls_conf.debug = false
 
+	-- XXX Sample parameters, need to be tested for better performance.
+	lls_conf.mailbox_max_entries_exp = 7
+	lls_conf.mailbox_burst_size = 32
+
 	-- The maximum number of packets to retrieve/transmit.
 	lls_conf.front_max_pkt_burst = 32
 	lls_conf.back_max_pkt_burst = 32

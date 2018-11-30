@@ -24,12 +24,6 @@
 
 #include "gatekeeper_main.h"
 
-/*
- * XXX Sample parameters, all mailboxes have 128 (i.e., 1 << 7)
- * entries by default.
- */
-#define MAILBOX_MAX_ENTRIES_EXP (7)
-
 struct mailbox {
 	struct rte_ring    *ring;
 	struct rte_mempool *pool;
