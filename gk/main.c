@@ -55,9 +55,6 @@
 #define PRIORITY_RENEW_CAP	 (2)
 #define PRIORITY_MAX		 (63)
 
-/* XXX Sample parameters, need to be tested for better performance. */
-#define GK_CMD_BURST_SIZE        (32)
-
 /* Store information about a packet. */
 struct ipacket {
 	/* Flow identifier for this packet. */
@@ -617,7 +614,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto acl4_search;
 	}
 
-	ret = init_mailbox("gk", MAILBOX_MAX_ENTRIES_EXP,
+	ret = init_mailbox("gk", gk_conf->mailbox_max_entries_exp,
 		sizeof(struct gk_cmd_entry), lcore_id, &instance->mb);
     	if (ret < 0)
 		goto acl6_search;
@@ -1616,11 +1613,12 @@ process_cmds_from_mailbox(
 {
 	int i;
 	int num_cmd;
-	struct gk_cmd_entry *gk_cmds[GK_CMD_BURST_SIZE];
+	unsigned int mailbox_burst_size = gk_conf->mailbox_burst_size;
+	struct gk_cmd_entry *gk_cmds[mailbox_burst_size];
 
 	/* Load a set of commands from its mailbox ring. */
         num_cmd = mb_dequeue_burst(&instance->mb,
-               	(void **)gk_cmds, GK_CMD_BURST_SIZE);
+		(void **)gk_cmds, mailbox_burst_size);
 
         for (i = 0; i < num_cmd; i++) {
 		process_gk_cmd(gk_cmds[i], instance, gk_conf);

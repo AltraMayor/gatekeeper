@@ -101,6 +101,10 @@ struct gk_config {
 	uint32_t           back_icmp_msgs_per_sec;
 	uint32_t           back_icmp_msgs_burst;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int       mailbox_max_entries_exp;
+	unsigned int       mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

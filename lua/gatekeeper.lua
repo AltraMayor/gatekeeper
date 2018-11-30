@@ -151,6 +151,8 @@ struct gk_config {
 	uint32_t     front_icmp_msgs_burst;
 	uint32_t     back_icmp_msgs_per_sec;
 	uint32_t     back_icmp_msgs_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
