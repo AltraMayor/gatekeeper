@@ -147,6 +147,10 @@ struct gk_config {
 	unsigned int flow_table_full_scan_ms;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
+	uint32_t     front_icmp_msgs_per_sec;
+	uint32_t     front_icmp_msgs_burst;
+	uint32_t     back_icmp_msgs_per_sec;
+	uint32_t     back_icmp_msgs_burst;
 	/* This struct has hidden fields. */
 };
 
