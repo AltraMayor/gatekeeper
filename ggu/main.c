@@ -694,7 +694,7 @@ run_ggu(struct net_config *net_conf,
 	 */
 	ggu_conf->mailbox_max_pkt_burst = gk_conf->back_max_pkt_burst;
 
-	ret = init_mailbox("ggu_mb", MAILBOX_MAX_ENTRIES,
+	ret = init_mailbox("ggu_mb", MAILBOX_MAX_ENTRIES_EXP,
 		sizeof(struct ggu_request) + ggu_conf->mailbox_max_pkt_burst *
 		sizeof(struct rte_mbuf *), ggu_conf->lcore_id,
 		&ggu_conf->mailbox);

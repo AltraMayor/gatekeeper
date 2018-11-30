@@ -617,7 +617,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto acl4_search;
 	}
 
-	ret = init_mailbox("gk", MAILBOX_MAX_ENTRIES,
+	ret = init_mailbox("gk", MAILBOX_MAX_ENTRIES_EXP,
 		sizeof(struct gk_cmd_entry), lcore_id, &instance->mb);
     	if (ret < 0)
 		goto acl6_search;

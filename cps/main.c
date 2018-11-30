@@ -1155,7 +1155,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		sizeof(struct cps_bgp_req) + sizeof(struct rte_mbuf *) *
 		cps_conf->mailbox_max_pkt_burst);
 
-	ret = init_mailbox("cps_mb", MAILBOX_MAX_ENTRIES,
+	ret = init_mailbox("cps_mb", MAILBOX_MAX_ENTRIES_EXP,
 		ele_size, cps_conf->lcore_id, &cps_conf->mailbox);
 	if (ret < 0)
 		goto kni;

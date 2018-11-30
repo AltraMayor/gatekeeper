@@ -508,9 +508,9 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 		goto out;
 	}
 
-	ret = init_mailbox("sol_reqs", 2 * sol_conf->pri_req_max_len,
-		sizeof(struct priority_req), sol_conf->lcore_id,
-		&sol_conf->mb);
+	ret = init_mailbox("sol_reqs", rte_log2_u32(2 *
+		sol_conf->pri_req_max_len), sizeof(struct priority_req),
+		sol_conf->lcore_id, &sol_conf->mb);
 	if (ret < 0)
 		goto out;
 

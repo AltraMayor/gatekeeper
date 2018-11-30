@@ -25,20 +25,24 @@
 #include "gatekeeper_main.h"
 
 /*
- * XXX Sample parameters, all mailboxes have 128 entries by default.
- * rte_ring_create() requires that the ring size (i.e., parameter count)
- * must be a power of two. Moreover, the real usable ring size is count-1
- * instead of count to differentiate a free ring from an empty ring.
+ * XXX Sample parameters, all mailboxes have 128 (i.e., 1 << 7)
+ * entries by default.
  */
-#define MAILBOX_MAX_ENTRIES (128)
+#define MAILBOX_MAX_ENTRIES_EXP (7)
 
 struct mailbox {
 	struct rte_ring    *ring;
 	struct rte_mempool *pool;
 };
 
+/*
+ * For optimum memory usage, the maximum number of elements for
+ * rte_ring_create() is defined as (2^mailbox_max_entries_exp), while
+ * the maximum number of elements for rte_mempool_create() is
+ * defined as (2^mailbox_max_entries_exp - 1).
+ */
 int init_mailbox(
-	const char *tag, int ele_count,
+	const char *tag, int mailbox_max_entries_exp,
 	int ele_size, unsigned int lcore_id, struct mailbox *mb);
 void *mb_alloc_entry(struct mailbox *mb);
 int mb_send_entry(struct mailbox *mb, void *obj);

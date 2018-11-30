@@ -608,7 +608,7 @@ lls_stage1(void *arg)
 	 * configuration by considering GK or GT blocks, we initialize
 	 * LLS mailbox here.
 	 */
-	return init_mailbox("lls_req", MAILBOX_MAX_ENTRIES,
+	return init_mailbox("lls_req", MAILBOX_MAX_ENTRIES_EXP,
 		ele_size, lls_conf->lcore_id, &lls_conf->requests);
 }
 
