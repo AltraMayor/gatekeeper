@@ -195,6 +195,8 @@ struct cps_config {
 	unsigned int num_attempts_kni_link_set;
 	unsigned int max_cps_route_updates;
 	unsigned int cps_scan_interval_sec;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 

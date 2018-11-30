@@ -6,6 +6,10 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 		"/home/cody/gatekeeper/dependencies/dpdk/build/kmod/rte_kni.ko"
 	local tcp_port_bgp = 179
 
+	-- XXX Sample parameters, need to be tested for better performance.
+	local mailbox_max_entries_exp = 7
+	local mailbox_burst_size = 32
+
 	-- Init the CPS configuration structure.
 	local cps_conf = gatekeeper.c.get_cps_conf()
 	if cps_conf == nil then
@@ -15,6 +19,8 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- Setup the CPS functional block.
 	cps_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 	cps_conf.tcp_port_bgp = tcp_port_bgp
+	cps_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
+	cps_conf.mailbox_burst_size = mailbox_burst_size
 	cps_conf.debug = false
 
 	-- The maximum number of packets to retrieve/transmit.
