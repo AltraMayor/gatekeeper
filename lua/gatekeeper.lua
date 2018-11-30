@@ -155,10 +155,12 @@ struct gk_config {
 };
 
 struct ggu_config {
-	unsigned int      lcore_id;
-	uint16_t          ggu_src_port;
-	uint16_t          ggu_dst_port;
-	uint16_t          ggu_max_pkt_burst;
+	unsigned int lcore_id;
+	uint16_t     ggu_src_port;
+	uint16_t     ggu_dst_port;
+	uint16_t     ggu_max_pkt_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
