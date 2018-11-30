@@ -696,8 +696,8 @@ run_ggu(struct net_config *net_conf,
 
 	ret = init_mailbox("ggu_mb", ggu_conf->mailbox_max_entries_exp,
 		sizeof(struct ggu_request) + ggu_conf->mailbox_max_pkt_burst *
-		sizeof(struct rte_mbuf *), ggu_conf->lcore_id,
-		&ggu_conf->mailbox);
+		sizeof(struct rte_mbuf *), ggu_conf->mailbox_mem_cache_size,
+		ggu_conf->lcore_id, &ggu_conf->mailbox);
 	if (ret < 0)
 		goto stage3;
 

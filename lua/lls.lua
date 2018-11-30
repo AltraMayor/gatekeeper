@@ -11,6 +11,7 @@ return function (net_conf, numa_table)
 
 	-- XXX Sample parameters, need to be tested for better performance.
 	lls_conf.mailbox_max_entries_exp = 7
+	lls_conf.mailbox_mem_cache_size = 0
 	lls_conf.mailbox_burst_size = 32
 
 	-- The maximum number of packets to retrieve/transmit.

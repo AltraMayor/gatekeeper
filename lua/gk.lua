@@ -2,6 +2,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	-- XXX Sample parameters, need to be tested for better performance.
 	local mailbox_max_entries_exp = 7
+	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
 
 	-- Init the GK configuration structure.
@@ -47,6 +48,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	--
 
 	gk_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
+	gk_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	gk_conf.mailbox_burst_size = mailbox_burst_size
 
 	if not gatekeeper.c.ipv4_configured(net_conf) then

@@ -609,7 +609,8 @@ lls_stage1(void *arg)
 	 * LLS mailbox here.
 	 */
 	return init_mailbox("lls_req", lls_conf->mailbox_max_entries_exp,
-		ele_size, lls_conf->lcore_id, &lls_conf->requests);
+		ele_size, lls_conf->mailbox_mem_cache_size,
+		lls_conf->lcore_id, &lls_conf->requests);
 }
 
 static int

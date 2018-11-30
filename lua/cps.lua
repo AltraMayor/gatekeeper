@@ -8,6 +8,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 
 	-- XXX Sample parameters, need to be tested for better performance.
 	local mailbox_max_entries_exp = 7
+	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
 
 	-- Init the CPS configuration structure.
@@ -20,6 +21,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 	cps_conf.tcp_port_bgp = tcp_port_bgp
 	cps_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
+	cps_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	cps_conf.mailbox_burst_size = mailbox_burst_size
 	cps_conf.debug = false
 

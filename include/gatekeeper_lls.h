@@ -196,6 +196,7 @@ struct lls_config {
 
 	/* Parameters to setup the mailbox instance. */
 	unsigned int      mailbox_max_entries_exp;
+	unsigned int      mailbox_mem_cache_size;
 	unsigned int      mailbox_burst_size;
 
 	/*

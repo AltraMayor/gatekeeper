@@ -37,7 +37,8 @@ struct mailbox {
  */
 int init_mailbox(
 	const char *tag, int mailbox_max_entries_exp,
-	int ele_size, unsigned int lcore_id, struct mailbox *mb);
+	unsigned int ele_size, unsigned int cache_size,
+	unsigned int lcore_id, struct mailbox *mb);
 void *mb_alloc_entry(struct mailbox *mb);
 int mb_send_entry(struct mailbox *mb, void *obj);
 void destroy_mailbox(struct mailbox *mb);
