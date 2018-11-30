@@ -151,14 +151,20 @@ struct gk_config {
 	uint32_t     front_icmp_msgs_burst;
 	uint32_t     back_icmp_msgs_per_sec;
 	uint32_t     back_icmp_msgs_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
 struct ggu_config {
-	unsigned int      lcore_id;
-	uint16_t          ggu_src_port;
-	uint16_t          ggu_dst_port;
-	uint16_t          ggu_max_pkt_burst;
+	unsigned int lcore_id;
+	uint16_t     ggu_src_port;
+	uint16_t     ggu_dst_port;
+	uint16_t     ggu_max_pkt_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
@@ -168,6 +174,9 @@ struct lls_config {
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int mailbox_max_pkt_burst;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
@@ -195,6 +204,9 @@ struct cps_config {
 	unsigned int num_attempts_kni_link_set;
 	unsigned int max_cps_route_updates;
 	unsigned int cps_scan_interval_sec;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
@@ -212,6 +224,7 @@ struct sol_config {
 	unsigned int deq_burst_size;
 	double       tb_rate_approx_err;
 	double       req_channel_bw_mbps;
+	unsigned int mailbox_mem_cache_size;
 	/* This struct has hidden fields. */
 };
 

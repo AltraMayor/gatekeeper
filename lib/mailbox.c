@@ -24,12 +24,10 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_mailbox.h"
 
-/* XXX Sample parameters, need to be tested for better performance. */
-#define GK_MEM_CACHE_SIZE (64)
-
 int
-init_mailbox(const char *tag,
-	int ele_count, int ele_size, unsigned int lcore_id, struct mailbox *mb)
+init_mailbox(const char *tag, int mailbox_max_entries_exp,
+	unsigned int ele_size, unsigned int cache_size,
+	unsigned int lcore_id, struct mailbox *mb)
 {
 	int ret;
 	char ring_name[128];
@@ -41,7 +39,8 @@ init_mailbox(const char *tag,
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(ring_name));
 
 	mb->ring = (struct rte_ring *)rte_ring_create(
-		ring_name, ele_count, socket_id, RING_F_SC_DEQ);
+		ring_name, 1 << mailbox_max_entries_exp,
+		socket_id, RING_F_SC_DEQ);
     	if (mb->ring == NULL) {
 		RTE_LOG(ERR, RING,
 			"mailbox: can't create ring %s (len = %d) at lcore %u!\n",
@@ -55,8 +54,8 @@ init_mailbox(const char *tag,
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 
     	mb->pool = (struct rte_mempool *)rte_mempool_create(
-		pool_name, ele_count, ele_size, GK_MEM_CACHE_SIZE,
-		0, NULL, NULL, NULL, NULL, socket_id, 0);
+		pool_name, (1 << mailbox_max_entries_exp) - 1, ele_size,
+		cache_size, 0, NULL, NULL, NULL, NULL, socket_id, 0);
     	if (mb->pool == NULL) {
 		RTE_LOG(ERR, MEMPOOL,
 			"mailbox: can't create mempool %s (len = %d) at lcore %u!\n",

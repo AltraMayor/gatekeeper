@@ -36,6 +36,11 @@ struct ggu_config {
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t          ggu_max_pkt_burst;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int      mailbox_max_entries_exp;
+	unsigned int      mailbox_mem_cache_size;
+	unsigned int      mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

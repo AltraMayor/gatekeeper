@@ -12,6 +12,7 @@ return function (net_conf, lcore)
 	-- These values should be tested to find optimal values.
 	sol_conf.enq_burst_size = 32
 	sol_conf.deq_burst_size = 32
+	sol_conf.mailbox_mem_cache_size = 0
 
 	-- Token bucket rate approximation error.
 	sol_conf.tb_rate_approx_err = 1e-7

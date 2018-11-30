@@ -125,6 +125,9 @@ struct sol_config {
 	 */
 	double             req_channel_bw_mbps;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int       mailbox_mem_cache_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
