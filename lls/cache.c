@@ -466,9 +466,9 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 			if (record->num_holds > 0)
 				lls_send_request(lls_conf, cache, ip_be,
 					&record->map.ha);
-		} else if (timeout > LLS_CACHE_SCAN_INTERVAL &&
-				(now - record->ts >=
-					timeout - LLS_CACHE_SCAN_INTERVAL)) {
+		} else if (timeout > lls_conf->lls_cache_scan_interval_sec &&
+				(now - record->ts >= timeout - lls_conf->
+					lls_cache_scan_interval_sec)) {
 			/*
 			 * If the record is close to being stale,
 			 * preemptively send a unicast probe.
@@ -490,6 +490,9 @@ void
 lls_cache_destroy(struct lls_cache *cache)
 {
 	rte_hash_free(cache->hash);
+	cache->hash = NULL;
+	rte_free(cache->records);
+	cache->records = NULL;
 }
 
 int
@@ -497,7 +500,7 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache)
 {
 	struct rte_hash_parameters lls_cache_params = {
 		.name = cache->name,
-		.entries = LLS_CACHE_RECORDS,
+		.entries = lls_conf->lls_cache_records,
 		.reserved = 0,
 		.key_len = cache->key_len,
 		.hash_func = DEFAULT_HASH_FUNC,
@@ -507,11 +510,24 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache)
 	};
 
 	RTE_VERIFY(cache->key_len <= LLS_MAX_KEY_LEN);
+	cache->records = rte_calloc("lls_records",
+		lls_conf->lls_cache_records, sizeof(*cache->records), 0);
+	if (cache->records == NULL) {
+		RTE_LOG(ERR, MALLOC, "Could not allocate %s cache records\n",
+			cache->name);
+		return -1;
+	}
+
 	cache->hash = rte_hash_create(&lls_cache_params);
 	if (cache->hash == NULL) {
 		RTE_LOG(ERR, HASH, "Could not create %s cache hash\n",
 			cache->name);
-		return -1;
+		goto records;
 	}
 	return 0;
+
+records:
+	lls_cache_destroy(cache);
+
+	return -1;
 }

@@ -29,9 +29,6 @@
 #include "cache.h"
 #include "nd.h"
 
-/* Length of time (in seconds) to wait between scans of the cache. */
-#define LLS_CACHE_SCAN_INTERVAL_SEC 10
-
 /*
  * When using LACP, the requirement must be met:
  *
@@ -704,11 +701,14 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 	if (ret < 0)
 		goto stage2;
 
-	/* Do LLS cache scan every LLS_CACHE_SCAN_INTERVAL_SEC seconds. */
+	/*
+	 * Do LLS cache scan every @lls_conf->lls_cache_scan_interval_sec
+	 * seconds.
+	 */
 	rte_timer_init(&lls_conf->scan_timer);
 	ret = rte_timer_reset(&lls_conf->scan_timer,
-		LLS_CACHE_SCAN_INTERVAL_SEC * rte_get_timer_hz(), PERIODICAL,
-		lls_conf->lcore_id, lls_scan, lls_conf);
+		lls_conf->lls_cache_scan_interval_sec * rte_get_timer_hz(),
+		PERIODICAL, lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, TIMER, "Cannot set LLS scan timer\n");
 		goto stage3;
