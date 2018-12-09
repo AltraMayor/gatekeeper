@@ -194,6 +194,9 @@ struct gt_config {
 	uint16_t     gt_max_pkt_burst;
 	unsigned int batch_interval;
 	unsigned int max_ggu_notify_pkts;
+	unsigned int mailbox_max_entries_exp;
+	unsigned int mailbox_mem_cache_size;
+	unsigned int mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 
@@ -215,6 +218,7 @@ struct cps_config {
 struct dynamic_config {
 	unsigned int     lcore_id;
 	struct gk_config *gk;
+	struct gt_config *gt;
 	/* This struct has hidden fields. */
 };
 
@@ -270,7 +274,7 @@ int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(struct gk_config *gk_conf,
+int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, struct dynamic_config *dy_conf);
 
 struct sol_config *alloc_sol_conf(void);
