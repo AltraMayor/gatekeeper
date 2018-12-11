@@ -7,6 +7,11 @@
 
 local dyc = gatekeeper.c.get_dy_conf()
 
+if dyc.gt ~= nil then
+	dylib.update_lua_states(dyc.gt)
+	return "gt: successfully updated the lua states\n"
+end
+
 local ret = dylib.c.add_fib_entry("187.73.40.0/30", "128.197.40.100",
 	"10.0.1.253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
 if ret < 0 then

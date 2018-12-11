@@ -44,6 +44,7 @@
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
+#include "luajit-ffi-cdata.h"
 
 /* TODO Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
@@ -1216,6 +1217,44 @@ gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
 	rte_pktmbuf_free(pkt);
 }
 
+static void
+process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
+{
+	switch (entry->op) {
+	case GT_UPDATE_POLICY:
+		lua_close(instance->lua_state);
+		instance->lua_state = entry->u.lua_state;
+
+		RTE_LOG(NOTICE, GATEKEEPER,
+			"gt: successfully updated the lua state at lcore %u\n",
+			rte_lcore_id());
+		break;
+
+	default:
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: unknown command operation %u\n", entry->op);
+		break;
+	}
+}
+
+static void
+process_cmds_from_mailbox(struct gt_instance *instance,
+	struct gt_config *gt_conf)
+{
+	int i;
+	int num_cmd;
+	struct gt_cmd_entry *gt_cmds[gt_conf->mailbox_burst_size];
+
+	/* Load a set of commands from its mailbox ring. */
+	num_cmd = mb_dequeue_burst(&instance->mb,
+		(void **)gt_cmds, gt_conf->mailbox_burst_size);
+
+	for (i = 0; i < num_cmd; i++) {
+		process_gt_cmd(gt_cmds[i], instance);
+		mb_free_entry(&instance->mb, gt_cmds[i]);
+	}
+}
+
 static int
 gt_proc(void *arg)
 {
@@ -1265,6 +1304,7 @@ gt_proc(void *arg)
 			gt_max_pkt_burst);
 
 		if (unlikely(num_rx == 0)) {
+			process_cmds_from_mailbox(instance, gt_conf);
 			flush_notify_pkts(gt_conf, instance);
 			continue;
 		}
@@ -1385,6 +1425,8 @@ gt_proc(void *arg)
 		process_pkts_acl(&gt_conf->net->front, lcore, acl6,
 			ETHER_TYPE_IPv6);
 
+		process_cmds_from_mailbox(instance, gt_conf);
+
 		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
 			RTE_VERIFY(death_row.cnt == 0);
 			rte_frag_table_del_expired_entries(instance->frag_tbl,
@@ -1417,6 +1459,8 @@ alloc_gt_conf(void)
 static inline void
 cleanup_gt_instance(struct gt_config *gt_conf, struct gt_instance *instance)
 {
+	destroy_mailbox(&instance->mb);
+
 	flush_notify_pkts(gt_conf, instance);
 	rte_free(instance->ggu_pkts);
 	instance->ggu_pkts = NULL;
@@ -1464,11 +1508,54 @@ gt_conf_put(struct gt_config *gt_conf)
 	return 0;
 }
 
+static lua_State *
+alloc_and_setup_lua_state(void)
+{
+	int ret;
+	char lua_entry_path[128];
+	lua_State *lua_state;
+
+	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
+			"%s/%s", LUA_POLICY_BASE_DIR, GRANTOR_CONFIG_FILE);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
+
+	lua_state = luaL_newstate();
+	if (lua_state == NULL) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: failed to create new Lua state at %s!\n",
+			__func__);
+		goto out;
+	}
+
+	luaL_openlibs(lua_state);
+	set_lua_path(lua_state, LUA_POLICY_BASE_DIR);
+	ret = luaL_loadfile(lua_state, lua_entry_path);
+	if (ret != 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: %s!\n", lua_tostring(lua_state, -1));
+		goto clean_lua_state;
+	}
+
+	/* Run the loaded chunk. */
+	ret = lua_pcall(lua_state, 0, 0, 0);
+	if (ret != 0) {
+		RTE_LOG(ERR, GATEKEEPER,
+			"gt: %s!\n", lua_tostring(lua_state, -1));
+		goto clean_lua_state;
+	}
+
+	return lua_state;
+
+clean_lua_state:
+	lua_close(lua_state);
+out:
+	return NULL;
+}
+
 static int
 config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 {
 	int ret;
-	char lua_entry_path[128];
 	unsigned int block_idx = get_block_idx(gt_conf, lcore_id);
 
 	/* Maximum TTL in cycles for each fragmented packet. */
@@ -1476,36 +1563,13 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		MS_PER_S * gt_conf->frag_max_flow_ttl_ms;
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
-	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
-			"%s/%s", LUA_POLICY_BASE_DIR, GRANTOR_CONFIG_FILE);
-	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
-
-	instance->lua_state = luaL_newstate();
+	instance->lua_state = alloc_and_setup_lua_state();
 	if (instance->lua_state == NULL) {
 		RTE_LOG(ERR, GATEKEEPER,
 			"gt: failed to create new Lua state at lcore %u!\n",
 			lcore_id);
 		ret = -1;
 		goto out;
-	}
-
-	luaL_openlibs(instance->lua_state);
-	set_lua_path(instance->lua_state, LUA_POLICY_BASE_DIR);
-	ret = luaL_loadfile(instance->lua_state, lua_entry_path);
-	if (ret != 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"gt: %s!\n", lua_tostring(instance->lua_state, -1));
-		ret = -1;
-		goto cleanup;
-	}
-
-	/* Run the loaded chunk. */
-	ret = lua_pcall(instance->lua_state, 0, 0, 0);
-	if (ret != 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"gt: %s!\n", lua_tostring(instance->lua_state, -1));
-		ret = -1;
-		goto cleanup;
 	}
 
 	if (gt_conf->net->front.configured_proto & CONFIGURED_IPV4) {
@@ -1588,6 +1652,12 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		ret = -1;
 		goto cleanup;
 	}
+
+	ret = init_mailbox("gt", gt_conf->mailbox_max_entries_exp,
+		sizeof(struct gt_cmd_entry), gt_conf->mailbox_mem_cache_size,
+		lcore_id, &instance->mb);
+	if (ret < 0)
+		goto cleanup;
 
 	goto out;
 
@@ -1768,5 +1838,70 @@ out:
 
 success:
 	rte_atomic32_init(&gt_conf->ref_cnt);
+	return 0;
+}
+
+#define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
+
+int
+l_update_gt_lua_states(lua_State *l)
+{
+	int i;
+	static bool assigned_type_gt_config = false;
+	static uint32_t correct_ctypeid_gt_config;
+
+	uint32_t ctypeid;
+
+	struct gt_config *gt_conf;
+
+	if (!assigned_type_gt_config) {
+		correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+		assigned_type_gt_config = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gt_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+
+	gt_conf = *(struct gt_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+
+	for (i = 0; i < gt_conf->num_lcores; i++) {
+		int ret;
+		struct gt_cmd_entry *entry;
+		struct gt_instance *instance = &gt_conf->instances[i];
+		lua_State *lua_state = alloc_and_setup_lua_state();
+		if (lua_state == NULL) {
+			luaL_error(l, "gt: failed to allocate new lua state to GT block %u at lcore %u\n",
+				i, gt_conf->lcores[i]);
+
+			continue;
+		}
+
+		entry = mb_alloc_entry(&instance->mb);
+		if (entry == NULL) {
+			lua_close(lua_state);
+
+			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
+				i, gt_conf->lcores[i]);
+
+			continue;
+		}
+
+		entry->op = GT_UPDATE_POLICY;
+		entry->u.lua_state = lua_state;
+
+		ret = mb_send_entry(&instance->mb, entry);
+		if (ret != 0) {
+			lua_close(lua_state);
+
+			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
+				i, gt_conf->lcores[i]);
+		}
+	}
+
 	return 0;
 }

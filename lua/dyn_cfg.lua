@@ -1,4 +1,4 @@
-return function (gk_conf, numa_table)
+return function (gk_conf, gt_conf, numa_table)
 
 	-- Init the dynamic configuration structure.
 	local dy_conf = gatekeeper.c.get_dy_conf()
@@ -13,7 +13,8 @@ return function (gk_conf, numa_table)
 	gatekeeper.c.set_dyc_timeout(30, 0, dy_conf)
 
 	-- Setup the dynamic config functional block.
-	local ret = gatekeeper.c.run_dynamic_config(gk_conf, server_path, dy_conf)
+	local ret = gatekeeper.c.run_dynamic_config(
+		gk_conf, gt_conf, server_path, dy_conf)
 	if ret < 0 then
 		error("Failed to run dynamic config block")
 	end

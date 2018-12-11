@@ -31,6 +31,11 @@ return function (net_conf, lls_conf, numa_table)
 
 	gt_conf.max_num_ipv6_neighbors = 1024
 
+	-- Sample parameters, need to be tested for better performance.
+	gt_conf.mailbox_max_entries_exp = 7
+	gt_conf.mailbox_mem_cache_size = 0
+	gt_conf.mailbox_burst_size = 32
+
 	gt_conf.gt_max_pkt_burst = gatekeeper.get_front_burst_config(
 		gt_max_pkt_burst, net_conf)
 	-- The maximum number of ARP or ND packets in LLS submitted by
