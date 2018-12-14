@@ -763,7 +763,7 @@ notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance)
 }
 
 /*
- * XXX What we are doing here is analogous to RCU's synchronize_rcu(),
+ * XXX #70 What we are doing here is analogous to RCU's synchronize_rcu(),
  * what suggests that we may be able to profit from RCU. But we are going
  * to postpone that until we have a better case to bring RCU to Gatekeeper.
  */

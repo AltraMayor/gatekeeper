@@ -226,7 +226,7 @@ dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
 
 		if (!credits_check(req_queue, pkt)) {
 			/*
-			 * XXX When under an attack, we may not want to
+			 * XXX #19 When under an attack, we may not want to
 			 * log this because it could become expensive.
 			 */
 			RTE_LOG(NOTICE, GATEKEEPER,

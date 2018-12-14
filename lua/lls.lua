@@ -9,7 +9,7 @@ return function (net_conf, numa_table)
 	-- Change these parameters to configure the LLS block.
 	lls_conf.debug = false
 
-	-- XXX Sample parameters, need to be tested for better performance.
+	-- XXX #155 Sample parameters, need to be tested for better performance.
 	lls_conf.mailbox_max_entries_exp = 7
 	lls_conf.mailbox_mem_cache_size = 0
 	lls_conf.mailbox_burst_size = 32
@@ -21,7 +21,7 @@ return function (net_conf, numa_table)
 	-- The maximum number of ARP or ND packets submitted by GK or GT.
 	lls_conf.mailbox_max_pkt_burst = 32
 
-	-- XXX Sample parameters, need to be tested for better performance.
+	-- XXX #155 Sample parameters, need to be tested for better performance.
 	lls_conf.lls_cache_records = 1024
 
 	-- Length of time (in seconds) to wait between scans of the cache.

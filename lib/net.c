@@ -859,7 +859,7 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 		 * choose set of minimum hash functions required (instead of
 		 * ETH_RSS_IP which is overkill), issue a warning in that case.
 		 *
-		 * TODO Find the minimum set of hash functions (ETH_RSS_*) that
+		 * TODO #152 Find the minimum set of hash functions (ETH_RSS_*) that
 		 * Gatekeeper needs and set
 		 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
 		 * Then, change this warning to an error.

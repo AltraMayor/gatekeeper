@@ -60,7 +60,7 @@ local function lookup_simple_policy(policies, pkt_info)
 	local dest_port
 	local ph = ffi.cast("struct gt_packet_headers *", pkt_info)
 
-	-- TODO The Lua policy should be responsible for
+	-- TODO #156 The Lua policy should be responsible for
 	-- checking the necessary space for each l4 header type.
 	if ph.l4_proto == policylib.c.TCP then
 		local tcphdr = ffi.cast("struct tcp_hdr *", fields.l4_hdr)
@@ -69,7 +69,7 @@ local function lookup_simple_policy(policies, pkt_info)
 		local udphdr = ffi.cast("struct udp_hdr *", fields.l4_hdr)
 		dest_port = udphdr.dst_port
 	else
-		-- TODO Add support for other transport protocols.
+		-- TODO #157 Add support for other transport protocols.
 		return nil
 	end
 

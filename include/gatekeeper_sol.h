@@ -43,7 +43,7 @@ struct priority_req {
 #define GK_MAX_REQ_PRIORITY (63)
 
 /*
- * XXX The DPDK packet scheduler uses __rte_cache_aligned
+ * XXX #36 The DPDK packet scheduler uses __rte_cache_aligned
  * on member @memory and on the struct as a whole. Should
  * it be used here?
  */

@@ -41,7 +41,7 @@
 #define LLS_LACP_ANNOUNCE_INTERVAL_MS 99
 
 /*
- * TODO Don't alert user of LLS transmission failures while LACP
+ * TODO #64 Don't alert user of LLS transmission failures while LACP
  * is still configuring, and warn the user if LACP is taking an
  * unusually long time to configure (since this could mean the
  * link partner does not have LACP configured).
@@ -343,7 +343,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 *
 		 * See: http://dpdk.org/doc/guides/prog_guide/link_bonding_poll_mode_drv_lib.html#configuration
 		 *
-		 * XXX Is this check needed? By default, the NIC only
+		 * XXX #74 Is this check needed? By default, the NIC only
 		 * accepts the assigned MAC address, broadcast address,
 		 * and any MAC added (for example, for IPv6 Ethernet multicast).
 		 */
@@ -431,7 +431,7 @@ lls_proc(void *arg)
 			 * If there are no requests to go through, then do a
 			 * scan of the cache (if enough time has passed).
 			 *
-			 * XXX In theory, many new LLS changes could starve
+			 * XXX #151 In theory, many new LLS changes could starve
 			 * the ability to scan, but this will not likely
 			 * happen. In fact, we may want to reduce the amount
 			 * of times this is called, since reading the HPET
@@ -440,7 +440,7 @@ lls_proc(void *arg)
 			 * Also invoke the TX burst function to fulfill
 			 * the LACP requirement.
 			 *
-			 * XXX The LACP requirement could be starved if
+			 * XXX #151 The LACP requirement could be starved if
 			 * the LLS block receives a lot of requests but
 			 * we are unable to answer them -- i.e. the
 			 * number of requests > 0 for a sustained

@@ -376,7 +376,7 @@ route_event_sock_open(struct cps_config *cps_conf)
 	cps_conf->nl = nl;
 
 	/*
-	 * TODO This bind will get all changes that arrive at the kernel,
+	 * TODO #56 This bind will get all changes that arrive at the kernel,
 	 * but it will duplicate the FIB: one in the kernel and another
 	 * in Gatekeeper.
 	 */
@@ -420,7 +420,7 @@ attr_get(struct cps_config *cps_conf,
 
 	if (tb[RTA_MULTIPATH]) {
 		/*
-		 * XXX This is the attribute used to implement ECMP.
+		 * XXX #75 This is the attribute used to implement ECMP.
 		 * We should more closely parse this attribute and
 		 * return the appropriate information through
 		 * @update to Grantor, if we're running Grantor.

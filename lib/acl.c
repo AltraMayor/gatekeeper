@@ -65,7 +65,7 @@ drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 		RTE_LOG(WARNING, GATEKEEPER,
 			"acl: a packet failed to match any ACL rules, the whole packet is dumped below:\n");
 		/*
-		 * XXX The default output used DPDK logging system
+		 * XXX #76 The default output used DPDK logging system
 		 * is stderr. The stream should be consistent with
 		 * the DPDK logging system.
 		 */

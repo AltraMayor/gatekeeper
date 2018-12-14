@@ -1,6 +1,6 @@
 return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
-	-- XXX Sample parameters, need to be tested for better performance.
+	-- XXX #155 Sample parameters, need to be tested for better performance.
 	local mailbox_max_entries_exp = 7
 	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32

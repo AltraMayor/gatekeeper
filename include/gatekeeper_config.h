@@ -26,14 +26,14 @@
 #define _GATEKEEPER_CONFIG_H_
 
 /* 
- * XXX Sample parameters for test only. 
+ * XXX #14 Sample parameters for test only.
  * They should be configured in the configuration step.
  */
 #define GATEKEEPER_MAX_PORTS	(4)
 #define GATEKEEPER_MAX_QUEUES	(8)
 
 /*
- * XXX Sample parameters for test only.
+ * XXX #14 Sample parameters for test only.
  * They should be analyzed or tested further to find optimal values.
  *
  * Larger queue size can mitigate bursty behavior, but can also increase 
@@ -43,7 +43,7 @@
 #define GATEKEEPER_NUM_TX_DESC	(512)
 
 /* 
- * XXX Sample parameter for the number of elements in the mbuf pool.
+ * XXX #14 Sample parameter for the number of elements in the mbuf pool.
  * This should be analyzed or tested further to find optimal value.
  *
  * The optimum size (in terms of memory usage) for a mempool is when it is a 
@@ -64,7 +64,7 @@
 #define GATEKEEPER_MBUF_SIZE (8191)
 
 /* 
- * XXX Sample parameter for the size of the per-core object cache, 
+ * XXX #14 Sample parameter for the size of the per-core object cache,
  * i.e., number of struct rte_mbuf elements in the per-core object cache.
  * this should be analyzed or tested further to find optimal value.
  *

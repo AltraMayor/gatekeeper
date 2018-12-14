@@ -311,7 +311,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		ip6hdr = l3_hdr;
 
 		/*
-		 * TODO Given that IPv6 ntuple filter doesn't check
+		 * TODO #63 Given that IPv6 ntuple filter doesn't check
 		 * the destination address, it must be done here.
 		 * If the IPv6 packet is not destined to
 		 * the Gatekeeper server, redirect the packet properly.
@@ -383,7 +383,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		goto free_packet;
 	}
 
-	/* XXX Check the UDP checksum. */
+	/* XXX #69 Check the UDP checksum. */
 
 	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
 	if (gguhdr->version != GGU_PD_VER) {
