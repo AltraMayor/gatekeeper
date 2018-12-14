@@ -1412,9 +1412,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 		default:
 			ret = -1;
-			/* XXX Incorrect state, log warning. */
 			RTE_LOG(ERR, GATEKEEPER,
-				"gk: unknown flow state!\n");
+				"gk: unknown flow state: %d\n",
+				fe->state);
 			break;
 		}
 
