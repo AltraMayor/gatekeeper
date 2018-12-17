@@ -1412,9 +1412,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 		default:
 			ret = -1;
-			/* XXX Incorrect state, log warning. */
 			RTE_LOG(ERR, GATEKEEPER,
-				"gk: unknown flow state!\n");
+				"gk: unknown flow state: %d\n",
+				fe->state);
 			break;
 		}
 
@@ -1434,7 +1434,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	num_tx_succ = rte_eth_tx_burst(port_back, tx_queue_back,
 		tx_bufs, num_tx);
 
-	/* XXX Do something better here! For now, free any unsent packets. */
+	/* XXX #71 Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_tx)) {
 		for (i = num_tx_succ; i < num_tx; i++)
 			drop_packet(tx_bufs[i]);
@@ -1595,7 +1595,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	num_tx_succ = rte_eth_tx_burst(port_front, tx_queue_front,
 		tx_bufs, num_tx);
 
-	/* XXX Do something better here! For now, free any unsent packets. */
+	/* XXX #71 Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_tx)) {
 		for (i = num_tx_succ; i < num_tx; i++)
 			drop_packet(tx_bufs[i]);
@@ -1639,7 +1639,7 @@ send_pkts(uint8_t port, uint16_t tx_queue,
 	/* Send burst of TX packets, to second port of pair. */
 	num_tx_succ = rte_eth_tx_burst(port, tx_queue, bufs, num_pkts);
 
-	/* XXX Do something better here! For now, free any unsent packets. */
+	/* XXX #71 Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_pkts)) {
 		for (i = num_tx_succ; i < num_pkts; i++)
 			drop_packet(bufs[i]);
@@ -1994,7 +1994,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	int i, block_idx = -1;
 
 	/*
-	 * XXX Change the mapping rss hash value to rss reta entry
+	 * XXX #149 Change the mapping rss hash value to rss reta entry
 	 * if the reta size is not 128.
 	 */
 	RTE_VERIFY(gk_conf->rss_conf_front.reta_size == 128);
@@ -2008,7 +2008,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	shift = rss_hash_val % RTE_RETA_GROUP_SIZE;
 	queue_id = gk_conf->rss_conf_front.reta_conf[idx].reta[shift];
 
-	/* XXX Change mapping queue id to the GK instance id efficiently. */
+	/* XXX #150 Change mapping queue id to the GK instance id efficiently. */
 	for (i = 0; i < gk_conf->num_lcores; i++)
 		if (gk_conf->instances[i].rx_queue_front == queue_id) {
 			block_idx = i;

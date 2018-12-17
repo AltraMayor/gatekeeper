@@ -148,7 +148,7 @@ enum gk_cmd_op {
 };
 
 /*
- * XXX Structure for each command. Add new fields to support more commands.
+ * Structure for each command.
  *
  * Notice that, the writers of a GK mailbox: the GK-GT unit and Dynamic config.
  */

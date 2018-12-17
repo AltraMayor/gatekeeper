@@ -12,6 +12,12 @@ function gatekeeper_init()
 	-- Otherwise, it will run as a grantor server.
 	local gatekeeper_server = true
 
+	-- Set the global log level to one of
+	-- RTE_LOG_{EMERG,ALERT,CRIT,ERR,WARNING,NOTICE,INFO,DEBUG}.
+	-- All logs equal to or to the left will be output.
+	local global_log_level = gatekeeper.c.RTE_LOG_DEBUG
+	gatekeeper.c.rte_log_set_global_level(global_log_level)
+
 	local netf = require("net")
 	local net_conf = netf(gatekeeper_server)
 

@@ -207,7 +207,7 @@ int setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id);
 void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 
 /*
- * TODO Add support for listing GK FIB entries.
+ * TODO #65 Add support for listing GK FIB entries.
  */
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,

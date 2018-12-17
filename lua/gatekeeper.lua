@@ -101,6 +101,18 @@ local ffi = require("ffi")
 -- Structs
 ffi.cdef[[
 
+enum log_levels {
+	/* Corresponding to the values in rte_log.h. */
+	RTE_LOG_EMERG = 1U,   /* System is unusable. */
+	RTE_LOG_ALERT = 2U,   /* Action must be taken immediately. */
+	RTE_LOG_CRIT = 3U,    /* Critical conditions. */
+	RTE_LOG_ERR = 4U,     /* Error conditions. */
+	RTE_LOG_WARNING = 5U, /* Warning conditions. */
+	RTE_LOG_NOTICE = 6U,  /* Normal but significant condition. */
+	RTE_LOG_INFO = 7U,    /* Informational. */
+	RTE_LOG_DEBUG = 8U,   /* Debug-level messages. */
+};
+
 enum bonding_modes {
 	/* Corresponding to the values in rte_eth_bond.h. */
 	BONDING_MODE_ROUND_ROBIN = 0,
@@ -238,6 +250,9 @@ struct sol_config {
 
 -- Functions and wrappers
 ffi.cdef[[
+
+void rte_log_set_global_level(uint32_t log_level);
+uint32_t rte_log_get_global_level(void);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,

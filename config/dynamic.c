@@ -35,7 +35,7 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 
-/* TODO Get the install path from the configuration file. */
+/* TODO #14 Get the install path from the configuration file. */
 #define LUA_DY_BASE_DIR     "./lua"
 #define DYNAMIC_CONFIG_FILE "dylib.lua"
 
@@ -112,7 +112,7 @@ process_client_message(int conn_fd,
 	const char *msg, int msg_len, lua_State *lua_state)
 {
 	/*
-	 * TODO Implement the functionalities to process the clients' request.
+	 * TODO #61 Implement the functionalities to process the clients' request.
 	 *
 	 * Gatekeeper and Grantor: Listing the ARP and ND table.
 	 * This is important for network diagnosis.

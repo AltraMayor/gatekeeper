@@ -165,7 +165,6 @@ struct ggu_policy {
 	struct ip_flow flow;
 
 	/*
-	 * XXX Add state fields for the flow if necessary.
 	 * The policy decision sent to a GK block must have
 	 * enough information to fill out the fields of
 	 * struct flow_entry at the corresponding state.

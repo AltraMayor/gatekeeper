@@ -46,7 +46,7 @@
 #include "gatekeeper_varip.h"
 #include "luajit-ffi-cdata.h"
 
-/* TODO Get the install-path via Makefile. */
+/* TODO #14 Get the install-path via Makefile. */
 #define LUA_POLICY_BASE_DIR "./lua"
 #define GRANTOR_CONFIG_FILE "policy.lua"
 
@@ -1409,7 +1409,7 @@ gt_proc(void *arg)
 			tx_bufs, num_tx);
 
 		/*
-		 * XXX Do something better here!
+		 * XXX #71 Do something better here!
 		 * For now, free any unsent packets.
 		 */
 		if (unlikely(num_tx_succ < num_tx)) {
