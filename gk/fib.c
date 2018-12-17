@@ -25,6 +25,7 @@
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 #include "luajit-ffi-cdata.h"
+#include "memblock.h"
 
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
@@ -1680,10 +1681,11 @@ fillup_gk_fib_ether_dump_entry(struct ether_cache *eth_cache,
 
 static int
 fillup_grantor_fib_dump_entry(
-	struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+	struct gk_fib_dump_entry *dentry, struct gk_fib *fib,
+	struct memblock_head *mb)
 {
-	struct gk_fib_ether_dump_entry *eth_tbl = rte_calloc(
-		NULL, 1, sizeof(struct gk_fib_ether_dump_entry), 0);
+	struct gk_fib_ether_dump_entry *eth_tbl = memblock_calloc(
+		mb, 1, sizeof(struct gk_fib_ether_dump_entry));
 	if (eth_tbl == NULL)
 		return -1;
 
@@ -1700,10 +1702,11 @@ fillup_grantor_fib_dump_entry(
 
 static int
 fillup_gateway_fib_dump_entry(
-	struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+	struct gk_fib_dump_entry *dentry, struct gk_fib *fib,
+	struct memblock_head *mb)
 {
-	struct gk_fib_ether_dump_entry *eth_tbl = rte_calloc(
-		NULL, 1, sizeof(struct gk_fib_ether_dump_entry), 0);
+	struct gk_fib_ether_dump_entry *eth_tbl = memblock_calloc(
+		mb, 1, sizeof(struct gk_fib_ether_dump_entry));
 	if (eth_tbl == NULL)
 		return -1;
 
@@ -1717,7 +1720,8 @@ fillup_gateway_fib_dump_entry(
 
 static int
 fillup_neighbor_fib_dump_entry(
-	struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+	struct gk_fib_dump_entry *dentry, struct gk_fib *fib,
+	struct memblock_head *mb)
 {
 	int num_entries = 0;
 	uint32_t next = 0;
@@ -1733,8 +1737,8 @@ fillup_neighbor_fib_dump_entry(
 	else
 		neigh_ht = &fib->u.neigh6;
 
-	eth_tbl = rte_calloc(NULL, neigh_ht->tbl_size,
-		sizeof(struct gk_fib_ether_dump_entry), 0);
+	eth_tbl = memblock_calloc(mb, neigh_ht->tbl_size,
+		sizeof(struct gk_fib_ether_dump_entry));
 	if (eth_tbl == NULL)
 		return -1;
 
@@ -1757,25 +1761,26 @@ fillup_neighbor_fib_dump_entry(
 }
 
 static int
-fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib,
+	struct memblock_head *mb)
 {
 	int ret = -1;
 	dentry->action = fib->action;
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
-		ret = fillup_grantor_fib_dump_entry(dentry, fib);
+		ret = fillup_grantor_fib_dump_entry(dentry, fib, mb);
 		break;
 
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET:
-		ret = fillup_gateway_fib_dump_entry(dentry, fib);
+		ret = fillup_gateway_fib_dump_entry(dentry, fib, mb);
 		break;
 
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		ret = fillup_neighbor_fib_dump_entry(dentry, fib);
+		ret = fillup_neighbor_fib_dump_entry(dentry, fib, mb);
 		break;
 
 	case GK_DROP:
@@ -1793,6 +1798,17 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 
 #define CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR "struct gk_fib_dump_entry *"
 
+/*
+ * We use memblock here to accomplish a couple of things:
+ * 1. bounding the amount of memory that is allocated before calling
+ *    the Lua callback;
+ * 2. avoiding the slow, general RTE memory allocation;
+ * 3. Generalizing the code since any number of dump structs can be
+ *    allocated and passed to the Lua callback. All the dump structs are
+ *    released at once when memblock_sfree_all() is called.
+ */
+#define MEMBLOCK_SIZE	(8 * 65536 * 4)
+
 static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
@@ -1805,6 +1821,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
 	struct gk_fib_dump_entry dentry;
+	MEMBLOCK_DEF_INIT(stack_mb, MEMBLOCK_SIZE);
 	void *cdata;
 
 	if (!assigned_type_fib_dump_entry) {
@@ -1825,7 +1842,8 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		dentry.addr.ip.v4.s_addr = htonl(re4->ip);
 		dentry.prefix_len = state.depth;
 		fib = &ltbl->fib_tbl[re4->next_hop];
-		ret = fillup_gk_fib_dump_entry(&dentry, fib);
+		ret = fillup_gk_fib_dump_entry(&dentry, fib,
+			memblock_from_stack(stack_mb));
 		if (ret < 0)
 			luaL_error(l, "gk: failed to fillup the IPv4 GK FIB dump entry!");
 
@@ -1837,11 +1855,15 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		lua_insert(l, 4);
 
 		if (lua_pcall(l, 2, 1, 0) != 0) {
-			rte_free(dentry.ether_tbl);
+			/*
+			 * The following call isn't strictly necessary
+			 * because we are going to raise a Lua error.
+			 */
+			memblock_sfree_all(stack_mb);
 			lua_error(l);
 		}
 
-		rte_free(dentry.ether_tbl);
+		memblock_sfree_all(stack_mb);
 
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
@@ -1859,6 +1881,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
 	struct gk_fib_dump_entry dentry;
+	MEMBLOCK_DEF_INIT(stack_mb, MEMBLOCK_SIZE);
 	void *cdata;
 
 	if (!assigned_type_fib_dump_entry) {
@@ -1880,7 +1903,8 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 			sizeof(dentry.addr.ip.v6));
 		dentry.prefix_len = re6.depth;
 		fib = &ltbl->fib_tbl6[re6.next_hop];
-		ret = fillup_gk_fib_dump_entry(&dentry, fib);
+		ret = fillup_gk_fib_dump_entry(&dentry, fib,
+			memblock_from_stack(stack_mb));
 		if (ret < 0)
 			luaL_error(l, "gk: failed to fillup the IPv6 GK FIB dump entry!");
 
@@ -1892,11 +1916,15 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		lua_insert(l, 4);
 
 		if (lua_pcall(l, 2, 1, 0) != 0) {
-			rte_free(dentry.ether_tbl);
+			/*
+			 * The following call isn't strictly necessary
+			 * because we are going to raise a Lua error.
+			 */
+			memblock_sfree_all(stack_mb);
 			lua_error(l);
 		}
 
-		rte_free(dentry.ether_tbl);
+		memblock_sfree_all(stack_mb);
 
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
