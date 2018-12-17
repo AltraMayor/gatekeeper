@@ -50,16 +50,18 @@ memblock_align(size_t size)
 		.head.end  = name.block + memblock_align(size)	\
 	}
 
+#define memblock_from_stack(memblock)	(&(memblock).head)
+
 #define memblock_salloc(memblock, size)		\
-	memblock_alloc(&memblock.head, size)
+	memblock_alloc(memblock_from_stack(memblock), size)
 
 #define memblock_scalloc(memblock, num, size)	\
-	memblock_calloc(&memblock.head, num, size)
+	memblock_calloc(memblock_from_stack(memblock), num, size)
 
-#define memblock_sfree_all(memblock)		\
-	do {					\
-		type(memblock) *b = &memblock;	\
-		b->head.next = b->block;	\
+#define memblock_sfree_all(memblock)			\
+	do {						\
+		type(memblock) *b = &(memblock);	\
+		b->head.next = b->block;		\
 	} while (0)
 
 struct memblock_head *memblock_alloc_block(size_t size);
