@@ -16,6 +16,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	-- Change these parameters to configure the Gatekeeper.
 	gk_conf.flow_ht_size = 1024
 
+	-- Log level for GK.
+	gk_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
 	gatekeeper.gk_assign_lcores(gk_conf, gk_lcores)
 
 	gk_conf.max_num_ipv4_rules = 1024

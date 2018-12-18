@@ -30,6 +30,11 @@
 #include "gatekeeper_sol.h"
 #include "gatekeeper_ratelimit.h"
 
+extern int gk_logtype;
+
+#define GK_LOG(level, ...) \
+	rte_log(RTE_LOG_ ## level, gk_logtype, "GATEKEEPER GK: " __VA_ARGS__)
+
 /*
  * A flow entry can be in one of three states:
  * request, granted, or declined.
@@ -105,6 +110,11 @@ struct gk_config {
 	unsigned int       mailbox_max_entries_exp;
 	unsigned int       mailbox_mem_cache_size;
 	unsigned int       mailbox_burst_size;
+
+	/* Log level for GK block. */
+	uint32_t          log_level;
+	/* Dynamic logging type, assigned at runtime. */
+	int               log_type;
 
 	/*
 	 * The fields below are for internal use.
