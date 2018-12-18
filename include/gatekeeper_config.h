@@ -97,6 +97,11 @@ struct dynamic_config {
 	/* Reference to the gt configuration struct. */
 	struct gt_config *gt;
 
+	/* Log level for Dynamic Configuration block. */
+	uint32_t         log_level;
+	/* Dynamic logging type, assigned at runtime. */
+	int              log_type;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.

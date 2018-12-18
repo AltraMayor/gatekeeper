@@ -232,6 +232,8 @@ struct dynamic_config {
 	unsigned int     lcore_id;
 	struct gk_config *gk;
 	struct gt_config *gt;
+	uint32_t         log_level;
+	int              log_type;
 	/* This struct has hidden fields. */
 };
 

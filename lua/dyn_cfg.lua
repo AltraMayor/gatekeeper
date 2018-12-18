@@ -10,6 +10,9 @@ return function (gk_conf, gt_conf, numa_table)
 
 	dy_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 
+	-- Log level for Dynamic Configuration.
+	dy_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
 	gatekeeper.c.set_dyc_timeout(30, 0, dy_conf)
 
 	-- Setup the dynamic config functional block.
