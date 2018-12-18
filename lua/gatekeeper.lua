@@ -280,7 +280,8 @@ struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 
 struct gt_config *alloc_gt_conf(void);
-int run_gt(struct net_config *net_conf, struct gt_config *gt_conf);
+int run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
+	const char *lua_base_directory, const char *lua_policy_file);
 
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,

@@ -46,7 +46,10 @@ return function (net_conf, lls_conf, numa_table)
 		gt_conf.gt_max_pkt_burst)
 
 	-- Setup the GT functional block.
-	local ret = gatekeeper.c.run_gt(net_conf, gt_conf)
+	local lua_base_directory = "./lua"
+	local lua_policy_file = "policy.lua"
+	local ret = gatekeeper.c.run_gt(net_conf, gt_conf,
+		lua_base_directory, lua_policy_file)
 	if ret < 0 then
 		error("Failed to run gt block(s)")
 	end
