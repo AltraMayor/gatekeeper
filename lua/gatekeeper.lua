@@ -215,7 +215,8 @@ struct gt_config {
 struct cps_config {
 	unsigned int lcore_id;
 	uint16_t     tcp_port_bgp;
-	int          debug;
+	uint32_t     log_level;
+	int          log_type;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int num_attempts_kni_link_set;
@@ -253,6 +254,9 @@ ffi.cdef[[
 
 void rte_log_set_global_level(uint32_t log_level);
 uint32_t rte_log_get_global_level(void);
+
+int rte_log_set_level(uint32_t type, uint32_t level);
+int rte_log_get_level(uint32_t type);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,

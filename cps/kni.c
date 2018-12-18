@@ -47,8 +47,7 @@ kni_change_if(uint16_t port_id, uint8_t if_up)
 	int ret = 0;
 
 	if (!rte_eth_dev_is_valid_port(port_id)) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: %s: invalid port ID %hu\n",
-			__func__, port_id);
+		CPS_LOG(ERR, "%s: invalid port ID %hu\n", __func__, port_id);
 		return -EINVAL;
 	}
 
@@ -56,8 +55,7 @@ kni_change_if(uint16_t port_id, uint8_t if_up)
 		rte_eth_dev_stop(port_id);
 		ret = rte_eth_dev_start(port_id);
 		if (ret < 0)
-			RTE_LOG(ERR, GATEKEEPER,
-				"cps: %s: Failed to start port %hu\n",
+			CPS_LOG(ERR, "%s: Failed to start port %hu\n",
 				__func__, port_id);
 	} else
 		rte_eth_dev_stop(port_id);
@@ -114,8 +112,7 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 	ifa->ifa_prefixlen = prefixlen;
 	ifa->ifa_scope = RT_SCOPE_UNIVERSE;
 	if ((ifa->ifa_index = if_nametoindex(kni_name)) == 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: %s cannot find device %s\n",
-			__func__, kni_name);
+		CPS_LOG(ERR, "%s cannot find device %s\n", __func__, kni_name);
 		return -1;
 	}
 
@@ -129,7 +126,7 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 
 	ret = mnl_socket_sendto(nl, nlh, nlh->nlmsg_len);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_sendto: cannot update %s with new IP address (family %d) (operation %d): %s\n",
+		CPS_LOG(ERR, "mnl_socket_sendto: cannot update %s with new IP address (family %d) (operation %d): %s\n",
 			kni_name, family, cmd, strerror(errno));
 		return ret;
 	}
@@ -142,14 +139,14 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 
 	ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
 	if (ret == -1) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_recvfrom: cannot update %s with new IP address (family %d) (operation %d): %s\n",
+		CPS_LOG(ERR, "mnl_socket_recvfrom: cannot update %s with new IP address (family %d) (operation %d): %s\n",
 			kni_name, family, cmd, strerror(errno));
 		return ret;
 	}
 
 	ret = mnl_cb_run(buf, ret, seq, portid, NULL, NULL);
 	if (ret == -1) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_cb_run: cannot update %s with new IP address (family %d) (operation %d): %s\n",
+		CPS_LOG(ERR, "mnl_cb_run: cannot update %s with new IP address (family %d) (operation %d): %s\n",
 			kni_name, family, cmd, strerror(errno));
 		return ret;
 	}
@@ -211,8 +208,7 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 
 	pid = fork();
 	if (pid == -1) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: fork failed, can't modify KNI %s link: %s\n",
+		CPS_LOG(ERR, "Fork failed, can't modify KNI %s link: %s\n",
 			kni_name, strerror(errno));
 		return -1;
 	} else if (pid == 0) {
@@ -222,8 +218,8 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 		 */
 		int ret = mnl_socket_sendto(nl, nlh, nlh->nlmsg_len);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"cps: mnl_socket_sendto: cannot bring KNI %s %s: %s\n",
+			CPS_LOG(ERR,
+				"mnl_socket_sendto: cannot bring KNI %s %s: %s\n",
 				kni_name, if_up ? "up" : "down",
 				strerror(errno));
 			_exit(EXIT_FAILURE);
@@ -238,7 +234,7 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 			/* Try to process child's request. */
 			int ret = rte_kni_handle_request(kni);
 			if (ret < 0) {
-				RTE_LOG(ERR, KNI, "%s: error in handling userspace request\n",
+				CPS_LOG(ERR, "%s: error in handling userspace request\n",
 					__func__);
 				goto next;
 			}
@@ -249,14 +245,13 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 				/* Keep trying to handle the KNI request. */
 				goto next;
 			} else if (ret == -1) {
-				RTE_LOG(ERR, GATEKEEPER, "cps: waitpid: %s\n",
-					strerror(errno));
+				CPS_LOG(ERR, "waitpid: %s\n", strerror(errno));
 				goto kill;
 			}
 
 			ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
 			if (ret == -1) {
-				RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_recvfrom: cannot bring KNI %s %s: %s\n",
+				CPS_LOG(ERR, "mnl_socket_recvfrom: cannot bring KNI %s %s: %s\n",
 					kni_name, if_up ? "up" : "down",
 					strerror(errno));
 				return ret;
@@ -264,7 +259,7 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 
 			ret = mnl_cb_run(buf, ret, seq, portid, NULL, NULL);
 			if (ret == -1) {
-				RTE_LOG(ERR, GATEKEEPER, "cps: mnl_cb_run: cannot bring KNI %s %s: %s\n",
+				CPS_LOG(ERR, "mnl_cb_run: cannot bring KNI %s %s: %s\n",
 					kni_name, if_up ? "up" : "down",
 					strerror(errno));
 				return ret;
@@ -291,15 +286,13 @@ kni_config_ip_addrs(struct rte_kni *kni, struct gatekeeper_if *iface)
 
 	nl = mnl_socket_open(NETLINK_ROUTE);
 	if (nl == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_open: %s\n",
-			strerror(errno));
+		CPS_LOG(ERR, "mnl_socket_open: %s\n", strerror(errno));
 		return -1;
 	}
 
 	ret = mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_bind: %s\n",
-			strerror(errno));
+		CPS_LOG(ERR, "mnl_socket_bind: %s\n", strerror(errno));
 		goto close;
 	}
 
@@ -332,15 +325,13 @@ kni_config_link(struct rte_kni *kni)
 
 	nl = mnl_socket_open(NETLINK_ROUTE);
 	if (nl == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_open: %s\n",
-			strerror(errno));
+		CPS_LOG(ERR, "mnl_socket_open: %s\n", strerror(errno));
 		return -1;
 	}
 
 	ret = mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: mnl_socket_bind: %s\n",
-			strerror(errno));
+		CPS_LOG(ERR, "mnl_socket_bind: %s\n", strerror(errno));
 		goto close;
 	}
 
@@ -369,7 +360,7 @@ route_event_sock_open(struct cps_config *cps_conf)
 
 	nl = mnl_socket_open(NETLINK_ROUTE);
 	if (nl == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: %s: mnl_socket_open: %s\n",
+		CPS_LOG(ERR, "%s: mnl_socket_open: %s\n",
 			__func__, strerror(errno));
 		return -1;
 	}
@@ -383,7 +374,7 @@ route_event_sock_open(struct cps_config *cps_conf)
 	ret = mnl_socket_bind(nl, RTMGRP_IPV4_ROUTE|RTMGRP_IPV6_ROUTE,
 		MNL_SOCKET_AUTOPID);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: %s: mnl_socket_bind: %s\n",
+		CPS_LOG(ERR, "%s: mnl_socket_bind: %s\n",
 			__func__, strerror(errno));
 		goto close;
 	}
@@ -399,7 +390,7 @@ static inline void
 inet_print(const char *msg, struct in_addr *in)
 {
 	char buf[INET_ADDRSTRLEN];
-	RTE_LOG(INFO, GATEKEEPER, "cps update: %s: %s\n", msg,
+	CPS_LOG(DEBUG, "cps update: %s: %s\n", msg,
 		inet_ntop(AF_INET, &in->s_addr, buf, sizeof(buf)));
 }
 
@@ -407,13 +398,12 @@ static inline void
 inet6_print(const char *msg, struct in6_addr *in6)
 {
 	char buf[INET6_ADDRSTRLEN];
-	RTE_LOG(INFO, GATEKEEPER, "cps update: %s: %s\n", msg,
+	CPS_LOG(DEBUG, "cps update: %s: %s\n", msg,
 		inet_ntop(AF_INET6, &in6->s6_addr, buf, sizeof(buf)));
 }
 
 static void
-attr_get(struct cps_config *cps_conf,
-	struct route_update *update, int family, struct nlattr *tb[])
+attr_get(struct route_update *update, int family, struct nlattr *tb[])
 {
 	bool dst_present = false;
 	bool gw_present = false;
@@ -430,8 +420,7 @@ attr_get(struct cps_config *cps_conf,
 		 * struct rtnexthop *rt =
 		 *	mnl_attr_get_payload(tb[RTA_MULTIPATH]);
 		 */
-		if (cps_conf->debug)
-			RTE_LOG(INFO, GATEKEEPER, "cps update: multipath\n");
+		CPS_LOG(DEBUG, "cps update: multipath\n");
 	}
 	if (tb[RTA_DST]) {
 		if (family == AF_INET) {
@@ -439,18 +428,16 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_DST]);
 			rte_memcpy(&update->ip.v4,
 				addr, sizeof(update->ip.v4));
-			if (cps_conf->debug)
-				inet_print("dst", addr);
+			inet_print("dst", addr);
 		} else if (likely(family == AF_INET6)) {
 			struct in6_addr *addr =
 				mnl_attr_get_payload(tb[RTA_DST]);
 			rte_memcpy(&update->ip.v6,
 				addr, sizeof(update->ip.v6));
-			if (cps_conf->debug)
-				inet6_print("dst", addr);
+			inet6_print("dst", addr);
 		} else {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps update: unknown address family %d at %s!\n",
+			CPS_LOG(WARNING,
+				"cps update: unknown address family %d at %s\n",
 				family, __func__);
 			return;
 		}
@@ -465,7 +452,7 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_SRC]);
 			if (inet_ntop(AF_INET, &addr->s_addr, buf,
 					sizeof(buf)) == NULL) {
-				RTE_LOG(ERR, GATEKEEPER,
+				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv4 address (%s)\n",
 					__func__, strerror(errno));
 				return;
@@ -475,32 +462,29 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_SRC]);
 			if (inet_ntop(AF_INET6, &addr->s6_addr, buf,
 					sizeof(buf)) == NULL) {
-				RTE_LOG(ERR, GATEKEEPER,
+				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv6 address (%s)\n",
 					__func__, strerror(errno));
 				return;
 			}
 		} else {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps update: unknown address family %d at %s!\n",
+			CPS_LOG(WARNING,
+				"cps update: unknown address family %d at %s\n",
 				family, __func__);
 			return;
 		}
 
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: the rtnetlink command has information (RTA_SRC with IP address %s) that we don't need or don't honor!\n",
+		CPS_LOG(WARNING,
+			"cps update: the rtnetlink command has information (RTA_SRC with IP address %s) that we don't need or don't honor\n",
 			buf);
 	}
 	if (tb[RTA_OIF]) {
 		update->oif_index = mnl_attr_get_u32(tb[RTA_OIF]);
-
-		if (cps_conf->debug)
-			RTE_LOG(INFO, GATEKEEPER, "cps update: oif=%u\n",
-				update->oif_index);
+		CPS_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
 	}
 	if (tb[RTA_FLOW]) {
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: the rtnetlink command has information (RTA_FLOW with flow=%u) that we don't need or don't honor!\n",
+		CPS_LOG(WARNING,
+			"cps update: the rtnetlink command has information (RTA_FLOW with flow=%u) that we don't need or don't honor\n",
 			mnl_attr_get_u32(tb[RTA_FLOW]));
 	}
 	if (tb[RTA_PREFSRC]) {
@@ -511,7 +495,7 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_PREFSRC]);
 			if (inet_ntop(AF_INET, &addr->s_addr, buf,
 					sizeof(buf)) == NULL) {
-				RTE_LOG(ERR, GATEKEEPER,
+				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv4 address (%s)\n",
 					__func__, strerror(errno));
 				return;
@@ -521,20 +505,20 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_PREFSRC]);
 			if (inet_ntop(AF_INET6, &addr->s6_addr, buf,
 					sizeof(buf)) == NULL) {
-				RTE_LOG(ERR, GATEKEEPER,
+				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv6 address (%s)\n",
 					__func__, strerror(errno));
 				return;
 			}
 		} else {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps update: unknown address family %d at %s!\n",
+			CPS_LOG(WARNING,
+				"cps update: unknown address family %d at %s\n",
 				family, __func__);
 			return;
 		}
 
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: the rtnetlink command has information (RTA_PREFSRC with IP address %s) that we don't need or don't honor!\n",
+		CPS_LOG(WARNING,
+			"cps update: the rtnetlink command has information (RTA_PREFSRC with IP address %s) that we don't need or don't honor\n",
 			buf);
 	}
 	if (tb[RTA_GATEWAY]) {
@@ -543,18 +527,16 @@ attr_get(struct cps_config *cps_conf,
 				mnl_attr_get_payload(tb[RTA_GATEWAY]);
 			rte_memcpy(&update->gw.v4,
 				addr, sizeof(update->gw.v4));
-			if (cps_conf->debug)
-				inet_print("gw", addr);
+			inet_print("gw", addr);
 		} else if (likely(family == AF_INET6)) {
 			struct in6_addr *addr =
 				mnl_attr_get_payload(tb[RTA_GATEWAY]);
 			rte_memcpy(&update->gw.v6,
 				addr, sizeof(update->gw.v6));
-			if (cps_conf->debug)
-				inet6_print("gw", addr);
+			inet6_print("gw", addr);
 		} else {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps update: unknown address family %d at %s!\n",
+			CPS_LOG(WARNING,
+				"cps update: unknown address family %d at %s\n",
 				family, __func__);
 			return;
 		}
@@ -562,8 +544,8 @@ attr_get(struct cps_config *cps_conf,
 		gw_present = true;
 	}
 	if (tb[RTA_PRIORITY]) {
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: the rtnetlink command has information (RTA_PRIORITY with prio=%u) that we don't need or don't honor!\n",
+		CPS_LOG(WARNING,
+			"cps update: the rtnetlink command has information (RTA_PRIORITY with prio=%u) that we don't need or don't honor\n",
 			mnl_attr_get_u32(tb[RTA_PRIORITY]));
 	}
 
@@ -648,7 +630,6 @@ static int
 route_cb(const struct nlmsghdr *nlh, void *arg)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
-	struct cps_config *cps_conf = get_cps_conf();
 	struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
 	struct route_update *update = arg;
 
@@ -656,18 +637,16 @@ route_cb(const struct nlmsghdr *nlh, void *arg)
 
 	if (nlh->nlmsg_type != RTM_NEWROUTE &&
 			nlh->nlmsg_type != RTM_DELROUTE) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"cps: unrecognized netlink message type: %u\n",
+		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
 			nlh->nlmsg_type);
 		return MNL_CB_OK;
 	}
 
-	if (cps_conf->debug)
-		RTE_LOG(INFO, GATEKEEPER, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
-			nlh->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
-			rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
-			rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
-			rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
+	CPS_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
+		nlh->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
+		rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
+		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
+		rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
 
 	update->type = nlh->nlmsg_type;
 	update->family = rm->rtm_family;
@@ -681,15 +660,14 @@ route_cb(const struct nlmsghdr *nlh, void *arg)
 	switch(rm->rtm_family) {
 	case AF_INET:
 		mnl_attr_parse(nlh, sizeof(*rm), data_ipv4_attr_cb, tb);
-		attr_get(cps_conf, update, rm->rtm_family, tb);
+		attr_get(update, rm->rtm_family, tb);
 		break;
 	case AF_INET6:
 		mnl_attr_parse(nlh, sizeof(*rm), data_ipv6_attr_cb, tb);
-		attr_get(cps_conf, update, rm->rtm_family, tb);
+		attr_get(update, rm->rtm_family, tb);
 		break;
 	default:
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"cps: unrecognized family in netlink event: %u\n",
+		CPS_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
 			rm->rtm_family);
 		break;
 	}
@@ -779,8 +757,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 			ip_buf, update->prefix_len);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 	} else {
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: unknown address family %d at %s!\n",
+		CPS_LOG(WARNING,
+			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
 		return -1;
 	}
@@ -799,8 +777,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 			const char *kni_name =
 				rte_kni_get_name(cps_conf->front_kni);
 			if (update->oif_index != if_nametoindex(kni_name)) {
-				RTE_LOG(WARNING, GATEKEEPER,
-					"cps: the output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network!\n",
+				CPS_LOG(WARNING,
+					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
 					prefix_info.str);
 				return -1;
 			}
@@ -815,8 +793,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 			const char *kni_name =
 				rte_kni_get_name(cps_conf->back_kni);
 			if (update->oif_index != if_nametoindex(kni_name)) {
-				RTE_LOG(WARNING, GATEKEEPER,
-					"cps: the output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network!\n",
+				CPS_LOG(WARNING,
+					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
 					prefix_info.str);
 				return -1;
 			}
@@ -862,8 +840,8 @@ del_route(struct route_update *update, struct gk_config *gk_conf)
 		rte_memcpy(&prefix_info.addr.ip.v6, &update->ip.v6,
 			sizeof(prefix_info.addr.ip.v6));
 	} else {
-		RTE_LOG(WARNING, GATEKEEPER,
-			"cps update: unknown address family %d at %s!\n",
+		CPS_LOG(WARNING,
+			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
 		return -1;
 	}
@@ -888,8 +866,7 @@ kni_cps_route_event(struct cps_config *cps_conf)
 			sizeof(buf), MSG_DONTWAIT);
 		if (ret == -1) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK)
-				RTE_LOG(ERR, GATEKEEPER,
-					"cps: %s: recv: %s\n",
+				CPS_LOG(ERR, "%s: recv: %s\n",
 					__func__, strerror(errno));
 			break;
 		}
@@ -909,8 +886,8 @@ kni_cps_route_event(struct cps_config *cps_conf)
 		 * shouldn't be receiving route updates.
 		 */
 		if (unlikely(num_updates != 0)) {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps: the system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving %u route update messages!\n",
+			CPS_LOG(WARNING,
+				"The system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving %u route update messages\n",
 				num_updates);
 		}
 
@@ -923,8 +900,8 @@ kni_cps_route_event(struct cps_config *cps_conf)
 		else if (likely(updates[i].type == RTM_DELROUTE))
 			del_route(&updates[i], cps_conf->gk);
 		else {
-			RTE_LOG(WARNING, GATEKEEPER,
-				"cps: receiving an unexpected update rule with type = %d!\n",
+			CPS_LOG(WARNING,
+				"Receiving an unexpected update rule with type = %d\n",
 				updates[i].type);
 		}
 	}
@@ -947,13 +924,13 @@ grab_file(const char *filename, unsigned long *size)
 
 	int fd = open(filename, O_RDONLY, 0);
 	if (fd < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: open: %s\n", strerror(errno));
+		CPS_LOG(ERR, "open: %s\n", strerror(errno));
 		return NULL;
 	}
 
 	ret = fstat(fd, &stat_buf);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: fstat: %s\n", strerror(errno));
+		CPS_LOG(ERR, "fstat: %s\n", strerror(errno));
 		goto close;
 	}
 
@@ -961,8 +938,7 @@ grab_file(const char *filename, unsigned long *size)
 
 	buffer = rte_malloc("kni_kmod", kmod_size, 0);
 	if (buffer == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: couldn't allocate %u bytes to read %s\n",
+		CPS_LOG(ERR, "Couldn't allocate %u bytes to read %s\n",
 			kmod_size, filename);
 		goto close;
 	}
@@ -971,7 +947,7 @@ grab_file(const char *filename, unsigned long *size)
 	while ((ret = read(fd, buffer + *size, kmod_size - *size)) > 0)
 		*size += ret;
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: read: %s\n", strerror(errno));
+		CPS_LOG(ERR, "read: %s\n", strerror(errno));
 		goto free;
 	}
 
@@ -1011,15 +987,13 @@ init_kni(const char *kni_kmod_path, unsigned int num_kni)
 
 	void *file = grab_file(kni_kmod_path, &len);
 	if (file == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "insmod: can't read '%s'\n",
-			kni_kmod_path);
+		CPS_LOG(ERR, "insmod: can't read '%s'\n", kni_kmod_path);
 		return -1;
 	}
 
 	ret = init_module(file, len, "");
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"insmod: error inserting '%s': %d %s\n",
+		CPS_LOG(ERR, "insmod: error inserting '%s': %d %s\n",
 			kni_kmod_path, ret, moderror(errno));
 		rte_free(file);
 		return ret;
@@ -1042,8 +1016,7 @@ check_usage(const char *modname)
 
 	module_list = fopen(PROC_MODULES_FILENAME, "r");
 	if (module_list == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"Can't open %s: %s\n", PROC_MODULES_FILENAME,
+		CPS_LOG(ERR, "Can't open %s: %s\n", PROC_MODULES_FILENAME,
 			strerror(errno));
 		return -1;
 	}
@@ -1055,7 +1028,7 @@ check_usage(const char *modname)
 		found_mods = true;
 
 		if (strchr(line, '\n') == NULL) {
-			RTE_LOG(ERR, GATEKEEPER, "long line broke rmmod.\n");
+			CPS_LOG(ERR, "Long line broke rmmod\n");
 			ret = -1;
 			goto out;
 		}
@@ -1068,12 +1041,11 @@ check_usage(const char *modname)
 
 		if (scanned <= 2 || scanned == EOF) {
 			if (scanned < 2 || scanned == EOF)
-				RTE_LOG(ERR, GATEKEEPER,
-					"Unknown format in %s: %s\n",
+				CPS_LOG(ERR, "Unknown format in %s: %s\n",
 					PROC_MODULES_FILENAME, line);
 			else
-				RTE_LOG(ERR, GATEKEEPER,
-					"Kernel doesn't support unloading.\n");
+				CPS_LOG(ERR,
+					"Kernel doesn't support unloading\n");
 			ret = -1;
 			goto out;
 		}
@@ -1082,8 +1054,7 @@ check_usage(const char *modname)
 			continue;
 
 		if (refs != 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"Module %s is in use\n", modname);
+			CPS_LOG(ERR, "Module %s is in use\n", modname);
 			ret = -1;
 		}
 
@@ -1091,12 +1062,11 @@ check_usage(const char *modname)
 	}
 
 	if (found_mods)
-		RTE_LOG(ERR, GATEKEEPER,
-			"Module %s does not exist in %s\n", modname,
+		CPS_LOG(ERR, "Module %s does not exist in %s\n", modname,
 			PROC_MODULES_FILENAME);
 	else
-		RTE_LOG(ERR, GATEKEEPER,
-			"fgets: error in reading %s\n", PROC_MODULES_FILENAME);
+		CPS_LOG(ERR, "fgets: error in reading %s\n",
+			PROC_MODULES_FILENAME);
 
 	ret = -1;
 out:
@@ -1118,8 +1088,7 @@ rm_kni(void)
 
 	ret = delete_module(name, O_NONBLOCK);
 	if (ret < 0)
-		RTE_LOG(ERR, GATEKEEPER, "Error removing %s: %s\n",
-			name, strerror(errno));
+		CPS_LOG(ERR, "Error removing %s: %s\n", name, strerror(errno));
 }
 
 static void
@@ -1149,8 +1118,7 @@ cps_arp_cb(const struct lls_map *map, void *arg,
 
 	req = mb_alloc_entry(&cps_conf->mailbox);
 	if (req == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: %s: allocation of mailbox message failed\n",
+		CPS_LOG(ERR, "%s: allocation of mailbox message failed\n",
 			__func__);
 		return;
 	}
@@ -1162,8 +1130,7 @@ cps_arp_cb(const struct lls_map *map, void *arg,
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: %s: failed to enqueue message to mailbox\n",
+		CPS_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
 			__func__);
 		return;
 	}
@@ -1179,13 +1146,13 @@ kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	struct arp_request *entry;
 
 	if (unlikely(!arp_enabled(cps_conf->lls))) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: KNI for %s iface received ARP packet, but the interface is not configured for ARP\n",
+		CPS_LOG(NOTICE, "KNI for %s iface received ARP packet, but the interface is not configured for ARP\n",
 			iface->name);
 		goto out;
 	}
 
 	if (unlikely(pkt_len < sizeof(*eth_hdr) + sizeof(*arp_hdr))) {
-		RTE_LOG(ERR, GATEKEEPER, "cps: KNI received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
+		CPS_LOG(ERR, "KNI received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
 			pkt_len, sizeof(*eth_hdr) + sizeof(*arp_hdr));
 		goto out;
 	}
@@ -1206,7 +1173,7 @@ kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 
 	arp_req = rte_malloc(__func__, sizeof(*arp_req), 0);
 	if (unlikely(entry == NULL)) {
-		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		CPS_LOG(ERR, "%s: DPDK ran out of memory", __func__);
 		goto out;
 	}
 
@@ -1248,8 +1215,7 @@ cps_nd_cb(const struct lls_map *map, void *arg,
 
 	req = mb_alloc_entry(&cps_conf->mailbox);
 	if (req == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: %s: allocation of mailbox message failed\n",
+		CPS_LOG(ERR, "%s: allocation of mailbox message failed\n",
 			__func__);
 		return;
 	}
@@ -1261,8 +1227,7 @@ cps_nd_cb(const struct lls_map *map, void *arg,
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"cps: %s: failed to enqueue message to mailbox\n",
+		CPS_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
 			__func__);
 		return;
 	}
@@ -1278,13 +1243,13 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	struct nd_request *entry;
 
 	if (unlikely(!nd_enabled(cps_conf->lls))) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: KNI for %s iface received ND packet, but the interface is not configured for ND\n",
+		CPS_LOG(NOTICE, "KNI for %s iface received ND packet, but the interface is not configured for ND\n",
 			iface->name);
 		goto out;
 	}
 
 	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr))) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
+		CPS_LOG(NOTICE, "ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
 			pkt_len, ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr)));
 		goto out;
 	}
@@ -1292,7 +1257,7 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	icmpv6_hdr = rte_pktmbuf_mtod_offset(buf, struct icmpv6_hdr *,
 		sizeof(*eth_hdr) + sizeof(struct ipv6_hdr));
 	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) {
-		RTE_LOG(NOTICE, GATEKEEPER, "cps: ND Advertisement packet received from KNI attached to %s iface\n",
+		CPS_LOG(NOTICE, "ND Advertisement packet received from KNI attached to %s iface\n",
 			iface->name);
 		goto out;
 	}
@@ -1307,7 +1272,7 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 
 	nd_req = rte_malloc(__func__, sizeof(*nd_req), 0);
 	if (unlikely(entry == NULL)) {
-		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		CPS_LOG(ERR, "%s: DPDK ran out of memory", __func__);
 		goto out;
 	}
 
