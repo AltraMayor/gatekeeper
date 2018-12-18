@@ -41,6 +41,11 @@ struct ggu_config {
 	unsigned int      mailbox_mem_cache_size;
 	unsigned int      mailbox_burst_size;
 
+	/* Log level for GK-GT Unit block. */
+	uint32_t          log_level;
+	/* Dynamic logging type, assigned at runtime. */
+	int               log_type;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
