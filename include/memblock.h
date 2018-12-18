@@ -60,7 +60,7 @@ memblock_align(size_t size)
 
 #define memblock_sfree_all(memblock)			\
 	do {						\
-		type(memblock) *b = &(memblock);	\
+		typeof(memblock) *b = &(memblock);	\
 		b->head.next = b->block;		\
 	} while (0)
 
