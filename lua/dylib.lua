@@ -53,6 +53,13 @@ struct gk_fib_dump_entry {
 	enum gk_fib_action action;
 };
 
+struct gk_neighbor_dump_entry {
+	bool          stale;
+	enum gk_fib_action action;
+	struct ipaddr neigh_ip;
+	struct ether_addr d_addr;
+};
+
 ]]
 
 -- Functions and wrappers
@@ -97,4 +104,21 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 		ip_addr_str .. ", d_addr: " .. d_buf .. "]"
 
 	return acc .. "\n"
+end
+
+-- The following is an example function that can be used as
+-- the callback function of list_gk_neighbors4() and list_gk_neighbors6().
+
+-- Parameter neighbor_dump_entry is going to be released after
+-- print_neighbor_dump_entry() returns, so don't keep references to
+-- neighbor_dump_entry or any of the data reachable through its fields.
+
+function print_neighbor_dump_entry(neighbor_dump_entry, acc)
+	local stale = neighbor_dump_entry.stale and "stale" or "fresh"
+	local neigh_ip = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
+	local d_buf = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
+
+	return acc .. "Neighbor Ethernet cache entry:" .. ": [state: " .. stale ..
+		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
+		", action: " .. tostring(neighbor_dump_entry.action) .. "]\n"
 end

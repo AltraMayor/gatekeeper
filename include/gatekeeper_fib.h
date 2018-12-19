@@ -219,6 +219,20 @@ struct gk_fib_dump_entry {
 	enum gk_fib_action action;
 };
 
+struct gk_neighbor_dump_entry {
+
+	bool          stale;
+
+	/* The fib action. */
+	enum gk_fib_action action;
+
+	/* The IP address of the neighbor. */
+	struct ipaddr neigh_ip;
+
+	/* The the MAC address of neigh_ip. */
+	struct ether_addr d_addr;
+};
+
 struct gk_config;
 
 int clear_ether_cache(struct ether_cache *eth_cache);
@@ -241,6 +255,8 @@ int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
 int l_list_gk_fib4(lua_State *l);
 int l_list_gk_fib6(lua_State *l);
+int l_list_gk_neighbors4(lua_State *l);
+int l_list_gk_neighbors6(lua_State *l);
 int l_ether_format_addr(lua_State *l);
 int l_ip_format_addr(lua_State *l);
 

@@ -1881,6 +1881,192 @@ l_list_gk_fib6(lua_State *l)
 	return 1;
 }
 
+static void
+fillup_gk_neighbor_dump_entry(struct gk_neighbor_dump_entry *dentry,
+	struct ether_cache *eth_cache)
+{
+	dentry->stale = eth_cache->stale;
+	rte_memcpy(&dentry->neigh_ip, &eth_cache->ip_addr,
+		sizeof(dentry->neigh_ip));
+	rte_memcpy(&dentry->d_addr, &eth_cache->l2_hdr.eth_hdr.d_addr,
+		sizeof(dentry->d_addr));
+}
+
+#define CTYPE_STRUCT_NEIGHBOR_DUMP_ENTRY_PTR "struct gk_neighbor_dump_entry *"
+
+static void
+list_hash_table_neighbors(lua_State *l, enum gk_fib_action action,
+	struct neighbor_hash_table *neigh_ht)
+{
+	uint32_t next = 0;
+	const void *key;
+	void *data;
+	int32_t index;
+
+	static bool assigned_type_neighbor_dentry = false;
+	static uint32_t correct_ctypeid_neighbor_dentry;
+
+	void *cdata;
+
+	if (!assigned_type_neighbor_dentry) {
+		correct_ctypeid_neighbor_dentry = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_NEIGHBOR_DUMP_ENTRY_PTR);
+		assigned_type_neighbor_dentry = true;
+	}
+
+	index = rte_hash_iterate(neigh_ht->hash_table,
+		(void *)&key, &data, &next);
+	while (index >= 0) {
+		struct gk_neighbor_dump_entry dentry;
+		struct ether_cache *eth_cache = &neigh_ht->cache_tbl[index];
+
+		dentry.action = action;
+		fillup_gk_neighbor_dump_entry(&dentry, eth_cache);
+
+		lua_pushvalue(l, 2);
+		lua_insert(l, 3);
+		cdata = luaL_pushcdata(l, correct_ctypeid_neighbor_dentry,
+			sizeof(struct gk_neighbor_dump_entry *));
+		*(struct gk_neighbor_dump_entry **)cdata = &dentry;
+		lua_insert(l, 4);
+
+		lua_call(l, 2, 1);
+
+		index = rte_hash_iterate(neigh_ht->hash_table,
+			(void *)&key, &data, &next);
+	}
+}
+
+static void
+list_ipv4_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
+	enum gk_fib_action action, struct gk_lpm *ltbl)
+{
+	struct gk_fib *neigh_fib;
+	int fib_id = lpm_lookup_ipv4(ltbl->lpm, iface->ip4_addr.s_addr);
+	/*
+	 * Invalid gateway entry, since at least we should
+	 * obtain the FIB entry for the neighbor table.
+	 */
+	if (fib_id < 0)
+		luaL_error(l, "gk: failed to lookup the lpm table at %s!",
+			__func__);
+
+	neigh_fib = &ltbl->fib_tbl[fib_id];
+	RTE_VERIFY(neigh_fib->action == action);
+
+	list_hash_table_neighbors(l, action, &neigh_fib->u.neigh);
+}
+
+static void
+list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
+	enum gk_fib_action action, struct gk_lpm *ltbl)
+{
+	struct gk_fib *neigh_fib;
+	int fib_id = lpm_lookup_ipv6(ltbl->lpm6, iface->ip6_addr.s6_addr);
+	/*
+	 * Invalid gateway entry, since at least we should
+	 * obtain the FIB entry for the neighbor table.
+	 */
+	if (fib_id < 0)
+		luaL_error(l, "gk: failed to lookup the lpm6 table at %s!",
+			__func__);
+
+	neigh_fib = &ltbl->fib_tbl6[fib_id];
+	RTE_VERIFY(neigh_fib->action == action);
+
+	list_hash_table_neighbors(l, action, &neigh_fib->u.neigh6);
+}
+
+static void
+list_ipv4_neighbors(lua_State *l,
+	struct net_config *net_conf, struct gk_lpm *ltbl)
+{
+	if (!ipv4_configured(net_conf))
+		return;
+
+	list_ipv4_if_neighbors(l, &net_conf->front,
+		GK_FWD_NEIGHBOR_FRONT_NET, ltbl);
+
+	if (net_conf->back_iface_enabled)
+		list_ipv4_if_neighbors(l, &net_conf->back,
+			GK_FWD_NEIGHBOR_BACK_NET, ltbl);
+}
+
+static void
+list_ipv6_neighbors(lua_State *l,
+	struct net_config *net_conf, struct gk_lpm *ltbl)
+{
+	if (!ipv6_configured(net_conf))
+		return;
+
+	list_ipv6_if_neighbors(l, &net_conf->front,
+		GK_FWD_NEIGHBOR_FRONT_NET, ltbl);
+
+	if (net_conf->back_iface_enabled)
+		list_ipv6_if_neighbors(l, &net_conf->back,
+			GK_FWD_NEIGHBOR_BACK_NET, ltbl);
+}
+
+typedef void (*list_neighbors)(lua_State *l,
+	struct net_config *net_conf, struct gk_lpm *ltbl);
+
+static void
+list_neighbors_for_lua(lua_State *l, list_neighbors f)
+{
+	static bool assigned_type_gk_config = false;
+	static uint32_t correct_ctypeid_gk_config;
+
+	uint32_t ctypeid;
+	struct gk_config *gk_conf;
+	struct gk_lpm *ltbl;
+
+	if (!assigned_type_gk_config) {
+		correct_ctypeid_gk_config = luaL_get_ctypeid(l,
+			CTYPE_STRUCT_GK_CONFIG_PTR);
+		assigned_type_gk_config = true;
+	}
+
+	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gk_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	/* Second argument must be a Lua function. */
+	luaL_checktype(l, 2, LUA_TFUNCTION);
+
+	/* Third argument should be a Lua value. */
+	if (lua_gettop(l) != 3)
+		luaL_error(l, "Expected three arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	gk_conf = *(struct gk_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	ltbl = &gk_conf->lpm_tbl;
+
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	f(l, gk_conf->net, ltbl);
+	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+
+	lua_remove(l, 1);
+	lua_remove(l, 1);
+}
+
+int
+l_list_gk_neighbors4(lua_State *l)
+{
+	list_neighbors_for_lua(l, list_ipv4_neighbors);
+	return 1;
+}
+
+int
+l_list_gk_neighbors6(lua_State *l)
+{
+	list_neighbors_for_lua(l, list_ipv6_neighbors);
+	return 1;
+}
+
 #define CTYPE_STRUCT_ETHER_ADDR_REF "struct ether_addr &"
 
 int

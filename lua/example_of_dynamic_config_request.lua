@@ -64,6 +64,11 @@ reply_msg = reply_msg .. dylib.list_gk_fib4(dyc.gk,
 reply_msg = reply_msg .. dylib.list_gk_fib6(dyc.gk,
 	dylib.print_fib_dump_entry, acc_start)
 
+reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
+	dylib.print_neighbor_dump_entry, acc_start)
+reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
+	dylib.print_neighbor_dump_entry, acc_start)
+
 ret = dylib.c.del_fib_entry("187.73.40.0/30", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
@@ -98,5 +103,10 @@ reply_msg = reply_msg .. dylib.list_gk_fib4(dyc.gk,
 	dylib.print_fib_dump_entry, acc_start)
 reply_msg = reply_msg .. dylib.list_gk_fib6(dyc.gk,
 	dylib.print_fib_dump_entry, acc_start)
+
+reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
+	dylib.print_neighbor_dump_entry, acc_start)
+reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
+	dylib.print_neighbor_dump_entry, acc_start)
 
 return "gk: successfully processed all the FIB entries\n" .. reply_msg
