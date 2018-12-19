@@ -14,6 +14,9 @@ return function (net_conf, lcore)
 	sol_conf.deq_burst_size = 32
 	sol_conf.mailbox_mem_cache_size = 0
 
+	-- Log level for SOL.
+	sol_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
 	-- Token bucket rate approximation error.
 	sol_conf.tb_rate_approx_err = 1e-7
 

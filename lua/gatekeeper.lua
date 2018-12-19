@@ -253,6 +253,8 @@ struct sol_config {
 	double       tb_rate_approx_err;
 	double       req_channel_bw_mbps;
 	unsigned int mailbox_mem_cache_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
