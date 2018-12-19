@@ -205,7 +205,7 @@ main(int argc, char *argv[])
 	argp_parse(&argp, argc, argv, 0, NULL, &args);
 
 	if (sizeof(serv_addr.sun_path) <= strlen(args.server_path)) {
-		fprintf(stderr, "Error: passing a too long server path (i.e., > %lu) - %s!\n",
+		fprintf(stderr, "Error: passing a too long server path (i.e., > %lu) - %s\n",
 			sizeof(serv_addr.sun_path), args.server_path);
 		ret = -1;
 		goto out;
@@ -219,7 +219,7 @@ main(int argc, char *argv[])
 		ret = -1;
 		goto out;
 	} else if (ret == 0) {
-		fprintf(stderr, "Error: the file %s is empty!\n",
+		fprintf(stderr, "Error: the file %s is empty\n",
 			args.lua_script_path);
 		goto out;
 	}
@@ -241,14 +241,14 @@ main(int argc, char *argv[])
 
 	ret = write_all(sock_fd, send_buff, total_file_len + sizeof(uint16_t));
 	if (ret != 0) {
-		fprintf(stderr, "Failed to send message!\n");
+		fprintf(stderr, "Failed to send message\n");
 		ret = -1;
 		goto close_sock;
 	}
 
 	ret = read_all(sock_fd, recv_buff, sizeof(uint16_t));
 	if (ret != 0) {
-		fprintf(stderr, "Failed to receive message length!\n");
+		fprintf(stderr, "Failed to receive message length\n");
 		ret = -1;
 		goto close_sock;
 	}
@@ -256,7 +256,7 @@ main(int argc, char *argv[])
 	len = ntohs(*(uint16_t *)recv_buff);
 	ret = read_all(sock_fd, recv_buff, len);
 	if (ret != 0) {
-		fprintf(stderr, "Failed to receive message!\n");
+		fprintf(stderr, "Failed to receive message\n");
 		ret = -1;
 	}
 

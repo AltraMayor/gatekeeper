@@ -139,19 +139,19 @@ ethertype_filter_add(uint16_t port_id, uint16_t ether_type, uint16_t queue_id)
 		&filter);
 	if (ret == -ENOTSUP) {
 		RTE_LOG(NOTICE, PORT,
-			"Hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu!\n",
+			"Hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu\n",
 			ether_type, port_id);
 		ret = -1;
 		goto out;
 	} else if (ret == -ENODEV) {
 		RTE_LOG(NOTICE, PORT,
-			"Port %hhu is invalid for adding an EtherType filter for 0x%02hx!\n",
+			"Port %hhu is invalid for adding an EtherType filter for 0x%02hx\n",
 			port_id, ether_type);
 		ret = -1;
 		goto out;
 	} else if (ret != 0) {
 		RTE_LOG(NOTICE, PORT,
-			"Other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx!\n",
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx\n",
 			port_id, ether_type);
 		ret = -1;
 		goto out;
@@ -224,19 +224,19 @@ ntuple_filter_add(uint16_t port_id, uint32_t dst_ip,
 		&filter_v4);
 	if (ret == -ENOTSUP) {
 		RTE_LOG(ERR, PORT,
-			"Hardware doesn't support adding an IPv4 ntuple filter on port %hhu!\n",
+			"Hardware doesn't support adding an IPv4 ntuple filter on port %hhu\n",
 			port_id);
 		ret = -1;
 		goto out;
 	} else if (ret == -ENODEV) {
 		RTE_LOG(ERR, PORT,
-			"Port %hhu is invalid for adding an IPv4 ntuple filter!\n",
+			"Port %hhu is invalid for adding an IPv4 ntuple filter\n",
 			port_id);
 		ret = -1;
 		goto out;
 	} else if (ret != 0) {
 		RTE_LOG(ERR, PORT,
-			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter!\n",
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter\n",
 			port_id);
 		ret = -1;
 		goto out;
@@ -251,19 +251,19 @@ ipv6:
 		&filter_v6);
 	if (ret == -ENOTSUP) {
 		RTE_LOG(ERR, PORT,
-			"Hardware doesn't support adding an IPv6 ntuple filter on port %hhu!\n",
+			"Hardware doesn't support adding an IPv6 ntuple filter on port %hhu\n",
 			port_id);
 		ret = -1;
 		goto out;
 	} else if (ret == -ENODEV) {
 		RTE_LOG(ERR, PORT,
-			"Port %hhu is invalid for adding an IPv6 ntuple filter!\n",
+			"Port %hhu is invalid for adding an IPv6 ntuple filter\n",
 			port_id);
 		ret = -1;
 		goto out;
 	} else if (ret != 0) {
 		RTE_LOG(ERR, PORT,
-			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter!\n",
+			"Other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter\n",
 			port_id);
 		ret = -1;
 		goto out;
@@ -299,7 +299,7 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 		ret = rte_eth_rx_queue_setup(port_id, queue_id,
 			GATEKEEPER_NUM_RX_DESC, numa_node, NULL, mp);
 		if (ret < 0) {
-			RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)!\n",
+			RTE_LOG(ERR, PORT, "Failed to configure port %hhu rx_queue %hu (err=%d)\n",
 				port_id, queue_id, ret);
 			return ret;
 		}
@@ -308,14 +308,14 @@ configure_queue(uint16_t port_id, uint16_t queue_id, enum queue_type ty,
 		ret = rte_eth_tx_queue_setup(port_id, queue_id,
 			GATEKEEPER_NUM_TX_DESC, numa_node, NULL);
 		if (ret < 0) {
-			RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)!\n",
+			RTE_LOG(ERR, PORT, "Failed to configure port %hhu tx_queue %hu (err=%d)\n",
 				port_id, queue_id, ret);
 			return ret;
 		}
 		break;
 	default:
 		RTE_LOG(ERR, GATEKEEPER,
-			"Unsupported queue type (%d) passed to %s!\n",
+			"Unsupported queue type (%d) passed to %s\n",
 			ty, __func__);
 		return -1;
 	}
@@ -547,7 +547,7 @@ convert_ip_to_str(struct ipaddr *ip_addr, char *res, int n)
 			return -1;
 		}
 	} else {
-		RTE_LOG(ERR, GATEKEEPER, "Unexpected condition at %s: unknown IP type %hu!\n",
+		RTE_LOG(ERR, GATEKEEPER, "Unexpected condition at %s: unknown IP type %hu\n",
 			__func__, ip_addr->proto);
 		return -1;
 	}
@@ -739,7 +739,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 	rte_eth_dev_info_get(port_id, &dev_info);
 	if (dev_info.reta_size == 0) {
 		RTE_LOG(ERR, PORT,
-			"Failed to setup RSS at port %hhu (invalid RETA size = 0)!\n",
+			"Failed to setup RSS at port %hhu (invalid RETA size = 0)\n",
 			port_id);
 		ret = -1;
 		goto out;
@@ -747,7 +747,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 
 	if (dev_info.reta_size > ETH_RSS_RETA_SIZE_512) {
 		RTE_LOG(ERR, PORT,
-			"Failed to setup RSS at port %hhu (invalid RETA size = %u)!\n",
+			"Failed to setup RSS at port %hhu (invalid RETA size = %u)\n",
 			port_id, dev_info.reta_size);
 		ret = -1;
 		goto out;
@@ -777,7 +777,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 		goto out;
 	} else if (ret == -EINVAL) {
 		RTE_LOG(ERR, PORT,
-			"Failed to setup RSS at port %hhu (RETA update with bad redirection table parameter)!\n",
+			"Failed to setup RSS at port %hhu (RETA update with bad redirection table parameter)\n",
 			port_id);
 		ret = -1;
 		goto out;
@@ -793,7 +793,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 		ret = -1;
 	} else if (ret == -EINVAL) {
 		RTE_LOG(ERR, PORT,
-			"Failed to setup RSS at port %hhu (RETA query with bad redirection table parameter)!\n",
+			"Failed to setup RSS at port %hhu (RETA query with bad redirection table parameter)\n",
 			port_id);
 		ret = -1;
 	}
@@ -817,7 +817,7 @@ gatekeeper_get_rss_config(uint16_t port_id,
 	if (rss_conf->reta_size == 0 ||
 			rss_conf->reta_size > ETH_RSS_RETA_SIZE_512) {
 		RTE_LOG(ERR, PORT,
-			"Failed to setup RSS at port %hhu (invalid RETA size = %hu)!\n",
+			"Failed to setup RSS at port %hhu (invalid RETA size = %hu)\n",
 			port_id, rss_conf->reta_size);
 		ret = -1;
 		goto out;
@@ -834,12 +834,12 @@ gatekeeper_get_rss_config(uint16_t port_id,
 		rss_conf->reta_conf, rss_conf->reta_size);
 	if (ret == -ENOTSUP) {
 		RTE_LOG(ERR, PORT,
-			"Failed to query RSS configuration at port %hhu hardware doesn't support!\n",
+			"Failed to query RSS configuration at port %hhu hardware doesn't support\n",
 			port_id);
 		ret = -1;
 	} else if (ret == -EINVAL) {
 		RTE_LOG(ERR, PORT,
-			"Failed to query RSS configuration at port %hhu (RETA query with bad redirection table parameter)!\n",
+			"Failed to query RSS configuration at port %hhu (RETA query with bad redirection table parameter)\n",
 			port_id);
 		ret = -1;
 	}
@@ -914,7 +914,7 @@ init_port(struct gatekeeper_if *iface, uint16_t port_id,
 		iface->num_tx_queues, &port_conf);
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT,
-			"Failed to configure port %hhu (err=%d)!\n",
+			"Failed to configure port %hhu (err=%d)\n",
 			port_id, ret);
 		return ret;
 	}
@@ -957,7 +957,7 @@ init_iface(struct gatekeeper_if *iface)
 			&iface->ports[i]);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
-				"Failed to map PCI %s to a port (err=%d)!\n",
+				"Failed to map PCI %s to a port (err=%d)\n",
 				iface->pci_addrs[i], ret);
 			goto close_partial;
 		}
@@ -978,7 +978,7 @@ init_iface(struct gatekeeper_if *iface)
 		ret = rte_eth_bond_create(dev_name, iface->bonding_mode, 0);
 		if (ret < 0) {
 			RTE_LOG(ERR, PORT,
-				"Failed to create bonded port (err=%d)!\n",
+				"Failed to create bonded port (err=%d)\n",
 				ret);
 			goto close_partial;
 		}
@@ -989,7 +989,7 @@ init_iface(struct gatekeeper_if *iface)
 			ret = rte_eth_bond_slave_add(iface->id,
 				iface->ports[i]);
 			if (ret < 0) {
-				RTE_LOG(ERR, PORT, "Failed to add slave port %hhu to bonded port %hhu (err=%d)!\n",
+				RTE_LOG(ERR, PORT, "Failed to add slave port %hhu to bonded port %hhu (err=%d)\n",
 					iface->ports[i], iface->id, ret);
 				rm_slave_ports(iface, num_slaves_added);
 				goto close_ports;
@@ -1026,7 +1026,7 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
 	int ret = rte_eth_dev_start(port_id);
 	if (ret < 0) {
 		RTE_LOG(ERR, PORT,
-			"Failed to start port %hhu (err=%d)!\n",
+			"Failed to start port %hhu (err=%d)\n",
 			port_id, ret);
 		return ret;
 	}
@@ -1053,7 +1053,7 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
 		if (link.link_status)
 			break;
 
-		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down!\n",
+		RTE_LOG(ERR, PORT, "Querying port %hhu, and link is down\n",
 			port_id);
 
 		if (!wait_for_link || attempts > num_attempts_link_get) {
@@ -1242,16 +1242,16 @@ init_net_stage1(void *arg)
 		 */
 		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
 			RTE_LOG(ERR, MEMPOOL,
-				"Failed to allocate mbuf for numa node %u!\n",
+				"Failed to allocate mbuf for numa node %u\n",
 				i);
 
-			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure!\n");
-			else if (rte_errno == E_RTE_SECONDARY) RTE_LOG(ERR, MEMPOOL, "Function was called from a secondary process instance!\n");
-			else if (rte_errno == EINVAL) RTE_LOG(ERR, MEMPOOL, "Cache size provided is too large!\n");
-			else if (rte_errno == ENOSPC) RTE_LOG(ERR, MEMPOOL, "The maximum number of memzones has already been allocated!\n");
-			else if (rte_errno == EEXIST) RTE_LOG(ERR, MEMPOOL, "A memzone with the same name already exists!\n");
-			else if (rte_errno == ENOMEM) RTE_LOG(ERR, MEMPOOL, "No appropriate memory area found in which to create memzone!\n");
-			else RTE_LOG(ERR, MEMPOOL, "Unknown error!\n");
+			if (rte_errno == E_RTE_NO_CONFIG) RTE_LOG(ERR, MEMPOOL, "Function could not get pointer to rte_config structure\n");
+			else if (rte_errno == E_RTE_SECONDARY) RTE_LOG(ERR, MEMPOOL, "Function was called from a secondary process instance\n");
+			else if (rte_errno == EINVAL) RTE_LOG(ERR, MEMPOOL, "Cache size provided is too large\n");
+			else if (rte_errno == ENOSPC) RTE_LOG(ERR, MEMPOOL, "The maximum number of memzones has already been allocated\n");
+			else if (rte_errno == EEXIST) RTE_LOG(ERR, MEMPOOL, "A memzone with the same name already exists\n");
+			else if (rte_errno == ENOMEM) RTE_LOG(ERR, MEMPOOL, "No appropriate memory area found in which to create memzone\n");
+			else RTE_LOG(ERR, MEMPOOL, "Unknown error\n");
 
 			return -1;
 		}
@@ -1293,7 +1293,7 @@ start_network_stage2(void *arg)
 destroy_front:
 	destroy_iface(&net->front, IFACE_DESTROY_ALL);
 fail:
-	RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network!\n");
+	RTE_LOG(ERR, GATEKEEPER, "Failed to start Gatekeeper network\n");
 	return ret;
 }
 

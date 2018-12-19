@@ -59,7 +59,7 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
 			bytes_to_add);
 		if (eth_hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
-				"Not enough headroom space in the first segment!\n");
+				"Not enough headroom space in the first segment\n");
 			return NULL;
 		}
 	} else if (bytes_to_add < 0) {
@@ -71,7 +71,7 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
 			-bytes_to_add);
 		if (eth_hdr == NULL) {
 			RTE_LOG(ERR, MBUF,
-				"Could not remove headroom space!\n");
+				"Could not remove headroom space\n");
 			return NULL;
 		}
 	} else

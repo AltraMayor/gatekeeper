@@ -272,7 +272,7 @@ config_gatekeeper(void)
 	lua_state = luaL_newstate();
 	if (!lua_state) {
 		RTE_LOG(ERR, LUA,
-			"config: failed to create new Lua state!\n");
+			"config: failed to create new Lua state\n");
 		return -1;
 	}
 
@@ -282,7 +282,7 @@ config_gatekeeper(void)
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
 		RTE_LOG(ERR, LUA,
-			"config: %s!\n", lua_tostring(lua_state, -1));
+			"config: %s\n", lua_tostring(lua_state, -1));
 		ret = -1;
 		goto out;
 	}
@@ -300,7 +300,7 @@ config_gatekeeper(void)
 	ret = lua_pcall(lua_state, 0, 0, 0);
 	if (ret != 0) {
 		RTE_LOG(ERR, LUA,
-			"config: %s!\n", lua_tostring(lua_state, -1));
+			"config: %s\n", lua_tostring(lua_state, -1));
 		ret = -1;
 		goto out;
 	}
@@ -310,7 +310,7 @@ config_gatekeeper(void)
 	ret = lua_pcall(lua_state, 0, 1, 0);
 	if (ret != 0) {
 		RTE_LOG(ERR, LUA,
-			"config: %s!\n", lua_tostring(lua_state, -1));
+			"config: %s\n", lua_tostring(lua_state, -1));
 		ret = -1;
 		goto out;
 	}
@@ -318,7 +318,7 @@ config_gatekeeper(void)
 	ret = luaL_checkinteger(lua_state, -1);
 	if (ret < 0)
 		RTE_LOG(ERR, LUA,
-			"config: gatekeeper_init() return value is %d!\n",
+			"config: gatekeeper_init() return value is %d\n",
 			ret);
 
 out:

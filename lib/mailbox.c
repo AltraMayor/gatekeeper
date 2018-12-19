@@ -43,7 +43,7 @@ init_mailbox(const char *tag, int mailbox_max_entries_exp,
 		socket_id, RING_F_SC_DEQ);
     	if (mb->ring == NULL) {
 		RTE_LOG(ERR, RING,
-			"mailbox: can't create ring %s (len = %d) at lcore %u!\n",
+			"mailbox: can't create ring %s (len = %d) at lcore %u\n",
 			ring_name, ret, lcore_id);
 		ret = -1;
 		goto out;
@@ -58,7 +58,7 @@ init_mailbox(const char *tag, int mailbox_max_entries_exp,
 		cache_size, 0, NULL, NULL, NULL, NULL, socket_id, 0);
     	if (mb->pool == NULL) {
 		RTE_LOG(ERR, MEMPOOL,
-			"mailbox: can't create mempool %s (len = %d) at lcore %u!\n",
+			"mailbox: can't create mempool %s (len = %d) at lcore %u\n",
 			pool_name, ret, lcore_id);
 		ret = -1;
         	goto free_ring;

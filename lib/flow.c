@@ -148,10 +148,10 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 			return;
 		}
 	} else
-		rte_panic("Unexpected condition at %s: unknown flow type %hu!\n",
+		rte_panic("Unexpected condition at %s: unknown flow type %hu\n",
 			__func__, flow->proto);
 
 	RTE_LOG(ERR, GATEKEEPER,
-		"%s for the flow with IP source address %s, and destination address %s!\n",
+		"%s for the flow with IP source address %s, and destination address %s\n",
 		err_msg, src, dst);
 }
