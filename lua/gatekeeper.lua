@@ -213,6 +213,8 @@ struct gt_config {
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
