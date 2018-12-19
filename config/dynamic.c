@@ -134,8 +134,7 @@ process_client_message(int conn_fd,
 		"Dynamic configuration: the reply was NULL.";
 
 	if (msg_len == 0) {
-		RTE_LOG(WARNING, LUA,
-			"dyn_cfg: the received message is an empty string\n");
+		DYC_LOG(WARNING, "The received message is an empty string\n");
 		return reply_client_message(conn_fd,
 			CLIENT_EMPTY_ERROR, strlen(CLIENT_EMPTY_ERROR));
 	}
@@ -151,30 +150,30 @@ process_client_message(int conn_fd,
 			strncpy(truncated_reply_msg, reply_msg, MSG_MAX_LEN);
 			truncated_reply_msg[MSG_MAX_LEN - 1] = '\0';
 
-			RTE_LOG(ERR, LUA, "dyn_cfg: %s\n", truncated_reply_msg);
+			DYC_LOG(ERR, "%s\n", truncated_reply_msg);
 
-			RTE_LOG(WARNING, LUA,
-				"dyn_cfg: The error message length (%lu) exceeds the limit\n",
+			DYC_LOG(WARNING,
+				"The error message length (%lu) exceeds the limit\n",
 				reply_len);
 
 			reply_len = MSG_MAX_LEN;
 		} else
-			RTE_LOG(ERR, LUA, "dyn_cfg: %s\n", reply_msg);
+			DYC_LOG(ERR, "%s\n", reply_msg);
 
 		return reply_client_message(conn_fd, reply_msg, reply_len);
 	}
 
 	reply_msg = luaL_checklstring(lua_state, -1, &reply_len);
 	if (reply_msg == NULL) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: The client request script returns a NULL string\n");
+		DYC_LOG(ERR,
+			"The client request script returns a NULL string\n");
 		return reply_client_message(conn_fd,
 			CLIENT_PROC_ERROR, strlen(CLIENT_PROC_ERROR));
 	}
 
 	if (reply_len > MSG_MAX_LEN) {
-		RTE_LOG(WARNING, LUA,
-			"dyn_cfg: The reply message length (%lu) exceeds the limit\n",
+		DYC_LOG(WARNING,
+			"The reply message length (%lu) exceeds the limit\n",
 			reply_len);
 		reply_len = MSG_MAX_LEN;
 	}
@@ -316,15 +315,13 @@ setup_dy_lua(lua_State *lua_state)
 	set_lua_path(lua_state, LUA_DY_BASE_DIR);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: %s\n", lua_tostring(lua_state, -1));
+		DYC_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		return -1;
 	}
 
 	ret = lua_pcall(lua_state, 0, 0, 0);
 	if (ret != 0) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: %s\n", lua_tostring(lua_state, -1));
+		DYC_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		return -1;
 	}
 
@@ -383,16 +380,14 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 
 	lua_state = luaL_newstate();
 	if (lua_state == NULL) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: failed to create new Lua state\n");
+		DYC_LOG(ERR, "Failed to create new Lua state\n");
 		goto close_fd;
 	}
 
 	/* Set up the Lua state while there is a connection. */
 	ret = setup_dy_lua(lua_state);
 	if (ret < 0) {
-		RTE_LOG(ERR, LUA,
-			"dyn_cfg: Failed to set up the lua state\n");
+		DYC_LOG(ERR, "Failed to set up the lua state\n");
 		goto close_lua;
 	}
 

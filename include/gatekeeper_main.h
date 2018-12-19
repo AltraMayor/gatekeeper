@@ -30,18 +30,10 @@
 #endif
 
 /*
- * Custom log type for Gatekeeper-related log entries.
- * When using this logtype, the log string should include
- * the name of the relevant functional block, library, etc.
+ * Custom log type for Gatekeeper-related log entries
+ * that are not relevant to a specific block.
  */
 #define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
-
-/*
- * Custom log type for Lua-related log entries.
- * When using this logtype, the log string should include
- * the name of the relevant functional block, library, etc.
- */
-#define RTE_LOGTYPE_LUA RTE_LOGTYPE_USER2
 
 extern volatile int exiting;
 
