@@ -186,7 +186,6 @@ struct ggu_config {
 
 struct lls_config {
 	unsigned int lcore_id;
-	int          debug;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int mailbox_max_pkt_burst;
@@ -195,6 +194,8 @@ struct lls_config {
 	unsigned int mailbox_burst_size;
 	unsigned int lls_cache_records;
 	unsigned int lls_cache_scan_interval_sec;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 

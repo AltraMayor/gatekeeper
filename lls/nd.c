@@ -101,13 +101,13 @@ char *
 ipv6_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
 {
 	if (sizeof(struct in6_addr) != cache->key_len) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: the key size of an ND entry should be %zu, but it is %"PRIx32"\n",
+		LLS_LOG(ERR, "The key size of an ND entry should be %zu, but it is %"PRIx32"\n",
 			sizeof(struct in6_addr), cache->key_len);
 		return NULL;
 	}
 
 	if (inet_ntop(AF_INET6, ip_be, buf, len) == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: %s: failed to convert a number to an IP address (%s)\n",
+		LLS_LOG(ERR, "%s: failed to convert a number to an IP address (%s)\n",
 			__func__, strerror(errno));
 		return NULL;
 	}
@@ -171,8 +171,8 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		rte_lcore_to_socket_id(lls_conf->lcore_id)];
 	struct rte_mbuf *created_pkt = rte_pktmbuf_alloc(mp);
 	if (created_pkt == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: could not alloc a packet for an ND Neighbor Solicitation\n");
+		LLS_LOG(ERR,
+			"Could not alloc a packet for an ND Neighbor Solicitation\n");
 		return;
 	}
 
@@ -249,8 +249,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 
 	if (rte_eth_tx_burst(iface->id, tx_queue, &created_pkt, 1) <= 0) {
 		rte_pktmbuf_free(created_pkt);
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: could not send an ND Neighbor Solicitation\n");
+		LLS_LOG(ERR, "Could not send an ND Neighbor Solicitation\n");
 	}
 }
 
@@ -285,7 +284,7 @@ parse_nd_opts(struct nd_opts *ndopts, uint8_t *opt, uint16_t opt_len)
 		case ND_OPT_SOURCE_LL_ADDR:
 		case ND_OPT_TARGET_LL_ADDR:
 			if (ndopts->opt_array[nd_opt->type])
-				RTE_LOG(INFO, GATEKEEPER, "lls: multiple options of type %d in an ND Neighbor packet\n",
+				LLS_LOG(INFO, "Multiple options of type %d in an ND Neighbor packet\n",
 					nd_opt->type);
 			else
 				ndopts->opt_array[nd_opt->type] = nd_opt;
@@ -413,12 +412,12 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	RTE_VERIFY(RTE_MBUF_DEFAULT_BUF_SIZE >= min_len);
 	if (pkt_len > min_len) {
 		if (rte_pktmbuf_trim(buf, pkt_len - min_len) < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "lls: could not trim packet to correct size for response to a Neighbor Solicitation\n");
+			LLS_LOG(ERR, "Could not trim packet to correct size for response to a Neighbor Solicitation\n");
 			return -1;
 		}
 	} else if (pkt_len < min_len) {
 		if (rte_pktmbuf_append(buf, min_len - pkt_len) == NULL) {
-			RTE_LOG(ERR, GATEKEEPER, "lls: could not append space to packet to correct size for response to a Neighbor Solicitation\n");
+			LLS_LOG(ERR, "Could not append space to packet to correct size for response to a Neighbor Solicitation\n");
 			return -1;
 		}
 	}
@@ -491,7 +490,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
 		if (rte_eth_tx_burst(iface->id, tx_queue, &buf, 1) <= 0) {
-			RTE_LOG(ERR, GATEKEEPER, "lls: could not send an ND Neighbor Advertisement in response to a Solicitation\n");
+			LLS_LOG(ERR, "Could not send an ND Neighbor Advertisement in response to a Solicitation\n");
 			return -1;
 		}
 	} else {
@@ -555,7 +554,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
 		if (rte_eth_tx_burst(iface->id, tx_queue, &buf, 1) <= 0) {
-			RTE_LOG(ERR, GATEKEEPER, "lls: could not send an ND Neighbor Solicitation in response to a Solicitation\n");
+			LLS_LOG(ERR, "Could not send an ND Neighbor Solicitation in response to a Solicitation\n");
 			return -1;
 		}
 	}
@@ -677,7 +676,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	/* pkt_in_skip_l2() was already called by GK or GT. */
 	l2_len = pkt_in_l2_hdr_len(buf);
 	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(l2_len)) {
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+		LLS_LOG(NOTICE, "ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
 			pkt_len, ND_NEIGH_PKT_MIN_LEN(l2_len), __func__);
 		return -1;
 	}
@@ -690,7 +689,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 
 	if (pkt_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			icmpv6_offset - sizeof(*ipv6_hdr))) {
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
+		LLS_LOG(NOTICE, "ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
 			pkt_len, ND_NEIGH_PKT_MIN_LEN(l2_len) +
 			icmpv6_offset - sizeof(*ipv6_hdr), __func__);
 		return -1;
@@ -712,7 +711,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return process_nd_neigh_advertisement(lls_conf,
 			ipv6_hdr, icmpv6_hdr, icmpv6_len, iface);
 	default:
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: %s received an ICMPv6 packet that's not a Neighbor Solicitation or Neighbor Advertisement (%hhu)\n",
+		LLS_LOG(NOTICE, "%s received an ICMPv6 packet that's not a Neighbor Solicitation or Neighbor Advertisement (%hhu)\n",
 			__func__, icmpv6_hdr->type);
 		return -1;
 	}
@@ -733,10 +732,10 @@ print_nd_record(struct lls_cache *cache, struct lls_record *record)
 		return;
 
 	if (map->stale)
-		RTE_LOG(INFO, GATEKEEPER, "%s: unresolved (%u holds)\n",
+		LLS_LOG(DEBUG, "%s: unresolved (%u holds)\n",
 			ip_str, record->num_holds);
 	else
-		RTE_LOG(INFO, GATEKEEPER,
+		LLS_LOG(DEBUG,
 			"%s: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8" (port %hhu) (%u holds)\n",
 			ip_str,
 			map->ha.addr_bytes[0], map->ha.addr_bytes[1],
