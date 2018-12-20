@@ -7,6 +7,7 @@ return function (net_conf, lls_conf, numa_table)
 	end
 	
 	-- Change these parameters to configure the Grantor.
+
 	gt_conf.ggu_src_port = 0xA0A0
 	gt_conf.ggu_dst_port = 0xB0B0
 	gt_conf.frag_bucket_num = 0x1000;
@@ -35,6 +36,9 @@ return function (net_conf, lls_conf, numa_table)
 	gt_conf.mailbox_max_entries_exp = 7
 	gt_conf.mailbox_mem_cache_size = 0
 	gt_conf.mailbox_burst_size = 32
+
+	-- Log level for GT.
+	gt_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
 	gt_conf.gt_max_pkt_burst = gatekeeper.get_front_burst_config(
 		gt_max_pkt_burst, net_conf)

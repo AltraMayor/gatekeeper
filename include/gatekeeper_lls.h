@@ -27,6 +27,11 @@
 #include "gatekeeper_acl.h"
 #include "gatekeeper_mailbox.h"
 
+extern int lls_logtype;
+
+#define LLS_LOG(level, ...) \
+	rte_log(RTE_LOG_ ## level, lls_logtype, "GATEKEEPER LLS: " __VA_ARGS__)
+
 /*
  * Maximum key length (in bytes) for an LLS map. It should be set
  * to the maximum key length needed. Currently, this is set to 16 for
@@ -178,12 +183,6 @@ struct lls_config {
 	/* lcore that the LLS block runs on. */
 	unsigned int      lcore_id;
 
-	/*
-	 * When non-zero, all caches will be dumped when
-	 * they are changed or periodically scanned.
-	 */
-	int               debug;
-
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t          front_max_pkt_burst;
 	uint16_t          back_max_pkt_burst;
@@ -201,6 +200,11 @@ struct lls_config {
 
 	/* Length of time (in seconds) to wait between scans of the cache. */
 	unsigned int      lls_cache_scan_interval_sec;
+
+	/* Log level for LLS block. */
+	uint32_t          log_level;
+	/* Dynamic logging type, assigned at runtime. */
+	int               log_type;
 
 	/*
 	 * The fields below are for internal use.

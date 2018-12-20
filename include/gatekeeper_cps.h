@@ -26,6 +26,11 @@
 #include "gatekeeper_mailbox.h"
 #include "list.h"
 
+extern int cps_logtype;
+
+#define CPS_LOG(level, ...) \
+	rte_log(RTE_LOG_ ## level, cps_logtype, "GATEKEEPER CPS: " __VA_ARGS__)
+
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
 	/* lcore that the CPS block runs on. */
@@ -33,11 +38,10 @@ struct cps_config {
 	/* Source and destination TCP ports to capture BGP traffic. */
 	uint16_t          tcp_port_bgp;
 
-	/*
-	 * When non-zero, routing table update information
-	 * from the KNI will be displayed.
-	 */
-	int               debug;
+	/* Log level for CPS block. */
+	uint32_t          log_level;
+	/* Dynamic logging type, assigned at runtime. */
+	int               log_type;
 
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t          front_max_pkt_burst;

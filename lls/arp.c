@@ -40,7 +40,7 @@ ipv4_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
 	struct in_addr ipv4_addr;
 
 	if (sizeof(ipv4_addr) != cache->key_len) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: the key size of an ARP entry should be %zu, but it is %"PRIx32"\n",
+		LLS_LOG(ERR, "The key size of an ARP entry should be %zu, but it is %"PRIx32"\n",
 			sizeof(ipv4_addr), cache->key_len);
 		return NULL;
 	}
@@ -48,7 +48,7 @@ ipv4_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
 	/* Keep IP address in network order for inet_ntop(). */
 	ipv4_addr.s_addr = *(const uint32_t *)ip_be;
 	if (inet_ntop(AF_INET, &ipv4_addr, buf, len) == NULL) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: %s: failed to convert a number to an IP address (%s)\n",
+		LLS_LOG(ERR, "%s: failed to convert a number to an IP address (%s)\n",
 			__func__, strerror(errno));
 		return NULL;
 	}
@@ -78,8 +78,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		rte_lcore_to_socket_id(lls_conf->lcore_id)];
 	created_pkt = rte_pktmbuf_alloc(mp);
 	if (created_pkt == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: could not alloc a packet for an ARP request\n");
+		LLS_LOG(ERR, "Could not alloc a packet for an ARP request\n");
 		return;
 	}
 
@@ -116,8 +115,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	ret = rte_eth_tx_burst(iface->id, tx_queue, &created_pkt, 1);
 	if (ret <= 0) {
 		rte_pktmbuf_free(created_pkt);
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: could not transmit an ARP request\n");
+		LLS_LOG(ERR, "Could not transmit an ARP request\n");
 	}
 }
 
@@ -133,7 +131,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	int ret;
 
 	if (pkt_len < l2_len + sizeof(*arp_hdr)) {
-		RTE_LOG(ERR, GATEKEEPER, "lls: %s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
+		LLS_LOG(ERR, "%s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
 			iface->name, pkt_len,
 			l2_len + sizeof(*arp_hdr));
 		return -1;
@@ -197,7 +195,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		/* Need to transmit reply. */
 		num_tx = rte_eth_tx_burst(iface->id, tx_queue, &buf, 1);
 		if (unlikely(num_tx != 1)) {
-			RTE_LOG(NOTICE, GATEKEEPER, "lls: ARP reply failed\n");
+			LLS_LOG(NOTICE, "ARP reply failed\n");
 			return -1;
 		}
 		return 0;
@@ -210,7 +208,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 */
 		return -1;
 	default:
-		RTE_LOG(NOTICE, GATEKEEPER, "lls: %s received an ARP packet with an unknown operation (%hu)\n",
+		LLS_LOG(NOTICE, "%s received an ARP packet with an unknown operation (%hu)\n",
 			__func__, rte_be_to_cpu_16(arp_hdr->arp_op));
 		return -1;
 	}
@@ -227,10 +225,10 @@ print_arp_record(struct lls_cache *cache, struct lls_record *record)
 		return;
 
 	if (map->stale)
-		RTE_LOG(INFO, GATEKEEPER, "%s: unresolved (%u holds)\n",
+		LLS_LOG(DEBUG, "%s: unresolved (%u holds)\n",
 			ip_str, record->num_holds);
 	else
-		RTE_LOG(INFO, GATEKEEPER,
+		LLS_LOG(DEBUG,
 			"%s: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8" (port %hhu) (%u holds)\n",
 			ip_str,
 			map->ha.addr_bytes[0], map->ha.addr_bytes[1],

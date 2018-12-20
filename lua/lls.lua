@@ -7,7 +7,11 @@ return function (net_conf, numa_table)
 	end
 
 	-- Change these parameters to configure the LLS block.
-	lls_conf.debug = false
+
+	-- Log level for LLS. Note: set to RTE_LOG_DEBUG
+	-- to log routing table updates and to log all
+	-- the cache when it is periodically scanned.
+	lls_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
 	-- XXX #155 Sample parameters, need to be tested for better performance.
 	lls_conf.mailbox_max_entries_exp = 7

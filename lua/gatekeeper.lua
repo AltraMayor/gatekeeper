@@ -166,6 +166,8 @@ struct gk_config {
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
@@ -177,12 +179,13 @@ struct ggu_config {
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
 struct lls_config {
 	unsigned int lcore_id;
-	int          debug;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int mailbox_max_pkt_burst;
@@ -191,6 +194,8 @@ struct lls_config {
 	unsigned int mailbox_burst_size;
 	unsigned int lls_cache_records;
 	unsigned int lls_cache_scan_interval_sec;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
@@ -209,13 +214,16 @@ struct gt_config {
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
 struct cps_config {
 	unsigned int lcore_id;
 	uint16_t     tcp_port_bgp;
-	int          debug;
+	uint32_t     log_level;
+	int          log_type;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int num_attempts_kni_link_set;
@@ -231,6 +239,8 @@ struct dynamic_config {
 	unsigned int     lcore_id;
 	struct gk_config *gk;
 	struct gt_config *gt;
+	uint32_t         log_level;
+	int              log_type;
 	/* This struct has hidden fields. */
 };
 
@@ -243,6 +253,8 @@ struct sol_config {
 	double       tb_rate_approx_err;
 	double       req_channel_bw_mbps;
 	unsigned int mailbox_mem_cache_size;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 
@@ -253,6 +265,9 @@ ffi.cdef[[
 
 void rte_log_set_global_level(uint32_t log_level);
 uint32_t rte_log_get_global_level(void);
+
+int rte_log_set_level(uint32_t type, uint32_t level);
+int rte_log_get_level(uint32_t type);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,

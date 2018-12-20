@@ -22,9 +22,24 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
--- Example of temporarily changing global log level.
+-- Examples of temporarily changing global and block log levels.
 local old_log_level = gatekeeper.c.rte_log_get_global_level()
 gatekeeper.c.rte_log_set_global_level(gatekeeper.c.RTE_LOG_ERR)
+
+local cpsc = gatekeeper.c.get_cps_conf()
+if cpsc == nil then
+	return "cps: failed to fetch config to update log level"
+end
+
+local old_cps_log_level = gatekeeper.c.rte_log_get_level(cpsc.log_type)
+if old_cps_log_level < 0 then
+	return "cps: failed to fetch log level"
+end
+
+ret = gatekeeper.c.rte_log_set_level(cpsc.log_type, gatekeeper.c.RTE_LOG_ERR)
+if ret < 0 then
+	return "cps: failed to set new log level"
+end
 
 ret = dylib.c.add_fib_entry("100.0.0.1/30", nil,
 	"10.0.1.254", dylib.c.GK_FWD_GATEWAY_BACK_NET, dyc.gk)
@@ -32,8 +47,12 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
--- Revert log level.
+-- Revert log levels.
 gatekeeper.c.rte_log_set_global_level(old_log_level)
+ret = gatekeeper.c.rte_log_set_level(cpsc.log_type, old_cps_log_level)
+if ret < 0 then
+	return "cps: failed to revert to old log level"
+end
 
 ret = dylib.c.add_fib_entry("200.0.0.1/30", nil,
 	"10.0.0.254", dylib.c.GK_FWD_GATEWAY_FRONT_NET, dyc.gk)

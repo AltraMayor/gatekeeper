@@ -37,6 +37,11 @@
 
 static struct ggu_config *ggu_conf;
 
+int ggu_logtype;
+
+#define GGU_LOG(level, ...) \
+	rte_log(RTE_LOG_ ## level, ggu_logtype, "GATEKEEPER GGU: " __VA_ARGS__)
+
 static inline const char *
 filter_name(const struct gatekeeper_if *iface)
 {
@@ -76,8 +81,7 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 		break;
 
 	default:
-		RTE_LOG(ERR, GATEKEEPER, "ggu: impossible policy state %hhu\n",
-			policy->state);
+		GGU_LOG(ERR, "Impossible policy state %hhu\n", policy->state);
 		mb_free_entry(mb, entry);
 		return;
 	}
@@ -97,7 +101,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		size_t params_offset;
 
 		if (ggu_decision->res1 != 0 || ggu_decision->res2 != 0) {
-			RTE_LOG(NOTICE, GATEKEEPER,
+			GGU_LOG(NOTICE,
 				"%s: %s: reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
 				block, __func__,
 				ggu_decision->res1,
@@ -111,7 +115,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				RTE_LOG(WARNING, GATEKEEPER,
+				GGU_LOG(WARNING,
 					"%s: %s: malformed IPv4 declined decision\n",
 					block, __func__);
 				return;
@@ -126,7 +130,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				RTE_LOG(WARNING, GATEKEEPER,
+				GGU_LOG(WARNING,
 					"%s: %s: malformed IPv6 declined decision\n",
 					block, __func__);
 				return;
@@ -141,7 +145,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				RTE_LOG(WARNING, GATEKEEPER,
+				GGU_LOG(WARNING,
 					"%s: %s: malformed IPv4 granted decision\n",
 					block, __func__);
 				return;
@@ -156,7 +160,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				RTE_LOG(WARNING, GATEKEEPER,
+				GGU_LOG(WARNING,
 					"%s: %s: malformed IPv6 granted decision\n",
 					block, __func__);
 				return;
@@ -168,7 +172,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			params_offset = sizeof(policy.flow.f.v6);
 			break;
 		default:
-			RTE_LOG(WARNING, GATEKEEPER,
+			GGU_LOG(WARNING,
 				"%s: %s: unexpected decision type: %hu\n",
 				block, __func__, decision_type);
 			return;
@@ -214,7 +218,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	}
 
 	if (decision_list_len != 0) {
-		RTE_LOG(WARNING, GATEKEEPER,
+		GGU_LOG(WARNING,
 			"%s: %s: notification packet had partial decision list\n",
 			block, __func__);
 	}
@@ -249,23 +253,23 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		minimum_size += sizeof(struct ipv4_hdr) +
 			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"ggu: the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+			GGU_LOG(NOTICE,
+				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
 				pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
 		ip4hdr = l3_hdr;
 		if (ip4hdr->next_proto_id != IPPROTO_UDP) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ggu: received non-UDP packets, IPv4 %s bug!\n",
+			GGU_LOG(ERR,
+				"Received non-UDP packets, IPv4 %s bug\n",
 				filter_name(back));
 			goto free_packet;
 		}
 
 		if (ip4hdr->dst_addr != back->ip4_addr.s_addr) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ggu: received packets not destined to the Gatekeeper server, IPv4 %s bug!\n",
+			GGU_LOG(ERR,
+				"Received packets not destined to the Gatekeeper server, IPv4 %s bug\n",
 				filter_name(back));
 			goto free_packet;
 		}
@@ -278,8 +282,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip4hdr);
 		if (pkt->data_len < minimum_size) {
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"ggu: the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+			GGU_LOG(NOTICE,
+				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
 				pkt->data_len, minimum_size);
 			goto free_packet;
 		}
@@ -298,8 +302,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		minimum_size += sizeof(struct ipv6_hdr) +
 			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"ggu: the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+			GGU_LOG(NOTICE,
+				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
 				pkt->data_len, minimum_size);
 			goto free_packet;
 		}
@@ -320,22 +324,22 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 				memcmp(ip6hdr->dst_addr,
 					back->ip6_addr.s6_addr,
 					sizeof(ip6hdr->dst_addr)) != 0) {
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"ggu: received an IPv6 packet destinated to other host!\n");
+			GGU_LOG(NOTICE,
+				"Received an IPv6 packet destined to other host\n");
 			return;
 		}
 
 		l3_len = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 			&nexthdr);
 		if (l3_len < 0) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ggu: failed to parse the IPv6 packet's extension headers!\n");
+			GGU_LOG(ERR,
+				"Failed to parse the IPv6 packet's extension headers\n");
 			goto free_packet;
 		}
 
 		if (nexthdr != IPPROTO_UDP) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ggu: received non-UDP packets, IPv6 %s bug!\n",
+			GGU_LOG(ERR,
+				"Received non-UDP packets, IPv6 %s bug\n",
 				filter_name(back));
 			goto free_packet;
 		}
@@ -346,8 +350,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip6hdr);
 		if (pkt->data_len < minimum_size) {
-			RTE_LOG(NOTICE, GATEKEEPER,
-				"ggu: the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+			GGU_LOG(NOTICE,
+				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
 				pkt->data_len, minimum_size);
 			goto free_packet;
 		}
@@ -357,8 +361,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	}
 
 	default:
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: unknown network layer protocol %hu\n",
+		GGU_LOG(NOTICE, "Unknown network layer protocol %hu\n",
 			ether_type);
 		goto free_packet;
 		break;
@@ -366,8 +369,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 
 	if (udphdr->src_port != ggu_conf->ggu_src_port ||
 			udphdr->dst_port != ggu_conf->ggu_dst_port) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"ggu: unknown udp src port %hu, dst port %hu, %s bug!\n",
+		GGU_LOG(ERR,
+			"Unknown udp src port %hu, dst port %hu, %s bug\n",
 			rte_be_to_cpu_16(udphdr->src_port),
 			rte_be_to_cpu_16(udphdr->dst_port),
 			filter_name(back));
@@ -377,8 +380,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	real_payload_len = pkt->data_len - l2_len - l3_len;
 	expected_payload_len = rte_be_to_cpu_16(udphdr->dgram_len);
 	if (real_payload_len != expected_payload_len) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: the size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)!\n",
+		GGU_LOG(NOTICE,
+			"The size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)\n",
 			real_payload_len, expected_payload_len);
 		goto free_packet;
 	}
@@ -387,14 +390,13 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 
 	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
 	if (gguhdr->version != GGU_PD_VER) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: unknown policy decision format %hhu\n",
+		GGU_LOG(NOTICE, "Unknown policy decision format %hhu\n",
 			gguhdr->version);
 		goto free_packet;
 	}
 	if (gguhdr->res1 != 0 || gguhdr->res2 != 0) {
-		RTE_LOG(NOTICE, GATEKEEPER,
-			"ggu: reserved fields of GGU header should be 0 but are %hhu and %hu\n",
+		GGU_LOG(NOTICE,
+			"Reserved fields of GGU header should be 0 but are %hhu and %hu\n",
 			gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
 		goto free_packet;
 	}
@@ -431,8 +433,8 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	RTE_VERIFY(num_pkts <= ggu_conf->mailbox_max_pkt_burst);
 
 	if (req == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"ggu: %s: allocation of mailbox message failed\n",
+		GGU_LOG(ERR,
+			"%s: allocation of mailbox message failed\n",
 			__func__);
 		ret = -ENOMEM;
 		goto free_pkts;
@@ -443,8 +445,8 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	ret = mb_send_entry(&ggu_conf->mailbox, req);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"ggu: %s: failed to enqueue message to mailbox\n",
+		GGU_LOG(ERR,
+			"%s: failed to enqueue message to mailbox\n",
 			__func__);
 		goto free_pkts;
 	}
@@ -467,8 +469,7 @@ ggu_proc(void *arg)
 	unsigned int i;
 	uint16_t ggu_max_pkt_burst = ggu_conf->ggu_max_pkt_burst;
 
-	RTE_LOG(NOTICE, GATEKEEPER,
-		"ggu: the GK-GT unit is running at lcore = %u\n", lcore);
+	GGU_LOG(NOTICE, "The GK-GT unit is running at lcore = %u\n", lcore);
 
 	/*
 	 * Load a set of GK-GT packets from the back NIC
@@ -509,8 +510,7 @@ ggu_proc(void *arg)
 		}
 	}
 
-	RTE_LOG(NOTICE, GATEKEEPER,
-		"ggu: the GK-GT unit at lcore = %u is exiting\n", lcore);
+	GGU_LOG(NOTICE, "The GK-GT unit at lcore = %u is exiting\n", lcore);
 	return cleanup_ggu(ggu_conf);
 }
 
@@ -539,7 +539,7 @@ ggu_stage1(void *arg)
 		ret = get_queue_id(&ggu_conf->net->back, QUEUE_TYPE_RX,
 			ggu_conf->lcore_id);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "ggu: cannot assign an RX queue for the back interface for lcore %u\n",
+			GGU_LOG(ERR, "Cannot assign an RX queue for the back interface for lcore %u\n",
 				ggu_conf->lcore_id);
 			return ret;
 		}
@@ -629,7 +629,7 @@ ggu_stage2(void *arg)
 		ret = register_ipv4_acl(&ipv4_rule, 1,
 			submit_ggu, NULL, &ggu_conf->net->back);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "ggu: could not register IPv4 GGU ACL on back iface\n");
+			GGU_LOG(ERR, "Could not register IPv4 GGU ACL on back iface\n");
 			return ret;
 		}
 	}
@@ -639,7 +639,7 @@ ggu_stage2(void *arg)
 		ret = register_ipv6_acl(&ipv6_rule, 1,
 			submit_ggu, NULL, &ggu_conf->net->back);
 		if (ret < 0) {
-			RTE_LOG(ERR, GATEKEEPER, "ggu: could not register IPv6 GGU ACL on back iface\n");
+			GGU_LOG(ERR, "Could not register IPv6 GGU ACL on back iface\n");
 			return ret;
 		}
 	}
@@ -658,8 +658,20 @@ run_ggu(struct net_config *net_conf,
 		goto out;
 	}
 
+	ggu_logtype = rte_log_register("gatekeeper.ggu");
+	if (ggu_logtype < 0) {
+		ret = -1;
+		goto out;
+	}
+	ret = rte_log_set_level(ggu_logtype, ggu_conf->log_level);
+	if (ret < 0) {
+		ret = -1;
+		goto out;
+	}
+	ggu_conf->log_type = ggu_logtype;
+
 	if (!net_conf->back_iface_enabled) {
-		RTE_LOG(ERR, GATEKEEPER, "ggu: back interface is required\n");
+		GGU_LOG(ERR, "Back interface is required\n");
 		ret = -1;
 		goto out;
 	}
@@ -726,8 +738,8 @@ alloc_ggu_conf(void)
 			sizeof(struct ggu_config), 0);
 		return ggu_conf;
 	} else {
-		RTE_LOG(ERR, GATEKEEPER,
-			"ggu: trying to allocate the second instance of struct ggu_config\n");
+		GGU_LOG(ERR,
+			"Trying to allocate the second instance of struct ggu_config\n");
 		return NULL;
 	}
 }

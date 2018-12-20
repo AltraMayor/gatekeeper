@@ -49,8 +49,7 @@ lls_cache_dump(struct lls_cache *cache)
 	const void *key;
 	void *data;
 
-	RTE_LOG(INFO, GATEKEEPER, "LLS cache (%s)\n=====================\n",
-		cache->name);
+	LLS_LOG(DEBUG, "LLS cache (%s)\n=====================\n", cache->name);
 	index = rte_hash_iterate(cache->hash, &key, &data, &iter);
 	while (index >= 0) {
 		cache->print_record(cache, &cache->records[index]);
@@ -94,7 +93,7 @@ lls_add_record(struct lls_cache *cache, const uint8_t *ip_be)
 		char ip_buf[cache->key_str_len];
 		char *ip_str = cache->ip_str(cache, ip_be,
 			ip_buf, cache->key_str_len);
-		RTE_LOG(ERR, HASH, "%s, could not add record for %s\n",
+		LLS_LOG(ERR, "%s, could not add record for %s\n",
 			ret == -EINVAL ? "Invalid params" : "No space",
 			ip_str == NULL ? cache->name : ip_str);
 	} else
@@ -110,7 +109,7 @@ lls_del_record(struct lls_cache *cache, const uint8_t *ip_be)
 		char ip_buf[cache->key_str_len];
 		char *ip_str = cache->ip_str(cache, ip_be, ip_buf,
 			cache->key_str_len);
-		RTE_LOG(ERR, HASH, "%s, record for %s not deleted\n",
+		LLS_LOG(ERR, "%s, record for %s not deleted\n",
 			ret == -ENOENT ? "No map found" : "Invalid params",
 			ip_str == NULL ? cache->name : ip_str);
 	}
@@ -139,7 +138,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 		/* Try to resolve record using broadcast. */
 		lls_send_request(lls_conf, cache, hold_req->ip_be, NULL);
 
-		if (lls_conf->debug)
+		if (lls_conf->log_level == RTE_LOG_DEBUG)
 			lls_cache_dump(cache);
 		return;
 	} else if (unlikely(ret == -EINVAL)) {
@@ -147,7 +146,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 		char *ip_str;
 		ip_str = cache->ip_str(cache, hold_req->ip_be, ip_buf,
 			cache->key_str_len);
-		RTE_LOG(ERR, HASH,
+		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; hold failed\n",
 			ip_str == NULL ? cache->name : ip_str);
 		return;
@@ -166,7 +165,7 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 	}
 	record->holds[record->num_holds++] = hold_req->hold;
 
-	if (lls_conf->debug)
+	if (lls_conf->log_level == RTE_LOG_DEBUG)
 		lls_cache_dump(cache);
 }
 
@@ -189,7 +188,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 		char ip_buf[cache->key_str_len];
 		char *ip_str = cache->ip_str(cache, put_req->ip_be, ip_buf,
 			cache->key_str_len);
-		RTE_LOG(ERR, HASH,
+		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; put failed\n",
 			ip_str == NULL ? cache->name : ip_str);
 		return;
@@ -227,7 +226,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 		rte_memcpy(&record->holds[i], &record->holds[record->num_holds],
 			sizeof(record->holds[i]));
 
-	if (lls_conf->debug)
+	if (lls_conf->log_level == RTE_LOG_DEBUG)
 		lls_cache_dump(cache);
 }
 
@@ -255,7 +254,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		record->ts = mod_req->ts;
 		record->num_holds = 0;
 
-		if (lls_conf->debug)
+		if (lls_conf->log_level == RTE_LOG_DEBUG)
 			lls_cache_dump(cache);
 		return;
 	} else if (unlikely(ret == -EINVAL)) {
@@ -263,7 +262,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		char *ip_str;
 		ip_str = cache->ip_str(cache, mod_req->ip_be, ip_buf,
 			cache->key_str_len);
-		RTE_LOG(ERR, HASH,
+		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; mod failed\n",
 			ip_str == NULL ? cache->name : ip_str);
 		return;
@@ -288,7 +287,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 
 	if (changed_ha || changed_port || changed_stale) {
 		lls_update_subscribers(record);
-		if (lls_conf->debug)
+		if (lls_conf->log_level == RTE_LOG_DEBUG)
 			lls_cache_dump(cache);
 	}
 }
@@ -344,8 +343,7 @@ lls_process_reqs(struct lls_config *lls_conf)
 			break;
 		}
 		default:
-			RTE_LOG(ERR, GATEKEEPER,
-				"lls: unrecognized request type (%d)\n",
+			LLS_LOG(ERR, "Unrecognized request type (%d)\n",
 				reqs[i]->ty);
 			break;
 		}
@@ -363,8 +361,7 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	int ret;
 
 	if (req == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: allocation for request of type %d failed", ty);
+		LLS_LOG(ERR, "Allocation for request of type %d failed", ty);
 		return -1;
 	}
 
@@ -393,8 +390,7 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	}
 	default:
 		mb_free_entry(&lls_conf->requests, req);
-		RTE_LOG(ERR, GATEKEEPER,
-			"lls: unknown request type %d failed", ty);
+		LLS_LOG(ERR, "Unknown request type %d failed", ty);
 		return -1;
 	}
 
@@ -452,8 +448,7 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 			char ip_buf[cache->key_str_len];
 			char *ip_str = cache->ip_str(cache, ip_be, ip_buf,
 				cache->key_str_len);
-			RTE_LOG(ERR, GATEKEEPER,
-				"lls: map for %s has an invalid port %hhu\n",
+			LLS_LOG(ERR, "Map for %s has an invalid port %hhu\n",
 				ip_str == NULL ? cache->name : ip_str,
 				record->map.port_id);
 			lls_del_record(cache, ip_be);
@@ -482,7 +477,7 @@ next:
 			&data, &iter);
 	}
 
-	if (get_lls_conf()->debug)
+	if (get_lls_conf()->log_level == RTE_LOG_DEBUG)
 		lls_cache_dump(cache);
 }
 
@@ -513,15 +508,14 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache)
 	cache->records = rte_calloc("lls_records",
 		lls_conf->lls_cache_records, sizeof(*cache->records), 0);
 	if (cache->records == NULL) {
-		RTE_LOG(ERR, MALLOC, "Could not allocate %s cache records\n",
+		LLS_LOG(ERR, "Could not allocate %s cache records\n",
 			cache->name);
 		return -1;
 	}
 
 	cache->hash = rte_hash_create(&lls_cache_params);
 	if (cache->hash == NULL) {
-		RTE_LOG(ERR, HASH, "Could not create %s cache hash\n",
-			cache->name);
+		LLS_LOG(ERR, "Could not create %s cache hash\n", cache->name);
 		goto records;
 	}
 	return 0;

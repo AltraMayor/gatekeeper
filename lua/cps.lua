@@ -23,7 +23,10 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
 	cps_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	cps_conf.mailbox_burst_size = mailbox_burst_size
-	cps_conf.debug = false
+
+	-- Log level for CPS. Note: set to RTE_LOG_DEBUG
+	-- to output routing table updates to the log.
+	cps_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
 	-- The maximum number of packets to retrieve/transmit.
 	cps_conf.front_max_pkt_burst = 32

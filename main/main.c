@@ -83,7 +83,7 @@ time_resolution_init(void)
 	picosec_per_cycle = 1000UL * diff_ns / cycles;
 
 	RTE_LOG(NOTICE, TIMER,
-		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "!\n",
+		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
 		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
 
 	return 0;
@@ -144,7 +144,7 @@ main(int argc, char **argv)
 {
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
-		rte_exit(EXIT_FAILURE, "Error with EAL initialization!\n");
+		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
 
 	/* Used by the LLS block. */
 	rte_timer_subsystem_init();
@@ -164,7 +164,7 @@ main(int argc, char **argv)
 
 	ret = config_gatekeeper();
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to configure Gatekeeper!\n");
+		RTE_LOG(ERR, GATEKEEPER, "Failed to configure Gatekeeper\n");
 		goto net;
 	}
 

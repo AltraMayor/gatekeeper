@@ -18,6 +18,9 @@ return function (net_conf, gk_conf, lcore)
 	ggu_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	ggu_conf.mailbox_burst_size = mailbox_burst_size
 
+	-- Log level for GGU.
+	ggu_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
 	-- The maximum number of packets to retrieve/transmit.
 	ggu_conf.ggu_max_pkt_burst = 32
 
