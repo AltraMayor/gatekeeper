@@ -532,6 +532,30 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 }
 
 int
+convert_ip_to_str(struct ipaddr *ip_addr, char *res, int n)
+{
+	if (ip_addr->proto == ETHER_TYPE_IPv4) {
+		if (inet_ntop(AF_INET, &ip_addr->ip.v4, res, n) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv4 address (%s)\n",
+				__func__, strerror(errno));
+			return -1;
+		}
+	} else if (likely(ip_addr->proto == ETHER_TYPE_IPv6)) {
+		if (inet_ntop(AF_INET6, &ip_addr->ip.v6, res, n) == NULL) {
+			RTE_LOG(ERR, GATEKEEPER, "%s: failed to convert a number to an IPv6 address (%s)\n",
+				__func__, strerror(errno));
+			return -1;
+		}
+	} else {
+		RTE_LOG(ERR, GATEKEEPER, "Unexpected condition at %s: unknown IP type %hu!\n",
+			__func__, ip_addr->proto);
+		return -1;
+	}
+
+	return 0;
+}
+
+int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs,
 	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag)

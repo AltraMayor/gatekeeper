@@ -384,6 +384,7 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
+int convert_ip_to_str(struct ipaddr *ip_addr, char *res, int n);
 int ethertype_filter_add(uint16_t port_id, uint16_t ether_type,
 	uint16_t queue_id);
 
