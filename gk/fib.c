@@ -1710,24 +1710,16 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
-	int ret, index;
-
-	static bool assigned_type_fib_dump_entry = false;
-	static uint32_t correct_ctypeid_fib_dump_entry;
-
+	int index;
 	struct gk_fib *fib;
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
 	struct gk_fib_dump_entry dentry;
 	void *cdata;
+	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
-	if (!assigned_type_fib_dump_entry) {
-		correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
-		assigned_type_fib_dump_entry = true;
-	}
-
-	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
+	int ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
 	if (ret < 0)
 		luaL_error(l, "gk: failed to initialize the lpm rule iterator state at %s!",
 			__func__);
@@ -1763,24 +1755,16 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 static void
 list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
-	int ret, index;
-
-	static bool assigned_type_fib_dump_entry = false;
-	static uint32_t correct_ctypeid_fib_dump_entry;
-
+	int index;
 	struct gk_fib *fib;
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
 	struct gk_fib_dump_entry dentry;
 	void *cdata;
+	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
-	if (!assigned_type_fib_dump_entry) {
-		correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
-		assigned_type_fib_dump_entry = true;
-	}
-
-	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
+	int ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
 	if (ret < 0)
 		luaL_error(l, "gk: failed to initialize the lpm6 rule iterator state at %s!",
 			__func__);
@@ -1821,21 +1805,15 @@ typedef void (*list_fib_entries)(lua_State *l, struct gk_lpm *ltbl);
 static void
 list_fib_for_lua(lua_State *l, list_fib_entries f)
 {
-	static bool assigned_type_gk_config = false;
-	static uint32_t correct_ctypeid_gk_config;
-
-	uint32_t ctypeid;
 	struct gk_config *gk_conf;
 	struct gk_lpm *ltbl;
-
-	if (!assigned_type_gk_config) {
-		correct_ctypeid_gk_config = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_GK_CONFIG_PTR);
-		assigned_type_gk_config = true;
-	}
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -1848,8 +1826,7 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	gk_conf = *(struct gk_config **)cdata;
 
 	ltbl = &gk_conf->lpm_tbl;
 
@@ -1895,24 +1872,15 @@ list_hash_table_neighbors(lua_State *l, enum gk_fib_action action,
 	uint32_t next = 0;
 	const void *key;
 	void *data;
-	int32_t index;
-
-	static bool assigned_type_neighbor_dentry = false;
-	static uint32_t correct_ctypeid_neighbor_dentry;
-
 	void *cdata;
+	uint32_t correct_ctypeid_neighbor_dentry = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_NEIGHBOR_DUMP_ENTRY_PTR);
 
-	if (!assigned_type_neighbor_dentry) {
-		correct_ctypeid_neighbor_dentry = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_NEIGHBOR_DUMP_ENTRY_PTR);
-		assigned_type_neighbor_dentry = true;
-	}
-
-	index = rte_hash_iterate(neigh_ht->hash_table,
+	int32_t index = rte_hash_iterate(neigh_ht->hash_table,
 		(void *)&key, &data, &next);
 	while (index >= 0) {
 		struct gk_neighbor_dump_entry dentry;
-		struct ether_cache *eth_cache = &neigh_ht->cache_tbl[index];
+		struct ether_cache *eth_cache = data;
 
 		dentry.action = action;
 		fillup_gk_neighbor_dump_entry(&dentry, eth_cache);
@@ -2007,21 +1975,15 @@ typedef void (*list_neighbors)(lua_State *l,
 static void
 list_neighbors_for_lua(lua_State *l, list_neighbors f)
 {
-	static bool assigned_type_gk_config = false;
-	static uint32_t correct_ctypeid_gk_config;
-
-	uint32_t ctypeid;
 	struct gk_config *gk_conf;
 	struct gk_lpm *ltbl;
-
-	if (!assigned_type_gk_config) {
-		correct_ctypeid_gk_config = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_GK_CONFIG_PTR);
-		assigned_type_gk_config = true;
-	}
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -2034,8 +1996,7 @@ list_neighbors_for_lua(lua_State *l, list_neighbors f)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	gk_conf = *(struct gk_config **)cdata;
 
 	ltbl = &gk_conf->lpm_tbl;
 
@@ -2066,27 +2027,20 @@ l_list_gk_neighbors6(lua_State *l)
 int
 l_ether_format_addr(lua_State *l)
 {
-	static bool assigned_type_ether_addr = false;
-	static uint32_t correct_ctypeid_ether_addr;
-
-	uint32_t ctypeid;
 	struct ether_addr *d_addr;
 	char d_buf[ETHER_ADDR_FMT_SIZE];
-
-	if (!assigned_type_ether_addr) {
-		correct_ctypeid_ether_addr = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_ETHER_ADDR_REF);
-		assigned_type_ether_addr = true;
-	}
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_ether_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_ETHER_ADDR_REF);
 
 	/* First argument must be of type CTYPE_STRUCT_ETHER_ADDR_REF. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ether_addr)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_ETHER_ADDR_REF);
 
-	d_addr = *(struct ether_addr **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+	d_addr = *(struct ether_addr **)cdata;
 
 	ether_format_addr(d_buf, sizeof(d_buf), d_addr);
 
@@ -2100,28 +2054,21 @@ l_ether_format_addr(lua_State *l)
 int
 l_ip_format_addr(lua_State *l)
 {
-	static bool assigned_type_ip_addr = false;
-	static uint32_t correct_ctypeid_ip_addr;
-
-	uint32_t ctypeid;
 	struct ipaddr *ip_addr;
 	char ip[128];
 	int ret;
-
-	if (!assigned_type_ip_addr) {
-		correct_ctypeid_ip_addr = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_IP_ADDR_REF);
-		assigned_type_ip_addr = true;
-	}
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_ip_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_IP_ADDR_REF);
 
 	/* First argument must be of type CTYPE_STRUCT_IP_ADDR_REF. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ip_addr)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_IP_ADDR_REF);
 
-	ip_addr = *(struct ipaddr **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+	ip_addr = *(struct ipaddr **)cdata;
 
 	ret = convert_ip_to_str(ip_addr, ip, sizeof(ip));
 	if (ret < 0)

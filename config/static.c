@@ -106,18 +106,11 @@ protected_gk_assign_lcores(lua_State *l)
 static int
 l_gk_assign_lcores(lua_State *l)
 {
-	static bool assigned_type = false;
-	static uint32_t correct_ctypeid;
-
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *lcores, **ud;
-
-	if (!assigned_type) {
-		correct_ctypeid = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_GK_CONFIG_PTR);
-		assigned_type = true;
-	}
+	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
 	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -185,18 +178,11 @@ protected_gt_assign_lcores(lua_State *l)
 static int
 l_gt_assign_lcores(lua_State *l)
 {
-	static bool assigned_type = false;
-	static uint32_t correct_ctypeid;
-
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *lcores, **ud;
-
-	if (!assigned_type) {
-		correct_ctypeid = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_GT_CONFIG_PTR);
-		assigned_type = true;
-	}
+	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
 	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);

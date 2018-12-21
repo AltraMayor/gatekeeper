@@ -1879,27 +1879,19 @@ int
 l_update_gt_lua_states(lua_State *l)
 {
 	int i;
-	static bool assigned_type_gt_config = false;
-	static uint32_t correct_ctypeid_gt_config;
-
 	uint32_t ctypeid;
-
 	struct gt_config *gt_conf;
-
-	if (!assigned_type_gt_config) {
-		correct_ctypeid_gt_config = luaL_get_ctypeid(l,
-			CTYPE_STRUCT_GT_CONFIG_PTR);
-		assigned_type_gt_config = true;
-	}
+	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gt_config)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GT_CONFIG_PTR);
 
-	gt_conf = *(struct gt_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	gt_conf = *(struct gt_config **)cdata;
 
 	for (i = 0; i < gt_conf->num_lcores; i++) {
 		int ret;
