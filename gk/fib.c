@@ -1818,7 +1818,8 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -1831,8 +1832,7 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	gk_conf = *(struct gk_config **)cdata;
 
 	ltbl = &gk_conf->lpm_tbl;
 
@@ -1988,7 +1988,8 @@ list_neighbors_for_lua(lua_State *l, list_neighbors f)
 		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -2001,8 +2002,7 @@ list_neighbors_for_lua(lua_State *l, list_neighbors f)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	gk_conf = *(struct gk_config **)cdata;
 
 	ltbl = &gk_conf->lpm_tbl;
 
@@ -2040,13 +2040,13 @@ l_ether_format_addr(lua_State *l)
 		CTYPE_STRUCT_ETHER_ADDR_REF);
 
 	/* First argument must be of type CTYPE_STRUCT_ETHER_ADDR_REF. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ether_addr)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_ETHER_ADDR_REF);
 
-	d_addr = *(struct ether_addr **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
+	d_addr = *(struct ether_addr **)cdata;
 
 	ether_format_addr(d_buf, sizeof(d_buf), d_addr);
 
@@ -2068,13 +2068,13 @@ l_ip_format_addr(lua_State *l)
 		CTYPE_STRUCT_IP_ADDR_REF);
 
 	/* First argument must be of type CTYPE_STRUCT_IP_ADDR_REF. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ip_addr)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_IP_ADDR_REF);
 
-	ip_addr = *(struct ipaddr **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
+	ip_addr = *(struct ipaddr **)cdata;
 
 	ret = convert_ip_to_str(ip_addr, ip, sizeof(ip));
 	if (ret < 0)
