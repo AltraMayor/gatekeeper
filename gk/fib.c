@@ -1886,7 +1886,7 @@ list_hash_table_neighbors(lua_State *l, enum gk_fib_action action,
 		(void *)&key, &data, &next);
 	while (index >= 0) {
 		struct gk_neighbor_dump_entry dentry;
-		struct ether_cache *eth_cache = &neigh_ht->cache_tbl[index];
+		struct ether_cache *eth_cache = data;
 
 		dentry.action = action;
 		fillup_gk_neighbor_dump_entry(&dentry, eth_cache);
