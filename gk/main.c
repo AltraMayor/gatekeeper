@@ -1897,6 +1897,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf)
 {
 	int ret, i;
+	uint16_t front_inc, back_inc;
 
 	if (net_conf == NULL || gk_conf == NULL || sol_conf == NULL) {
 		ret = -1;
@@ -1951,6 +1952,11 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto out;
 	}
 
+	front_inc = gk_conf->front_max_pkt_burst * gk_conf->num_lcores;
+	net_conf->front.total_pkt_burst += front_inc;
+	back_inc = gk_conf->back_max_pkt_burst * gk_conf->num_lcores;
+	net_conf->back.total_pkt_burst += back_inc;
+
 	gk_conf->net = net_conf;
 	gk_conf->sol_conf = sol_conf;
 
@@ -1961,7 +1967,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 		net_conf, gk_conf->num_lcores, gk_conf->num_lcores,
 		gk_conf->num_lcores, gk_conf->num_lcores, gk_stage1, gk_conf);
 	if (ret < 0)
-		goto out;
+		goto burst;
 
 	ret = launch_at_stage2(gk_stage2, gk_conf);
 	if (ret < 0)
@@ -1982,6 +1988,9 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+burst:
+	net_conf->front.total_pkt_burst -= front_inc;
+	net_conf->back.total_pkt_burst -= back_inc;
 out:
 	return ret;
 

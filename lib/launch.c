@@ -185,6 +185,31 @@ fail:
 	return -1;
 }
 
+int
+launch_count_lcores(const char *filtered_blocks[], unsigned int num_blocks)
+{
+	int num_lcores = 0;
+
+	struct stage3_entry *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &launch_heads.stage3, list) {
+		unsigned int i;
+		bool filter = false;
+
+		for (i = 0; i < num_blocks; i++) {
+			if (strcmp(entry->name, filtered_blocks[i]) == 0) {
+				filter = true;
+				break;
+			}
+		}
+
+		if (!filter)
+			num_lcores++;
+	}
+
+	return num_lcores;
+}
+
 static inline void
 free_stage3_entry(struct stage3_entry *entry)
 {

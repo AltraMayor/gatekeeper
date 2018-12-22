@@ -654,6 +654,7 @@ run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf)
 {
 	int ret;
+	uint16_t back_inc;
 
 	if (ggu_conf == NULL || net_conf == NULL || gk_conf == NULL) {
 		ret = -1;
@@ -682,9 +683,12 @@ run_ggu(struct net_config *net_conf,
 		ggu_conf->log_ratelimit_interval_ms,
 		ggu_conf->log_ratelimit_burst);
 
+	back_inc = ggu_conf->ggu_max_pkt_burst;
+	net_conf->back.total_pkt_burst += back_inc;
+
 	ret = net_launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_stage1, ggu_conf);
 	if (ret < 0)
-		goto out;
+		goto burst;
 
 	ret = launch_at_stage2(ggu_stage2, ggu_conf);
 	if (ret < 0)
@@ -726,6 +730,8 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+burst:
+	net_conf->back.total_pkt_burst -= back_inc;
 out:
 	return ret;
 }
