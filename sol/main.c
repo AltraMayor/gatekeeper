@@ -464,6 +464,7 @@ int
 run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 {
 	int ret;
+	uint16_t front_inc;
 
 	if (net_conf == NULL || sol_conf == NULL) {
 		ret = -1;
@@ -528,12 +529,22 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 		goto out;
 	}
 
+	/*
+	 * Need to account for the packets lingering in
+	 * the queue of the SOL block as well.
+	 *
+	 * Although the packets are going to the back interface,
+	 * they are allocated at the front interface.
+	 */
+	front_inc = sol_conf->pri_req_max_len + sol_conf->deq_burst_size;
+	net_conf->front.total_pkt_burst += front_inc;
+
 	ret = init_mailbox("sol_reqs", rte_log2_u32(2 *
 		sol_conf->pri_req_max_len), sizeof(struct priority_req),
 		sol_conf->mailbox_mem_cache_size, sol_conf->lcore_id,
 		&sol_conf->mb);
 	if (ret < 0)
-		goto out;
+		goto burst;
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 0, 1, sol_stage1, sol_conf);
 	if (ret < 0)
@@ -558,6 +569,8 @@ stage1:
 	pop_n_at_stage1(1);
 mb:
 	destroy_mailbox(&sol_conf->mb);
+burst:
+	net_conf->front.total_pkt_burst -= front_inc;
 out:
 	return ret;
 }

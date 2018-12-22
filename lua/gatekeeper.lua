@@ -130,12 +130,15 @@ struct gatekeeper_if {
 	char     *name;
 	uint16_t num_rx_queues;
 	uint16_t num_tx_queues;
+	uint16_t total_pkt_burst;
 	uint32_t arp_cache_timeout_sec;
 	uint32_t nd_cache_timeout_sec;
 	uint32_t bonding_mode;
 	int      vlan_insert;
 	uint16_t mtu;
 	uint8_t  ipv6_default_hop_limits;
+	uint16_t num_rx_desc;
+	uint16_t num_tx_desc;
 	/* This struct has hidden fields. */
 };
 

@@ -1772,6 +1772,7 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	const char *lua_base_directory, const char *lua_policy_file)
 {
 	int ret = -1, i;
+	uint16_t front_inc;
 
 	if (net_conf == NULL || gt_conf == NULL ||
 			lua_base_directory == NULL ||
@@ -1796,10 +1797,13 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 			gt_conf->log_ratelimit_burst);
 	}
 
+	front_inc = gt_conf->gt_max_pkt_burst * gt_conf->num_lcores;
+	net_conf->front.total_pkt_burst += front_inc;
+
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",
 		lua_base_directory);
 	if (gt_conf->lua_base_directory == NULL)
-		goto out;
+		goto burst;
 
 	gt_conf->lua_policy_file = rte_strdup("lua_policy_file",
 		lua_policy_file);
@@ -1865,6 +1869,8 @@ gt_config_file:
 policy_dir:
 	rte_free(gt_conf->lua_base_directory);
 	gt_conf->lua_base_directory = NULL;
+burst:
+	net_conf->front.total_pkt_burst -= front_inc;
 out:
 	return ret;
 }

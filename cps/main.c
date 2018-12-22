@@ -1096,6 +1096,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 {
 	int ret;
 	int ele_size;
+	uint16_t front_inc, back_inc = 0;
 
 	if (net_conf == NULL || (gk_conf == NULL && gt_conf == NULL) ||
 			cps_conf == NULL || lls_conf == NULL) {
@@ -1119,9 +1120,17 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		cps_conf->log_ratelimit_interval_ms,
 		cps_conf->log_ratelimit_burst);
 
+	/* Take the packets needed in the KNI into account as well. */
+	front_inc = 2 * cps_conf->front_max_pkt_burst;
+	net_conf->front.total_pkt_burst += front_inc;
+	if (net_conf->back_iface_enabled) {
+		back_inc = 2 * cps_conf->back_max_pkt_burst;
+		net_conf->back.total_pkt_burst += back_inc;
+	}
+
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, cps_stage1, cps_conf);
 	if (ret < 0)
-		goto out;
+		goto burst;
 
 	ret = launch_at_stage2(cps_stage2, cps_conf);
 	if (ret < 0)
@@ -1196,6 +1205,9 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+burst:
+	net_conf->front.total_pkt_burst -= front_inc;
+	net_conf->back.total_pkt_burst -= back_inc;
 out:
 	return ret;
 }

@@ -804,6 +804,7 @@ int
 run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 {
 	int ret;
+	uint16_t front_inc, back_inc = 0;
 
 	if (net_conf == NULL || lls_conf == NULL) {
 		ret = -1;
@@ -834,9 +835,16 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto out;
 	}
 
+	front_inc = lls_conf->front_max_pkt_burst;
+	net_conf->front.total_pkt_burst += front_inc;
+	if (net_conf->back_iface_enabled) {
+		back_inc = lls_conf->back_max_pkt_burst;
+		net_conf->back.total_pkt_burst += back_inc;
+	}
+
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
 	if (ret < 0)
-		goto out;
+		goto burst;
 
 	ret = launch_at_stage2(lls_stage2, lls_conf);
 	if (ret < 0)
@@ -947,6 +955,9 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+burst:
+	net_conf->front.total_pkt_burst -= front_inc;
+	net_conf->back.total_pkt_burst -= back_inc;
 out:
 	return ret;
 }

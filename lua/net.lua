@@ -63,6 +63,17 @@ return function (gatekeeper_server)
 	local front_vlan_insert = true
 	local front_mtu = 1500
 
+	-- XXX #155 They should be analyzed or tested further to find
+	-- optimal values. Larger queue size can mitigate bursty behavior,
+	-- but can also increase pressure on cache and lead to lower
+	-- performance.
+	--
+	-- Gatekeeper servers are expected to transmit much fewer packets than
+	-- they receive, while Grantor servers are expected to transmit about
+	-- as many packets as they receive.
+	local front_num_rx_desc = gatekeeper_server and 512 or 128
+	local front_num_tx_desc = 128
+
 	local back_iface_enabled = gatekeeper_server
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
@@ -72,6 +83,13 @@ return function (gatekeeper_server)
 	local back_vlan_tag = 0x5678
 	local back_vlan_insert = true
 	local back_mtu = 2048
+
+	-- XXX #155 They should be analyzed or tested further to find
+	-- optimal values. Larger queue size can mitigate bursty behavior,
+	-- but can also increase pressure on cache and lead to lower
+	-- performance.
+	local back_num_rx_desc = 128
+	local back_num_tx_desc = 128
 
 	--
 	-- Code below this point should not need to be changed by operators.
@@ -90,6 +108,8 @@ return function (gatekeeper_server)
 	front_iface.vlan_insert = front_vlan_insert
 	front_iface.mtu = front_mtu
 	front_iface.ipv6_default_hop_limits = front_ipv6_default_hop_limits
+	front_iface.num_rx_desc = front_num_rx_desc
+	front_iface.num_tx_desc = front_num_tx_desc
 	local ret = gatekeeper.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
 	if ret < 0 then
@@ -106,6 +126,8 @@ return function (gatekeeper_server)
 		back_iface.mtu = back_mtu
 		back_iface.ipv6_default_hop_limits =
 			back_ipv6_default_hop_limits
+		back_iface.num_rx_desc = back_num_rx_desc
+		back_iface.num_tx_desc = back_num_tx_desc
 		ret = gatekeeper.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
 		if ret < 0 then

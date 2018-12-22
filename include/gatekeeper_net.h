@@ -124,6 +124,9 @@ struct gatekeeper_if {
 	uint16_t        num_rx_queues;
 	uint16_t        num_tx_queues;
 
+	/* The total burst size of any functional block for this interface. */
+	uint16_t        total_pkt_burst;
+
 	/* Timeouts for cache entries (in seconds) for Link Layer Support. */
 	uint32_t	arp_cache_timeout_sec;
 	uint32_t	nd_cache_timeout_sec;
@@ -165,6 +168,23 @@ struct gatekeeper_if {
 
 	/* The maximum packet lifetime. */
 	uint8_t         ipv6_default_hop_limits;
+
+	/*
+	 * According to the 82599 datasheet, a receive descriptor is
+	 * a data structure that contains the receive data buffer address
+	 * and fields for hardware to store packet information. Upon receipt
+	 * of a packet for this device, hardware stores the packet data into
+	 * the indicated buffer and writes the length, status and errors to
+	 * the receive descriptor.
+	 *
+	 * Each packet buffer is indicated by a descriptor.
+	 */
+	uint16_t        num_rx_desc;
+	/*
+	 * Similar to the receive descriptor, each packet buffer is
+	 * indicated by a descriptor as well.
+	 */
+	uint16_t        num_tx_desc;
 
 	/*
 	 * The fields below are for internal use.
@@ -348,6 +368,16 @@ struct net_config {
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
+
+	/* The number of struct rte_mbuf elements in the mbuf pool. */
+	unsigned int         gatekeeper_num_mbuf;
+
+	/*
+	 * The size of the per-core object cache, i.e.,
+	 * number of struct rte_mbuf elements in the per-core objec cache.
+	 */
+	unsigned int         gatekeeper_per_lcore_cache_size;
+
 	struct gatekeeper_if front;
 	struct gatekeeper_if back;
 
