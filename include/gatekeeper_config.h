@@ -117,7 +117,8 @@ struct dynamic_config {
 	struct timeval   rcv_time_out;
 };
 
-int config_gatekeeper(void);
+int config_gatekeeper(const char *lua_base_dir,
+	const char *gatekeeper_config_file);
 int set_lua_path(lua_State *l, const char *path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
