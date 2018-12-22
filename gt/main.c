@@ -1761,20 +1761,6 @@ cleanup:
 	return ret;
 }
 
-static char *
-gt_strdup(const char *type, const char *s)
-{
-	char *res = rte_malloc(type, strlen(s) + 1, 0);
-	if (res == NULL) {
-		RTE_LOG(ERR, MALLOC, "gt: out of memory for duplicating the string: %s\n", s);
-		goto out;
-	}
-	strcpy(res, s);
-
-out:
-	return res;
-}
-
 int
 run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	const char *lua_base_directory, const char *lua_policy_file)
@@ -1800,12 +1786,12 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 
 
 
-	gt_conf->lua_base_directory = gt_strdup("lua_base_directory",
+	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",
 		lua_base_directory);
 	if (gt_conf->lua_base_directory == NULL)
 		goto out;
 
-	gt_conf->lua_policy_file = gt_strdup("lua_policy_file",
+	gt_conf->lua_policy_file = rte_strdup("lua_policy_file",
 		lua_policy_file);
 	if (gt_conf->lua_policy_file == NULL)
 		goto policy_dir;

@@ -35,10 +35,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 
-/* TODO #14 Get the install path from the configuration file. */
-#define LUA_DY_BASE_DIR     "./lua"
-#define DYNAMIC_CONFIG_FILE "dylib.lua"
-
 /*
  * The cast "(uint16_t)" is needed because of
  * the strict compilation check of DPDK,
@@ -277,6 +273,12 @@ cleanup_dy(struct dynamic_config *dy_conf)
 		dy_conf->sock_fd = -1;
 	}
 
+	rte_free(dy_conf->dynamic_config_file);
+	dy_conf->dynamic_config_file = NULL;
+
+	rte_free(dy_conf->lua_dy_base_dir);
+	dy_conf->lua_dy_base_dir = NULL;
+
 	if (dy_conf->server_path != NULL) {
 		ret = unlink(dy_conf->server_path);
 		if (ret != 0) {
@@ -301,18 +303,18 @@ const struct luaL_reg dylib_lua_c_funcs [] = {
 };
 
 static int 
-setup_dy_lua(lua_State *lua_state)
+setup_dy_lua(lua_State *lua_state, struct dynamic_config *dy_conf)
 {
 	int ret;
 	char lua_entry_path[128];
 
-	ret = snprintf(lua_entry_path, sizeof(lua_entry_path),
-		"%s/%s", LUA_DY_BASE_DIR, DYNAMIC_CONFIG_FILE);
+	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), "%s/%s",
+		dy_conf->lua_dy_base_dir, dy_conf->dynamic_config_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
 	luaL_openlibs(lua_state);
 	luaL_register(lua_state, "dylib", dylib_lua_c_funcs);
-	set_lua_path(lua_state, LUA_DY_BASE_DIR);
+	set_lua_path(lua_state, dy_conf->lua_dy_base_dir);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
 		DYC_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
@@ -385,7 +387,7 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 	}
 
 	/* Set up the Lua state while there is a connection. */
-	ret = setup_dy_lua(lua_state);
+	ret = setup_dy_lua(lua_state, dy_conf);
 	if (ret < 0) {
 		DYC_LOG(ERR, "Failed to set up the lua state\n");
 		goto close_lua;
@@ -477,7 +479,8 @@ set_dyc_timeout(unsigned int sec,
 
 int
 run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
-	const char *server_path, struct dynamic_config *dy_conf)
+	const char *server_path, const char *lua_dy_base_dir,
+	const char *dynamic_config_file, struct dynamic_config *dy_conf)
 {
 	int ret;
 	struct sockaddr_un server_addr;
@@ -491,7 +494,8 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	 * This way, not only will the dynamic config block work for
 	 * the Grantor case, it could work for unforeseen cases as well.
 	 */
-	if (server_path == NULL || dy_conf == NULL) {
+	if (server_path == NULL || lua_dy_base_dir == NULL ||
+			dynamic_config_file == NULL || dy_conf == NULL) {
 		ret = -1;
 		goto out;
 	}
@@ -510,13 +514,11 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 
 	dy_conf->sock_fd = -1;
 
-	dy_conf->server_path = rte_malloc(
-		"server_path", strlen(server_path) + 1, 0);
+	dy_conf->server_path = rte_strdup("server_path", server_path);
 	if (dy_conf->server_path == NULL) {
 		ret = -1;
 		goto out;
 	}
-	strcpy(dy_conf->server_path, server_path);
 
 	/*
 	 * Remove any old socket and create an unnamed socket for the server.
@@ -526,7 +528,21 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 		DYC_LOG(ERR, "Failed to unlink(%s) - (%s)\n",
 			dy_conf->server_path, strerror(errno));
 		ret = -1;
-		goto free_path;
+		goto free_server_path;
+	}
+
+	dy_conf->lua_dy_base_dir = rte_strdup(
+		"lua_dy_base_dir", lua_dy_base_dir);
+	if (dy_conf->lua_dy_base_dir == NULL) {
+		ret = -1;
+		goto free_server_path;
+	}
+
+	dy_conf->dynamic_config_file = rte_strdup(
+		"dynamic_config_file", dynamic_config_file);
+	if (dy_conf->dynamic_config_file == NULL) {
+		ret = -1;
+		goto free_dy_lua_base_dir;
 	}
 
 	/* Init the server socket. */
@@ -535,7 +551,7 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 		DYC_LOG(ERR, "Failed to initialize the server socket - (%s)\n",
 			strerror(errno));
 		ret = -1;
-		goto free_path;
+		goto free_dynamic_config_file;
 	}
 
 	/* Name the socket. */
@@ -598,8 +614,13 @@ put_gk_gt_config:
 free_sock:
 	close(dy_conf->sock_fd);
 	dy_conf->sock_fd = -1;
-
-free_path:
+free_dynamic_config_file:
+	rte_free(dy_conf->dynamic_config_file);
+	dy_conf->dynamic_config_file = NULL;
+free_dy_lua_base_dir:
+	rte_free(dy_conf->lua_dy_base_dir);
+	dy_conf->lua_dy_base_dir = NULL;
+free_server_path:
 	rte_free(dy_conf->server_path);
 	dy_conf->server_path = NULL;
 

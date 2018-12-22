@@ -150,16 +150,6 @@ struct stage3_entry {
 	unsigned int     lcore_id;
 };
 
-static char *
-rte_strdup(const char *s)
-{
-	int len = s == NULL ? 0 : strlen(s) + 1;
-	char *ret = rte_malloc(__func__, len, 0);
-	if (ret == NULL)
-		return ret;
-	return strcpy(ret, s);
-}
-
 int
 launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 	unsigned int lcore_id)
@@ -167,7 +157,7 @@ launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 	struct stage3_entry *entry;
 	char *name_cpy;
 
-	name_cpy = rte_strdup(name);
+	name_cpy = rte_strdup(__func__, name);
 	if (name_cpy == NULL)
 		goto fail;
 

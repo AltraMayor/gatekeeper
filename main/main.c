@@ -91,6 +91,17 @@ parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = {options, parse_opt, adoc, doc, NULL, NULL, NULL};
 
+char *
+rte_strdup(const char *type, const char *s)
+{
+	int len = s == NULL ? 0 : strlen(s) + 1;
+	char *res = rte_malloc(type, len, 0);
+	if (unlikely(res == NULL))
+		return NULL;
+
+	return strcpy(res, s);
+}
+
 /* Obtain the system time resolution. */
 static int
 time_resolution_init(void)

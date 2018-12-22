@@ -7,6 +7,8 @@ return function (gk_conf, gt_conf, numa_table)
 	end
 
 	local server_path = "/tmp/dyn_cfg.socket"
+	local lua_dy_base_dir = "./lua"
+	local dynamic_config_file = "dylib.lua"
 
 	dy_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 
@@ -17,7 +19,8 @@ return function (gk_conf, gt_conf, numa_table)
 
 	-- Setup the dynamic config functional block.
 	local ret = gatekeeper.c.run_dynamic_config(
-		gk_conf, gt_conf, server_path, dy_conf)
+		gk_conf, gt_conf, server_path,
+		lua_dy_base_dir, dynamic_config_file, dy_conf)
 	if ret < 0 then
 		error("Failed to run dynamic config block")
 	end
