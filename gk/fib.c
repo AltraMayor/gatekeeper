@@ -1710,7 +1710,7 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
-	int index;
+	int ret, index;
 	struct gk_fib *fib;
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
@@ -1719,10 +1719,13 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
-	int ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
-	if (ret < 0)
+	rte_spinlock_lock_tm(&ltbl->lock);
+	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
+	if (ret < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to initialize the lpm rule iterator state at %s!",
 			__func__);
+	}
 
 	index = rte_lpm_rule_iterate(&state, &re4);
 	while (index >= 0) {
@@ -1746,16 +1749,20 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = &dentry;
 		lua_insert(l, 4);
 
-		lua_call(l, 2, 1);
+		if (lua_pcall(l, 2, 1, 0) != 0) {
+			rte_spinlock_unlock_tm(&ltbl->lock);
+			lua_error(l);
+		}
 
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
+	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
 static void
 list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
-	int index;
+	int ret, index;
 	struct gk_fib *fib;
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
@@ -1764,10 +1771,13 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
-	int ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
-	if (ret < 0)
+	rte_spinlock_lock_tm(&ltbl->lock);
+	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
+	if (ret < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to initialize the lpm6 rule iterator state at %s!",
 			__func__);
+	}
 
 	index = rte_lpm6_rule_iterate(&state6, &re6);
 	while (index >= 0) {
@@ -1792,10 +1802,14 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = &dentry;
 		lua_insert(l, 4);
 
-		lua_call(l, 2, 1);
+		if (lua_pcall(l, 2, 1, 0) != 0) {
+			rte_spinlock_unlock_tm(&ltbl->lock);
+			lua_error(l);
+		}
 
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
+	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
 typedef void (*list_fib_entries)(lua_State *l, struct gk_lpm *ltbl);
@@ -1806,7 +1820,6 @@ static void
 list_fib_for_lua(lua_State *l, list_fib_entries f)
 {
 	struct gk_config *gk_conf;
-	struct gk_lpm *ltbl;
 	uint32_t ctypeid;
 	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -1828,11 +1841,7 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 
 	gk_conf = *(struct gk_config **)cdata;
 
-	ltbl = &gk_conf->lpm_tbl;
-
-	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	f(l, ltbl);
-	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+	f(l, &gk_conf->lpm_tbl);
 
 	lua_remove(l, 1);
 	lua_remove(l, 1);
@@ -1866,8 +1875,8 @@ fillup_gk_neighbor_dump_entry(struct gk_neighbor_dump_entry *dentry,
 #define CTYPE_STRUCT_NEIGHBOR_DUMP_ENTRY_PTR "struct gk_neighbor_dump_entry *"
 
 static void
-list_hash_table_neighbors(lua_State *l, enum gk_fib_action action,
-	struct neighbor_hash_table *neigh_ht)
+list_hash_table_neighbors_unlock(lua_State *l, enum gk_fib_action action,
+	struct neighbor_hash_table *neigh_ht, struct gk_lpm *ltbl)
 {
 	uint32_t next = 0;
 	const void *key;
@@ -1892,51 +1901,67 @@ list_hash_table_neighbors(lua_State *l, enum gk_fib_action action,
 		*(struct gk_neighbor_dump_entry **)cdata = &dentry;
 		lua_insert(l, 4);
 
-		lua_call(l, 2, 1);
+		if (lua_pcall(l, 2, 1, 0) != 0) {
+			rte_spinlock_unlock_tm(&ltbl->lock);
+			lua_error(l);
+		}
 
 		index = rte_hash_iterate(neigh_ht->hash_table,
 			(void *)&key, &data, &next);
 	}
+
+	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
 static void
 list_ipv4_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
+	int fib_id;
 	struct gk_fib *neigh_fib;
-	int fib_id = lpm_lookup_ipv4(ltbl->lpm, iface->ip4_addr.s_addr);
+
+	rte_spinlock_lock_tm(&ltbl->lock);
+	fib_id = lpm_lookup_ipv4(ltbl->lpm, iface->ip4_addr.s_addr);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0)
+	if (fib_id < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to lookup the lpm table at %s!",
 			__func__);
+	}
 
 	neigh_fib = &ltbl->fib_tbl[fib_id];
 	RTE_VERIFY(neigh_fib->action == action);
 
-	list_hash_table_neighbors(l, action, &neigh_fib->u.neigh);
+	list_hash_table_neighbors_unlock(l, action, &neigh_fib->u.neigh, ltbl);
 }
 
 static void
 list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
+	int fib_id;
 	struct gk_fib *neigh_fib;
-	int fib_id = lpm_lookup_ipv6(ltbl->lpm6, iface->ip6_addr.s6_addr);
+
+	rte_spinlock_lock_tm(&ltbl->lock);
+	fib_id = lpm_lookup_ipv6(ltbl->lpm6, iface->ip6_addr.s6_addr);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0)
+	if (fib_id < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to lookup the lpm6 table at %s!",
 			__func__);
+	}
 
 	neigh_fib = &ltbl->fib_tbl6[fib_id];
 	RTE_VERIFY(neigh_fib->action == action);
 
-	list_hash_table_neighbors(l, action, &neigh_fib->u.neigh6);
+	list_hash_table_neighbors_unlock(l, action,
+		&neigh_fib->u.neigh6, ltbl);
 }
 
 static void
@@ -1976,7 +2001,6 @@ static void
 list_neighbors_for_lua(lua_State *l, list_neighbors f)
 {
 	struct gk_config *gk_conf;
-	struct gk_lpm *ltbl;
 	uint32_t ctypeid;
 	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_GK_CONFIG_PTR);
@@ -1998,11 +2022,7 @@ list_neighbors_for_lua(lua_State *l, list_neighbors f)
 
 	gk_conf = *(struct gk_config **)cdata;
 
-	ltbl = &gk_conf->lpm_tbl;
-
-	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	f(l, gk_conf->net, ltbl);
-	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+	f(l, gk_conf->net, &gk_conf->lpm_tbl);
 
 	lua_remove(l, 1);
 	lua_remove(l, 1);
