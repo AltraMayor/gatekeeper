@@ -57,24 +57,16 @@ int lls_logtype;
 
 static struct lls_config lls_conf = {
 	.arp_cache = {
-		.key_len = sizeof(struct in_addr),
-		.key_str_len = INET_ADDRSTRLEN,
 		.name = "arp",
 		.iface_enabled = iface_arp_enabled,
-		.ip_str = ipv4_str,
 		.ip_in_subnet = ipv4_in_subnet,
 		.xmit_req = xmit_arp_req,
-		.print_record = print_arp_record,
 	},
 	.nd_cache = {
-		.key_len = sizeof(struct in6_addr),
-		.key_str_len = INET6_ADDRSTRLEN,
 		.name = "nd",
 		.iface_enabled = iface_nd_enabled,
-		.ip_str = ipv6_str,
 		.ip_in_subnet = ipv6_in_subnet,
 		.xmit_req = xmit_nd_req,
-		.print_record = print_nd_record,
 	},
 };
 
@@ -102,18 +94,21 @@ cleanup_lls(void)
 }
 
 int
-hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be, unsigned int lcore_id)
+hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_hold_req hold_req = {
 			.cache = &lls_conf.arp_cache,
+			.addr = {
+				.proto = ETHER_TYPE_IPv4,
+				.ip.v4 = *ipv4,
+			},
 			.hold = {
 				.cb = cb,
 				.arg = arg,
 				.lcore_id = lcore_id,
 			},
 		};
-		rte_memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
@@ -123,14 +118,17 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ip_be, unsigned int lcore_id)
 }
 
 int
-put_arp(struct in_addr *ip_be, unsigned int lcore_id)
+put_arp(struct in_addr *ipv4, unsigned int lcore_id)
 {
 	if (arp_enabled(&lls_conf)) {
 		struct lls_put_req put_req = {
 			.cache = &lls_conf.arp_cache,
+			.addr = {
+				.proto = ETHER_TYPE_IPv4,
+				.ip.v4 = *ipv4,
+			},
 			.lcore_id = lcore_id,
 		};
-		rte_memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 
@@ -140,18 +138,21 @@ put_arp(struct in_addr *ip_be, unsigned int lcore_id)
 }
 
 int
-hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be, unsigned int lcore_id)
+hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ipv6, unsigned int lcore_id)
 {
 	if (nd_enabled(&lls_conf)) {
 		struct lls_hold_req hold_req = {
 			.cache = &lls_conf.nd_cache,
+			.addr = {
+				.proto = ETHER_TYPE_IPv6,
+				.ip.v6 = *ipv6,
+			},
 			.hold = {
 				.cb = cb,
 				.arg = arg,
 				.lcore_id = lcore_id,
 			},
 		};
-		rte_memcpy(hold_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
@@ -161,14 +162,17 @@ hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ip_be, unsigned int lcore_id)
 }
 
 int
-put_nd(struct in6_addr *ip_be, unsigned int lcore_id)
+put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 {
 	if (nd_enabled(&lls_conf)) {
 		struct lls_put_req put_req = {
 			.cache = &lls_conf.nd_cache,
+			.addr = {
+				.proto = ETHER_TYPE_IPv6,
+				.ip.v6 = *ipv6,
+			},
 			.lcore_id = lcore_id,
 		};
-		rte_memcpy(put_req.ip_be, ip_be, sizeof(*ip_be));
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 
@@ -723,7 +727,8 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 
 	lls_conf->net = net_conf;
 	if (arp_enabled(lls_conf)) {
-		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache);
+		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache,
+			sizeof(struct in_addr));
 		if (ret < 0) {
 			LLS_LOG(ERR, "ARP cache cannot be started\n");
 			goto timer;
@@ -741,7 +746,8 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 	}
 
 	if (nd_enabled(lls_conf)) {
-		ret = lls_cache_init(lls_conf, &lls_conf->nd_cache);
+		ret = lls_cache_init(lls_conf, &lls_conf->nd_cache,
+			sizeof(struct in6_addr));
 		if (ret < 0) {
 			LLS_LOG(ERR, "ND cache cannot be started\n");
 			goto arp;

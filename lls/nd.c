@@ -97,26 +97,8 @@ iface_nd_enabled(struct net_config *net, struct gatekeeper_if *iface)
 	return ipv6_if_configured(iface);
 }
 
-char *
-ipv6_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
-{
-	if (sizeof(struct in6_addr) != cache->key_len) {
-		LLS_LOG(ERR, "The key size of an ND entry should be %zu, but it is %"PRIx32"\n",
-			sizeof(struct in6_addr), cache->key_len);
-		return NULL;
-	}
-
-	if (inet_ntop(AF_INET6, ip_be, buf, len) == NULL) {
-		LLS_LOG(ERR, "%s: failed to convert a number to an IP address (%s)\n",
-			__func__, strerror(errno));
-		return NULL;
-	}
-
-	return buf;
-}
-
 int
-ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
+ipv6_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
 {
 	/* Check for both link-local and global subnets. */
 	const uint64_t *paddr_global =
@@ -129,7 +111,7 @@ ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
 	const uint64_t *pmask_local =
 		(const uint64_t *)&iface->ll_ip6_mask.s6_addr;
 
-	const uint64_t *paddr_rcvd = (const uint64_t *)ip_be;
+	const uint64_t *paddr_rcvd = (const uint64_t *)addr->ip.v6.s6_addr;
 
 	return (!((paddr_local[0] ^ paddr_rcvd[0]) & pmask_local[0]) &&
 		!((paddr_local[1] ^ paddr_rcvd[1]) & pmask_local[1]))
@@ -155,10 +137,11 @@ ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
  * indications as required by the RFC.
  */
 void
-xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
+xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	const struct ether_addr *ha, uint16_t tx_queue)
 {
 	struct lls_config *lls_conf = get_lls_conf();
+	const uint8_t *ipv6_addr = addr->ip.v6.s6_addr;
 
 	struct ether_hdr *eth_hdr;
 	struct ipv6_hdr *ipv6_hdr;
@@ -189,13 +172,13 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 		 * Need to use IPv6 multicast Ethernet address.
 		 * Technically, the last four bytes of this
 		 * address should be the same as the solicited-node
-		 * multicast address formed using @ip_be, but
+		 * multicast address formed using @ipv6_addr, but
 		 * this is equivalent to 0xFF followed by the
-		 * last three bytes of @ip_be.
+		 * last three bytes of @ipv6_addr.
 		 */
 		struct ether_addr eth_mc_daddr = { {
-			     0x33,      0x33,      0xFF,
-			ip_be[13], ip_be[14], ip_be[15],
+			0x33, 0x33, 0xFF,
+			ipv6_addr[13], ipv6_addr[14], ipv6_addr[15],
 		} };
 		ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
 	} else
@@ -223,11 +206,11 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 
 	if (ha == NULL) {
 		/* Need to use IPv6 solicited-node multicast address. */
-		uint8_t ip6_mc_daddr[16] = IPV6_SN_MC_ADDR(ip_be);
+		uint8_t ip6_mc_daddr[16] = IPV6_SN_MC_ADDR(ipv6_addr);
 		rte_memcpy(ipv6_hdr->dst_addr, ip6_mc_daddr,
 			sizeof(ipv6_hdr->dst_addr));
 	} else
-		rte_memcpy(ipv6_hdr->dst_addr, ip_be,
+		rte_memcpy(ipv6_hdr->dst_addr, ipv6_addr,
 			sizeof(ipv6_hdr->dst_addr));
 
 	/* Set-up ICMPv6 header. */
@@ -239,7 +222,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	/* Set-up ND header with options. */
 	nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
 	nd_msg->flags = 0;
-	rte_memcpy(nd_msg->target, ip_be, sizeof(nd_msg->target));
+	rte_memcpy(nd_msg->target, ipv6_addr, sizeof(nd_msg->target));
 	nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
 	nd_opt->type = ND_OPT_SOURCE_LL_ADDR;
 	nd_opt->len = 1;
@@ -371,6 +354,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	if (ndopts.opt_array[ND_OPT_SOURCE_LL_ADDR] != NULL) {
 		struct lls_mod_req mod_req = {
 			.cache = &lls_conf->nd_cache,
+			.addr.proto = ETHER_TYPE_IPv6,
 			.port_id = iface->id,
 			.ts = time(NULL),
 		};
@@ -389,8 +373,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 			ndopts.opt_array[ND_OPT_SOURCE_LL_ADDR];
 
 		/* Update resolution of source of Solicitation. */
-		rte_memcpy(mod_req.ip_be, ipv6_hdr->src_addr,
-			lls_conf->nd_cache.key_len);
+		rte_memcpy(mod_req.addr.ip.v6.s6_addr, ipv6_hdr->src_addr,
+			sizeof(mod_req.addr.ip.v6.s6_addr));
 		ether_addr_copy(&nd_opt->ha, &mod_req.ha);
 		lls_process_mod(lls_conf, &mod_req);
 
@@ -401,8 +385,11 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 * If source link layer address is not in the options,
 		 * get the source resolution, if we have it.
 		 */
+		struct ipaddr addr = { .proto = ETHER_TYPE_IPv6 };
+		rte_memcpy(addr.ip.v6.s6_addr, ipv6_hdr->src_addr,
+			sizeof(addr.ip.v6.s6_addr));
 		struct lls_map *map = lls_cache_get(&lls_conf->nd_cache,
-			ipv6_hdr->src_addr);
+			&addr);
 		if (map != NULL)
 			src_eth_addr = &map->ha;
 	}
@@ -618,6 +605,7 @@ process_nd_neigh_advertisement(struct lls_config *lls_conf,
 	if (ndopts.opt_array[ND_OPT_TARGET_LL_ADDR] != NULL) {
 		struct lls_mod_req mod_req = {
 			.cache = &lls_conf->nd_cache,
+			.addr.proto = ETHER_TYPE_IPv6,
 			.port_id = iface->id,
 			.ts = time(NULL),
 		};
@@ -626,8 +614,8 @@ process_nd_neigh_advertisement(struct lls_config *lls_conf,
 		nd_opt = (struct nd_opt_lladdr *)
 			ndopts.opt_array[ND_OPT_TARGET_LL_ADDR];
 
-		rte_memcpy(mod_req.ip_be, nd_msg->target,
-			lls_conf->nd_cache.key_len);
+		rte_memcpy(mod_req.addr.ip.v6.s6_addr, nd_msg->target,
+			sizeof(mod_req.addr.ip.v6.s6_addr));
 		ether_addr_copy(&nd_opt->ha, &mod_req.ha);
 		lls_process_mod(lls_conf, &mod_req);
 	}
@@ -719,27 +707,4 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	rte_panic("Reached the end of %s without hitting a switch case\n",
 		__func__);
 	return 0;
-}
-
-void
-print_nd_record(struct lls_cache *cache, struct lls_record *record)
-{
-	struct lls_map *map = &record->map;
-	char ip_buf[cache->key_str_len];
-	char *ip_str = ipv6_str(cache, map->ip_be, ip_buf, cache->key_str_len);
-
-	if (ip_str == NULL)
-		return;
-
-	if (map->stale)
-		LLS_LOG(DEBUG, "%s: unresolved (%u holds)\n",
-			ip_str, record->num_holds);
-	else
-		LLS_LOG(DEBUG,
-			"%s: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8" (port %hhu) (%u holds)\n",
-			ip_str,
-			map->ha.addr_bytes[0], map->ha.addr_bytes[1],
-			map->ha.addr_bytes[2], map->ha.addr_bytes[3],
-			map->ha.addr_bytes[4], map->ha.addr_bytes[5],
-			map->port_id, record->num_holds);
 }

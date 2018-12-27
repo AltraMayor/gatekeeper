@@ -25,15 +25,11 @@
 /* Whether ARP is enabled on this interface. */
 int iface_arp_enabled(struct net_config *net, struct gatekeeper_if *iface);
 
-/* Convert @ip_be to an IPv4 address and store it in @buf. */
-char *ipv4_str(struct lls_cache *cache, const uint8_t *ip_be,
-	char *buf, size_t len);
-
-/* Return whether @ip_be is in the same subnet as @iface's IPv4 address. */
-int ipv4_in_subnet(struct gatekeeper_if *iface, const void *ip_be);
+/* Return whether @addr is in the same subnet as @iface's IPv4 address. */
+int ipv4_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr);
 
 /* Transmit an ARP request packet. */
-void xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
+void xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	const struct ether_addr *ha, uint16_t tx_queue);
 
 /*
@@ -45,8 +41,5 @@ void xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 int process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr,
 	struct arp_hdr *arp_hdr);
-
-/* Print an ARP record. */
-void print_arp_record(struct lls_cache *cache, struct lls_record *record);
 
 #endif /* _GATEKEEPER_LLS_ARP_H_ */

@@ -1124,7 +1124,7 @@ cps_arp_cb(const struct lls_map *map, void *arg,
 	}
 
 	req->ty = CPS_REQ_ARP;
-	rte_memcpy(&req->u.arp.ip, map->ip_be, sizeof(req->u.arp.ip));
+	req->u.arp.ip = map->addr.ip.v4.s_addr;
 	rte_memcpy(&req->u.arp.ha, &map->ha, sizeof(req->u.arp.ha));
 	req->u.arp.iface = arg;
 
@@ -1221,7 +1221,8 @@ cps_nd_cb(const struct lls_map *map, void *arg,
 	}
 
 	req->ty = CPS_REQ_ND;
-	rte_memcpy(&req->u.nd.ip, map->ip_be, sizeof(req->u.nd.ip));
+	rte_memcpy(req->u.nd.ip, map->addr.ip.v6.s6_addr,
+		sizeof(req->u.nd.ip));
 	rte_memcpy(&req->u.nd.ha, &map->ha, sizeof(req->u.nd.ha));
 	req->u.nd.iface = arg;
 

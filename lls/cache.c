@@ -27,17 +27,17 @@
 
 static void
 lls_send_request(struct lls_config *lls_conf, struct lls_cache *cache,
-	const uint8_t *ip_be, const struct ether_addr *ha)
+	const struct ipaddr *addr, const struct ether_addr *ha)
 {
 	struct gatekeeper_if *front = &lls_conf->net->front;
 	struct gatekeeper_if *back = &lls_conf->net->back;
 	if (cache->iface_enabled(lls_conf->net, front) &&
-			cache->ip_in_subnet(front, ip_be))
-		cache->xmit_req(&lls_conf->net->front, ip_be, ha,
+			cache->ip_in_subnet(front, addr))
+		cache->xmit_req(&lls_conf->net->front, addr, ha,
 			lls_conf->tx_queue_front);
 	if (cache->iface_enabled(lls_conf->net, back) &&
-			cache->ip_in_subnet(back, ip_be))
-		cache->xmit_req(&lls_conf->net->back, ip_be, ha,
+			cache->ip_in_subnet(back, addr))
+		cache->xmit_req(&lls_conf->net->back, addr, ha,
 			lls_conf->tx_queue_back);
 }
 
@@ -52,7 +52,29 @@ lls_cache_dump(struct lls_cache *cache)
 	LLS_LOG(DEBUG, "LLS cache (%s)\n=====================\n", cache->name);
 	index = rte_hash_iterate(cache->hash, &key, &data, &iter);
 	while (index >= 0) {
-		cache->print_record(cache, &cache->records[index]);
+		struct lls_record *record = &cache->records[index];
+		struct lls_map *map = &record->map;
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		int ret = convert_ip_to_str(&map->addr, ip_str,
+			sizeof(ip_str));
+		if (unlikely(ret < 0)) {
+			LLS_LOG(DEBUG, "Couldn't convert cache record's IP address to string\n");
+			goto next;
+		}
+
+		if (map->stale) {
+			LLS_LOG(DEBUG, "%s: unresolved (%u holds)\n",
+				ip_str, record->num_holds);
+		} else {
+			LLS_LOG(DEBUG,
+				"%s: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8" (port %hhu) (%u holds)\n",
+				ip_str,
+				map->ha.addr_bytes[0], map->ha.addr_bytes[1],
+				map->ha.addr_bytes[2], map->ha.addr_bytes[3],
+				map->ha.addr_bytes[4], map->ha.addr_bytes[5],
+				map->port_id, record->num_holds);
+		}
+next:
 		index = rte_hash_iterate(cache->hash, &key, &data, &iter);
 	}
 }
@@ -86,32 +108,30 @@ lls_update_subscribers(struct lls_record *record)
 }
 
 static int
-lls_add_record(struct lls_cache *cache, const uint8_t *ip_be)
+lls_add_record(struct lls_cache *cache, const struct ipaddr *addr)
 {
-	int ret = rte_hash_add_key(cache->hash, ip_be);
+	int ret = rte_hash_add_key(cache->hash, &addr->ip);
 	if (unlikely(ret == -EINVAL || ret == -ENOSPC)) {
-		char ip_buf[cache->key_str_len];
-		char *ip_str = cache->ip_str(cache, ip_be,
-			ip_buf, cache->key_str_len);
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		int ret2 = convert_ip_to_str(addr, ip_str, sizeof(ip_str));
 		LLS_LOG(ERR, "%s, could not add record for %s\n",
 			ret == -EINVAL ? "Invalid params" : "No space",
-			ip_str == NULL ? cache->name : ip_str);
+			ret2 < 0 ? cache->name : ip_str);
 	} else
 		RTE_VERIFY(ret >= 0);
 	return ret;
 }
 
 static void
-lls_del_record(struct lls_cache *cache, const uint8_t *ip_be)
+lls_del_record(struct lls_cache *cache, const struct ipaddr *addr)
 {
-	int32_t ret = rte_hash_del_key(cache->hash, ip_be);
+	int32_t ret = rte_hash_del_key(cache->hash, &addr->ip);
 	if (unlikely(ret == -ENOENT || ret == -EINVAL)) {
-		char ip_buf[cache->key_str_len];
-		char *ip_str = cache->ip_str(cache, ip_be, ip_buf,
-			cache->key_str_len);
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		int ret2 = convert_ip_to_str(addr, ip_str, sizeof(ip_str));
 		LLS_LOG(ERR, "%s, record for %s not deleted\n",
 			ret == -ENOENT ? "No map found" : "Invalid params",
-			ip_str == NULL ? cache->name : ip_str);
+			ret2 < 0 ? cache->name : ip_str);
 	}
 }
 
@@ -120,35 +140,34 @@ lls_process_hold(struct lls_config *lls_conf, struct lls_hold_req *hold_req)
 {
 	struct lls_cache *cache = hold_req->cache;
 	struct lls_record *record;
-	int ret = rte_hash_lookup(cache->hash, hold_req->ip_be);
+	int ret = rte_hash_lookup(cache->hash, &hold_req->addr.ip);
 
 	if (ret == -ENOENT) {
-		ret = lls_add_record(cache, hold_req->ip_be);
+		ret = lls_add_record(cache, &hold_req->addr);
 		if (ret < 0)
 			return;
 
 		record = &cache->records[ret];
 		record->map.stale = true;
-		rte_memcpy(record->map.ip_be, hold_req->ip_be, cache->key_len);
+		record->map.addr = hold_req->addr;
 		record->ts = time(NULL);
 		RTE_VERIFY(record->ts >= 0);
 		record->holds[0] = hold_req->hold;
 		record->num_holds = 1;
 
 		/* Try to resolve record using broadcast. */
-		lls_send_request(lls_conf, cache, hold_req->ip_be, NULL);
+		lls_send_request(lls_conf, cache, &hold_req->addr, NULL);
 
 		if (lls_conf->log_level == RTE_LOG_DEBUG)
 			lls_cache_dump(cache);
 		return;
 	} else if (unlikely(ret == -EINVAL)) {
-		char ip_buf[cache->key_str_len];
-		char *ip_str;
-		ip_str = cache->ip_str(cache, hold_req->ip_be, ip_buf,
-			cache->key_str_len);
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		ret = convert_ip_to_str(&hold_req->addr, ip_str,
+			sizeof(ip_str));
 		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; hold failed\n",
-			ip_str == NULL ? cache->name : ip_str);
+			ret < 0 ? cache->name : ip_str);
 		return;
 	}
 
@@ -175,7 +194,7 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 	struct lls_cache *cache = put_req->cache;
 	struct lls_record *record;
 	unsigned int i;
-	int ret = rte_hash_lookup(cache->hash, put_req->ip_be);
+	int ret = rte_hash_lookup(cache->hash, &put_req->addr.ip);
 
 	if (ret == -ENOENT) {
 		/*
@@ -185,12 +204,12 @@ lls_process_put(struct lls_config *lls_conf, struct lls_put_req *put_req)
 		 */
 		return;
 	} else if (unlikely(ret == -EINVAL)) {
-		char ip_buf[cache->key_str_len];
-		char *ip_str = cache->ip_str(cache, put_req->ip_be, ip_buf,
-			cache->key_str_len);
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		ret = convert_ip_to_str(&put_req->addr, ip_str,
+			sizeof(ip_str));
 		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; put failed\n",
-			ip_str == NULL ? cache->name : ip_str);
+			ret < 0 ? cache->name : ip_str);
 		return;
 	}
 
@@ -238,10 +257,10 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 	int changed_ha = false;
 	int changed_port = false;
 	int changed_stale = false;
-	int ret = rte_hash_lookup(cache->hash, mod_req->ip_be);
+	int ret = rte_hash_lookup(cache->hash, &mod_req->addr.ip);
 
 	if (ret == -ENOENT) {
-		ret = lls_add_record(cache, mod_req->ip_be);
+		ret = lls_add_record(cache, &mod_req->addr);
 		if (ret < 0)
 			return;
 
@@ -250,7 +269,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 		ether_addr_copy(&mod_req->ha, &record->map.ha);
 		record->map.port_id = mod_req->port_id;
 		record->map.stale = false;
-		rte_memcpy(record->map.ip_be, mod_req->ip_be, cache->key_len);
+		record->map.addr = mod_req->addr;
 		record->ts = mod_req->ts;
 		record->num_holds = 0;
 
@@ -258,13 +277,12 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 			lls_cache_dump(cache);
 		return;
 	} else if (unlikely(ret == -EINVAL)) {
-		char ip_buf[cache->key_str_len];
-		char *ip_str;
-		ip_str = cache->ip_str(cache, mod_req->ip_be, ip_buf,
-			cache->key_str_len);
+		char ip_str[MAX_INET_ADDRSTRLEN];
+		ret = convert_ip_to_str(&mod_req->addr, ip_str,
+			sizeof(ip_str));
 		LLS_LOG(ERR,
 			"Invalid params, could not get %s map; mod failed\n",
-			ip_str == NULL ? cache->name : ip_str);
+			ret < 0 ? cache->name : ip_str);
 		return;
 	}
 
@@ -402,9 +420,9 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 }
 
 struct lls_map *
-lls_cache_get(struct lls_cache *cache, const uint8_t *ip_be)
+lls_cache_get(struct lls_cache *cache, const struct ipaddr *addr)
 {
-	int ret = rte_hash_lookup(cache->hash, ip_be);
+	int ret = rte_hash_lookup(cache->hash, &addr->ip);
 	if (ret < 0)
 		return NULL;
 	return &cache->records[ret].map;
@@ -415,16 +433,17 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 {
 	uint32_t iter = 0;
 	int32_t index;
-	const uint8_t *ip_be;
+	const void *key;
 	void *data;
 	struct gatekeeper_if *front = &lls_conf->net->front;
 	struct gatekeeper_if *back = &lls_conf->net->back;
 	time_t now = time(NULL);
 
 	RTE_VERIFY(now >= 0);
-	index = rte_hash_iterate(cache->hash, (void *)&ip_be, &data, &iter);
+	index = rte_hash_iterate(cache->hash, (void *)&key, &data, &iter);
 	while (index >= 0) {
 		struct lls_record *record = &cache->records[index];
+		struct ipaddr *addr = &record->map.addr;
 		uint32_t timeout;
 
 		/*
@@ -433,9 +452,9 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 		 */
 		if (record->map.stale) {
 			if (record->num_holds > 0)
-				lls_send_request(lls_conf, cache, ip_be, NULL);
+				lls_send_request(lls_conf, cache, addr, NULL);
 			else
-				lls_del_record(cache, ip_be);
+				lls_del_record(cache, addr);
 			goto next;
 		}
 
@@ -445,13 +464,13 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 				record->map.port_id == back->id)
 			timeout = cache->back_timeout_sec;
 		else {
-			char ip_buf[cache->key_str_len];
-			char *ip_str = cache->ip_str(cache, ip_be, ip_buf,
-				cache->key_str_len);
+			char ip_str[MAX_INET_ADDRSTRLEN];
+			int ret = convert_ip_to_str(addr, ip_str,
+				sizeof(ip_str));
 			LLS_LOG(ERR, "Map for %s has an invalid port %hhu\n",
-				ip_str == NULL ? cache->name : ip_str,
+				ret < 0 ? cache->name : ip_str,
 				record->map.port_id);
-			lls_del_record(cache, ip_be);
+			lls_del_record(cache, addr);
 			goto next;
 		}
 
@@ -459,7 +478,7 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 			record->map.stale = true;
 			lls_update_subscribers(record);
 			if (record->num_holds > 0)
-				lls_send_request(lls_conf, cache, ip_be,
+				lls_send_request(lls_conf, cache, addr,
 					&record->map.ha);
 		} else if (timeout > lls_conf->lls_cache_scan_interval_sec &&
 				(now - record->ts >= timeout - lls_conf->
@@ -469,11 +488,11 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 			 * preemptively send a unicast probe.
 			 */
 			if (record->num_holds > 0)
-				lls_send_request(lls_conf, cache, ip_be,
+				lls_send_request(lls_conf, cache, addr,
 					&record->map.ha);
 		}
 next:
-		index = rte_hash_iterate(cache->hash, (void *)&ip_be,
+		index = rte_hash_iterate(cache->hash, (void *)&key,
 			&data, &iter);
 	}
 
@@ -491,20 +510,20 @@ lls_cache_destroy(struct lls_cache *cache)
 }
 
 int
-lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache)
+lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
+	uint32_t key_len)
 {
 	struct rte_hash_parameters lls_cache_params = {
 		.name = cache->name,
 		.entries = lls_conf->lls_cache_records,
 		.reserved = 0,
-		.key_len = cache->key_len,
+		.key_len = key_len,
 		.hash_func = DEFAULT_HASH_FUNC,
 		.hash_func_init_val = 0,
 		.socket_id = rte_lcore_to_socket_id(lls_conf->lcore_id),
 		.extra_flag = 0,
 	};
 
-	RTE_VERIFY(cache->key_len <= LLS_MAX_KEY_LEN);
 	cache->records = rte_calloc("lls_records",
 		lls_conf->lls_cache_records, sizeof(*cache->records), 0);
 	if (cache->records == NULL) {

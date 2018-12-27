@@ -34,37 +34,15 @@ iface_arp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 	return ipv4_if_configured(iface);
 }
 
-char *
-ipv4_str(struct lls_cache *cache, const uint8_t *ip_be, char *buf, size_t len)
-{
-	struct in_addr ipv4_addr;
-
-	if (sizeof(ipv4_addr) != cache->key_len) {
-		LLS_LOG(ERR, "The key size of an ARP entry should be %zu, but it is %"PRIx32"\n",
-			sizeof(ipv4_addr), cache->key_len);
-		return NULL;
-	}
-
-	/* Keep IP address in network order for inet_ntop(). */
-	ipv4_addr.s_addr = *(const uint32_t *)ip_be;
-	if (inet_ntop(AF_INET, &ipv4_addr, buf, len) == NULL) {
-		LLS_LOG(ERR, "%s: failed to convert a number to an IP address (%s)\n",
-			__func__, strerror(errno));
-		return NULL;
-	}
-
-	return buf;
-}
-
 int
-ipv4_in_subnet(struct gatekeeper_if *iface, const void *ip_be)
+ipv4_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
 {
-	return !((iface->ip4_addr.s_addr ^ *(const uint32_t *)ip_be) &
+	return !((iface->ip4_addr.s_addr ^ addr->ip.v4.s_addr) &
 		iface->ip4_mask.s_addr);
 }
 
 void
-xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
+xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	const struct ether_addr *ha, uint16_t tx_queue)
 {
 	struct rte_mbuf *created_pkt;
@@ -110,7 +88,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
 	ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_sha);
 	arp_hdr->arp_data.arp_sip = iface->ip4_addr.s_addr;
 	memset(&arp_hdr->arp_data.arp_tha, 0, ETHER_ADDR_LEN);
-	arp_hdr->arp_data.arp_tip = *(const uint32_t *)ip_be;
+	arp_hdr->arp_data.arp_tip = addr->ip.v4.s_addr;
 
 	ret = rte_eth_tx_burst(iface->id, tx_queue, &created_pkt, 1);
 	if (ret <= 0) {
@@ -124,6 +102,10 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr,
 	struct arp_hdr *arp_hdr)
 {
+	struct ipaddr addr = {
+		.proto = ETHER_TYPE_IPv4,
+		.ip.v4.s_addr = arp_hdr->arp_data.arp_sip,
+	};
 	struct lls_mod_req mod_req;
 	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
 	/* pkt_in_skip_l2() already called by LLS. */
@@ -148,13 +130,12 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return -1;
 
 	/* If sip is not in the same subnet as our IP address, drop. */
-	if (!ipv4_in_subnet(iface, &arp_hdr->arp_data.arp_sip))
+	if (!ipv4_in_subnet(iface, &addr))
 		return -1;
 
 	/* Update cache with source resolution, regardless of operation. */
 	mod_req.cache = &lls_conf->arp_cache;
-	rte_memcpy(mod_req.ip_be, &arp_hdr->arp_data.arp_sip,
-		lls_conf->arp_cache.key_len);
+	mod_req.addr = addr;
 	ether_addr_copy(&arp_hdr->arp_data.arp_sha, &mod_req.ha);
 	mod_req.port_id = iface->id;
 	mod_req.ts = time(NULL);
@@ -212,27 +193,4 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			__func__, rte_be_to_cpu_16(arp_hdr->arp_op));
 		return -1;
 	}
-}
-
-void
-print_arp_record(struct lls_cache *cache, struct lls_record *record)
-{
-	struct lls_map *map = &record->map;
-	char ip_buf[cache->key_str_len];
-	char *ip_str = ipv4_str(cache, map->ip_be, ip_buf, cache->key_str_len);
-
-	if (ip_str == NULL)
-		return;
-
-	if (map->stale)
-		LLS_LOG(DEBUG, "%s: unresolved (%u holds)\n",
-			ip_str, record->num_holds);
-	else
-		LLS_LOG(DEBUG,
-			"%s: %02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8":%02"PRIx8" (port %hhu) (%u holds)\n",
-			ip_str,
-			map->ha.addr_bytes[0], map->ha.addr_bytes[1],
-			map->ha.addr_bytes[2], map->ha.addr_bytes[3],
-			map->ha.addr_bytes[4], map->ha.addr_bytes[5],
-			map->port_id, record->num_holds);
 }

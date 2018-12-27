@@ -32,13 +32,6 @@ extern int lls_logtype;
 #define LLS_LOG(level, ...) \
 	rte_log(RTE_LOG_ ## level, lls_logtype, "GATEKEEPER LLS: " __VA_ARGS__)
 
-/*
- * Maximum key length (in bytes) for an LLS map. It should be set
- * to the maximum key length needed. Currently, this is set to 16 for
- * the number of bytes in an IPv6 address.
- */
-#define LLS_MAX_KEY_LEN (16)
-
 /* Requests that can be made to the LLS block. */
 enum lls_req_ty {
 	/* Express interest in a map by registering a callback function. */
@@ -78,7 +71,7 @@ struct lls_map {
 	int               stale;
 
 	/* IP address for this map, in network ordering. */
-	uint8_t           ip_be[LLS_MAX_KEY_LEN];
+	struct ipaddr     addr;
 };
 
 /*
@@ -131,12 +124,6 @@ struct lls_record {
 };
 
 struct lls_cache {
-	/* Length (in bytes) of keys for this cache. */
-	uint32_t          key_len;
-
-	/* Maximum length (in bytes) for strings of keys for this cache. */
-	uint32_t          key_str_len;
-
 	/* Timeout value (in seconds) to mark entries as stale. */
 	uint32_t          front_timeout_sec;
 	uint32_t          back_timeout_sec;
@@ -154,29 +141,23 @@ struct lls_cache {
 	int (*iface_enabled)(struct net_config *net,
 		struct gatekeeper_if *iface);
 
-	/* Convert @ip_be to string form and store it in @buf. */
-	char *(*ip_str)(struct lls_cache *cache, const uint8_t *ip_be,
-		char *buf, size_t len);
-
 	/*
-	 * Returns whether @ip_be is in the same subnet as the
+	 * Returns whether @addr is in the same subnet as the
 	 * relevant address for this cache assigned to @iface.
 	 */
-	int (*ip_in_subnet)(struct gatekeeper_if *iface, const void *ip_be);
+	int (*ip_in_subnet)(struct gatekeeper_if *iface,
+		const struct ipaddr *addr);
 
 	/*
 	 * Function to transmit a request out of @iface to resolve
-	 * IP address @ip_be to an Ethernet address.
+	 * IP address @addr to an Ethernet address.
 	 *
 	 * If @ha is NULL, then broadcast (IPv4) or multicast (IPv6).
 	 * Otherwise, unicast to @ha.
 	 */
-	void (*xmit_req)(struct gatekeeper_if *iface, const uint8_t *ip_be,
+	void (*xmit_req)(struct gatekeeper_if *iface,
+		const struct ipaddr *addr,
 		const struct ether_addr *ha, uint16_t tx_queue);
-
-	/* Function to print a cache record. */
-	void (*print_record)(struct lls_cache *cache,
-		struct lls_record *record);
 };
 
 struct lls_config {

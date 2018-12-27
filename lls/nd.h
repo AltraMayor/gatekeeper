@@ -25,15 +25,11 @@
 /* Whether ND is enabled on this interface. */
 int iface_nd_enabled(struct net_config *net, struct gatekeeper_if *iface);
 
-/* Convert @ip_be to an IPv6 address and store it in @buf. */
-char *ipv6_str(struct lls_cache *cache, const uint8_t *ip_be,
-	char *buf, size_t len);
-
-/* Return whether @ip_be is in the same subnet as @iface's IPv6 address. */
-int ipv6_in_subnet(struct gatekeeper_if *iface, const void *ip_be);
+/* Return whether @addr is in the same subnet as @iface's IPv6 address. */
+int ipv6_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr);
 
 /* Transmit an ND request packet. */
-void xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
+void xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	const struct ether_addr *ha, uint16_t tx_queue);
 
 /*
@@ -44,8 +40,5 @@ void xmit_nd_req(struct gatekeeper_if *iface, const uint8_t *ip_be,
  */
 int process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *buf);
-
-/* Print an ND record. */
-void print_nd_record(struct lls_cache *cache, struct lls_record *record);
 
 #endif /* _GATEKEEPER_LLS_ND_H_ */

@@ -529,7 +529,7 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 }
 
 int
-convert_ip_to_str(struct ipaddr *ip_addr, char *res, int n)
+convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n)
 {
 	if (ip_addr->proto == ETHER_TYPE_IPv4) {
 		if (inet_ntop(AF_INET, &ip_addr->ip.v4, res, n) == NULL) {
