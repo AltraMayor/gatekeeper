@@ -28,6 +28,7 @@
 #include "arp.h"
 #include "cache.h"
 #include "nd.h"
+#include "luajit-ffi-cdata.h"
 
 /*
  * When using LACP, the requirement must be met:
@@ -318,6 +319,114 @@ lacp_timer_reset(struct lls_config *lls_conf, struct gatekeeper_if *iface)
 		(uint64_t)((LLS_LACP_ANNOUNCE_INTERVAL_MS / 1000.0) *
 			rte_get_timer_hz()), PERIODICAL,
 		lls_conf->lcore_id, lls_lacp_announce, iface);
+}
+
+static void
+fillup_lls_dump_entry(struct lls_dump_entry *dentry, struct lls_map *map)
+{
+	dentry->stale = map->stale;
+	dentry->port_id = map->port_id;
+	dentry->addr = map->addr;
+	ether_addr_copy(&map->ha, &dentry->ha);
+}
+
+#define CTYPE_STRUCT_LLS_DUMP_ENTRY_PTR "struct lls_dump_entry *"
+
+static void
+list_lls(lua_State *l, struct lls_cache *cache)
+{
+	uint32_t next = 0;
+	const void *key;
+	void *data;
+	int32_t index;
+	void *cdata;
+	uint32_t correct_ctypeid_lls_dentry = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_LLS_DUMP_ENTRY_PTR);
+
+	index = rte_hash_iterate(cache->hash, (void *)&key, &data, &next);
+	while (index >= 0) {
+		struct lls_dump_entry dentry;
+		struct lls_record *record = &cache->records[index];
+
+		fillup_lls_dump_entry(&dentry, &record->map);
+
+		lua_pushvalue(l, 2);
+		lua_insert(l, 3);
+		cdata = luaL_pushcdata(l, correct_ctypeid_lls_dentry,
+			sizeof(struct lls_dump_entry *));
+		*(struct lls_dump_entry **)cdata = &dentry;
+		lua_insert(l, 4);
+
+		lua_call(l, 2, 1);
+
+		index = rte_hash_iterate(cache->hash,
+			(void *)&key, &data, &next);
+	}
+}
+
+static void
+list_arp(lua_State *l, struct lls_config *lls_conf)
+{
+	if (!ipv4_configured(lls_conf->net))
+		return;
+	list_lls(l, &lls_conf->arp_cache);
+}
+
+static void
+list_nd(lua_State *l, struct lls_config *lls_conf)
+{
+	if (!ipv6_configured(lls_conf->net))
+		return;
+	list_lls(l, &lls_conf->nd_cache);
+}
+
+typedef void (*list_lls_fn)(lua_State *l, struct lls_config *lls_conf);
+
+#define CTYPE_STRUCT_LLS_CONFIG_PTR "struct lls_config *"
+
+static void
+list_lls_for_lua(lua_State *l, list_lls_fn f)
+{
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_lls_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_LLS_CONFIG_PTR);
+	struct lls_config *lls_conf;
+
+	/* First argument must be of type CTYPE_STRUCT_LLS_CONFIG_PTR. */
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_LLS_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_lls_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_LLS_CONFIG_PTR);
+
+	/* Second argument must be a Lua function. */
+	luaL_checktype(l, 2, LUA_TFUNCTION);
+
+	/* Third argument should be a Lua value. */
+	if (lua_gettop(l) != 3)
+		luaL_error(l, "Expected three arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	lls_conf = *(struct lls_config **)cdata;
+
+	f(l, lls_conf);
+
+	lua_remove(l, 1);
+	lua_remove(l, 1);
+}
+
+int
+l_list_lls_arp(lua_State *l)
+{
+	list_lls_for_lua(l, list_arp);
+	return 1;
+}
+
+int
+l_list_lls_nd(lua_State *l)
+{
+	list_lls_for_lua(l, list_nd);
+	return 1;
 }
 
 static int

@@ -123,6 +123,18 @@ struct lls_record {
 	struct lls_hold holds[RTE_MAX_LCORE];
 };
 
+/* For dumping LLS entries using the Dynamic Config. */
+struct lls_dump_entry {
+	/* Whether this entry is stale. */
+	bool              stale;
+	/* The port on which this entry resides. */
+	uint16_t          port_id;
+	/* The IP address of the entry. */
+	struct ipaddr     addr;
+	/* The MAC address of the entry. */
+	struct ether_addr ha;
+};
+
 struct lls_cache {
 	/* Timeout value (in seconds) to mark entries as stale. */
 	uint32_t          front_timeout_sec;
@@ -381,5 +393,8 @@ void submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
+
+int l_list_lls_arp(lua_State *l);
+int l_list_lls_nd(lua_State *l);
 
 #endif /* _GATEKEEPER_LLS_H_ */

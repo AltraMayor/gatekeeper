@@ -60,6 +60,13 @@ struct gk_neighbor_dump_entry {
 	struct ether_addr d_addr;
 };
 
+struct lls_dump_entry {
+	bool              stale;
+	uint16_t          port_id;
+	struct ipaddr     addr;
+	struct ether_addr ha;
+};
+
 ]]
 
 -- Functions and wrappers
@@ -121,4 +128,22 @@ function print_neighbor_dump_entry(neighbor_dump_entry, acc)
 	return acc .. "Neighbor Ethernet cache entry:" .. ": [state: " .. stale ..
 		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
 		", action: " .. tostring(neighbor_dump_entry.action) .. "]\n"
+end
+
+-- The following is an example function that can be used as
+-- the callback function of list_lls_arp() and list_lls_nd().
+
+-- Parameter lls_dump_entry is going to be released after
+-- print_lls_dump_entry() returns, so don't keep references to
+-- lls_dump_entry or any of the data reachable through its fields.
+
+function print_lls_dump_entry(lls_dump_entry, acc)
+	local stale = lls_dump_entry.stale and "stale" or "fresh"
+	local ip = dylib.ip_format_addr(lls_dump_entry.addr)
+	local ha = dylib.ether_format_addr(lls_dump_entry.ha)
+	local port_id = lls_dump_entry.port_id
+
+	return acc .. "LLS cache entry:" .. ": [state: " .. stale ..
+		", ip: " .. ip .. ", mac: " .. ha ..
+		", port: " .. port_id .. "]\n"
 end

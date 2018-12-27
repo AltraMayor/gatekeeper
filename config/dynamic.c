@@ -31,6 +31,7 @@
 #include <rte_malloc.h>
 
 #include "gatekeeper_net.h"
+#include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
@@ -112,15 +113,6 @@ static int
 process_client_message(int conn_fd,
 	const char *msg, int msg_len, lua_State *lua_state)
 {
-	/*
-	 * TODO #61 Implement the functionalities to process the clients' request.
-	 *
-	 * Gatekeeper and Grantor: Listing the ARP and ND table.
-	 * This is important for network diagnosis.
-	 *
-	 * Grantor: Updating the policy GTs run.
-	 */
-
 	int ret;
 	size_t reply_len;
 	const char *reply_msg;
@@ -297,6 +289,8 @@ const struct luaL_reg dylib_lua_c_funcs [] = {
 	{"list_gk_fib6",         l_list_gk_fib6},
 	{"list_gk_neighbors4",   l_list_gk_neighbors4},
 	{"list_gk_neighbors6",   l_list_gk_neighbors6},
+	{"list_lls_arp",         l_list_lls_arp},
+	{"list_lls_nd",          l_list_lls_nd},
 	{"ether_format_addr",    l_ether_format_addr},
 	{"ip_format_addr",       l_ip_format_addr},
 	{NULL,                   NULL}	/* Sentinel. */

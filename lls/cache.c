@@ -521,7 +521,11 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 		.hash_func = DEFAULT_HASH_FUNC,
 		.hash_func_init_val = 0,
 		.socket_id = rte_lcore_to_socket_id(lls_conf->lcore_id),
-		.extra_flag = 0,
+		/*
+		 * Enable concurrency control for race conditions
+		 * between writers (LLS) and readers (Dynamic Config).
+		 */
+		.extra_flag = RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY,
 	};
 
 	cache->records = rte_calloc("lls_records",
