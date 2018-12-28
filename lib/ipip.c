@@ -55,8 +55,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		/* Allocate space for outer IPv4 header and L2 header. */
 		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv4_hdr));
 		if (eth_hdr == NULL) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ipip: could not adjust IPv4 packet length\n");
+			G_LOG(ERR, "ipip: could not adjust IPv4 packet length\n");
 			return -1;
 		}
 
@@ -94,8 +93,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		/* Allocate space for new IPv6 header and L2 header. */
 		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv6_hdr));
 		if (eth_hdr == NULL) {
-			RTE_LOG(ERR, GATEKEEPER,
-				"ipip: could not adjust IPv6 packet length\n");
+			G_LOG(ERR, "ipip: could not adjust IPv6 packet length\n");
 			return -1;
 		}
 
