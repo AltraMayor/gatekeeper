@@ -32,10 +32,6 @@
 #include "gatekeeper_gt.h"
 #include "luajit-ffi-cdata.h"
 
-/* TODO #14 Get the install-path via Makefile. */
-#define LUA_BASE_DIR               "./lua"
-#define GATEKEEPER_CONFIG_FILE     "gatekeeper_config.lua"
-
 /*
  * Return a table with all lcore ids but the lcore id of the master lcore.
  * Function to be called from Lua.
@@ -245,14 +241,14 @@ set_lua_path(lua_State *l, const char *path)
 }
 
 int
-config_gatekeeper(void)
+config_gatekeeper(const char *lua_base_dir, const char *gatekeeper_config_file)
 {
 	int ret;
 	char lua_entry_path[128];
 	lua_State *lua_state;
 
 	ret = snprintf(lua_entry_path, sizeof(lua_entry_path), \
-			"%s/%s", LUA_BASE_DIR, GATEKEEPER_CONFIG_FILE);
+			"%s/%s", lua_base_dir, gatekeeper_config_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
 	lua_state = luaL_newstate();
@@ -264,7 +260,7 @@ config_gatekeeper(void)
 
 	luaL_openlibs(lua_state);
 	luaL_register(lua_state, "gatekeeper", gatekeeper);
-	set_lua_path(lua_state, LUA_BASE_DIR);
+	set_lua_path(lua_state, lua_base_dir);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
 		RTE_LOG(ERR, GATEKEEPER,

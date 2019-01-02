@@ -115,14 +115,22 @@ struct dynamic_config {
 
 	/* Specify the receiving timeouts until reporting an error. */
 	struct timeval   rcv_time_out;
+
+	/* The directory for Lua files of dynamic configuration. */
+	char             *lua_dy_base_dir;
+
+	/* The Lua file for initializing dynamic configuration. */
+	char             *dynamic_config_file;
 };
 
-int config_gatekeeper(void);
+int config_gatekeeper(const char *lua_base_dir,
+	const char *gatekeeper_config_file);
 int set_lua_path(lua_State *l, const char *path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
 int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
-	const char *server_path, struct dynamic_config *dy_conf);
+	const char *server_path, const char *lua_dy_base_dir,
+	const char *dynamic_config_file, struct dynamic_config *dy_conf);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

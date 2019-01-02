@@ -21,6 +21,7 @@
 #include <signal.h>
 #include <time.h>
 #include <inttypes.h>
+#include <argp.h>
 
 #include <rte_eal.h>
 #include <rte_log.h>
@@ -44,6 +45,62 @@ volatile int exiting = false;
 uint64_t cycles_per_sec;
 uint64_t cycles_per_ms;
 uint64_t picosec_per_cycle;
+
+/* Argp's global variables. */
+const char *argp_program_version = "Gatekeeper 1.0";
+
+/* Arguments. */
+static char adoc[] = "";
+
+static char doc[] = "Gatekeeper -- the first open source "
+	"DDoS protection system";
+
+static struct argp_option options[] = {
+	{"lua-base-dir", 'd', "DIR", 0,
+		"Base directory DIR for Gatekeeper Lua files", 0},
+	{"gatekeeper-config-file", 'f', "FILE", 0,
+		"Lua configuration FILE to initialize Gatekeeper", 0},
+	{ 0 }
+};
+
+struct args {
+	const char *lua_base_dir;
+	const char *gatekeeper_config_file;
+};
+
+static error_t
+parse_opt(int key, char *arg, struct argp_state *state)
+{
+	struct args *args = state->input;
+
+	switch (key) {
+	case 'd':
+		args->lua_base_dir = arg;
+		break;
+
+	case 'f':
+		args->gatekeeper_config_file = arg;
+		break;
+
+	default:
+		return ARGP_ERR_UNKNOWN;
+	}
+
+	return 0;
+}
+
+static struct argp argp = {options, parse_opt, adoc, doc, NULL, NULL, NULL};
+
+char *
+rte_strdup(const char *type, const char *s)
+{
+	int len = s == NULL ? 0 : strlen(s) + 1;
+	char *res = rte_malloc(type, len, 0);
+	if (unlikely(res == NULL))
+		return NULL;
+
+	return strcpy(res, s);
+}
 
 /* Obtain the system time resolution. */
 static int
@@ -142,9 +199,23 @@ out:
 int
 main(int argc, char **argv)
 {
+	struct args args = {
+		/* Defaults. */
+		.lua_base_dir = LUA_BASE_DIR,
+		.gatekeeper_config_file = GATEKEEPER_CONFIG_FILE,
+	};
+
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
+
+	argc -= ret;
+	argv += ret;
+
+	/* Parse Gatekeeper arguments (after the EAL ones). */
+	ret = argp_parse(&argp, argc, argv, 0, NULL, &args);
+	if (ret != 0)
+		rte_exit(EXIT_FAILURE, "Invalid Gatekeeper parameters\n");
 
 	/* Used by the LLS block. */
 	rte_timer_subsystem_init();
@@ -162,7 +233,7 @@ main(int argc, char **argv)
 	if (ret < 0)
 		goto out;
 
-	ret = config_gatekeeper();
+	ret = config_gatekeeper(args.lua_base_dir, args.gatekeeper_config_file);
 	if (ret < 0) {
 		RTE_LOG(ERR, GATEKEEPER, "Failed to configure Gatekeeper\n");
 		goto net;

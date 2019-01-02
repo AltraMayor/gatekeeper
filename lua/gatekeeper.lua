@@ -306,7 +306,8 @@ struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
 int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
-	const char *server_path, struct dynamic_config *dy_conf);
+	const char *server_path, const char *lua_dy_base_dir,
+	const char *dynamic_config_file, struct dynamic_config *dy_conf);
 
 struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
