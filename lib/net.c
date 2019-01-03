@@ -37,9 +37,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 
-/* Number of attempts to wait for a link to come up. */
-#define NUM_ATTEMPTS_LINK_GET	(5)
-
 static struct net_config config;
 /*
  * The secret key of the RSS hash (RSK) must be random in order
