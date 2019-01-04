@@ -70,8 +70,8 @@ __read_once_size(const volatile void *p, void *res, int size)
 		break;
 
  	default:
-		RTE_LOG(WARNING, GATEKEEPER,
-			"seqlock: Data access exceeds word size and won't be atomic\n");
+		G_LOG(WARNING,
+			"seqlock: data access exceeds word size and won't be atomic\n");
 		break;
 	}
 }

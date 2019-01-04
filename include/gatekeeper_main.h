@@ -33,7 +33,11 @@
  * Custom log type for Gatekeeper-related log entries
  * that are not relevant to a specific block.
  */
-#define RTE_LOGTYPE_GATEKEEPER RTE_LOGTYPE_USER1
+extern int gatekeeper_logtype;
+
+#define G_LOG(level, ...)		\
+	rte_log(RTE_LOG_ ## level,	\
+	gatekeeper_logtype, "GATEKEEPER: " __VA_ARGS__)
 
 extern volatile int exiting;
 

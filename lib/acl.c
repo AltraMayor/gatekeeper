@@ -62,7 +62,7 @@ drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 		 *   Gatekeeper down since Gatekeeper does a lot of
 		 *   processing to eventually discard these packets.
 		 */
-		RTE_LOG(WARNING, GATEKEEPER,
+		G_LOG(WARNING,
 			"acl: a packet failed to match any ACL rules, the whole packet is dumped below:\n");
 		/*
 		 * XXX #76 The default output used DPDK logging system
@@ -97,8 +97,8 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	ret = rte_acl_classify(astate->acls[socket_id],
 		acl->data, res, acl->num, 1);
 	if (unlikely(ret < 0)) {
-		RTE_LOG(ERR, ACL,
-			"invalid arguments given to %s rte_acl_classify()\n",
+		G_LOG(ERR,
+			"acl: invalid arguments given to %s rte_acl_classify()\n",
 			proto_name);
 		goto drop_acl_pkts;
 	}
@@ -140,7 +140,7 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 			 * Each ACL function is responsible for
 			 * freeing packets not already handled.
 			 */
-			RTE_LOG(WARNING, GATEKEEPER,
+			G_LOG(WARNING,
 				"acl: %s ACL function %d failed on %s iface\n",
 				proto_name, i, iface->name);
 		}
@@ -255,7 +255,7 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
 	unsigned int i;
 
 	if (iface->ipv4_acls.func_count == GATEKEEPER_ACL_MAX) {
-		RTE_LOG(ERR, GATEKEEPER, "acl: cannot install more IPv4 ACL types on the %s iface\n",
+		G_LOG(ERR, "acl: cannot install more IPv4 ACL types on the %s iface\n",
 			iface->name);
 		return -1;
 	}
@@ -273,7 +273,7 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
 		ret = rte_acl_add_rules(iface->ipv4_acls.acls[i],
 			(struct rte_acl_rule *)ipv4_rules, num_rules);
 		if (ret < 0) {
-			RTE_LOG(ERR, ACL, "Failed to add IPv4 ACL rules on the %s interface on socket %d\n",
+			G_LOG(ERR, "acl: failed to add IPv4 ACL rules on the %s interface on socket %d\n",
 				iface->name, i);
 			return ret;
 		}
@@ -307,8 +307,8 @@ build_ipv4_acls(struct gatekeeper_if *iface)
 		ret = rte_acl_build(iface->ipv4_acls.acls[i],
 			&acl_build_params);
 		if (ret < 0) {
-			RTE_LOG(ERR, ACL,
-				"Failed to build IPv4 ACL for the %s iface\n",
+			G_LOG(ERR,
+				"acl: failed to build IPv4 ACL for the %s iface\n",
 				iface->name);
 			return ret;
 		}
@@ -344,7 +344,7 @@ init_ipv4_acls(struct gatekeeper_if *iface)
 		if (iface->ipv4_acls.acls[i] == NULL) {
 			unsigned int j;
 
-			RTE_LOG(ERR, ACL, "Failed to create IPv4 ACL for the %s iface on socket %d\n",
+			G_LOG(ERR, "acl: failed to create IPv4 ACL for the %s iface on socket %d\n",
 				iface->name, i);
 			for (j = 0; j < i; j++) {
 				rte_acl_free(iface->ipv4_acls.acls[i]);
@@ -480,7 +480,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 	unsigned int i;
 
 	if (iface->ipv6_acls.func_count == GATEKEEPER_ACL_MAX) {
-		RTE_LOG(ERR, GATEKEEPER, "acl: cannot install more IPv6 ACL types on the %s iface\n",
+		G_LOG(ERR, "acl: cannot install more IPv6 ACL types on the %s iface\n",
 			iface->name);
 		return -1;
 	}
@@ -498,7 +498,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 		ret = rte_acl_add_rules(iface->ipv6_acls.acls[i],
 			(struct rte_acl_rule *)ipv6_rules, num_rules);
 		if (ret < 0) {
-			RTE_LOG(ERR, ACL, "Failed to add IPv6 ACL rules on the %s interface on socket %d\n",
+			G_LOG(ERR, "acl: failed to add IPv6 ACL rules on the %s interface on socket %d\n",
 				iface->name, i);
 			return ret;
 		}
@@ -532,8 +532,8 @@ build_ipv6_acls(struct gatekeeper_if *iface)
 		ret = rte_acl_build(iface->ipv6_acls.acls[i],
 			&acl_build_params);
 		if (ret < 0) {
-			RTE_LOG(ERR, ACL,
-				"Failed to build IPv6 ACL for the %s iface\n",
+			G_LOG(ERR,
+				"acl: failed to build IPv6 ACL for the %s iface\n",
 				iface->name);
 			return ret;
 		}
@@ -569,7 +569,7 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 		if (iface->ipv6_acls.acls[i] == NULL) {
 			unsigned int j;
 
-			RTE_LOG(ERR, ACL, "Failed to create IPv6 ACL for the %s iface on socket %d\n",
+			G_LOG(ERR, "acl: failed to create IPv6 ACL for the %s iface on socket %d\n",
 				iface->name, i);
 			for (j = 0; j < i; j++) {
 				rte_acl_free(iface->ipv6_acls.acls[i]);

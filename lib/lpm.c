@@ -39,8 +39,8 @@ init_ipv4_lpm(const char *tag,
 
 	lpm = rte_lpm_create(lpm_name, socket_id, lpm_conf);
 	if (lpm == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"Unable to create the IPv4 LPM table %s on socket %u\n",
+		G_LOG(ERR,
+			"lpm: unable to create the IPv4 LPM table %s on socket %u\n",
 			lpm_name, socket_id);
 		return NULL;
 	}
@@ -57,12 +57,11 @@ lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 
 	ret = rte_lpm_lookup(lpm, ntohl(ip), &next_hop);
 	if (ret == -EINVAL) {
-		RTE_LOG(ERR, LPM,
-			"lpm: incorrect arguments for IPv4 lookup\n");
+		G_LOG(ERR, "lpm: incorrect arguments for IPv4 lookup\n");
 		ret = -1;
 		goto out;
 	} else if (ret == -ENOENT) {
-		RTE_LOG(WARNING, LPM, "lpm: IPv4 lookup miss\n");
+		G_LOG(WARNING, "lpm: IPv4 lookup miss\n");
 		ret = -1;
 		goto out;
 	}
@@ -88,8 +87,8 @@ init_ipv6_lpm(const char *tag,
 
 	lpm = rte_lpm6_create(lpm_name, socket_id, lpm6_conf);
 	if (lpm == NULL) {
-		RTE_LOG(ERR, GATEKEEPER,
-			"Unable to create the IPv6 LPM table %s on socket %u\n",
+		G_LOG(ERR,
+			"lpm: unable to create the IPv6 LPM table %s on socket %u\n",
 			lpm_name, socket_id);
 		return NULL;
 	}
@@ -105,12 +104,11 @@ lpm_lookup_ipv6(struct rte_lpm6 *lpm, uint8_t *ip)
 
 	ret = rte_lpm6_lookup(lpm, ip, &next_hop);
 	if (ret == -EINVAL) {
-		RTE_LOG(ERR, LPM,
-			"lpm: incorrect arguments for IPv6 lookup\n");
+		G_LOG(ERR, "lpm: incorrect arguments for IPv6 lookup\n");
 		ret = -1;
 		goto out;
 	} else if (ret == -ENOENT) {
-		RTE_LOG(WARNING, LPM, "lpm: IPv6 lookup miss\n");
+		G_LOG(WARNING, "lpm: IPv6 lookup miss\n");
 		ret = -1;
 		goto out;
 	}

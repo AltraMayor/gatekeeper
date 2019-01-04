@@ -51,7 +51,7 @@ launch_at_stage1(lcore_function_t *f, void *arg)
 
 	entry = rte_malloc(__func__, sizeof(*entry), 0);
 	if (entry == NULL) {
-		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		G_LOG(ERR, "launch: %s: DPDK ran out of memory", __func__);
 		return -1;
 	}
 
@@ -103,7 +103,7 @@ launch_at_stage2(lcore_function_t *f, void *arg)
 
 	entry = rte_malloc(__func__, sizeof(*entry), 0);
 	if (entry == NULL) {
-		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		G_LOG(ERR, "launch: %s: DPDK ran out of memory", __func__);
 		return -1;
 	}
 
@@ -163,7 +163,7 @@ launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 
 	entry = rte_malloc(__func__, sizeof(*entry), 0);
 	if (entry == NULL) {
-		RTE_LOG(ERR, MALLOC, "%s: DPDK ran out of memory", __func__);
+		G_LOG(ERR, "launch: %s: DPDK ran out of memory", __func__);
 		goto name_cpy;
 	}
 
@@ -214,7 +214,7 @@ launch_stage3(void)
 		ret = rte_eal_remote_launch(entry->f, entry->arg,
 			entry->lcore_id);
 		if (ret != 0) {
-			RTE_LOG(ERR, EAL, "lcore %u failed to launch %s\n",
+			G_LOG(ERR, "launch: lcore %u failed to launch %s\n",
 				entry->lcore_id, entry->name);
 			return ret;
 		}
