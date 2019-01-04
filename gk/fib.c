@@ -407,9 +407,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	neigh_hash_params.socket_id = socket_id;
 	neigh->hash_table = rte_hash_create(&neigh_hash_params);
 	if (neigh->hash_table == NULL) {
-		RTE_LOG(ERR, HASH,
-			"The GK block cannot create hash table for neighbor FIB\n");
-
+		GK_LOG(ERR, "Cannot create hash table for neighbor FIB\n");
 		ret = -1;
 		goto out;
 	}
@@ -418,9 +416,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	neigh->cache_tbl = rte_calloc(NULL,
 		ht_size, sizeof(struct ether_cache), 0);
 	if (neigh->cache_tbl == NULL) {
-		RTE_LOG(ERR, MALLOC,
-			"The GK block cannot create Ethernet header cache table\n");
-
+		GK_LOG(ERR, "Cannot create Ethernet header cache table\n");
 		ret = -1;
 		goto neigh_hash;
 	}
