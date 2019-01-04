@@ -26,8 +26,8 @@ struct lls_hold_req {
 	/* Cache that holds (or will hold) this map. */
 	struct lls_cache *cache;
 
-	/* IP address for this request, in network ordering. */
-	uint8_t          ip_be[LLS_MAX_KEY_LEN];
+	/* IP address for this request. */
+	struct ipaddr    addr;
 
 	/* Hold that this is requesting. */
 	struct lls_hold  hold;
@@ -38,8 +38,8 @@ struct lls_put_req {
 	/* Cache that (possibly) has this hold. */
 	struct lls_cache *cache;
 
-	/* IP address for this request, in network ordering. */
-	uint8_t          ip_be[LLS_MAX_KEY_LEN];
+	/* IP address for this request. */
+	struct ipaddr    addr;
 
 	/* The lcore that requested this put. */
 	unsigned int     lcore_id;
@@ -74,8 +74,8 @@ struct lls_mod_req {
 	/* Cache that holds (or will hold) this map. */
 	struct lls_cache  *cache;
 
-	/* IP address for this modification, in network ordering. */
-	uint8_t           ip_be[LLS_MAX_KEY_LEN];
+	/* IP address for this modification. */
+	struct ipaddr     addr;
 
 	/*
 	 * Ethernet address of modification, possibly
@@ -112,7 +112,8 @@ struct lls_request {
 	} u;
 };
 
-int lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache);
+int lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
+	uint32_t key_len);
 void lls_cache_destroy(struct lls_cache *cache);
 
 /* Process any requests to the LLS block. */
@@ -134,13 +135,14 @@ int lls_req(enum lls_req_ty ty, void *req_arg);
 void lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod);
 
 /*
- * Fetch a map according to the key @ip_be.
+ * Fetch a map according to the key in @addr.
  *
  * NOTE
  *	This should only be used by the LLS block itself. Other
  *	requests to get maps should go through hold requests.
  */
-struct lls_map *lls_cache_get(struct lls_cache *cache, const uint8_t *ip_be);
+struct lls_map *lls_cache_get(struct lls_cache *cache,
+	const struct ipaddr *addr);
 
 /* Scan the cache and send requests or remove entries as needed. */
 void lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache);

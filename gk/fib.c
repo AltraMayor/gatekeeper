@@ -2071,7 +2071,7 @@ int
 l_ip_format_addr(lua_State *l)
 {
 	struct ipaddr *ip_addr;
-	char ip[128];
+	char ip[MAX_INET_ADDRSTRLEN];
 	int ret;
 	uint32_t ctypeid;
 	uint32_t correct_ctypeid_ip_addr = luaL_get_ctypeid(l,

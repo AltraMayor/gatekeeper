@@ -1,9 +1,3 @@
--- TODO #67 Add examples for other operations. For example:
--- Functions to list the ARP table.
--- Functions to list the ND table.
--- Functions to process the GT policies.
--- ......
-
 require "dylib"
 
 local acc_start = ""
@@ -127,5 +121,14 @@ reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
 	dylib.print_neighbor_dump_entry, acc_start)
 reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
 	dylib.print_neighbor_dump_entry, acc_start)
+
+local llsc = gatekeeper.c.get_lls_conf()
+if cpsc == nil then
+	return "lls: failed to fetch config to dump caches"
+end
+reply_msg = reply_msg .. dylib.list_lls_arp(llsc,
+	dylib.print_lls_dump_entry, acc_start)
+reply_msg = reply_msg .. dylib.list_lls_nd(llsc,
+	dylib.print_lls_dump_entry, acc_start)
 
 return "gk: successfully processed all the FIB entries\n" .. reply_msg
