@@ -144,6 +144,8 @@ struct net_config {
 	int          guarantee_random_entropy;
 	unsigned int num_attempts_link_get;
 	bool         *numa_used;
+	uint32_t     log_level;
+	int          log_type;
 	/* This struct has hidden fields. */
 };
 

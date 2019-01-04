@@ -1330,6 +1330,12 @@ gatekeeper_init_network(struct net_config *net_conf)
 	if (net_conf == NULL)
 		return -1;
 
+	net_conf->log_type = gatekeeper_logtype;
+
+	ret = rte_log_set_level(net_conf->log_type, net_conf->log_level);
+	if (ret < 0)
+		return -1;
+
 	net_conf->numa_nodes = find_num_numa_nodes();
 	net_conf->numa_used = rte_calloc("numas", net_conf->numa_nodes,
 		sizeof(*net_conf->numa_used), 0);

@@ -35,6 +35,9 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
 
+/* Log type for all non-block related Gatekeeper activity. */
+int gatekeeper_logtype;
+
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;
 
@@ -139,8 +142,8 @@ time_resolution_init(void)
 	cycles_per_ms = cycles_per_sec / 1000UL;
 	picosec_per_cycle = 1000UL * diff_ns / cycles;
 
-	RTE_LOG(NOTICE, TIMER,
-		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
+	G_LOG(NOTICE,
+		"main: cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
 		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
 
 	return 0;
@@ -204,8 +207,13 @@ main(int argc, char **argv)
 		.lua_base_dir = LUA_BASE_DIR,
 		.gatekeeper_config_file = GATEKEEPER_CONFIG_FILE,
 	};
+	int ret;
 
-	int ret = rte_eal_init(argc, argv);
+	gatekeeper_logtype = rte_log_register("gatekeeper");
+	if (gatekeeper_logtype < 0)
+		rte_exit(EXIT_FAILURE, "Error registering gatekeeper log type\n");
+
+	ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
 
@@ -235,7 +243,7 @@ main(int argc, char **argv)
 
 	ret = config_gatekeeper(args.lua_base_dir, args.gatekeeper_config_file);
 	if (ret < 0) {
-		RTE_LOG(ERR, GATEKEEPER, "Failed to configure Gatekeeper\n");
+		G_LOG(ERR, "main: failed to configure Gatekeeper\n");
 		goto net;
 	}
 

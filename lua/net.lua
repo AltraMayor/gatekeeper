@@ -43,6 +43,12 @@ return function (gatekeeper_server)
 	local front_ipv6_default_hop_limits = 255
 	local back_ipv6_default_hop_limits = 255
 
+	-- Set the log level for all Gatekeeper activity that is
+	-- not associated with a functional block. Only activated
+	-- when network starts; for early log entries, set using
+	-- the --log-level EAL command line option.
+	net_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
 	-- 1 IPv4, 1 IPv6.

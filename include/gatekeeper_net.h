@@ -333,6 +333,12 @@ struct net_config {
 	 */
 	bool                 *numa_used;
 
+	/* Log level for all non-block related activity. */
+	uint32_t             log_level;
+
+	/* Dynamic logging type, assigned at runtime. */
+	int                  log_type;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
