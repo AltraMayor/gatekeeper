@@ -47,7 +47,7 @@ return function (gatekeeper_server)
 	-- not associated with a functional block. Only activated
 	-- when network starts; for early log entries, set using
 	-- the --log-level EAL command line option.
-	net_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+	local log_level = gatekeeper.c.RTE_LOG_DEBUG
 
 	local front_ports = {"enp133s0f0"}
 	-- Each interface should have at most two ip addresses:
@@ -77,6 +77,7 @@ return function (gatekeeper_server)
 	local net_conf = gatekeeper.c.get_net_conf()
 	net_conf.guarantee_random_entropy = guarantee_random_entropy
 	net_conf.num_attempts_link_get = num_attempts_link_get
+	net_conf.log_level = log_level
 
 	local front_iface = gatekeeper.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
