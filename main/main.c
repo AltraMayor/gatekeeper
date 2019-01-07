@@ -204,8 +204,8 @@ main(int argc, char **argv)
 {
 	struct args args = {
 		/* Defaults. */
-		.lua_base_dir = LUA_BASE_DIR,
-		.gatekeeper_config_file = GATEKEEPER_CONFIG_FILE,
+		.lua_base_dir = "./lua",
+		.gatekeeper_config_file = "gatekeeper_config.lua",
 	};
 	int ret;
 
