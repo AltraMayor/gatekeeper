@@ -11,7 +11,7 @@ if dyc.gt ~= nil then
 end
 
 local ret = dylib.c.add_fib_entry("198.51.100.0/24", "203.0.113.1",
-	"10.0.1.253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
+	"10.0.2.253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
@@ -36,7 +36,7 @@ if ret < 0 then
 end
 
 ret = dylib.c.add_fib_entry("192.0.2.0/24", nil,
-	"10.0.1.254", dylib.c.GK_FWD_GATEWAY_BACK_NET, dyc.gk)
+	"10.0.2.254", dylib.c.GK_FWD_GATEWAY_BACK_NET, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
@@ -49,25 +49,25 @@ if ret < 0 then
 end
 
 ret = dylib.c.add_fib_entry("198.18.0.0/15", nil,
-	"10.0.0.254", dylib.c.GK_FWD_GATEWAY_FRONT_NET, dyc.gk)
+	"10.0.1.254", dylib.c.GK_FWD_GATEWAY_FRONT_NET, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
-local ret = dylib.c.add_fib_entry("2001:db8:1::/48", "2001:db8:0::1",
-	"fc00::253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
+local ret = dylib.c.add_fib_entry("2001:db8:3::/48", "2001:db8:0::1",
+	"2001:db8:2::253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
-ret = dylib.c.add_fib_entry("2001:db8:2::/48", nil,
-	"fc00::254", dylib.c.GK_FWD_GATEWAY_BACK_NET, dyc.gk)
+ret = dylib.c.add_fib_entry("2001:db8:4::/48", nil,
+	"2001:db8:2::253", dylib.c.GK_FWD_GATEWAY_BACK_NET, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
-ret = dylib.c.add_fib_entry("2001:db8:3::/48", nil,
-	"fc00::254", dylib.c.GK_FWD_GATEWAY_FRONT_NET, dyc.gk)
+ret = dylib.c.add_fib_entry("2001:db8:5::/48", nil,
+	"2001:db8:1::253", dylib.c.GK_FWD_GATEWAY_FRONT_NET, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
@@ -92,22 +92,22 @@ if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
 
-ret = dylib.c.del_fib_entry("192.0.3.0/24", dyc.gk)
-if ret < 0 then
-	return "gk: failed to delete an FIB entry\n"
-end
-
-ret = dylib.c.del_fib_entry("2001:db8:1::/48", dyc.gk)
-if ret < 0 then
-	return "gk: failed to delete an FIB entry\n"
-end
-
-ret = dylib.c.del_fib_entry("2001:db8:2::/48", dyc.gk)
+ret = dylib.c.del_fib_entry("198.18.0.0/15", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
 
 ret = dylib.c.del_fib_entry("2001:db8:3::/48", dyc.gk)
+if ret < 0 then
+	return "gk: failed to delete an FIB entry\n"
+end
+
+ret = dylib.c.del_fib_entry("2001:db8:4::/48", dyc.gk)
+if ret < 0 then
+	return "gk: failed to delete an FIB entry\n"
+end
+
+ret = dylib.c.del_fib_entry("2001:db8:5::/48", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
