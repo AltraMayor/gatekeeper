@@ -63,10 +63,10 @@ local function lookup_simple_policy(policies, pkt_info)
 	-- TODO #156 The Lua policy should be responsible for
 	-- checking the necessary space for each l4 header type.
 	if ph.l4_proto == policylib.c.TCP then
-		local tcphdr = ffi.cast("struct tcp_hdr *", fields.l4_hdr)
+		local tcphdr = ffi.cast("struct tcp_hdr *", ph.l4_hdr)
 		dest_port = tcphdr.dst_port
 	elseif ph.l4_proto == policylib.c.UDP then
-		local udphdr = ffi.cast("struct udp_hdr *", fields.l4_hdr)
+		local udphdr = ffi.cast("struct udp_hdr *", ph.l4_hdr)
 		dest_port = udphdr.dst_port
 	else
 		-- TODO #157 Add support for other transport protocols.
