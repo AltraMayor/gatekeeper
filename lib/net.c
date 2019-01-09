@@ -612,7 +612,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 
 		ip_addr = strtok_r(ip_cidr_copy, "/", &saveptr);
 		if (ip_addr == NULL)
-			goto name;
+			goto pci_addrs;
 
 		gk_type = get_ip_type(ip_addr);
 		if (gk_type == AF_INET &&
@@ -626,31 +626,31 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			iface->configured_proto |= CONFIGURED_IPV6;
 		}
 		else
-			goto name;
+			goto pci_addrs;
 
 		prefix_len_str = strtok_r(NULL, "\0", &saveptr);
 		if (prefix_len_str == NULL)
-			goto name;
+			goto pci_addrs;
 
 		prefix_len = strtol(prefix_len_str, &end, 10);
 		if (prefix_len_str == end || !*prefix_len_str || *end) {
 			G_LOG(ERR,
 				"net: prefix length \"%s\" is not a number\n",
 				prefix_len_str);
-			goto name;
+			goto pci_addrs;
 		}
 		if ((prefix_len == LONG_MAX || prefix_len == LONG_MIN) &&
 				errno == ERANGE) {
 			G_LOG(ERR,
 				"net: prefix length \"%s\" caused underflow or overflow\n",
 				prefix_len_str);
-			goto name;
+			goto pci_addrs;
 		}
 		if (prefix_len < 0 || prefix_len > max_prefix_len(gk_type)) {
 			G_LOG(ERR,
 				"net: prefix length \"%s\" is out of range\n",
 				prefix_len_str);
-			goto name;
+			goto pci_addrs;
 		}
 
 		if (gk_type == AF_INET) {
@@ -696,6 +696,11 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 
 	return 0;
 
+pci_addrs:
+	for (i = 0; i < num_pci_addrs; i++)
+		rte_free(iface->pci_addrs[i]);
+	rte_free(iface->pci_addrs);
+	iface->pci_addrs = NULL;
 name:
 	rte_free(iface->name);
 	iface->name = NULL;
