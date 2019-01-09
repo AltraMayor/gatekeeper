@@ -244,6 +244,8 @@ int setup_neighbor_tbl(unsigned int socket_id, int identifier,
 int setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id);
 void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 
+int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
+
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf);

@@ -654,36 +654,10 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		}
 
 		if (gk_type == AF_INET) {
-			/*
-			 * Need to be careful in case @prefix_len == 0,
-			 * since in that case we will be shifting by 32
-			 * bits, which is undefined for a 32-bit quantity.
-			 * So shift using a 0ULL (at least 64 bits), and then
-			 * cast back down to a 32-bit unsigned integer
-			 * implicitly using rte_cpu_to_be_32().
-			 */
-			iface->ip4_mask.s_addr =
-				rte_cpu_to_be_32(~0ULL << (32 - prefix_len));
+			ip4_prefix_mask(prefix_len, &iface->ip4_mask);
 			iface->ip4_addr_plen = prefix_len;
 		} else if (gk_type == AF_INET6) {
-			/*
-			 * No portable way to do the same trick as above,
-			 * so make @prefix_len == 0 into its own case.
-			 * Then, the other two cases shift by at most 63 bits.
-			 */
-			uint64_t *paddr = (uint64_t *)iface->ip6_mask.s6_addr;
-			if (prefix_len == 0) {
-				paddr[0] = 0ULL;
-				paddr[1] = 0ULL;
-			} else if (prefix_len <= 64) {
-				paddr[0] = rte_cpu_to_be_64(
-					~0ULL << (64 - prefix_len));
-				paddr[1] = 0ULL;
-			} else {
-				paddr[0] = ~0ULL;
-				paddr[1] = rte_cpu_to_be_64(
-					~0ULL << (128 - prefix_len));
-			}
+			ip6_prefix_mask(prefix_len, &iface->ip6_mask);
 			iface->ip6_addr_plen = prefix_len;
 		}
 	}

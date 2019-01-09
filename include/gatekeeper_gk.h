@@ -161,6 +161,13 @@ struct gk_config {
 enum gk_cmd_op {
 	GGU_POLICY_ADD,
 	GK_SYNCH_WITH_LPM,
+	GK_FLUSH_FLOW_TABLE,
+	GK_CMD_OP_MAX,
+};
+
+struct gk_flush_request {
+	struct ip_prefix src;
+	struct ip_prefix dst;
 };
 
 /*
@@ -174,6 +181,7 @@ struct gk_cmd_entry {
 	union {
 		struct ggu_policy ggu;
 		struct gk_fib *fib;
+		struct gk_flush_request flush;
 	} u;
 };
 
@@ -185,6 +193,9 @@ int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);
 struct mailbox *get_responsible_gk_mailbox(
 	const struct ip_flow *flow, const struct gk_config *gk_conf);
+
+int gk_flush_flow_table(const char *src_prefix,
+	const char *dst_prefix, struct gk_config *gk_conf);
 
 int pkt_copy_cached_eth_header(struct rte_mbuf *pkt,
 	struct ether_cache *eth_cache, size_t l2_len_out);
