@@ -88,6 +88,9 @@ return function (gatekeeper_server)
 	front_iface.ipv6_default_hop_limits = front_ipv6_default_hop_limits
 	local ret = gatekeeper.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
+	if ret < 0 then
+		error("Failed to initialize the front interface")
+	end
 
 	net_conf.back_iface_enabled = back_iface_enabled
 	if back_iface_enabled then
@@ -101,6 +104,9 @@ return function (gatekeeper_server)
 			back_ipv6_default_hop_limits
 		ret = gatekeeper.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
+		if ret < 0 then
+			error("Failed to initialize the back interface")
+		end
 	end
 
 	-- Initialize the network.
