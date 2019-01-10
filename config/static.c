@@ -32,10 +32,7 @@
 #include "gatekeeper_gt.h"
 #include "luajit-ffi-cdata.h"
 
-/*
- * Return a table with all lcore ids but the lcore id of the master lcore.
- * Function to be called from Lua.
- */
+/* Return a table with all lcore ids. Function to be called from Lua. */
 static int
 l_list_lcores(lua_State *l)
 {
@@ -44,7 +41,6 @@ l_list_lcores(lua_State *l)
 
 	lua_newtable(l);	/* Result. */
 
-	/* Only list slave lcores because the master lcore is special. */
 	RTE_LCORE_FOREACH(i) {
 		/* Push lcore id into Lua stack. */
 		lua_pushinteger(l, i);
