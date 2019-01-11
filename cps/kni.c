@@ -346,17 +346,19 @@ close:
 	return ret;
 }
 
+/* The below rd_*() functions handle interactions with the routing daemon. */
+
 void
-route_event_sock_close(struct cps_config *cps_conf)
+rd_event_sock_close(struct cps_config *cps_conf)
 {
-	if (cps_conf->nl != NULL) {
-		mnl_socket_close(cps_conf->nl);
-		cps_conf->nl = NULL;
+	if (cps_conf->rd_nl != NULL) {
+		mnl_socket_close(cps_conf->rd_nl);
+		cps_conf->rd_nl = NULL;
 	}
 }
 
 int
-route_event_sock_open(struct cps_config *cps_conf)
+rd_event_sock_open(struct cps_config *cps_conf)
 {
 	struct mnl_socket *nl;
 	int ret;
@@ -367,15 +369,13 @@ route_event_sock_open(struct cps_config *cps_conf)
 			__func__, strerror(errno));
 		return -1;
 	}
-	cps_conf->nl = nl;
+	cps_conf->rd_nl = nl;
 
 	/*
-	 * TODO #56 This bind will get all changes that arrive at the kernel,
-	 * but it will duplicate the FIB: one in the kernel and another
-	 * in Gatekeeper.
+	 * This binds the Netlink socket to port @nl_pid,
+	 * so the routing daemon may interact with Gatekeeper.
 	 */
-	ret = mnl_socket_bind(nl, RTMGRP_IPV4_ROUTE|RTMGRP_IPV6_ROUTE,
-		MNL_SOCKET_AUTOPID);
+	ret = mnl_socket_bind(nl, 0, cps_conf->nl_pid);
 	if (ret < 0) {
 		CPS_LOG(ERR, "%s: mnl_socket_bind: %s\n",
 			__func__, strerror(errno));
@@ -385,7 +385,7 @@ route_event_sock_open(struct cps_config *cps_conf)
 	return 0;
 
 close:
-	route_event_sock_close(cps_conf);
+	rd_event_sock_close(cps_conf);
 	return ret;
 }
 
@@ -630,28 +630,21 @@ data_ipv6_attr_cb(const struct nlattr *attr, void *data)
 }
 
 static int
-route_cb(const struct nlmsghdr *nlh, void *arg)
+rd_modroute(const struct nlmsghdr *req, void *arg)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
-	struct rtmsg *rm = mnl_nlmsg_get_payload(nlh);
+	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
 	struct route_update *update = arg;
 
 	update->valid = false;
 
-	if (nlh->nlmsg_type != RTM_NEWROUTE &&
-			nlh->nlmsg_type != RTM_DELROUTE) {
-		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
-			nlh->nlmsg_type);
-		return MNL_CB_OK;
-	}
-
 	CPS_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
-		nlh->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
+		req->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
 		rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
 		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
 		rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
 
-	update->type = nlh->nlmsg_type;
+	update->type = req->nlmsg_type;
 	update->family = rm->rtm_family;
 
 	/* Destination prefix length, e.g., 24 or 32 for IPv4. */
@@ -662,16 +655,33 @@ route_cb(const struct nlmsghdr *nlh, void *arg)
 
 	switch(rm->rtm_family) {
 	case AF_INET:
-		mnl_attr_parse(nlh, sizeof(*rm), data_ipv4_attr_cb, tb);
+		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
 		attr_get(update, rm->rtm_family, tb);
 		break;
 	case AF_INET6:
-		mnl_attr_parse(nlh, sizeof(*rm), data_ipv6_attr_cb, tb);
+		mnl_attr_parse(req, sizeof(*rm), data_ipv6_attr_cb, tb);
 		attr_get(update, rm->rtm_family, tb);
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
 			rm->rtm_family);
+		break;
+	}
+
+	return MNL_CB_OK;
+}
+
+static int
+rd_cb(const struct nlmsghdr *req, void *arg)
+{
+	switch (req->nlmsg_type) {
+	case RTM_NEWROUTE:
+		/* FALLTHROUGH */
+	case RTM_DELROUTE:
+		return rd_modroute(req, arg);
+	default:
+		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
+			req->nlmsg_type);
 		break;
 	}
 
@@ -856,7 +866,7 @@ del_route(struct route_update *update, struct gk_config *gk_conf)
 }
 
 void
-kni_cps_route_event(struct cps_config *cps_conf)
+kni_cps_rd_event(struct cps_config *cps_conf)
 {
 	uint16_t max_cps_route_updates = cps_conf->max_cps_route_updates;
 	struct route_update updates[max_cps_route_updates];
@@ -865,7 +875,7 @@ kni_cps_route_event(struct cps_config *cps_conf)
 	char buf[MNL_SOCKET_BUFFER_SIZE];
 
 	do {
-		int ret = mnl_socket_recvfrom_flags(cps_conf->nl, buf,
+		int ret = mnl_socket_recvfrom_flags(cps_conf->rd_nl, buf,
 			sizeof(buf), MSG_DONTWAIT);
 		if (ret == -1) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK)
@@ -875,7 +885,7 @@ kni_cps_route_event(struct cps_config *cps_conf)
 		}
 
 		ret = mnl_cb_run(buf, ret, 0, 0,
-			route_cb, &updates[num_updates]);
+			rd_cb, &updates[num_updates]);
 		if (ret != MNL_CB_OK)
 			break;
 

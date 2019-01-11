@@ -248,6 +248,7 @@ struct cps_config {
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
+	uint32_t     nl_pid;
 	/* This struct has hidden fields. */
 };
 

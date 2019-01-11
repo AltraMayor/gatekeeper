@@ -56,10 +56,10 @@ cleanup_cps(void)
 	cps_conf.gk = NULL;
 
 	/*
-	 * route_event_sock_close() can be called even when the netlink
+	 * rd_event_sock_close() can be called even when the netlink
 	 * socket is not open, and rte_kni_release() can be passed NULL.
 	 */
-	route_event_sock_close(&cps_conf);
+	rd_event_sock_close(&cps_conf);
 	rte_kni_release(cps_conf.back_kni);
 	rte_kni_release(cps_conf.front_kni);
 	rte_timer_stop(&cps_conf.scan_timer);
@@ -520,7 +520,7 @@ cps_proc(void *arg)
 		rte_timer_manage();
 
 		/* Read in routing table updates and update LPM table. */
-		kni_cps_route_event(cps_conf);
+		kni_cps_rd_event(cps_conf);
 	}
 
 	CPS_LOG(NOTICE, "The CPS block at lcore = %u is exiting\n",
@@ -1076,9 +1076,9 @@ cps_stage2(void *arg)
 		}
 	}
 
-	ret = route_event_sock_open(cps_conf);
+	ret = rd_event_sock_open(cps_conf);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to open route event socket\n");
+		CPS_LOG(ERR, "Failed to open routing daemon event socket\n");
 		goto error;
 	}
 
@@ -1142,6 +1142,11 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	cps_conf->net = net_conf;
 	cps_conf->lls = lls_conf;
+
+	if (cps_conf->nl_pid == 0) {
+		CPS_LOG(ERR, "Option nl_pid must be greater than 0\n");
+		goto stage3;
+	}
 
 	ret = init_kni(kni_kmod_path, net_conf->back_iface_enabled ? 2 : 1);
 	if (ret < 0) {

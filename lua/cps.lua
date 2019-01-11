@@ -46,6 +46,9 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- resolution requests from KNIs.
 	cps_conf.cps_scan_interval_sec = 5
 
+	-- Netlink port ID to receive updates and scans from routing daemon.
+	cps_conf.nl_pid = 0x6A7E
+
 	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)
 	if ret < 0 then

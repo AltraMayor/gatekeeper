@@ -70,6 +70,9 @@ struct cps_config {
 	unsigned int      mailbox_mem_cache_size;
 	unsigned int      mailbox_burst_size;
 
+	/* Netlink port ID for communicating with routing daemon. */
+	uint32_t          nl_pid;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -101,8 +104,12 @@ struct cps_config {
 	/* Timer to scan over outstanding resolution requests. */
 	struct rte_timer  scan_timer;
 
-	/* Socket for receiving routing table updates. */
-	struct mnl_socket *nl;
+	/*
+	 * Netlink socket for receiving from the routing daemon.
+	 * Bound to @nl_pid so that userspace routing daemons
+	 * can be configured to update Gatekeeper.
+	 */
+	struct mnl_socket *rd_nl;
 
 	struct gk_config  *gk;
 	struct gt_config  *gt;
