@@ -40,6 +40,10 @@ return function (net_conf, lls_conf, numa_table)
 	-- Log level for GT.
 	gt_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
+	-- Log ratelimit interval and burst size.
+	gt_conf.log_ratelimit_interval_ms = 5000
+	gt_conf.log_ratelimit_burst = 10
+
 	gt_conf.gt_max_pkt_burst = gatekeeper.get_front_burst_config(
 		gt_max_pkt_burst, net_conf)
 	-- The maximum number of ARP or ND packets in LLS submitted by
