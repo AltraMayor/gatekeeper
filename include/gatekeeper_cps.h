@@ -88,6 +88,10 @@ struct cps_config {
 	struct rte_kni    *front_kni;
 	struct rte_kni    *back_kni;
 
+	/* Output interface IDs for the KNIs; used with routing daemons. */
+	unsigned int      front_kni_index;
+	unsigned int      back_kni_index;
+
 	/* Mailbox to hold requests from other blocks. */
 	struct mailbox    mailbox;
 

@@ -96,7 +96,8 @@ kni_disable_change_mac_address(__attribute__((unused)) uint16_t port_id,
 
 static int
 modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
-	int family, void *ipaddr, uint8_t prefixlen, const char *kni_name)
+	int family, void *ipaddr, uint8_t prefixlen, const char *kni_name,
+	unsigned int kni_index)
 {
 	char buf[MNL_SOCKET_BUFFER_SIZE];
 	struct nlmsghdr *nlh;
@@ -114,10 +115,7 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 	ifa->ifa_family = family;
 	ifa->ifa_prefixlen = prefixlen;
 	ifa->ifa_scope = RT_SCOPE_UNIVERSE;
-	if ((ifa->ifa_index = if_nametoindex(kni_name)) == 0) {
-		CPS_LOG(ERR, "%s cannot find device %s\n", __func__, kni_name);
-		return -1;
-	}
+	ifa->ifa_index = kni_index;
 
 	if (ifa->ifa_family == AF_INET)
 		mnl_attr_put_u32(nlh, IFA_LOCAL, *(uint32_t *)ipaddr);
@@ -159,11 +157,11 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 
 static int
 add_ipaddr(struct mnl_socket *nl, int family, void *ipaddr,
-	uint8_t prefixlen, const char *kni_name)
+	uint8_t prefixlen, const char *kni_name, unsigned int kni_index)
 {
 	return modify_ipaddr(nl, RTM_NEWADDR,
 		NLM_F_CREATE|NLM_F_REQUEST|NLM_F_EXCL, family,
-		ipaddr, prefixlen, kni_name);
+		ipaddr, prefixlen, kni_name, kni_index);
 }
 
 static int
@@ -281,7 +279,8 @@ kill:
 }
 
 int
-kni_config_ip_addrs(struct rte_kni *kni, struct gatekeeper_if *iface)
+kni_config_ip_addrs(struct rte_kni *kni, unsigned int kni_index,
+	struct gatekeeper_if *iface)
 {
 	struct mnl_socket *nl;
 	const char *kni_name = rte_kni_get_name(kni);
@@ -302,14 +301,14 @@ kni_config_ip_addrs(struct rte_kni *kni, struct gatekeeper_if *iface)
 	/* Add global and link-local IP addresses. */
 	if (ipv4_if_configured(iface)) {
 		ret = add_ipaddr(nl, AF_INET, &iface->ip4_addr,
-			iface->ip4_addr_plen, kni_name);
+			iface->ip4_addr_plen, kni_name, kni_index);
 		if (ret < 0)
 			goto close;
 	}
 
 	if (ipv6_if_configured(iface)) {
 		ret = add_ipaddr(nl, AF_INET6, &iface->ip6_addr,
-			iface->ip6_addr_plen, kni_name);
+			iface->ip6_addr_plen, kni_name, kni_index);
 		if (ret < 0)
 			goto close;
 	}
@@ -790,9 +789,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
 		if (update->oif_index != 0) {
-			const char *kni_name =
-				rte_kni_get_name(cps_conf->front_kni);
-			if (update->oif_index != if_nametoindex(kni_name)) {
+			if (update->oif_index != cps_conf->front_kni_index) {
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
 					prefix_info.str);
@@ -807,9 +804,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 		if (update->oif_index != 0) {
-			const char *kni_name =
-				rte_kni_get_name(cps_conf->back_kni);
-			if (update->oif_index != if_nametoindex(kni_name)) {
+			if (update->oif_index != cps_conf->back_kni_index) {
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
 					prefix_info.str);

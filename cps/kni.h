@@ -38,7 +38,8 @@ struct nd_request {
 int kni_change_mtu(uint16_t port_id, unsigned int new_mtu);
 int kni_change_if(uint16_t port_id, uint8_t if_up);
 int kni_disable_change_mac_address(uint16_t port_id, uint8_t *mac_addr);
-int kni_config_ip_addrs(struct rte_kni *kni, struct gatekeeper_if *iface);
+int kni_config_ip_addrs(struct rte_kni *kni, unsigned int kni_index,
+	struct gatekeeper_if *iface);
 int kni_config_link(struct rte_kni *kni);
 int rd_event_sock_open(struct cps_config *cps_conf);
 void rd_event_sock_close(struct cps_config *cps_conf);
