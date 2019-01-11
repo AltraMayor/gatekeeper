@@ -481,6 +481,10 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	}
 	sol_conf->log_type = sol_logtype;
 
+	log_ratelimit_state_init(sol_conf->lcore_id,
+		sol_conf->log_ratelimit_interval_ms,
+		sol_conf->log_ratelimit_burst);
+
 	if (!net_conf->back_iface_enabled) {
 		SOL_LOG(ERR, "Back interface is required\n");
 		ret = -1;

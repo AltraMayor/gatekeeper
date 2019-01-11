@@ -25,6 +25,10 @@ return function (net_conf, lcore)
 	-- Otherwise, should be kept as 0.
 	sol_conf.req_channel_bw_mbps = 0.0
 
+	-- Log ratelimit interval and burst size.
+	sol_conf.log_ratelimit_interval_ms = 5000
+	sol_conf.log_ratelimit_burst = 10
+
 	-- Setup the sol functional block.
 	local ret = gatekeeper.c.run_sol(net_conf, sol_conf)
 	if ret < 0 then
