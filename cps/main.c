@@ -25,6 +25,7 @@
 #include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_varip.h"
+#include "gatekeeper_log_ratelimit.h"
 #include "kni.h"
 
 /*
@@ -1113,6 +1114,10 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto out;
 	}
 	cps_conf->log_type = cps_logtype;
+
+	log_ratelimit_state_init(cps_conf->lcore_id,
+		cps_conf->log_ratelimit_interval_ms,
+		cps_conf->log_ratelimit_burst);
 
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, cps_stage1, cps_conf);
 	if (ret < 0)

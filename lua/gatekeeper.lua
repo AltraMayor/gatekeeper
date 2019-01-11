@@ -226,6 +226,8 @@ struct cps_config {
 	uint16_t     tcp_port_bgp;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int num_attempts_kni_link_set;
