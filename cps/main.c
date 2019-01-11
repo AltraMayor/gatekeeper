@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <net/if.h>
+
 #include <rte_bus_pci.h>
 #include <rte_tcp.h>
 #include <rte_cycles.h>
@@ -662,17 +664,16 @@ fail:
  * are expected.
  */
 static int
-kni_create(struct rte_kni **kni, struct rte_mempool *mp,
+kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	struct gatekeeper_if *iface)
 {
 	struct rte_kni_conf conf;
 	struct rte_eth_dev_info dev_info;
 	struct rte_kni_ops ops;
-	int ret;
 
 	memset(&conf, 0, sizeof(conf));
-	ret = snprintf(conf.name, RTE_KNI_NAMESIZE, "kni_%s", iface->name);
-	RTE_VERIFY(ret > 0 && ret < RTE_KNI_NAMESIZE);
+	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
+	strcpy(conf.name, kni_name);
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
 
 	/* If the interface is bonded, take PCI info from the primary slave. */
@@ -761,13 +762,18 @@ cps_stage1(void *arg)
 {
 	struct cps_config *cps_conf = arg;
 	unsigned int socket_id = rte_lcore_to_socket_id(cps_conf->lcore_id);
+	char name[RTE_KNI_NAMESIZE];
 	int ret;
 
 	ret = assign_cps_queue_ids(cps_conf);
 	if (ret < 0)
 		goto error;
 
-	ret = kni_create(&cps_conf->front_kni,
+	ret = snprintf(name, sizeof(name), "kni_%s",
+		cps_conf->net->front.name);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
+
+	ret = kni_create(&cps_conf->front_kni, name,
 		cps_conf->net->gatekeeper_pktmbuf_pool[socket_id],
 		&cps_conf->net->front);
 	if (ret < 0) {
@@ -782,8 +788,19 @@ cps_stage1(void *arg)
 		goto error;
 	}
 
+	cps_conf->front_kni_index = if_nametoindex(name);
+	if (cps_conf->front_kni_index == 0) {
+		CPS_LOG(ERR, "Failed to get front KNI index: %s\n",
+			strerror(errno));
+		goto error;
+	}
+
 	if (cps_conf->net->back_iface_enabled) {
-		ret = kni_create(&cps_conf->back_kni,
+		ret = snprintf(name, sizeof(name), "kni_%s",
+			cps_conf->net->back.name);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
+
+		ret = kni_create(&cps_conf->back_kni, name,
 			cps_conf->net->gatekeeper_pktmbuf_pool[socket_id],
 			&cps_conf->net->back);
 		if (ret < 0) {
@@ -796,6 +813,13 @@ cps_stage1(void *arg)
 		if (ret < 0) {
 			CPS_LOG(ERR,
 				"Failed to configure KNI link on the back iface\n");
+			goto error;
+		}
+
+		cps_conf->back_kni_index = if_nametoindex(name);
+		if (cps_conf->back_kni_index == 0) {
+			CPS_LOG(ERR, "Failed to get back KNI index: %s\n",
+				strerror(errno));
 			goto error;
 		}
 	}
@@ -1054,7 +1078,8 @@ cps_stage2(void *arg)
 		goto error;
 	}
 
-	ret = kni_config_ip_addrs(cps_conf->front_kni, &cps_conf->net->front);
+	ret = kni_config_ip_addrs(cps_conf->front_kni,
+		cps_conf->front_kni_index, &cps_conf->net->front);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Failed to configure KNI IP addresses on the front iface\n");
 		goto error;
@@ -1069,7 +1094,7 @@ cps_stage2(void *arg)
 		}
 
 		ret = kni_config_ip_addrs(cps_conf->back_kni,
-			&cps_conf->net->back);
+			cps_conf->back_kni_index, &cps_conf->net->back);
 		if (ret < 0) {
 			CPS_LOG(ERR, "Failed to configure KNI IP addresses on the back iface\n");
 			goto error;
