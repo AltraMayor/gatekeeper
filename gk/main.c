@@ -1915,6 +1915,12 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	}
 	gk_conf->log_type = gk_logtype;
 
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		log_ratelimit_state_init(gk_conf->lcores[i],
+			gk_conf->log_ratelimit_interval_ms,
+			gk_conf->log_ratelimit_burst);
+	}
+
 	if (!net_conf->back_iface_enabled) {
 		GK_LOG(ERR, "Back interface is required\n");
 		ret = -1;

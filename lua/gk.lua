@@ -5,6 +5,10 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
 
+	-- Log ratelimit interval and burst size.
+	local log_ratelimit_interval_ms = 5000
+	local log_ratelimit_burst = 10
+
 	-- Init the GK configuration structure.
 	local gk_conf = gatekeeper.c.alloc_gk_conf()
 	if gk_conf == nil then
@@ -53,6 +57,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
 	gk_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	gk_conf.mailbox_burst_size = mailbox_burst_size
+
+	gk_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
+	gk_conf.log_ratelimit_burst = log_ratelimit_burst
 
 	if not gatekeeper.c.ipv4_configured(net_conf) then
 		gk_conf.gk_max_num_ipv4_fib_entries = 0
