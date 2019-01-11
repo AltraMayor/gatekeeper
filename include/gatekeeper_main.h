@@ -29,14 +29,16 @@
 #define DEFAULT_HASH_FUNC       rte_jhash
 #endif
 
+#include "gatekeeper_log_ratelimit.h"
+
 /*
  * Custom log type for Gatekeeper-related log entries
  * that are not relevant to a specific block.
  */
 extern int gatekeeper_logtype;
 
-#define G_LOG(level, ...)		\
-	rte_log(RTE_LOG_ ## level,	\
+#define G_LOG(level, ...)		        \
+	rte_log_ratelimit(RTE_LOG_ ## level,	\
 	gatekeeper_logtype, "GATEKEEPER: " __VA_ARGS__)
 
 extern volatile int exiting;
