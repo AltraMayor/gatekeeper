@@ -31,6 +31,10 @@ return function (net_conf, numa_table)
 	-- Length of time (in seconds) to wait between scans of the cache.
 	lls_conf.lls_cache_scan_interval_sec = 10
 
+	-- Log ratelimit interval and burst size.
+	lls_conf.log_ratelimit_interval_ms = 5000
+	lls_conf.log_ratelimit_burst = 10
+
 	-- Setup the LLS functional block.
 	lls_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 	local ret = gatekeeper.c.run_lls(net_conf, lls_conf)
