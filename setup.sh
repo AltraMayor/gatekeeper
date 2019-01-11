@@ -59,6 +59,15 @@ cd ../luajit-2.0
 make CFLAGS=-fPIC
 sudo make install
 
+# Setup BIRD.
+cd ../bird
+
+# Build and install.
+autoreconf
+./configure
+make
+sudo make install
+
 cd ../../
 
 # Build interface name -> PCI address map.
