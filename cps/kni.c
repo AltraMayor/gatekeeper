@@ -653,6 +653,9 @@ rd_modroute(const struct nlmsghdr *req, void *arg)
 	/* Default to an invalid index number. */
 	update->oif_index = 0;
 
+	/* Route origin (routing daemon). */
+	update->rt_proto = rm->rtm_protocol;
+
 	switch(rm->rtm_family) {
 	case AF_INET:
 		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
@@ -798,7 +801,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		}
 
 		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
-			GK_FWD_GATEWAY_FRONT_NET, cps_conf->gk);
+			GK_FWD_GATEWAY_FRONT_NET, update->rt_proto,
+			cps_conf->gk);
 	}
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
@@ -814,7 +818,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		}
 
 		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
-			GK_FWD_GATEWAY_BACK_NET, cps_conf->gk);
+			GK_FWD_GATEWAY_BACK_NET, update->rt_proto,
+			cps_conf->gk);
 	}
 
 	return -1;

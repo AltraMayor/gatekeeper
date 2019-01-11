@@ -18,6 +18,7 @@
 
 #include <stddef.h>
 #include <arpa/inet.h>
+#include <linux/rtnetlink.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
@@ -1127,7 +1128,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
  */
 static struct gk_fib *
 init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
-	struct ipaddr *gw_addr, struct gk_config *gk_conf)
+	uint8_t rt_proto, struct ipaddr *gw_addr, struct gk_config *gk_conf)
 {
 	int ret, fib_id;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
@@ -1179,6 +1180,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	/* Fills up the Gateway FIB entry for the IP prefix. */
 	gw_fib->action = action;
 	gw_fib->u.gateway.eth_cache = eth_cache;
+	gw_fib->u.gateway.rt_proto = rt_proto;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0)
@@ -1297,7 +1299,8 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 static int
 add_fib_entry_locked(struct ip_prefix *prefix,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, struct gk_config *gk_conf)
+	enum gk_fib_action action, uint8_t rt_proto,
+	struct gk_config *gk_conf)
 {
 	switch (action) {
 	case GK_FWD_GRANTOR: {
@@ -1323,7 +1326,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 			return -1;
 
 		gw_fib = init_gateway_fib_locked(
-			prefix, action, gw_addr, gk_conf);
+			prefix, action, rt_proto, gw_addr, gk_conf);
 		if (gw_fib == NULL)
 			return -1;
 
@@ -1530,7 +1533,8 @@ check_prefix_locked(struct ip_prefix *prefix,
 int
 add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, struct gk_config *gk_conf)
+	enum gk_fib_action action, uint8_t rt_proto,
+	struct gk_config *gk_conf)
 {
 	int ret;
 	struct gk_fib *neigh_fib;
@@ -1587,7 +1591,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(
-		prefix_info, gt_addr, gw_addr, action, gk_conf);
+		prefix_info, gt_addr, gw_addr, action, rt_proto, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1620,7 +1624,7 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
 
 	return add_fib_entry_numerical(&prefix_info,
-		gt_para, gw_para, action, gk_conf);
+		gt_para, gw_para, action, RTPROT_STATIC, gk_conf);
 }
 
 int

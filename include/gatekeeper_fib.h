@@ -143,6 +143,13 @@ struct gk_fib {
 		struct {
 			/* The cached Ethernet header. */
 			struct ether_cache *eth_cache;
+
+			/*
+			 * Routing table protocol - origin of the root.
+			 * RTPROT_STATIC for routes added by user.
+			 * RTPROT_BIRD for routes added by BIRD daemon, etc.
+			 */
+			uint8_t rt_proto;
 		} gateway;
 
 		struct {
@@ -248,7 +255,8 @@ int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
 
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, struct gk_config *gk_conf);
+	enum gk_fib_action action, uint8_t protocol,
+	struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(
