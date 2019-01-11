@@ -5,6 +5,10 @@ return function (net_conf, gk_conf, lcore)
 	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
 
+	-- Log ratelimit interval and burst size.
+	local log_ratelimit_interval_ms = 5000
+	local log_ratelimit_burst = 10
+
 	-- Init the GGU configuration structure.
 	local ggu_conf = gatekeeper.c.alloc_ggu_conf()
 	if ggu_conf == nil then
@@ -20,6 +24,9 @@ return function (net_conf, gk_conf, lcore)
 
 	-- Log level for GGU.
 	ggu_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+
+	ggu_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
+	ggu_conf.log_ratelimit_burst = log_ratelimit_burst
 
 	-- The maximum number of packets to retrieve/transmit.
 	ggu_conf.ggu_max_pkt_burst = 32
