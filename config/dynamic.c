@@ -35,6 +35,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_log_ratelimit.h"
 
 /*
  * The cast "(uint16_t)" is needed because of
@@ -49,8 +50,8 @@ int dyc_logtype;
 
 static struct dynamic_config config;
 
-#define DYC_LOG(level, ...) 			\
-	rte_log(RTE_LOG_ ## level, dyc_logtype,	\
+#define DYC_LOG(level, ...) 			          \
+	rte_log_ratelimit(RTE_LOG_ ## level, dyc_logtype, \
 	"GATEKEEPER DYN CFG: " __VA_ARGS__)
 
 /*
@@ -505,6 +506,10 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 		goto out;
 	}
 	dy_conf->log_type = dyc_logtype;
+
+	log_ratelimit_state_init(dy_conf->lcore_id,
+		dy_conf->log_ratelimit_interval_ms,
+		dy_conf->log_ratelimit_burst);
 
 	dy_conf->sock_fd = -1;
 
