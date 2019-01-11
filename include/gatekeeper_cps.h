@@ -190,6 +190,9 @@ struct route_update {
 
 	uint32_t oif_index;
 
+	/* Route origin. See field rtm_protocol of struct rtmsg. */
+	uint8_t  rt_proto;
+
 	union {
 		struct in_addr  v4;
 		struct in6_addr v6;
