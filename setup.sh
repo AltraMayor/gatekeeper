@@ -63,7 +63,7 @@ cd ../../
 
 # Build interface name -> PCI address map.
 gcc generate_if_map.c -o generate_if_map -Wall
-./generate_if_map
+./generate_if_map lua/if_map.lua
 
 # Build client.
 cd gkctl
