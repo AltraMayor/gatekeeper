@@ -4,13 +4,13 @@ local ffi = require("ffi")
 GLOBAL_POLICIES = {}
 
 local default = {
-    	["params"] = {
-        	["tx_rate_kb_sec"] = 10,
-        	["cap_expire_sec"] = 10,
+	["params"] = {
+		["tx_rate_kb_sec"] = 10,
+		["cap_expire_sec"] = 10,
 		["next_renewal_ms"] = 10,
 		["renewal_step_ms"] = 10,
-        	["action"] = policylib.c.GK_GRANTED,
-    	},
+		["action"] = policylib.c.GK_GRANTED,
+	},
 }
 
 --[[
@@ -27,13 +27,13 @@ including speed limit, expiration time, actions - DENY or ACCEPT, etc.
 local IPV4 = policylib.c.IPV4
 
 local group1 = {
-    	["params"] = {
-        	["tx_rate_kb_sec"] = 20,
-        	["cap_expire_sec"] = 20,
+	["params"] = {
+		["tx_rate_kb_sec"] = 20,
+		["cap_expire_sec"] = 20,
 		["next_renewal_ms"] = 20,
 		["renewal_step_ms"] = 20,
-        	["action"] = policylib.c.GK_GRANTED,
-    	},
+		["action"] = policylib.c.GK_GRANTED,
+	},
 }
 
 local groups = {
@@ -46,7 +46,7 @@ local simple_policies = {
 		{
 			{
 				["dest_port"] = 80,
-    				["policy_id"] = groups[1],
+				["policy_id"] = groups[1],
 			},
 		},
 	},
