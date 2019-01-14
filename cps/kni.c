@@ -993,13 +993,20 @@ init_kni(const char *kni_kmod_path, unsigned int num_kni)
 
 	ret = init_module(file, len, "");
 	if (ret < 0) {
+		if (errno == EEXIST) {
+			CPS_LOG(NOTICE, "%s: %s already inserted\n",
+				__func__, kni_kmod_path);
+			goto success;
+		}
+
 		CPS_LOG(ERR, "%s: error inserting '%s': %d %s\n",
 			__func__, kni_kmod_path, ret, moderror(errno));
 		rte_free(file);
 		return ret;
 	}
-	rte_free(file);
 
+success:
+	rte_free(file);
 	rte_kni_init(num_kni);
 	return 0;
 }
