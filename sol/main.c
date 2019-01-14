@@ -231,8 +231,9 @@ dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
 
 		if (!credits_check(req_queue, pkt)) {
 			/*
-			 * XXX #19 When under an attack, we may not want to
-			 * log this because it could become expensive.
+			 * The library log_ratelimit will throtle
+			 * the log rate of the log entry below when
+			 * Gatekeeper servers are under attacks.
 			 */
 			SOL_LOG(NOTICE, "Out of request bandwidth\n");
 			goto out;
