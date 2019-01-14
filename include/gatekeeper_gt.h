@@ -36,6 +36,8 @@ struct gt_packet_headers {
 	uint8_t  l4_proto;
 	uint8_t  priority;
 	uint8_t  outer_ecn;
+	/* Length of packet after IP headers (L4 + L5 + payload). */
+	uint8_t  upper_len;
 
 	void     *l2_hdr;
 	void     *outer_l3_hdr;

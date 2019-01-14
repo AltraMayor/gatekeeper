@@ -4,13 +4,20 @@ local ffi = require("ffi")
 GLOBAL_POLICIES = {}
 
 local default = {
-    	["params"] = {
-        	["tx_rate_kb_sec"] = 10,
-        	["cap_expire_sec"] = 10,
+	["params"] = {
+		["tx_rate_kb_sec"] = 10,
+		["cap_expire_sec"] = 10,
 		["next_renewal_ms"] = 10,
 		["renewal_step_ms"] = 10,
-        	["action"] = policylib.c.GK_GRANTED,
-    	},
+		["action"] = policylib.c.GK_GRANTED,
+	},
+}
+
+local malformed = {
+	["params"] = {
+		["expire_sec"] = 10,
+		["action"] = policylib.c.GK_DECLINED,
+	},
 }
 
 --[[
@@ -27,17 +34,18 @@ including speed limit, expiration time, actions - DENY or ACCEPT, etc.
 local IPV4 = policylib.c.IPV4
 
 local group1 = {
-    	["params"] = {
-        	["tx_rate_kb_sec"] = 20,
-        	["cap_expire_sec"] = 20,
+	["params"] = {
+		["tx_rate_kb_sec"] = 20,
+		["cap_expire_sec"] = 20,
 		["next_renewal_ms"] = 20,
 		["renewal_step_ms"] = 20,
-        	["action"] = policylib.c.GK_GRANTED,
-    	},
+		["action"] = policylib.c.GK_GRANTED,
+	},
 }
 
 local groups = {
 	[1] = group1,
+	[254] = malformed,
 	[255] = default,
 }
 
@@ -46,7 +54,7 @@ local simple_policies = {
 		{
 			{
 				["dest_port"] = 80,
-    				["policy_id"] = groups[1],
+				["policy_id"] = groups[1],
 			},
 		},
 	},
@@ -60,12 +68,18 @@ local function lookup_simple_policy(policies, pkt_info)
 	local dest_port
 	local ph = ffi.cast("struct gt_packet_headers *", pkt_info)
 
-	-- TODO #156 The Lua policy should be responsible for
-	-- checking the necessary space for each l4 header type.
 	if ph.l4_proto == policylib.c.TCP then
+		if ph.upper_len < ffi.sizeof("struct tcp_hdr") then
+			return malformed
+		end
+
 		local tcphdr = ffi.cast("struct tcp_hdr *", ph.l4_hdr)
 		dest_port = tcphdr.dst_port
 	elseif ph.l4_proto == policylib.c.UDP then
+		if ph.upper_len < ffi.sizeof("struct udp_hdr") then
+			return malformed
+		end
+
 		local udphdr = ffi.cast("struct udp_hdr *", ph.l4_hdr)
 		dest_port = udphdr.dst_port
 	else
