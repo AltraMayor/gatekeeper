@@ -822,6 +822,10 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 	}
 	lls_conf->log_type = lls_logtype;
 
+	log_ratelimit_state_init(lls_conf->lcore_id,
+		lls_conf->log_ratelimit_interval_ms,
+		lls_conf->log_ratelimit_burst);
+
 	if (!(lls_conf->front_max_pkt_burst > 0 &&
 			(net_conf->back_iface_enabled == 0 ||
 			(net_conf->back_iface_enabled &&

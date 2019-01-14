@@ -15,6 +15,10 @@ return function (gk_conf, gt_conf, numa_table)
 	-- Log level for Dynamic Configuration.
 	dy_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
+	-- Log ratelimit interval and burst size.
+	dy_conf.log_ratelimit_interval_ms = 5000
+	dy_conf.log_ratelimit_burst = 10
+
 	gatekeeper.c.set_dyc_timeout(30, 0, dy_conf)
 
 	-- Setup the dynamic config functional block.

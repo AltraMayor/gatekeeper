@@ -26,11 +26,13 @@
 
 #include "gatekeeper_acl.h"
 #include "gatekeeper_mailbox.h"
+#include "gatekeeper_log_ratelimit.h"
 
 extern int lls_logtype;
 
-#define LLS_LOG(level, ...) \
-	rte_log(RTE_LOG_ ## level, lls_logtype, "GATEKEEPER LLS: " __VA_ARGS__)
+#define LLS_LOG(level, ...)                               \
+	rte_log_ratelimit(RTE_LOG_ ## level, lls_logtype, \
+		"GATEKEEPER LLS: " __VA_ARGS__)
 
 /* Requests that can be made to the LLS block. */
 enum lls_req_ty {
@@ -198,6 +200,10 @@ struct lls_config {
 	uint32_t          log_level;
 	/* Dynamic logging type, assigned at runtime. */
 	int               log_type;
+	/* Log ratelimit interval in ms for LLS block. */
+	uint32_t          log_ratelimit_interval_ms;
+	/* Log ratelimit burst size for LLS block. */
+	uint32_t          log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.

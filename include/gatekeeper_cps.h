@@ -24,12 +24,14 @@
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
 #include "gatekeeper_mailbox.h"
+#include "gatekeeper_log_ratelimit.h"
 #include "list.h"
 
 extern int cps_logtype;
 
-#define CPS_LOG(level, ...) \
-	rte_log(RTE_LOG_ ## level, cps_logtype, "GATEKEEPER CPS: " __VA_ARGS__)
+#define CPS_LOG(level, ...)                              \
+	rte_log_ratelimit(RTE_LOG_ ## level, cps_logtype,\
+		"GATEKEEPER CPS: " __VA_ARGS__)
 
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
@@ -42,6 +44,10 @@ struct cps_config {
 	uint32_t          log_level;
 	/* Dynamic logging type, assigned at runtime. */
 	int               log_type;
+	/* Log ratelimit interval in ms for CPS block. */
+	uint32_t          log_ratelimit_interval_ms;
+	/* Log ratelimit burst size for CPS block. */
+	uint32_t          log_ratelimit_burst;
 
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t          front_max_pkt_burst;

@@ -28,6 +28,10 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- to output routing table updates to the log.
 	cps_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
 
+	-- Log ratelimit interval and burst size.
+	cps_conf.log_ratelimit_interval_ms = 5000
+	cps_conf.log_ratelimit_burst = 10
+
 	-- The maximum number of packets to retrieve/transmit.
 	cps_conf.front_max_pkt_burst = 32
 	cps_conf.back_max_pkt_burst = 32

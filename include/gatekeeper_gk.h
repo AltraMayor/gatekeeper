@@ -29,11 +29,13 @@
 #include "gatekeeper_lpm.h"
 #include "gatekeeper_sol.h"
 #include "gatekeeper_ratelimit.h"
+#include "gatekeeper_log_ratelimit.h"
 
 extern int gk_logtype;
 
-#define GK_LOG(level, ...) \
-	rte_log(RTE_LOG_ ## level, gk_logtype, "GATEKEEPER GK: " __VA_ARGS__)
+#define GK_LOG(level, ...)                               \
+	rte_log_ratelimit(RTE_LOG_ ## level, gk_logtype, \
+		"GATEKEEPER GK: " __VA_ARGS__)
 
 /*
  * A flow entry can be in one of three states:
@@ -115,6 +117,10 @@ struct gk_config {
 	uint32_t          log_level;
 	/* Dynamic logging type, assigned at runtime. */
 	int               log_type;
+	/* Log ratelimit interval in ms for GK block. */
+	uint32_t          log_ratelimit_interval_ms;
+	/* Log ratelimit burst size for GK block. */
+	uint32_t          log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.

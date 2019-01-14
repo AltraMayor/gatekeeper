@@ -34,13 +34,15 @@
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
+#include "gatekeeper_log_ratelimit.h"
 
 static struct ggu_config *ggu_conf;
 
 int ggu_logtype;
 
-#define GGU_LOG(level, ...) \
-	rte_log(RTE_LOG_ ## level, ggu_logtype, "GATEKEEPER GGU: " __VA_ARGS__)
+#define GGU_LOG(level, ...)                               \
+	rte_log_ratelimit(RTE_LOG_ ## level, ggu_logtype, \
+		"GATEKEEPER GGU: " __VA_ARGS__)
 
 static inline const char *
 filter_name(const struct gatekeeper_if *iface)
@@ -675,6 +677,10 @@ run_ggu(struct net_config *net_conf,
 		ret = -1;
 		goto out;
 	}
+
+	log_ratelimit_state_init(ggu_conf->lcore_id,
+		ggu_conf->log_ratelimit_interval_ms,
+		ggu_conf->log_ratelimit_burst);
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_stage1, ggu_conf);
 	if (ret < 0)

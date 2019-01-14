@@ -23,6 +23,7 @@
 #include <rte_cycles.h>
 #include <rte_reciprocal.h>
 
+#include "gatekeeper_log_ratelimit.h"
 #include "list.h"
 
 struct priority_req {
@@ -132,6 +133,10 @@ struct sol_config {
 	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
 	int                log_type;
+	/* Log ratelimit interval in ms for SOL block. */
+	uint32_t           log_ratelimit_interval_ms;
+	/* Log ratelimit burst size for SOL block. */
+	uint32_t           log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.

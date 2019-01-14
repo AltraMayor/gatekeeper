@@ -171,6 +171,8 @@ struct gk_config {
 	unsigned int mailbox_burst_size;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -184,6 +186,8 @@ struct ggu_config {
 	unsigned int mailbox_burst_size;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -199,6 +203,8 @@ struct lls_config {
 	unsigned int lls_cache_scan_interval_sec;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -219,6 +225,8 @@ struct gt_config {
 	unsigned int mailbox_burst_size;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -227,6 +235,8 @@ struct cps_config {
 	uint16_t     tcp_port_bgp;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int num_attempts_kni_link_set;
@@ -244,6 +254,8 @@ struct dynamic_config {
 	struct gt_config *gt;
 	uint32_t         log_level;
 	int              log_type;
+	uint32_t         log_ratelimit_interval_ms;
+	uint32_t         log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
@@ -258,6 +270,8 @@ struct sol_config {
 	unsigned int mailbox_mem_cache_size;
 	uint32_t     log_level;
 	int          log_type;
+	uint32_t     log_ratelimit_interval_ms;
+	uint32_t     log_ratelimit_burst;
 	/* This struct has hidden fields. */
 };
 
