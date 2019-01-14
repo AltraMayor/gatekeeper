@@ -987,14 +987,14 @@ init_kni(const char *kni_kmod_path, unsigned int num_kni)
 
 	void *file = grab_file(kni_kmod_path, &len);
 	if (file == NULL) {
-		CPS_LOG(ERR, "insmod: can't read '%s'\n", kni_kmod_path);
+		CPS_LOG(ERR, "%s: can't read '%s'\n", __func__, kni_kmod_path);
 		return -1;
 	}
 
 	ret = init_module(file, len, "");
 	if (ret < 0) {
-		CPS_LOG(ERR, "insmod: error inserting '%s': %d %s\n",
-			kni_kmod_path, ret, moderror(errno));
+		CPS_LOG(ERR, "%s: error inserting '%s': %d %s\n",
+			__func__, kni_kmod_path, ret, moderror(errno));
 		rte_free(file);
 		return ret;
 	}
@@ -1028,7 +1028,8 @@ check_usage(const char *modname)
 		found_mods = true;
 
 		if (strchr(line, '\n') == NULL) {
-			CPS_LOG(ERR, "Long line broke rmmod\n");
+			CPS_LOG(ERR, "Line too long while reading loaded modules file %s\n",
+				PROC_MODULES_FILENAME);
 			ret = -1;
 			goto out;
 		}
