@@ -159,34 +159,39 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			info->inner_l3_len = ipv4_hdr_len(inner_ipv4_hdr);
 			info->frag_hdr = NULL;
 		}
+
+		parsed_len += ipv4_hdr_len(inner_ipv4_hdr);
 	} else if (likely(inner_ip_ver == 6)) {
-		int l4_offset;
+		int inner_ipv6_len;
 
 		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr))
 			return -1;
 
 		inner_ipv6_hdr = (struct ipv6_hdr *)info->inner_l3_hdr;
-		l4_offset = ipv6_skip_exthdr(inner_ipv6_hdr, pkt->data_len -
-			parsed_len, &info->l4_proto);
-                if (l4_offset < 0) {
+		inner_ipv6_len = ipv6_skip_exthdr(inner_ipv6_hdr,
+			pkt->data_len - parsed_len, &info->l4_proto);
+                if (inner_ipv6_len < 0) {
                         GT_LOG(ERR,
                                 "Failed to parse the packet's inner IPv6 extension headers\n");
 			return -1;
                 }
 
 		info->inner_ip_ver = ETHER_TYPE_IPv6;
-		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + l4_offset;
+		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + inner_ipv6_len;
 		info->frag_hdr =
 			rte_ipv6_frag_get_ipv6_fragment_header(inner_ipv6_hdr);
 
 		if (info->frag_hdr != NULL) {
 			info->frag = true;
 			info->l2_outer_l3_len = parsed_len;
-			info->inner_l3_len = l4_offset;
+			info->inner_l3_len = inner_ipv6_len;
 		}
+
+		parsed_len += inner_ipv6_len;
 	} else
 		return -1;
 
+	info->upper_len = pkt->data_len - parsed_len;
 	return 0;
 }
 

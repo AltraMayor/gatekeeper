@@ -13,6 +13,13 @@ local default = {
 	},
 }
 
+local malformed = {
+	["params"] = {
+		["expire_sec"] = 10,
+		["action"] = policylib.c.GK_DECLINED,
+	},
+}
+
 --[[
 The following defines the simple policies without LPM for Grantor.
 
@@ -38,6 +45,7 @@ local group1 = {
 
 local groups = {
 	[1] = group1,
+	[254] = malformed,
 	[255] = default,
 }
 
@@ -60,12 +68,18 @@ local function lookup_simple_policy(policies, pkt_info)
 	local dest_port
 	local ph = ffi.cast("struct gt_packet_headers *", pkt_info)
 
-	-- TODO #156 The Lua policy should be responsible for
-	-- checking the necessary space for each l4 header type.
 	if ph.l4_proto == policylib.c.TCP then
+		if ph.upper_len < ffi.sizeof("struct tcp_hdr") then
+			return malformed
+		end
+
 		local tcphdr = ffi.cast("struct tcp_hdr *", ph.l4_hdr)
 		dest_port = tcphdr.dst_port
 	elseif ph.l4_proto == policylib.c.UDP then
+		if ph.upper_len < ffi.sizeof("struct udp_hdr") then
+			return malformed
+		end
+
 		local udphdr = ffi.cast("struct udp_hdr *", ph.l4_hdr)
 		dest_port = udphdr.dst_port
 	else
