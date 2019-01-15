@@ -34,7 +34,7 @@ SRCS-y := main/main.c
 
 # Functional blocks.
 SRCS-y += config/static.c config/dynamic.c
-SRCS-y += cps/main.c cps/kni.c
+SRCS-y += cps/main.c cps/kni.c cps/elf.c
 SRCS-y += ggu/main.c
 SRCS-y += gk/main.c gk/fib.c
 SRCS-y += gt/main.c
