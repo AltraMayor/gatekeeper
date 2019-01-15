@@ -32,7 +32,10 @@
 #include "gatekeeper_cps.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
+#include "elf.h"
 #include "kni.h"
+
+#define KNI_MODULE_NAME ("rte_kni")
 
 /*
  * According to init_module(2) and delete_module(2), there
@@ -979,6 +982,93 @@ moderror(int err)
 	}
 }
 
+#define SYS_MODULES_ATTR_PATH ("/sys/module/%s/%s")
+
+static int
+get_loaded_kmod_attr(const char *attr, char *val, size_t val_len)
+{
+	FILE *attr_file;
+	char path[256];
+	char line[1024];
+	int ret;
+
+	ret = snprintf(path, sizeof(path), SYS_MODULES_ATTR_PATH,
+		KNI_MODULE_NAME, attr);
+	if (ret <= 0 || ret >= (int)sizeof(path)) {
+		CPS_LOG(ERR, "Can't compose path name to read %s from loaded %s\n",
+			attr, KNI_MODULE_NAME);
+		return -1;
+	}
+
+	attr_file = fopen(path, "r");
+	if (attr_file == NULL) {
+		CPS_LOG(ERR, "Can't open %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	if (fgets(line, sizeof(line), attr_file) != NULL) {
+		size_t len = strlen(line);
+
+		/* fgets() reads in line, including newline character. */
+		if (line[len - 1] != '\n') {
+			CPS_LOG(ERR, "Line buffer too short to read in %s from %s\n",
+				attr, path);
+			ret = -1;
+			goto close;
+		}
+
+		/* Remove newline. */
+		line[len - 1] = '\0';
+		len--;
+
+		if (len > val_len - 1) {
+			CPS_LOG(ERR, "Found attribute in %s but value buffer is too short to read in its value (%s)\n",
+				path, line);
+			ret = -1;
+			goto close;
+		}
+
+		strcpy(val, line);
+		ret = 0;
+	} else
+		ret = -1;
+
+close:
+	fclose(attr_file);
+	return ret;
+}
+
+static bool
+loaded_kmod_matches_file(void *file, unsigned long len)
+{
+	char kmod_srcver[64], loaded_kmod_srcver[64];
+	int ret;
+
+	ret = get_modinfo_string(file, len, "srcversion",
+		kmod_srcver, sizeof(kmod_srcver));
+	if (ret < 0) {
+		CPS_LOG(ERR, "Unable to fetch srcversion of %s.ko file specified in config\n",
+			KNI_MODULE_NAME);
+		return false;
+	}
+
+	ret = get_loaded_kmod_attr("srcversion",
+		loaded_kmod_srcver, sizeof(loaded_kmod_srcver));
+	if (ret < 0) {
+		CPS_LOG(ERR, "Unable to fetch srcversion of %s module already loaded\n",
+			KNI_MODULE_NAME);
+		return false;
+	}
+
+	if (strcmp(kmod_srcver, loaded_kmod_srcver) == 0)
+		return true;
+
+	CPS_LOG(ERR, "srcversion of loaded %s module (%s) does not match srcversion of %s.ko file specified in config (%s)\n",
+		KNI_MODULE_NAME, loaded_kmod_srcver,
+		KNI_MODULE_NAME, kmod_srcver);
+	return false;
+}
+
 int
 init_kni(const char *kni_kmod_path, unsigned int num_kni)
 {
@@ -996,19 +1086,24 @@ init_kni(const char *kni_kmod_path, unsigned int num_kni)
 		if (errno == EEXIST) {
 			CPS_LOG(NOTICE, "%s: %s already inserted\n",
 				__func__, kni_kmod_path);
-			goto success;
+
+			if (loaded_kmod_matches_file(file, len)) {
+				ret = 0;
+				goto success;
+			}
+		} else {
+			CPS_LOG(ERR, "%s: error inserting '%s': %d %s\n",
+				__func__, kni_kmod_path, ret, moderror(errno));
 		}
 
-		CPS_LOG(ERR, "%s: error inserting '%s': %d %s\n",
-			__func__, kni_kmod_path, ret, moderror(errno));
-		rte_free(file);
-		return ret;
+		goto out;
 	}
 
 success:
-	rte_free(file);
 	rte_kni_init(num_kni);
-	return 0;
+out:
+	rte_free(file);
+	return ret;
 }
 
 #define PROC_MODULES_FILENAME ("/proc/modules")
@@ -1085,7 +1180,7 @@ out:
 void
 rm_kni(void)
 {
-	const char *name = "rte_kni";
+	const char *name = KNI_MODULE_NAME;
 	int ret;
 
 	rte_kni_close();
