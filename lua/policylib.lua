@@ -16,10 +16,28 @@ enum gk_flow_state {
 };
 
 enum protocols {
+	ICMP = 1,
 	TCP = 6,
 	UDP = 17,
+	ICMPV6 = 58,
 	IPV4 = 0x0800,
 	IPV6 = 0x86DD,
+};
+
+enum icmp_types {
+	ICMP_ECHO_REQUEST_TYPE = 8,
+};
+
+enum icmp_codes {
+	ICMP_ECHO_REQUEST_CODE = 0,
+};
+
+enum icmpv6_types {
+	ICMPV6_ECHO_REQUEST_TYPE = 128,
+};
+
+enum icmpv6_codes {
+	ICMPV6_ECHO_REQUEST_CODE = 0,
 };
 
 struct ipv4_hdr {
@@ -61,6 +79,20 @@ struct udp_hdr {
 	uint16_t dst_port;
 	uint16_t dgram_len;
 	uint16_t dgram_cksum;
+} __attribute__((__packed__));
+
+struct icmp_hdr {
+	uint8_t  icmp_type;
+	uint8_t  icmp_code;
+	uint16_t icmp_cksum;
+	uint16_t icmp_ident;
+	uint16_t icmp_seq_nb;
+} __attribute__((__packed__));
+
+struct icmpv6_hdr {
+	uint8_t  icmpv6_type;
+	uint8_t  icmpv6_code;
+	uint16_t icmpv6_cksum;
 } __attribute__((__packed__));
 
 struct gt_packet_headers {

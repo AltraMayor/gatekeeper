@@ -20,6 +20,13 @@ local malformed = {
 	},
 }
 
+local declined = {
+	["params"] = {
+		["expire_sec"] = 60,
+		["action"] = policylib.c.GK_DECLINED,
+	},
+}
+
 --[[
 The following defines the simple policies without LPM for Grantor.
 
@@ -45,6 +52,7 @@ local group1 = {
 
 local groups = {
 	[1] = group1,
+	[253] = declined,
 	[254] = malformed,
 	[255] = default,
 }
@@ -82,8 +90,47 @@ local function lookup_simple_policy(policies, pkt_info)
 
 		local udphdr = ffi.cast("struct udp_hdr *", ph.l4_hdr)
 		dest_port = udphdr.dst_port
+	elseif ph.inner_ip_ver == policylib.c.IPV4 and
+			ph.l4_proto == policylib.c.ICMP then
+		if ph.upper_len < ffi.sizeof("struct icmp_hdr") then
+			return malformed
+		end
+
+		local ipv4_hdr = ffi.cast("struct ipv4_hdr *", ph.inner_l3_hdr)
+		local icmp_hdr = ffi.cast("struct icmp_hdr *", ph.l4_hdr)
+		local icmp_type = icmp_hdr.icmp_type
+		local icmp_code = icmp_hdr.icmp_code
+
+		-- Disable traceroute through ICMP into network.
+		if ipv4_hdr.time_to_live < 16 and icmp_type ==
+				policylib.c.ICMP_ECHO_REQUEST_TYPE and
+				icmp_code ==
+				policylib.c.ICMP_ECHO_REQUEST_CODE then
+			return declined
+		end
+
+		return default
+	elseif ph.inner_ip_ver == policylib.c.IPV6 and
+			ph.l4_proto == policylib.c.ICMPV6 then
+		if ph.upper_len < ffi.sizeof("struct icmpv6_hdr") then
+			return malformed
+		end
+
+		local ipv6_hdr = ffi.cast("struct ipv6_hdr *", ph.inner_l3_hdr)
+		local icmpv6_hdr = ffi.cast("struct icmpv6_hdr *", ph.l4_hdr)
+		local icmpv6_type = icmpv6_hdr.icmpv6_type
+		local icmpv6_code = icmpv6_hdr.icmpv6_code
+
+		-- Disable traceroute through ICMPV6 into network.
+		if ipv6_hdr.hop_limits < 16 and icmpv6_type ==
+				policylib.c.ICMPV6_ECHO_REQUEST_TYPE and
+				icmpv6_code ==
+				policylib.c.ICMPV6_ECHO_REQUEST_CODE then
+			return declined
+		end
+
+		return default
 	else
-		-- TODO #157 Add support for other transport protocols.
 		return nil
 	end
 
