@@ -2137,7 +2137,6 @@ gk_flush_flow_table(const char *src_prefix,
 	int i;
 	uint16_t proto = 0;
 	struct gk_flush_request flush;
-	struct gk_cmd_entry *entry;
 
 	if (src_prefix == NULL && dst_prefix == NULL) {
 		GK_LOG(ERR, "Failed to flush flow table: both source and destination prefixes are NULL\n");
@@ -2177,7 +2176,8 @@ gk_flush_flow_table(const char *src_prefix,
 		flush.dst.addr.proto = proto;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
-		entry = mb_alloc_entry(&gk_conf->instances[i].mb);
+		struct gk_cmd_entry *entry =
+			mb_alloc_entry(&gk_conf->instances[i].mb);
 		if (entry == NULL) {
 			GK_LOG(WARNING,
 				"Cannot allocate an entry for the mailbox of the GK block at lcore %u to flush flows that match src_prefix=%s and dst_prefix=%s\n",
