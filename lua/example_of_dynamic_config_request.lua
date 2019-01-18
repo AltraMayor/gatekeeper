@@ -131,4 +131,14 @@ reply_msg = reply_msg .. dylib.list_lls_arp(llsc,
 reply_msg = reply_msg .. dylib.list_lls_nd(llsc,
 	dylib.print_lls_dump_entry, acc_start)
 
+ret = dylib.c.gk_flush_flow_table("198.51.100.0/24", "192.0.2.0/24", dyc.gk)
+if ret < 0 then
+	return "gk: failed to flush the flow table\n"
+end
+
+ret = dylib.c.gk_flush_flow_table("2001:db8:3::/48", "2001:db8:5::/48", dyc.gk)
+if ret < 0 then
+	return "gk: failed to flush the flow table\n"
+end
+
 return "gk: successfully processed all the FIB entries\n" .. reply_msg

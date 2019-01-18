@@ -101,23 +101,11 @@ int
 ipv6_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
 {
 	/* Check for both link-local and global subnets. */
-	const uint64_t *paddr_global =
-		(const uint64_t *)&iface->ip6_addr.s6_addr;
-	const uint64_t *pmask_global =
-		(const uint64_t *)&iface->ip6_mask.s6_addr;
-
-	const uint64_t *paddr_local =
-		(const uint64_t *)&iface->ll_ip6_addr.s6_addr;
-	const uint64_t *pmask_local =
-		(const uint64_t *)&iface->ll_ip6_mask.s6_addr;
-
-	const uint64_t *paddr_rcvd = (const uint64_t *)addr->ip.v6.s6_addr;
-
-	return (!((paddr_local[0] ^ paddr_rcvd[0]) & pmask_local[0]) &&
-		!((paddr_local[1] ^ paddr_rcvd[1]) & pmask_local[1]))
+	return (ip6_same_subnet(iface->ll_ip6_addr.s6_addr, addr->ip.v6.s6_addr,
+		iface->ll_ip6_mask.s6_addr)
 		||
-		(!((paddr_global[0] ^ paddr_rcvd[0]) & pmask_global[0]) &&
-		!((paddr_global[1] ^ paddr_rcvd[1]) & pmask_global[1]));
+		ip6_same_subnet(iface->ip6_addr.s6_addr, addr->ip.v6.s6_addr,
+		iface->ip6_mask.s6_addr));
 }
 
 /*

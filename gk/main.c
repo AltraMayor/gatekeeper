@@ -851,6 +851,99 @@ add_ggu_policy(struct ggu_policy *policy,
 }
 
 static void
+flush_flow_table(struct ip_prefix *src,
+	struct ip_prefix *dst, struct gk_instance *instance)
+{
+	uint16_t proto;
+	uint32_t next = 0;
+	int32_t index;
+	uint64_t num_flushed_flows = 0;
+	const struct ip_flow *key;
+	void *data;
+	struct in_addr ip4_src_mask;
+	struct in_addr ip4_dst_mask;
+	struct in6_addr ip6_src_mask;
+	struct in6_addr ip6_dst_mask;
+
+	RTE_VERIFY(src->addr.proto == dst->addr.proto);
+
+	if (src->addr.proto == ETHER_TYPE_IPv4) {
+		ip4_prefix_mask(src->len, &ip4_src_mask);
+		ip4_prefix_mask(dst->len, &ip4_dst_mask);
+
+		memset(&ip6_src_mask, 0, sizeof(ip6_src_mask));
+		memset(&ip6_dst_mask, 0, sizeof(ip6_dst_mask));
+
+		proto = ETHER_TYPE_IPv4;
+	} else if (likely(src->addr.proto == ETHER_TYPE_IPv6)) {
+		memset(&ip4_src_mask, 0, sizeof(ip4_src_mask));
+		memset(&ip4_dst_mask, 0, sizeof(ip4_dst_mask));
+
+		ip6_prefix_mask(src->len, &ip6_src_mask);
+		ip6_prefix_mask(dst->len, &ip6_dst_mask);
+
+		proto = ETHER_TYPE_IPv6;
+	} else
+		rte_panic("Unexpected protocol: %i\n", src->addr.proto);
+
+	index = rte_hash_iterate(instance->ip_flow_hash_table,
+		(void *)&key, &data, &next);
+	while (index >= 0) {
+		bool matched = true;
+		struct flow_entry *fe =
+			&instance->ip_flow_entry_table[index];
+
+		if (proto != fe->flow.proto)
+			goto next;
+
+		if (proto == ETHER_TYPE_IPv4) {
+			if (src->len != 0) {
+				matched = ip4_same_subnet(
+					src->addr.ip.v4.s_addr,
+					fe->flow.f.v4.src,
+					ip4_src_mask.s_addr);
+			}
+
+			if (matched && dst->len != 0) {
+				matched = ip4_same_subnet(
+					dst->addr.ip.v4.s_addr,
+					fe->flow.f.v4.dst,
+					ip4_dst_mask.s_addr);
+			}
+		} else {
+			if (src->len != 0) {
+				matched = ip6_same_subnet(
+					src->addr.ip.v6.s6_addr,
+					fe->flow.f.v6.src,
+					ip6_src_mask.s6_addr);
+			}
+
+			if (matched && dst->len != 0) {
+				matched = ip6_same_subnet(
+					dst->addr.ip.v6.s6_addr,
+					fe->flow.f.v6.dst,
+					ip6_dst_mask.s6_addr);
+			}
+		}
+
+		if (matched) {
+			gk_del_flow_entry_from_hash(
+				instance->ip_flow_hash_table, fe);
+			num_flushed_flows++;
+		}
+
+next:
+		index = rte_hash_iterate(instance->ip_flow_hash_table,
+			(void *)&key, &data, &next);
+	}
+
+	GK_LOG(NOTICE,
+		"The GK block finished flushing %" PRIu64
+		" flows in the flow table at %s with lcore %u\n",
+		num_flushed_flows, __func__, rte_lcore_id());
+}
+
+static void
 gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 {
 	switch (fib->action) {
@@ -917,6 +1010,11 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 
 	case GK_SYNCH_WITH_LPM:
 		gk_synchronize(entry->u.fib, instance);
+		break;
+
+	case GK_FLUSH_FLOW_TABLE:
+		flush_flow_table(&entry->u.flush.src,
+			&entry->u.flush.dst, instance);
 		break;
 
 	default:
@@ -2030,4 +2128,68 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 		GK_LOG(ERR, "Wrong RSS configuration for GK blocks\n");
 
 	return &gk_conf->instances[block_idx].mb;
+}
+
+int
+gk_flush_flow_table(const char *src_prefix,
+	const char *dst_prefix, struct gk_config *gk_conf)
+{
+	int i;
+	uint16_t proto = 0;
+	struct gk_flush_request flush;
+
+	if (src_prefix == NULL && dst_prefix == NULL) {
+		GK_LOG(ERR, "Failed to flush flow table: both source and destination prefixes are NULL\n");
+		return -1;
+	}
+
+	memset(&flush, 0, sizeof(flush));
+
+	/*
+	 * Field .str is only meant to help logging and debugging,
+	 * but we cannot pass src_prefix or dst_prefix along
+	 * because they go away soon after this function returns.
+	 */
+	flush.src.str = __func__;
+	flush.dst.str = __func__;
+
+	if (src_prefix != NULL) {
+		flush.src.len = parse_ip_prefix(src_prefix,
+			&flush.src.addr);
+		if (flush.src.len < 0)
+			return -1;
+		proto = flush.src.addr.proto;
+	}
+
+	if (dst_prefix != NULL) {
+		flush.dst.len = parse_ip_prefix(dst_prefix,
+			&flush.dst.addr);
+		if (flush.dst.len < 0 || (src_prefix != NULL &&
+				flush.dst.addr.proto != proto))
+			return -1;
+		proto = flush.dst.addr.proto;
+	}
+
+	if (src_prefix == NULL)
+		flush.src.addr.proto = proto;
+	if (dst_prefix == NULL)
+		flush.dst.addr.proto = proto;
+
+	for (i = 0; i < gk_conf->num_lcores; i++) {
+		struct gk_cmd_entry *entry =
+			mb_alloc_entry(&gk_conf->instances[i].mb);
+		if (entry == NULL) {
+			GK_LOG(WARNING,
+				"Cannot allocate an entry for the mailbox of the GK block at lcore %u to flush flows that match src_prefix=%s and dst_prefix=%s\n",
+				gk_conf->lcores[i], src_prefix, dst_prefix);
+			continue;
+		}
+
+		entry->op = GK_FLUSH_FLOW_TABLE;
+		entry->u.flush = flush;
+
+		mb_send_entry(&gk_conf->instances[i].mb, entry);
+	}
+
+	return 0;
 }

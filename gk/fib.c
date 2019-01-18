@@ -202,7 +202,7 @@ eth_cache_cleanup:
 	return NULL;
 }
 
-static int
+int
 parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 {
 	/* Need to make copy to tokenize. */

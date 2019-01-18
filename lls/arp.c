@@ -37,7 +37,7 @@ iface_arp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 int
 ipv4_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
 {
-	return !((iface->ip4_addr.s_addr ^ addr->ip.v4.s_addr) &
+	return ip4_same_subnet(iface->ip4_addr.s_addr, addr->ip.v4.s_addr,
 		iface->ip4_mask.s_addr);
 }
 
