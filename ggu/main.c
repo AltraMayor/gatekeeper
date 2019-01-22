@@ -233,6 +233,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	struct ether_hdr *eth_hdr;
 	void *l3_hdr;
 	struct udp_hdr *udphdr;
+	uint16_t pkt_udp_checksum, cal_udp_checksum;
 	struct ggu_common_hdr *gguhdr;
 	struct ggu_decision *ggu_decision;
 	uint16_t real_payload_len;
@@ -388,7 +389,24 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		goto free_packet;
 	}
 
-	/* XXX #69 Check the UDP checksum. */
+	pkt_udp_checksum = udphdr->dgram_cksum;
+	udphdr->dgram_cksum = 0;
+
+	if (ether_type == ETHER_TYPE_IPv4) {
+		cal_udp_checksum = rte_ipv4_udptcp_cksum(l3_hdr, udphdr);
+		if (pkt_udp_checksum != cal_udp_checksum) {
+			GGU_LOG(ERR, "The IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				pkt_udp_checksum, cal_udp_checksum);
+			goto free_packet;
+		}
+	} else {
+		cal_udp_checksum = rte_ipv6_udptcp_cksum(l3_hdr, udphdr);
+		if (pkt_udp_checksum != cal_udp_checksum) {
+			GGU_LOG(ERR, "The IPv6 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				pkt_udp_checksum, cal_udp_checksum);
+			goto free_packet;
+		}
+	}
 
 	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
 	if (gguhdr->version != GGU_PD_VER) {
