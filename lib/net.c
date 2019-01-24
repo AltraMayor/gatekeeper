@@ -1114,8 +1114,22 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 {
 	int ret;
 	uint8_t i;
-	uint8_t num_succ_ports = 0;
+	uint8_t num_succ_ports;
 
+	/*
+	 * The MTU of the device should be changed while the device
+	 * is down. Otherwise, drivers for some NICs and in some cases
+	 * (when multiple ports are bonded) fail to set the MTU.
+	 */
+	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
+	if (ret < 0) {
+		G_LOG(ERR,
+			"net: cannot set the MTU on the %s iface (error %d)\n",
+			iface->name, -ret);
+		goto destroy_init;
+	}
+
+	num_succ_ports = 0;
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = start_port(iface->ports[i],
 			&num_succ_ports, num_attempts_link_get);
@@ -1128,14 +1142,6 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 		ret = start_port(iface->id, NULL, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
-	}
-
-	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
-	if (ret < 0) {
-		G_LOG(ERR,
-			"net: cannot set the MTU on the %s iface (error %d)\n",
-			iface->name, -ret);
-		goto stop_partial;
 	}
 
 	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,
@@ -1171,6 +1177,7 @@ ipv4_acls:
 		destroy_acls(&iface->ipv4_acls);
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
+destroy_init:
 	destroy_iface(iface, IFACE_DESTROY_INIT);
 	return ret;
 }
