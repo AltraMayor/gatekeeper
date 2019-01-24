@@ -91,20 +91,6 @@ randomize_rss_key(int guarantee_random_entropy)
 /* To support the optimized implementation of generic RSS hash function. */
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
-static const struct rte_eth_conf gatekeeper_template_port_conf = {
-	.rxmode = {
-		/* Set to use RSS in init_port() if the device supports it. */
-		.mq_mode = ETH_MQ_RX_NONE,
-		/*
-		 * The field .max_rx_pkt_len is configurable via
-		 * the static config as the field mtu and is set
-		 * in init_port(). See the documentation of member
-		 * mtu of struct gatekeeper_if for more information.
-		 */
-		.offloads = DEV_RX_OFFLOAD_JUMBO_FRAME,
-	},
-};
-
 /*
  * @ether_type should be passed in host ordering, but is converted
  * to little endian ordering before being added as a filter. The
@@ -700,6 +686,150 @@ get_if_back(struct net_config *net_conf)
 	return net_conf->back_iface_enabled ? &net_conf->back : NULL;
 }
 
+/*
+ * It seems common that devices do not exactly support the
+ * hashes in the DPDK macros such as ETH_RSS_IP, so until we
+ * choose set of minimum hash functions required (instead of
+ * ETH_RSS_IP which is overkill), issue a warning in the
+ * case that the device does not support the hashes.
+ *
+ * TODO #152 Find the minimum set of hash functions (ETH_RSS_*) that
+ * Gatekeeper needs and set port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
+ * Then, change this warning to an error and return -1.
+ */
+#define GATEKEEPER_RSS_HF (ETH_RSS_IP)
+
+static int
+check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
+	const struct rte_eth_dev_info *dev_info,
+	struct rte_eth_conf *port_conf)
+{
+	if (dev_info->flow_type_rss_offloads == 0) {
+		/* This port doesn't support RSS, so disable RSS. */
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support RSS\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		iface->rss = false;
+	} else if ((dev_info->flow_type_rss_offloads & GATEKEEPER_RSS_HF) !=
+			GATEKEEPER_RSS_HF) {
+		G_LOG(WARNING,
+			"net: port %hu (%s) on the %s interface only supports RSS hash functions 0x%"PRIx64", but Gatekeeper requires: 0x%"PRIx64"\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name,
+			dev_info->flow_type_rss_offloads,
+			(uint64_t)GATEKEEPER_RSS_HF);
+	}
+
+	port_conf->rx_adv_conf.rss_conf.rss_hf &=
+		dev_info->flow_type_rss_offloads;
+
+	return 0;
+}
+
+static int
+check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
+	const struct rte_eth_dev_info *dev_info,
+	struct rte_eth_conf *port_conf)
+{
+	if (dev_info->max_rx_pktlen < port_conf->rxmode.max_rx_pkt_len) {
+		G_LOG(ERR,
+			"net: port %hu (%s) on the %s interface only supports MTU of size %"PRIu32", but Gatekeeper is configured to be %"PRIu16"\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name, dev_info->max_rx_pktlen,
+			port_conf->rxmode.max_rx_pkt_len);
+		return -1;
+	}
+
+	if ((port_conf->rxmode.offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) &&
+			!(dev_info->rx_offload_capa &
+			DEV_RX_OFFLOAD_JUMBO_FRAME)) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading for jumbo frames\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		return -1;
+	}
+
+	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_MULTI_SEGS) &&
+			!(dev_info->tx_offload_capa &
+			DEV_TX_OFFLOAD_MULTI_SEGS)) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading multi-segment TX buffers\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_MULTI_SEGS;
+	}
+
+	return 0;
+}
+
+static int
+check_port_offloads(struct gatekeeper_if *iface,
+	struct rte_eth_conf *port_conf)
+{
+	unsigned int i;
+
+	/*
+	 * Set up device RSS.
+	 *
+	 * Assume all ports support RSS until shown otherwise.
+	 * If not, RSS will be disabled and only one queue is used.
+	 *
+	 * Check each port for the RSS hash functions it supports,
+	 * and configure each to use the intersection of supported
+	 * hash functions out of GATEKEEPER_RSS_HF.
+	 */
+	iface->rss = true;
+	port_conf->rx_adv_conf.rss_conf.rss_hf = GATEKEEPER_RSS_HF;
+
+	/*
+	 * Set up device MTU.
+	 *
+	 * If greater than the traditional MTU, then add the
+	 * jumbo frame RX offload flag. All ports must support
+	 * this offload in this case.
+	 *
+	 * If greater than the size of the mbufs, then add the
+	 * multi-segment buffer flag. This is optional and
+	 * if any ports don't support it, it will be removed.
+	 */
+	port_conf->rxmode.max_rx_pkt_len = iface->mtu;
+	if (iface->mtu > ETHER_MTU)
+		port_conf->rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
+		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+
+	for (i = 0; i < iface->num_ports; i++) {
+		struct rte_eth_dev_info dev_info;
+		uint16_t port_id = iface->ports[i];
+		int ret;
+
+		rte_eth_dev_info_get(port_id, &dev_info);
+
+		/* Check for RSS capabilities and offloads. */
+		ret = check_port_rss(iface, i, &dev_info, port_conf);
+		if (ret < 0)
+			return ret;
+
+		/* Check for MTU capability and offloads. */
+		ret = check_port_mtu(iface, i, &dev_info, port_conf);
+		if (ret < 0)
+			return ret;
+	}
+
+	if (iface->rss) {
+		port_conf->rxmode.mq_mode = ETH_MQ_RX_RSS;
+		port_conf->rx_adv_conf.rss_conf.rss_key = default_rss_key;
+		port_conf->rx_adv_conf.rss_conf.rss_key_len =
+			GATEKEEPER_RSS_KEY_LEN;
+	} else {
+		/* Configured hash functions are not supported. */
+		G_LOG(WARNING, "net: the %s interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
+			iface->name);
+		iface->num_rx_queues = 1;
+	}
+
+	return 0;
+}
+
 int
 gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 {
@@ -822,88 +952,38 @@ out:
 	return ret;
 }
 
+/*
+ * @port_idx represents index of port in iface->ports when it is >= 0.
+ * When it is -1, @port_id is a bonded port and has no entry in iface->ports.
+ */
 static int
-init_port(struct gatekeeper_if *iface, uint16_t port_id,
-	uint8_t *pnum_succ_ports)
+init_port(struct gatekeeper_if *iface, uint16_t port_id, int port_idx,
+	const struct rte_eth_conf *port_conf)
 {
-	struct rte_eth_conf port_conf = gatekeeper_template_port_conf;
-	struct rte_eth_dev_info dev_info;
-	int ret;
-
-	rte_eth_dev_info_get(port_id, &dev_info);
-
-	if (dev_info.flow_type_rss_offloads != 0) {
-		uint64_t configured_rss_hf;
-
-		iface->rss = true;
-
-		port_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
-
-		port_conf.rx_adv_conf.rss_conf.rss_key = default_rss_key;
-		port_conf.rx_adv_conf.rss_conf.rss_key_len =
-			GATEKEEPER_RSS_KEY_LEN;
-		port_conf.rx_adv_conf.rss_conf.rss_hf = ETH_RSS_IP;
-
-		/* Only use RSS hash functions this device can handle. */
-		configured_rss_hf = port_conf.rx_adv_conf.rss_conf.rss_hf;
-		port_conf.rx_adv_conf.rss_conf.rss_hf &=
-			dev_info.flow_type_rss_offloads;
-
-		/*
-		 * Check whether this device supports the configured RSS hashes.
-		 *
-		 * It seems common that devices do not exactly support the
-		 * hashes in the DPDK macros such as ETH_RSS_IP, so until we
-		 * choose set of minimum hash functions required (instead of
-		 * ETH_RSS_IP which is overkill), issue a warning in that case.
-		 *
-		 * TODO #152 Find the minimum set of hash functions (ETH_RSS_*) that
-		 * Gatekeeper needs and set
-		 * gatekeeper_port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
-		 * Then, change this warning to an error.
-		 */
-		if (configured_rss_hf !=
-				port_conf.rx_adv_conf.rss_conf.rss_hf) {
-			G_LOG(WARNING,
-				"net: port %hu invalid configured rss_hf: 0x%"PRIx64", valid value: 0x%"PRIx64"\n",
-				port_id, configured_rss_hf,
-				port_conf.rx_adv_conf.rss_conf.rss_hf);
-		}
-	} else {
-		G_LOG(WARNING, "net: the %s interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
-			iface->name);
-		iface->num_rx_queues = 1;
-	}
-
-	port_conf.rxmode.max_rx_pkt_len = iface->mtu;
-
-	/*
-	 * If the MTU is set above the mbuf segment size, then hardware
-	 * support for transmitting multiple segments should be enabled.
-	 */
-	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
-		port_conf.txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
-
-	ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
-		iface->num_tx_queues, &port_conf);
+	int ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
+		iface->num_tx_queues, port_conf);
 	if (ret < 0) {
-		G_LOG(ERR, "net: failed to configure port %hhu (err=%d)\n",
-			port_id, ret);
+		G_LOG(ERR, "net: failed to configure port %hu (%s) on the %s interface (err=%d)\n",
+			port_id,
+			port_idx >= 0 ? iface->pci_addrs[port_idx] : "bonded",
+			iface->name, ret);
 		return ret;
 	}
-	if (pnum_succ_ports != NULL)
-		(*pnum_succ_ports)++;
-
 	return 0;
 }
 
 static int
 init_iface(struct gatekeeper_if *iface)
 {
+	struct rte_eth_conf port_conf = {
+		.rxmode = {
+			.mq_mode = ETH_MQ_RX_NONE,
+		},
+		/* Other offloads configured below. */
+	};
 	int ret;
 	uint8_t i;
-	uint8_t num_succ_ports = 0;
-	uint8_t num_slaves_added = 0;
+	uint8_t num_succ_ports;
 
 	iface->alive = true;
 
@@ -930,20 +1010,34 @@ init_iface(struct gatekeeper_if *iface)
 			&iface->ports[i]);
 		if (ret < 0) {
 			G_LOG(ERR,
-				"net: failed to map PCI %s to a port (err=%d)\n",
-				iface->pci_addrs[i], ret);
-			goto close_partial;
+				"net: failed to map PCI %s to a port on the %s interface (err=%d)\n",
+				iface->pci_addrs[i], iface->name, ret);
+			goto free_ports;
 		}
+	}
 
-		ret = init_port(iface, iface->ports[i], &num_succ_ports);
+	/* Make sure the ports support hardware offloads. */
+	ret = check_port_offloads(iface, &port_conf);
+	if (ret < 0) {
+		G_LOG(ERR,
+			"net: %s interface doesn't support a critical hardware capability\n",
+			iface->name);
+		goto free_ports;
+	}
+
+	num_succ_ports = 0;
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = init_port(iface, iface->ports[i], i, &port_conf);
 		if (ret < 0)
 			goto close_partial;
+		num_succ_ports++;
 	}
 
 	/* Initialize bonded port, if needed. */
 	if (!iface_bonded(iface))
 		iface->id = iface->ports[0];
 	else {
+		uint8_t num_slaves_added;
 		char dev_name[64];
 		ret = snprintf(dev_name, sizeof(dev_name), "net_bonding%s",
 			iface->name);
@@ -951,13 +1045,18 @@ init_iface(struct gatekeeper_if *iface)
 		ret = rte_eth_bond_create(dev_name, iface->bonding_mode, 0);
 		if (ret < 0) {
 			G_LOG(ERR,
-				"net: failed to create bonded port (err=%d)\n",
-				ret);
+				"net: failed to create bonded port on the %s interface (err=%d)\n",
+				iface->name, ret);
 			goto close_partial;
 		}
 
 		iface->id = (uint8_t)ret;
 
+		/*
+		 * Bonded port inherits RSS and offload settings
+		 * from the slave ports added to it.
+		 */
+		num_slaves_added = 0;
 		for (i = 0; i < iface->num_ports; i++) {
 			ret = rte_eth_bond_slave_add(iface->id,
 				iface->ports[i]);
@@ -970,7 +1069,7 @@ init_iface(struct gatekeeper_if *iface)
 			num_slaves_added++;
 		}
 
-		ret = init_port(iface, iface->id, NULL);
+		ret = init_port(iface, iface->id, -1, &port_conf);
 		if (ret < 0)
 			goto close_ports;
 	}
@@ -982,6 +1081,7 @@ close_ports:
 	return ret;
 close_partial:
 	close_iface_ports(iface, num_succ_ports);
+free_ports:
 	rte_free(iface->ports);
 	iface->ports = NULL;
 	destroy_iface(iface, IFACE_DESTROY_LUA);
