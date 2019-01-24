@@ -198,7 +198,7 @@ main(int argc, char *argv[])
 
     	struct args args = {
 		/* Defaults. */
-		.server_path = "/tmp/dyn_cfg.socket",
+		.server_path = "/var/run/gatekeeper/dyn_cfg.socket",
 	};
 
 	/* Read parameters. */

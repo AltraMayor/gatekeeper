@@ -380,6 +380,12 @@ struct net_config {
 	/* The total number of NUMA nodes in the host. */
 	uint32_t             numa_nodes;
 
+	/* The ID of the user that will run Gatekeeper after it boots. */
+	uid_t                pw_uid;
+
+	/* The group ID of the user that will run Gatekeeper after it boots. */
+	gid_t                pw_gid;
+
 	/*
 	 * There is a memory pool per NUMA node to be used for
 	 * packet buffers in that node.
@@ -437,6 +443,8 @@ int gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues,
 	uint16_t num_queues);
 int gatekeeper_get_rss_config(uint16_t port_id,
 	struct gatekeeper_rss_config *rss_conf);
+int gatekeeper_setup_user(struct net_config *net_conf,
+	const char *user);
 int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);
 bool ipv4_configured(struct net_config *net_conf);

@@ -80,4 +80,8 @@ gcc main.c -o client -Wall -Wextra -pedantic
 
 cd ..
 
+sudo mkdir -p /var/run/gatekeeper/
+sudo chown -R $USER:$GROUPS /var/run/gatekeeper/
+sudo chmod -R 700 /var/run/gatekeeper/
+
 echo "Environmental variables RTE_SDK and RTE_TARGET have been set, but not saved for future logins. You should save them to your shell's preferences file or set them after every login."
