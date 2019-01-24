@@ -990,7 +990,7 @@ close_partial:
 
 static int
 start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
-	int wait_for_link, unsigned int num_attempts_link_get)
+	unsigned int num_attempts_link_get)
 {
 	struct rte_eth_link link;
 	uint8_t attempts = 0;
@@ -1028,7 +1028,7 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
 		G_LOG(ERR, "net: querying port %hhu, and link is down\n",
 			port_id);
 
-		if (!wait_for_link || attempts > num_attempts_link_get) {
+		if (attempts > num_attempts_link_get) {
 			G_LOG(ERR, "net: giving up on port %hhu\n", port_id);
 			ret = -1;
 			return ret;
@@ -1118,14 +1118,14 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = start_port(iface->ports[i],
-			&num_succ_ports, false, num_attempts_link_get);
+			&num_succ_ports, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
 	}
 
 	/* Bonding port(s). */
 	if (iface_bonded(iface)) {
-		ret = start_port(iface->id, NULL, true, num_attempts_link_get);
+		ret = start_port(iface->id, NULL, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
 	}
