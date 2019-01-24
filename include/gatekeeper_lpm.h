@@ -36,7 +36,7 @@ int lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip);
 struct rte_lpm6 *init_ipv6_lpm(const char *tag,
 	const struct rte_lpm6_config *lpm6_conf,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier);
-int lpm_lookup_ipv6(struct rte_lpm6 *lpm, uint8_t *ip);
+int lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip);
 
 static inline void
 destroy_ipv4_lpm(struct rte_lpm *lpm)

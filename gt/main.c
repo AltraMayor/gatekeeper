@@ -242,15 +242,15 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
 
-		policy->flow.f.v4.src = ip4_hdr->src_addr;
-		policy->flow.f.v4.dst = ip4_hdr->dst_addr;
+		policy->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
+		policy->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
 	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
 
-		rte_memcpy(policy->flow.f.v6.src, ip6_hdr->src_addr,
-			sizeof(policy->flow.f.v6.src));
-		rte_memcpy(policy->flow.f.v6.dst, ip6_hdr->dst_addr,
-			sizeof(policy->flow.f.v6.dst));
+		rte_memcpy(policy->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
+			sizeof(policy->flow.f.v6.src.s6_addr));
+		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
+			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
 		GT_LOG(ERR,
 			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",
@@ -289,15 +289,15 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
 
-		policy->flow.f.v4.src = ip4_hdr->src_addr;
-		policy->flow.f.v4.dst = ip4_hdr->dst_addr;
+		policy->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
+		policy->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
 	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
 
-		rte_memcpy(policy->flow.f.v6.src, ip6_hdr->src_addr,
-			sizeof(policy->flow.f.v6.src));
-		rte_memcpy(policy->flow.f.v6.dst, ip6_hdr->dst_addr,
-			sizeof(policy->flow.f.v6.dst));
+		rte_memcpy(policy->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
+			sizeof(policy->flow.f.v6.src.s6_addr));
+		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
+			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
 		GT_LOG(ERR,
 			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",

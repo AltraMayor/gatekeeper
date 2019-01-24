@@ -95,12 +95,12 @@ init_ipv6_lpm(const char *tag,
 }
 
 int
-lpm_lookup_ipv6(struct rte_lpm6 *lpm, uint8_t *ip)
+lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip)
 {
 	int ret;
 	uint32_t next_hop;
 
-	ret = rte_lpm6_lookup(lpm, ip, &next_hop);
+	ret = rte_lpm6_lookup(lpm, (uint8_t *)ip, &next_hop);
 	if (ret == -EINVAL) {
 		G_LOG(ERR, "lpm: incorrect arguments for IPv6 lookup\n");
 		goto out;

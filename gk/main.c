@@ -174,14 +174,14 @@ look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
 	int fib_id;
 
 	if (flow->proto == ETHER_TYPE_IPv4) {
-		fib_id = lpm_lookup_ipv4(ltbl->lpm, flow->f.v4.dst);
+		fib_id = lpm_lookup_ipv4(ltbl->lpm, flow->f.v4.dst.s_addr);
 		if (fib_id < 0)
 			return NULL;
 		return &ltbl->fib_tbl[fib_id];
 	}
 
 	if (likely(flow->proto == ETHER_TYPE_IPv6)) {
-		fib_id = lpm_lookup_ipv6(ltbl->lpm6, flow->f.v6.dst);
+		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &flow->f.v6.dst);
 		if (fib_id < 0)
 			return NULL;
 		return &ltbl->fib_tbl6[fib_id];
@@ -220,8 +220,8 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 
 		ip4_hdr = packet->l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv4;
-		packet->flow.f.v4.src = ip4_hdr->src_addr;
-		packet->flow.f.v4.dst = ip4_hdr->dst_addr;
+		packet->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
+		packet->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
 		break;
 
 	case ETHER_TYPE_IPv6:
@@ -236,10 +236,10 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 
 		ip6_hdr = packet->l3_hdr;
 		packet->flow.proto = ETHER_TYPE_IPv6;
-		rte_memcpy(packet->flow.f.v6.src, ip6_hdr->src_addr,
-			sizeof(packet->flow.f.v6.src));
-		rte_memcpy(packet->flow.f.v6.dst, ip6_hdr->dst_addr,
-			sizeof(packet->flow.f.v6.dst));
+		rte_memcpy(packet->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
+			sizeof(packet->flow.f.v6.src.s6_addr));
+		rte_memcpy(packet->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
+			sizeof(packet->flow.f.v6.dst.s6_addr));
 		break;
 
 	case ETHER_TYPE_ARP:
@@ -932,29 +932,29 @@ flush_flow_table(struct ip_prefix *src,
 			if (src->len != 0) {
 				matched = ip4_same_subnet(
 					src->addr.ip.v4.s_addr,
-					fe->flow.f.v4.src,
+					fe->flow.f.v4.src.s_addr,
 					ip4_src_mask.s_addr);
 			}
 
 			if (matched && dst->len != 0) {
 				matched = ip4_same_subnet(
 					dst->addr.ip.v4.s_addr,
-					fe->flow.f.v4.dst,
+					fe->flow.f.v4.dst.s_addr,
 					ip4_dst_mask.s_addr);
 			}
 		} else {
 			if (src->len != 0) {
 				matched = ip6_same_subnet(
-					src->addr.ip.v6.s6_addr,
-					fe->flow.f.v6.src,
-					ip6_src_mask.s6_addr);
+					&src->addr.ip.v6,
+					&fe->flow.f.v6.src,
+					&ip6_src_mask);
 			}
 
 			if (matched && dst->len != 0) {
 				matched = ip6_same_subnet(
-					dst->addr.ip.v6.s6_addr,
-					fe->flow.f.v6.dst,
-					ip6_dst_mask.s6_addr);
+					&dst->addr.ip.v6,
+					&fe->flow.f.v6.dst,
+					&ip6_dst_mask);
 			}
 		}
 
@@ -1174,8 +1174,8 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	icmp_ipv4->fragment_offset = IP_DN_FRAGMENT_FLAG;
 	icmp_ipv4->time_to_live = IP_DEFTTL;
 	icmp_ipv4->next_proto_id = IPPROTO_ICMP;
-	icmp_ipv4->src_addr = packet->flow.f.v4.dst;
-	icmp_ipv4->dst_addr = packet->flow.f.v4.src;
+	icmp_ipv4->src_addr = packet->flow.f.v4.dst.s_addr;
+	icmp_ipv4->dst_addr = packet->flow.f.v4.src.s_addr;
 	icmp_ipv4->total_length = rte_cpu_to_be_16(pkt->data_len -
 		iface->l2_len_out);
 	/*
@@ -1251,9 +1251,9 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 	 * RFC 4861, sections 7.1.1 and 7.1.2.
 	 */
 	icmp_ipv6->hop_limits = 255;
-	rte_memcpy(icmp_ipv6->src_addr, packet->flow.f.v6.dst,
+	rte_memcpy(icmp_ipv6->src_addr, packet->flow.f.v6.dst.s6_addr,
 		sizeof(icmp_ipv6->src_addr));
-	rte_memcpy(icmp_ipv6->dst_addr, packet->flow.f.v6.src,
+	rte_memcpy(icmp_ipv6->dst_addr, packet->flow.f.v6.src.s6_addr,
 		sizeof(icmp_ipv6->dst_addr));
 
 	/* Set-up ICMPv6 header. */
@@ -1509,7 +1509,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				} else {
 					eth_cache = lookup_ether_cache(
 						&fib->u.neigh6,
-						packet.flow.f.v6.dst);
+						&packet.flow.f.v6.dst);
 				}
 
 				RTE_VERIFY(eth_cache != NULL);
@@ -1705,7 +1705,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			} else {
 				eth_cache = lookup_ether_cache(
 					&fib->u.neigh6,
-					packet.flow.f.v6.dst);
+					&packet.flow.f.v6.dst);
 			}
 
 			RTE_VERIFY(eth_cache != NULL);

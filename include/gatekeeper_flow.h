@@ -21,6 +21,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <netinet/in.h>
 
 struct ip_flow {
 	/* IPv4 or IPv6. */
@@ -28,13 +29,13 @@ struct ip_flow {
 
 	union {
 		struct {
-			uint32_t src;
-			uint32_t dst;
+			struct in_addr src;
+			struct in_addr dst;
 		} v4;
 
 		struct {
-			uint8_t src[16];
-			uint8_t dst[16];
+			struct in6_addr src;
+			struct in6_addr dst;
 		} v6;
 	} f;
 };

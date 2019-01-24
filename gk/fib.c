@@ -914,7 +914,7 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 		neigh_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(gw_addr->proto == ETHER_TYPE_IPv6)
 			&& ipv6_if_configured(iface)) {
-		fib_id = lpm_lookup_ipv6(ltbl->lpm6, gw_addr->ip.v6.s6_addr);
+		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &gw_addr->ip.v6);
 		/*
 		 * Invalid gateway entry, since at least we should
 		 * obtain the FIB entry for the neighbor table.
@@ -1949,7 +1949,7 @@ list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	struct gk_fib *neigh_fib;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
-	fib_id = lpm_lookup_ipv6(ltbl->lpm6, iface->ip6_addr.s6_addr);
+	fib_id = lpm_lookup_ipv6(ltbl->lpm6, &iface->ip6_addr);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.

@@ -134,14 +134,14 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 			return;
 		}
 	} else if (likely(flow->proto == ETHER_TYPE_IPv6)) {
-		if (inet_ntop(AF_INET6, flow->f.v6.src,
+		if (inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
 				src, sizeof(src)) == NULL) {
 			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
 			return;
 		}
 
-		if (inet_ntop(AF_INET6, flow->f.v6.dst,
+		if (inet_ntop(AF_INET6, flow->f.v6.dst.s6_addr,
 				dst, sizeof(dst)) == NULL) {
 			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
