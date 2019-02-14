@@ -1209,7 +1209,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	rte_timer_init(&cps_conf->scan_timer);
 	ret = rte_timer_reset(&cps_conf->scan_timer,
-		cps_conf->cps_scan_interval_sec * rte_get_timer_hz(),
+		cps_conf->scan_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, cps_conf->lcore_id, cps_scan, cps_conf);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Cannot set CPS scan timer\n");

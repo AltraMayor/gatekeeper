@@ -57,13 +57,13 @@ struct cps_config {
 	unsigned int      num_attempts_kni_link_set;
 
 	/* Maximum number of updates for LPM table to serve at once. */
-	unsigned int      max_cps_route_updates;
+	unsigned int      max_route_updates;
 
 	/*
 	 * Period between scans of the outstanding
 	 * resolution requests from KNIs.
 	 */
-	unsigned int      cps_scan_interval_sec;
+	unsigned int      scan_interval_sec;
 
 	/* Parameters to setup the mailbox instance. */
 	unsigned int      mailbox_max_entries_exp;
