@@ -243,8 +243,8 @@ struct cps_config {
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	unsigned int num_attempts_kni_link_set;
-	unsigned int max_cps_route_updates;
-	unsigned int cps_scan_interval_sec;
+	unsigned int max_route_updates;
+	unsigned int scan_interval_sec;
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;

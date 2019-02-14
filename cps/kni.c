@@ -858,8 +858,8 @@ del_route(struct route_update *update, struct gk_config *gk_conf)
 void
 kni_cps_route_event(struct cps_config *cps_conf)
 {
-	uint16_t max_cps_route_updates = cps_conf->max_cps_route_updates;
-	struct route_update updates[max_cps_route_updates];
+	uint16_t max_route_updates = cps_conf->max_route_updates;
+	struct route_update updates[max_route_updates];
 	unsigned int i;
 	unsigned int num_updates = 0;
 	char buf[MNL_SOCKET_BUFFER_SIZE];
@@ -881,7 +881,7 @@ kni_cps_route_event(struct cps_config *cps_conf)
 
 		if (updates[num_updates].valid)
 			num_updates++;
-	} while (num_updates < max_cps_route_updates);
+	} while (num_updates < max_route_updates);
 
 	if (cps_conf->gk == NULL) {
 		/*

@@ -40,11 +40,11 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.num_attempts_kni_link_set = 5
 
 	-- Maximum number of updates for LPM table to serve at once.
-	cps_conf.max_cps_route_updates = 8
+	cps_conf.max_route_updates = 8
 
 	-- Period between scans of the outstanding
 	-- resolution requests from KNIs.
-	cps_conf.cps_scan_interval_sec = 5
+	cps_conf.scan_interval_sec = 5
 
 	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)
