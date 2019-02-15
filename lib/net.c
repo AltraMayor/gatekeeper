@@ -104,40 +104,44 @@ uint8_t rss_key_be[RTE_DIM(default_rss_key)];
  *	ask help from the DPDK mailinglist, but didn't get reply.
  */
 int
-ethertype_filter_add(uint16_t port_id, uint16_t ether_type, uint16_t queue_id)
+ethertype_filter_add(struct gatekeeper_if *iface, uint16_t ether_type,
+	uint16_t queue_id)
 {
 	struct rte_eth_ethertype_filter filter = {
 		.ether_type = rte_cpu_to_le_16(ether_type),
 		.flags = 0,
 		.queue = queue_id,
 	};
+	unsigned int i;
 	int ret;
 
-	RTE_VERIFY(rte_eth_dev_filter_supported(port_id,
-		RTE_ETH_FILTER_ETHERTYPE) == 0);
+	RTE_VERIFY(iface->hw_filter_eth);
 
-	ret = rte_eth_dev_filter_ctrl(port_id,
-		RTE_ETH_FILTER_ETHERTYPE,
-		RTE_ETH_FILTER_ADD,
-		&filter);
-	if (ret == -ENOTSUP) {
-		G_LOG(NOTICE,
-			"net: hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu\n",
-			ether_type, port_id);
-		ret = -1;
-		goto out;
-	} else if (ret == -ENODEV) {
-		G_LOG(NOTICE,
-			"net: port %hhu is invalid for adding an EtherType filter for 0x%02hx\n",
-			port_id, ether_type);
-		ret = -1;
-		goto out;
-	} else if (ret != 0) {
-		G_LOG(NOTICE,
-			"net: other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx\n",
-			port_id, ether_type);
-		ret = -1;
-		goto out;
+	for (i = 0; i < iface->num_ports; i++) {
+		uint16_t port_id = iface->ports[i];
+		ret = rte_eth_dev_filter_ctrl(port_id,
+			RTE_ETH_FILTER_ETHERTYPE,
+			RTE_ETH_FILTER_ADD,
+			&filter);
+		if (ret == -ENOTSUP) {
+			G_LOG(NOTICE,
+				"net: hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu\n",
+				ether_type, port_id);
+			ret = -1;
+			goto out;
+		} else if (ret == -ENODEV) {
+			G_LOG(NOTICE,
+				"net: port %hhu is invalid for adding an EtherType filter for 0x%02hx\n",
+				port_id, ether_type);
+			ret = -1;
+			goto out;
+		} else if (ret != 0) {
+			G_LOG(NOTICE,
+				"net: other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx\n",
+				port_id, ether_type);
+			ret = -1;
+			goto out;
+		}
 	}
 
 	ret = 0;
@@ -154,13 +158,14 @@ out:
  * it can filter both IPv4 and IPv6 addresses.
  */
 int
-ntuple_filter_add(uint16_t port_id, uint32_t dst_ip,
+ntuple_filter_add(struct gatekeeper_if *iface, uint32_t dst_ip,
 	uint16_t src_port, uint16_t src_port_mask,
 	uint16_t dst_port, uint16_t dst_port_mask,
 	uint8_t proto, uint16_t queue_id,
 	int ipv4_configured, int ipv6_configured)
 {
 	int ret = 0;
+	unsigned int i;
 	struct rte_eth_ntuple_filter filter_v4 = {
 		.flags = RTE_5TUPLE_FLAGS,
 		.dst_ip = dst_ip,
@@ -195,62 +200,68 @@ ntuple_filter_add(uint16_t port_id, uint32_t dst_ip,
 		.queue = queue_id,
 	};
 
-	RTE_VERIFY(rte_eth_dev_filter_supported(port_id,
-		RTE_ETH_FILTER_NTUPLE) == 0);
+	RTE_VERIFY(iface->hw_filter_ntuple);
 
 	if (!ipv4_configured)
 		goto ipv6;
 
-	ret = rte_eth_dev_filter_ctrl(port_id,
-		RTE_ETH_FILTER_NTUPLE,
-		RTE_ETH_FILTER_ADD,
-		&filter_v4);
-	if (ret == -ENOTSUP) {
-		G_LOG(ERR,
-			"net: hardware doesn't support adding an IPv4 ntuple filter on port %hhu\n",
-			port_id);
-		ret = -1;
-		goto out;
-	} else if (ret == -ENODEV) {
-		G_LOG(ERR,
-			"net: port %hhu is invalid for adding an IPv4 ntuple filter\n",
-			port_id);
-		ret = -1;
-		goto out;
-	} else if (ret != 0) {
-		G_LOG(ERR,
-			"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter\n",
-			port_id);
-		ret = -1;
-		goto out;
+	for (i = 0; i < iface->num_ports; i++) {
+		uint16_t port_id = iface->ports[i];
+		ret = rte_eth_dev_filter_ctrl(port_id,
+			RTE_ETH_FILTER_NTUPLE,
+			RTE_ETH_FILTER_ADD,
+			&filter_v4);
+		if (ret == -ENOTSUP) {
+			G_LOG(ERR,
+				"net: hardware doesn't support adding an IPv4 ntuple filter on port %hhu\n",
+				port_id);
+			ret = -1;
+			goto out;
+		} else if (ret == -ENODEV) {
+			G_LOG(ERR,
+				"net: port %hhu is invalid for adding an IPv4 ntuple filter\n",
+				port_id);
+			ret = -1;
+			goto out;
+		} else if (ret != 0) {
+			G_LOG(ERR,
+				"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter\n",
+				port_id);
+			ret = -1;
+			goto out;
+		}
 	}
 ipv6:
 	if (!ipv6_configured)
 		goto out;
 
-	ret = rte_eth_dev_filter_ctrl(port_id,
-		RTE_ETH_FILTER_NTUPLE,
-		RTE_ETH_FILTER_ADD,
-		&filter_v6);
-	if (ret == -ENOTSUP) {
-		G_LOG(ERR,
-			"net: hardware doesn't support adding an IPv6 ntuple filter on port %hhu\n",
-			port_id);
-		ret = -1;
-		goto out;
-	} else if (ret == -ENODEV) {
-		G_LOG(ERR,
-			"net: port %hhu is invalid for adding an IPv6 ntuple filter\n",
-			port_id);
-		ret = -1;
-		goto out;
-	} else if (ret != 0) {
-		G_LOG(ERR,
-			"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter\n",
-			port_id);
-		ret = -1;
-		goto out;
+	for (i = 0; i < iface->num_ports; i++) {
+		uint16_t port_id = iface->ports[i];
+		ret = rte_eth_dev_filter_ctrl(port_id,
+			RTE_ETH_FILTER_NTUPLE,
+			RTE_ETH_FILTER_ADD,
+			&filter_v6);
+		if (ret == -ENOTSUP) {
+			G_LOG(ERR,
+				"net: hardware doesn't support adding an IPv6 ntuple filter on port %hhu\n",
+				port_id);
+			ret = -1;
+			goto out;
+		} else if (ret == -ENODEV) {
+			G_LOG(ERR,
+				"net: port %hhu is invalid for adding an IPv6 ntuple filter\n",
+				port_id);
+			ret = -1;
+			goto out;
+		} else if (ret != 0) {
+			G_LOG(ERR,
+				"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter\n",
+				port_id);
+			ret = -1;
+			goto out;
+		}
 	}
+
 	ret = 0;
 out:
 	return ret;
@@ -1244,14 +1255,23 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 			goto stop_partial;
 	}
 
-	iface->hw_filter_eth = rte_eth_dev_filter_supported(iface->id,
-		RTE_ETH_FILTER_ETHERTYPE) == 0;
+	iface->hw_filter_eth = true;
+	iface->hw_filter_ntuple = true;
+	for (i = 0; i < iface->num_ports; i++) {
+		if (iface->hw_filter_eth &&
+				(rte_eth_dev_filter_supported(iface->ports[i],
+					RTE_ETH_FILTER_ETHERTYPE) != 0))
+			iface->hw_filter_eth = false;
+
+		if (iface->hw_filter_ntuple &&
+				(rte_eth_dev_filter_supported(iface->ports[i],
+					RTE_ETH_FILTER_NTUPLE) != 0))
+			iface->hw_filter_ntuple = false;
+	}
+
 	G_LOG(NOTICE,
 		"net: EtherType filters %s supported on the %s iface\n",
 		iface->hw_filter_eth ? "are" : "are NOT", iface->name);
-
-	iface->hw_filter_ntuple = rte_eth_dev_filter_supported(iface->id,
-		RTE_ETH_FILTER_NTUPLE) == 0;
 	G_LOG(NOTICE,
 		"net: ntuple filters %s supported on the %s iface\n",
 		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);

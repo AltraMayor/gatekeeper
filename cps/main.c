@@ -971,7 +971,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 			 * Capture pkts for connections
 			 * started by our BGP speaker.
 			 */
-			int ret = ntuple_filter_add(iface->id,
+			int ret = ntuple_filter_add(iface,
 				iface->ip4_addr.s_addr,
 				rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
 				0, 0, IPPROTO_TCP, rx_queue, true, false);
@@ -983,7 +983,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 			}
 
 			/* Capture connections remote speakers started. */
-			ret = ntuple_filter_add(iface->id,
+			ret = ntuple_filter_add(iface,
 				iface->ip4_addr.s_addr, 0, 0,
 				rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
 				IPPROTO_TCP, rx_queue, true, false);

@@ -748,7 +748,7 @@ lls_stage2(void *arg)
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
 		if (hw_filter_eth_available(&net_conf->front)) {
-			ret = ethertype_filter_add(net_conf->front.id,
+			ret = ethertype_filter_add(&net_conf->front,
 				ETHER_TYPE_ARP, lls_conf->rx_queue_front);
 			if (ret < 0)
 				return ret;
@@ -772,7 +772,7 @@ lls_stage2(void *arg)
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
 		if (hw_filter_eth_available(&net_conf->back)) {
-			ret = ethertype_filter_add(net_conf->back.id,
+			ret = ethertype_filter_add(&net_conf->back,
 				ETHER_TYPE_ARP, lls_conf->rx_queue_back);
 			if (ret < 0)
 				return ret;

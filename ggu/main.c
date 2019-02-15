@@ -628,7 +628,7 @@ ggu_stage2(void *arg)
 	 * to its queue for both IPv4 and IPv6 addresses.
 	 */
 	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
-		return ntuple_filter_add(ggu_conf->net->back.id,
+		return ntuple_filter_add(&ggu_conf->net->back,
 			ggu_conf->net->back.ip4_addr.s_addr,
 			ggu_conf->ggu_src_port, UINT16_MAX,
 			ggu_conf->ggu_dst_port, UINT16_MAX,
