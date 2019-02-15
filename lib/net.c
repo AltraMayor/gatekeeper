@@ -687,42 +687,106 @@ get_if_back(struct net_config *net_conf)
 }
 
 /*
- * It seems common that devices do not exactly support the
- * hashes in the DPDK macros such as ETH_RSS_IP, so until we
- * choose set of minimum hash functions required (instead of
- * ETH_RSS_IP which is overkill), issue a warning in the
- * case that the device does not support the hashes.
- *
- * TODO #152 Find the minimum set of hash functions (ETH_RSS_*) that
- * Gatekeeper needs and set port_conf.rx_adv_conf.rss_conf.rss_hf accordingly.
- * Then, change this warning to an error and return -1.
+ * Split up ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
+ * For each type of IP being used in Gatekeeper, check the supported
+ * hashes of the device. If none are supported, disable RSS. If
+ * ETH_RSS_IPV{4,6} is not supported, issue a warning since we expect
+ * this to be a common and critical hash function. Some devices (i40e
+ * and AVF) do not support the ETH_RSS_IPV{4,6} hashes, but the hashes
+ * they do support may be enough.
  */
-#define GATEKEEPER_RSS_HF (ETH_RSS_IP)
+
+#define GATEKEEPER_IPV4_RSS_HF ( \
+	ETH_RSS_IPV4 | \
+	ETH_RSS_FRAG_IPV4 | \
+	ETH_RSS_NONFRAG_IPV4_OTHER)
+
+#define GATEKEEPER_IPV6_RSS_HF ( \
+	ETH_RSS_IPV6 | \
+	ETH_RSS_FRAG_IPV6 | \
+	ETH_RSS_NONFRAG_IPV6_OTHER | \
+	ETH_RSS_IPV6_EX)
 
 static int
 check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	const struct rte_eth_dev_info *dev_info,
 	struct rte_eth_conf *port_conf)
 {
-	if (dev_info->flow_type_rss_offloads == 0) {
-		/* This port doesn't support RSS, so disable RSS. */
+	uint64_t rss_off = dev_info->flow_type_rss_offloads;
+
+	/* This port doesn't support RSS, so disable RSS. */
+	if (rss_off == 0) {
 		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support RSS\n",
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
 			iface->name);
-		iface->rss = false;
-	} else if ((dev_info->flow_type_rss_offloads & GATEKEEPER_RSS_HF) !=
-			GATEKEEPER_RSS_HF) {
-		G_LOG(WARNING,
-			"net: port %hu (%s) on the %s interface only supports RSS hash functions 0x%"PRIx64", but Gatekeeper requires: 0x%"PRIx64"\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name,
-			dev_info->flow_type_rss_offloads,
-			(uint64_t)GATEKEEPER_RSS_HF);
+		goto disable_rss;
 	}
 
-	port_conf->rx_adv_conf.rss_conf.rss_hf &=
-		dev_info->flow_type_rss_offloads;
+	/* Check IPv4 RSS hashes. */
+	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV4_RSS_HF) {
+		/* No IPv4 hashes are supported, so disable RSS. */
+		if ((rss_off & GATEKEEPER_IPV4_RSS_HF) == 0) {
+			G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support any IPv4 related RSS hashes\n",
+				iface->ports[port_idx], iface->pci_addrs[port_idx],
+				iface->name);
+			goto disable_rss;
+		}
 
+		/*
+		 * The IPv4 hash that we think is typically
+		 * used is not supported, so warn the user.
+		 */
+		if ((rss_off & ETH_RSS_IPV4) == 0) {
+			G_LOG(WARNING, "net: port %hu (%s) on the %s interface does not support the ETH_RSS_IPV4 hash function; the device may not hash packets to the correct queues\n",
+				iface->ports[port_idx],
+				iface->pci_addrs[port_idx],
+				iface->name);
+		}
+	}
+
+	/* Check IPv6 RSS hashes. */
+	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV6_RSS_HF) {
+		/* No IPv6 hashes are supported, so disable RSS. */
+		if ((rss_off & GATEKEEPER_IPV6_RSS_HF) == 0) {
+			G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support any IPv6 related RSS hashes\n",
+				iface->ports[port_idx], iface->pci_addrs[port_idx],
+				iface->name);
+			goto disable_rss;
+		}
+
+		/*
+		 * The IPv6 hash that we think is typically
+		 * used is not supported, so warn the user.
+		 */
+		if ((rss_off & ETH_RSS_IPV6) == 0) {
+			G_LOG(WARNING, "net: port %hu (%s) on the %s interface does not support the ETH_RSS_IPV6 hash function; the device may not hash packets to the correct queues\n",
+				iface->ports[port_idx],
+				iface->pci_addrs[port_idx],
+				iface->name);
+		}
+	}
+
+	/*
+	 * Any missing hashes that will cause RSS to definitely fail
+	 * or are likely to cause RSS to fail are handled above.
+	 * Here, also log if the device doesn't support any of the requested
+	 * hashes, including the hashes considered non-essential.
+	 */
+	if ((rss_off & port_conf->rx_adv_conf.rss_conf.rss_hf) !=
+			port_conf->rx_adv_conf.rss_conf.rss_hf) {
+		G_LOG(NOTICE,
+			"net: port %hu (%s) on the %s interface only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name, rss_off,
+			port_conf->rx_adv_conf.rss_conf.rss_hf);
+	}
+
+	port_conf->rx_adv_conf.rss_conf.rss_hf &= rss_off;
+	return 0;
+
+disable_rss:
+	iface->rss = false;
+	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
 	return 0;
 }
 
@@ -767,6 +831,9 @@ check_port_offloads(struct gatekeeper_if *iface,
 {
 	unsigned int i;
 
+	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF|GATEKEEPER_IPV6_RSS_HF) !=
+		ETH_RSS_IP);
+
 	/*
 	 * Set up device RSS.
 	 *
@@ -775,10 +842,18 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 *
 	 * Check each port for the RSS hash functions it supports,
 	 * and configure each to use the intersection of supported
-	 * hash functions out of GATEKEEPER_RSS_HF.
+	 * hash functions.
 	 */
 	iface->rss = true;
-	port_conf->rx_adv_conf.rss_conf.rss_hf = GATEKEEPER_RSS_HF;
+	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
+	if (ipv4_if_configured(iface)) {
+		port_conf->rx_adv_conf.rss_conf.rss_hf |=
+			GATEKEEPER_IPV4_RSS_HF;
+	}
+	if (ipv6_if_configured(iface)) {
+		port_conf->rx_adv_conf.rss_conf.rss_hf |=
+			GATEKEEPER_IPV6_RSS_HF;
+	}
 
 	/*
 	 * Set up device MTU.
