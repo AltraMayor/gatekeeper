@@ -1797,7 +1797,8 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 			gt_conf->log_ratelimit_burst);
 	}
 
-	front_inc = gt_conf->gt_max_pkt_burst * gt_conf->num_lcores;
+	front_inc = gt_conf->num_lcores *
+		(gt_conf->gt_max_pkt_burst + gt_conf->frag_max_entries);
 	net_conf->front.total_pkt_burst += front_inc;
 
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",
