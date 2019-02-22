@@ -1573,7 +1573,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto out;
 	}
 
-	if (gt_conf->net->front.configured_proto & CONFIGURED_IPV4) {
+	if (ipv4_if_configured(&gt_conf->net->front)) {
 		ret = setup_neighbor_tbl(
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
 			lcore_id * RTE_MAX_LCORE + 0, ETHER_TYPE_IPv4,
@@ -1583,7 +1583,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 			goto cleanup;
 	}
 
-	if (gt_conf->net->front.configured_proto & CONFIGURED_IPV6) {
+	if (ipv6_if_configured(&gt_conf->net->front)) {
 		ret = setup_neighbor_tbl(
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
 			lcore_id * RTE_MAX_LCORE + 1, ETHER_TYPE_IPv6,
