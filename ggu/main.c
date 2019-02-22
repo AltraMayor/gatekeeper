@@ -318,7 +318,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		ip6hdr = l3_hdr;
 
 		/*
-		 * TODO #63 Given that IPv6 ntuple filter doesn't check
+		 * XXX #63 Given that IPv6 ntuple filter doesn't check
 		 * the destination address, it must be done here.
 		 * If the IPv6 packet is not destined to
 		 * the Gatekeeper server, redirect the packet properly.

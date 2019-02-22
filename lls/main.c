@@ -42,7 +42,7 @@
 #define LLS_LACP_ANNOUNCE_INTERVAL_MS 99
 
 /*
- * TODO #64 Don't alert user of LLS transmission failures while LACP
+ * XXX #64 Don't alert user of LLS transmission failures while LACP
  * is still configuring, and warn the user if LACP is taking an
  * unusually long time to configure (since this could mean the
  * link partner does not have LACP configured).
