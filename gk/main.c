@@ -1863,18 +1863,26 @@ cleanup_gk(struct gk_config *gk_conf)
 		destroy_mailbox(&gk_conf->instances[i].mb);
 	}
 
-	for (ui = 0; ui < gk_conf->gk_max_num_ipv4_fib_entries; ui++) {
-		struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl[ui];
-		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
-				fib->action == GK_FWD_NEIGHBOR_BACK_NET)
-			destroy_neigh_hash_table(&fib->u.neigh);
+	if (gk_conf->lpm_tbl.fib_tbl != NULL) {
+		for (ui = 0; ui < gk_conf->gk_max_num_ipv4_fib_entries; ui++) {
+			struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl[ui];
+			if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+					fib->action ==
+						GK_FWD_NEIGHBOR_BACK_NET) {
+				destroy_neigh_hash_table(&fib->u.neigh);
+			}
+		}
 	}
 
-	for (ui = 0; ui < gk_conf->gk_max_num_ipv6_fib_entries; ui++) {
-		struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl6[ui];
-		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
-				fib->action == GK_FWD_NEIGHBOR_BACK_NET)
-			destroy_neigh_hash_table(&fib->u.neigh6);
+	if (gk_conf->lpm_tbl.fib_tbl6 != NULL) {
+		for (ui = 0; ui < gk_conf->gk_max_num_ipv6_fib_entries; ui++) {
+			struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl6[ui];
+			if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+					fib->action ==
+						GK_FWD_NEIGHBOR_BACK_NET) {
+				destroy_neigh_hash_table(&fib->u.neigh6);
+			}
+		}
 	}
 
 	destroy_gk_lpm(&gk_conf->lpm_tbl);
