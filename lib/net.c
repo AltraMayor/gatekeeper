@@ -1597,6 +1597,19 @@ gatekeeper_init_network(struct net_config *net_conf)
 	if (ret < 0)
 		return -1;
 
+	if (net_conf->back_iface_enabled) {
+		if (ipv4_if_configured(&net_conf->front) !=
+				ipv4_if_configured(&net_conf->back)) {
+			G_LOG(ERR, "net: front and back interfaces must either both support IPv4 or neither support IPv4\n");
+			return -1;
+		}
+		if (ipv6_if_configured(&net_conf->front) !=
+				ipv6_if_configured(&net_conf->back)) {
+			G_LOG(ERR, "net: front and back interfaces must either both support IPv6 or neither support IPv6\n");
+			return -1;
+		}
+	}
+
 	net_conf->numa_nodes = find_num_numa_nodes();
 	net_conf->numa_used = rte_calloc("numas", net_conf->numa_nodes,
 		sizeof(*net_conf->numa_used), 0);
