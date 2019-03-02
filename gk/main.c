@@ -287,6 +287,26 @@ drop_packet(struct rte_mbuf *pkt)
 	return 0;
 }
 
+typedef int (*packet_drop_cb_func)(struct rte_mbuf *pkt,
+	struct gk_instance *instance);
+
+static int
+drop_packet_front(struct rte_mbuf *pkt, struct gk_instance *instance)
+{
+	instance->traffic_stats.tot_pkts_num_dropped++;
+	instance->traffic_stats.tot_pkts_size_dropped +=
+		rte_pktmbuf_pkt_len(pkt);
+
+	return drop_packet(pkt);
+}
+
+static inline int
+drop_packet_back(struct rte_mbuf *pkt,
+	__attribute__((unused)) struct gk_instance *instance)
+{
+	return drop_packet(pkt);
+}
+
 /*
  * Return value indicates whether the cached Ethernet header is stale or not.
  */
@@ -325,7 +345,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
  */
 static int
 gk_process_request(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -375,7 +395,13 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 		return -1;
 
 	ret = gk_solicitor_enqueue(sol_conf, packet->pkt, priority);
-	return ret < 0 ? ret : EINPROGRESS;
+	if (ret < 0)
+		return ret;
+
+	stats->pkts_num_request++;
+	stats->pkts_size_request += rte_pktmbuf_pkt_len(packet->pkt);
+
+	return EINPROGRESS;
 }
 
 static inline uint64_t
@@ -395,7 +421,7 @@ cycle_from_second(uint64_t time)
  */
 static int
 gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
 {
 	int ret;
 	bool renew_cap;
@@ -407,7 +433,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf);
+		return gk_process_request(fe, packet, sol_conf, stats);
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
@@ -443,6 +469,9 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 			sol_conf->net->back.l2_len_out))
 		return -1;
 
+	stats->pkts_num_granted++;
+	stats->pkts_size_granted += rte_pktmbuf_pkt_len(packet->pkt);
+
 	return 0;
 }
 
@@ -456,14 +485,17 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf)
+	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
 {
 	uint64_t now = rte_rdtsc();
 
 	if (unlikely(now >= fe->u.declined.expire_at)) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf);
+		return gk_process_request(fe, packet, sol_conf, stats);
 	}
+
+	stats->pkts_num_declined++;
+	stats->pkts_size_declined += rte_pktmbuf_pkt_len(packet->pkt);
 
 	return -1;
 }
@@ -1096,7 +1128,8 @@ icmp_cksum(void *buf, unsigned int size)
 
 static void
 xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
-	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+	struct gk_instance *instance, packet_drop_cb_func cb_f)
 {
 	struct ether_addr eth_addr_tmp;
 	struct ether_hdr *icmp_eth;
@@ -1111,7 +1144,7 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 			GK_LOG(ERR,
 				"Failed to remove %d bytes of data at the end of the mbuf at %s",
 				pkt->data_len - icmp_pkt_len, __func__);
-			drop_packet(pkt);
+			cb_f(pkt, instance);
 			return;
 		}
 
@@ -1123,7 +1156,7 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 			GK_LOG(ERR,
 				"Failed to append %d bytes of new data: not enough headroom space in the first segment at %s\n",
 				icmp_pkt_len - pkt->data_len, __func__);
-			drop_packet(pkt);
+			cb_f(pkt, instance);
 			return;
 		}
 	}
@@ -1168,7 +1201,8 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 
 static void
 xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
-	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs)
+	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+	struct gk_instance *instance, packet_drop_cb_func cb_f)
 {
 	struct ether_addr eth_addr_tmp;
 	struct ether_hdr *icmp_eth;
@@ -1184,7 +1218,7 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 			GK_LOG(ERR,
 				"Failed to remove %d bytes of data at the end of the mbuf at %s",
 				pkt->data_len - icmpv6_pkt_len, __func__);
-			drop_packet(pkt);
+			cb_f(pkt, instance);
 			return;
 		}
 
@@ -1196,7 +1230,7 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 			GK_LOG(ERR,
 				"Failed to append %d bytes of new data: not enough headroom space in the first segment at %s\n",
 				icmpv6_pkt_len - pkt->data_len, __func__);
-			drop_packet(pkt);
+			cb_f(pkt, instance);
 			return;
 		}
 	}
@@ -1249,13 +1283,17 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 static int
 update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
-	struct token_bucket_ratelimit_state *rs)
+	struct token_bucket_ratelimit_state *rs, struct gk_instance *instance,
+	packet_drop_cb_func cb_f)
 {
 	if (packet->flow.proto == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ipv4_hdr = packet->l3_hdr;
 		if (ipv4_hdr->time_to_live <= 1) {
-			if (tb_ratelimit_allow(rs))
-				xmit_icmp(iface, packet, num_pkts, icmp_bufs);
+			if (tb_ratelimit_allow(rs)) {
+				xmit_icmp(iface, packet, num_pkts,
+					icmp_bufs, instance, cb_f);
+			} else
+				cb_f(packet->pkt, instance);
 			return -ETIMEDOUT;
 		}
 
@@ -1264,8 +1302,11 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	} else if (likely(packet->flow.proto == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *ipv6_hdr = packet->l3_hdr;
 		if (ipv6_hdr->hop_limits <= 1) {
-			if (tb_ratelimit_allow(rs))
-				xmit_icmpv6(iface, packet, num_pkts, icmp_bufs);
+			if (tb_ratelimit_allow(rs)) {
+				xmit_icmpv6(iface, packet, num_pkts,
+					icmp_bufs, instance, cb_f);
+			} else
+				cb_f(packet->pkt, instance);
 			return -ETIMEDOUT;
 		}
 
@@ -1274,7 +1315,7 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 		GK_LOG(WARNING,
 			"Unexpected condition at %s: unknown flow type %hu\n",
 			__func__, packet->flow.proto);
-		drop_packet(packet->pkt);
+		cb_f(packet->pkt, instance);
 		return -EINVAL;
 	}
 
@@ -1303,6 +1344,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
+	struct gk_measurement_metrics *stats = &instance->traffic_stats;
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
@@ -1310,6 +1352,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 	if (unlikely(num_rx == 0))
 		return;
+
+	stats->tot_pkts_num += num_rx;
 
 	for (i = 0; i < num_rx; i++) {
 		struct ipacket packet;
@@ -1320,6 +1364,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		struct flow_entry *fe;
 		struct rte_mbuf *pkt = rx_bufs[i];
 
+		stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
+
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
 			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
@@ -1328,7 +1374,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			}
 
 			/* Drop non-IP and non-ARP packets. */
-			drop_packet(pkt);
+			drop_packet_front(pkt, instance);
 			continue;
 		}
 
@@ -1362,7 +1408,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				else {
 					print_flow_err_msg(&packet.flow,
 						"gk: failed to get the fib entry");
-					drop_packet(pkt);
+					drop_packet_front(pkt, instance);
 				}
 				continue;
 			}
@@ -1398,12 +1444,14 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 						&packet.flow, fib);
 					ret = gk_process_request(
 						&temp_fe, &packet,
-						gk_conf->sol_conf);
-					if (ret < 0)
-						drop_packet(pkt);
+						gk_conf->sol_conf, stats);
+					if (ret < 0) {
+						drop_packet_front(
+							pkt, instance);
+					}
 					continue;
 				} else if (ret < 0) {
-					drop_packet(pkt);
+					drop_packet_front(pkt, instance);
 					continue;
 				}
 
@@ -1433,13 +1481,15 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 						pkt_copy_cached_eth_header(pkt,
 							eth_cache,
 							back->l2_len_out)) {
-					drop_packet(pkt);
+					drop_packet_front(pkt, instance);
 					continue;
 				}
 
 				if (update_ip_hop_count(front, &packet,
 						num_pkts, icmp_bufs,
-						&instance->front_icmp_rs) < 0)
+						&instance->front_icmp_rs,
+						instance,
+						drop_packet_front) < 0)
 					continue;
 
 				tx_bufs[num_tx++] = pkt;
@@ -1468,13 +1518,15 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 						pkt_copy_cached_eth_header(pkt,
 							eth_cache,
 							back->l2_len_out)) {
-					drop_packet(pkt);
+					drop_packet_front(pkt, instance);
 					continue;
 				}
 
 				if (update_ip_hop_count(front, &packet,
 						num_pkts, icmp_bufs,
-						&instance->front_icmp_rs) < 0)
+						&instance->front_icmp_rs,
+						instance,
+						drop_packet_front) < 0)
 					continue;
 
 				tx_bufs[num_tx++] = pkt;
@@ -1484,7 +1536,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			case GK_DROP:
 				/* FALLTHROUGH */
 			default:
-				drop_packet(pkt);
+				drop_packet_front(pkt, instance);
 				continue;
 			}
 		}
@@ -1492,17 +1544,17 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		switch (fe->state) {
 		case GK_REQUEST:
 			ret = gk_process_request(fe, &packet,
-				gk_conf->sol_conf);
+				gk_conf->sol_conf, stats);
 			break;
 
 		case GK_GRANTED:
 			ret = gk_process_granted(fe, &packet,
-				gk_conf->sol_conf);
+				gk_conf->sol_conf, stats);
 			break;
 
 		case GK_DECLINED:
 			ret = gk_process_declined(fe, &packet,
-				gk_conf->sol_conf);
+				gk_conf->sol_conf, stats);
 			break;
 
 		default:
@@ -1512,7 +1564,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		}
 
 		if (ret < 0)
-			drop_packet(pkt);
+			drop_packet_front(pkt, instance);
 		else if (ret == EINPROGRESS) {
 			/* Request will be serviced by another lcore. */
 			continue;
@@ -1530,7 +1582,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	/* XXX #71 Do something better here! For now, free any unsent packets. */
 	if (unlikely(num_tx_succ < num_tx)) {
 		for (i = num_tx_succ; i < num_tx; i++)
-			drop_packet(tx_bufs[i]);
+			drop_packet_front(tx_bufs[i], instance);
 	}
 
 	if (num_arp > 0)
@@ -1632,7 +1684,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 			if (update_ip_hop_count(back, &packet,
 					num_pkts, icmp_bufs,
-					&instance->back_icmp_rs) < 0)
+					&instance->back_icmp_rs,
+					instance, drop_packet_back) < 0)
 				continue;
 
 			tx_bufs[num_tx++] = pkt;
@@ -1667,7 +1720,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 			if (update_ip_hop_count(back, &packet,
 					num_pkts, icmp_bufs,
-					&instance->back_icmp_rs) < 0)
+					&instance->back_icmp_rs,
+					instance, drop_packet_back) < 0)
 				continue;
 
 			tx_bufs[num_tx++] = pkt;
@@ -1762,7 +1816,11 @@ gk_proc(void *arg)
 	int num_buckets = rte_hash_get_num_buckets(
 		instance->ip_flow_hash_table);
 	uint32_t bucket_idx = 0;
-	uint64_t last_tsc = rte_rdtsc();
+	uint64_t last_scan_tsc = rte_rdtsc();
+	uint64_t last_measure_tsc = last_scan_tsc;
+	uint64_t basic_measurement_logging_cycles =
+		gk_conf->basic_measurement_logging_ms *
+		rte_get_tsc_hz() / 1000;
 	uint64_t bucket_scan_timeout_cycles = round(
 		(double)(gk_conf->flow_table_full_scan_ms *
 		rte_get_tsc_hz()) / (num_buckets * 1000.));
@@ -1778,6 +1836,8 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
+		uint64_t now;
+
 		front_num_pkts = 0;
 		back_num_pkts = 0;
 
@@ -1798,10 +1858,35 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		if (rte_rdtsc() - last_tsc >= bucket_scan_timeout_cycles) {
+		now = rte_rdtsc();
+		if (now - last_scan_tsc >= bucket_scan_timeout_cycles) {
 			gk_flow_tbl_bucket_scan(&bucket_idx,
 				gk_conf->request_timeout_cycles, instance);
-			last_tsc = rte_rdtsc();
+			last_scan_tsc = rte_rdtsc();
+			now = last_scan_tsc;
+		}
+
+		if (now - last_measure_tsc >=
+				basic_measurement_logging_cycles) {
+			struct gk_measurement_metrics *stats =
+				&instance->traffic_stats;
+
+			GK_LOG(NOTICE,
+				"The GK block basic measurements at lcore = %u: [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64"]\n",
+				lcore, stats->tot_pkts_num,
+				stats->tot_pkts_size,
+				stats->pkts_num_granted,
+				stats->pkts_size_granted,
+				stats->pkts_num_request,
+				stats->pkts_size_request,
+				stats->pkts_num_declined,
+				stats->pkts_size_declined,
+				stats->tot_pkts_num_dropped,
+				stats->tot_pkts_size_dropped);
+
+			memset(stats, 0, sizeof(*stats));
+
+			last_measure_tsc = rte_rdtsc();
 		}
 	}
 
