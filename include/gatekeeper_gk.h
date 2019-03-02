@@ -114,13 +114,13 @@ struct gk_config {
 	unsigned int       mailbox_burst_size;
 
 	/* Log level for GK block. */
-	uint32_t          log_level;
+	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
-	int               log_type;
+	int                log_type;
 	/* Log ratelimit interval in ms for GK block. */
-	uint32_t          log_ratelimit_interval_ms;
+	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for GK block. */
-	uint32_t          log_ratelimit_burst;
+	uint32_t           log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.
