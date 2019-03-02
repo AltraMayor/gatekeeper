@@ -40,6 +40,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	-- Scan the whole flow table in 10 minutes.
 	gk_conf.flow_table_full_scan_ms = 10 * 60 * 1000
 
+	-- Logging the basic measurements in a minute.
+	gk_conf.basic_measurement_logging_ms = 60 * 1000
+
 	-- The maximum number of packets to retrieve/transmit.
 	local gk_max_pkt_burst_front = 32
 	local gk_max_pkt_burst_back = 32

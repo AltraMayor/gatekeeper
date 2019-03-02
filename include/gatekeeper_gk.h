@@ -43,6 +43,30 @@ extern int gk_logtype;
  */
 enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
 
+/* Structure for the GK basic measurements. */
+struct gk_measurement_metrics {
+	/* Total number of packets received. */
+	uint64_t tot_pkts_num;
+	/* Total size in bytes of packets received. */
+	uint64_t tot_pkts_size;
+	/* Number of packets forwarded through the granted channel. */
+	uint64_t pkts_num_granted;
+	/* Size in bytes of packets forwarded through the granted channel. */
+	uint64_t pkts_size_granted;
+	/* Number of packets forwarded through the request channel. */
+	uint64_t pkts_num_request;
+	/* Size in bytes of packets forwarded through the request channel. */
+	uint64_t pkts_size_request;
+	/* Number of packets dropped because it has been rejected. */
+	uint64_t pkts_num_declined;
+	/* Size in bytes of packets dropped because it has been rejected. */
+	uint64_t pkts_size_declined;
+	/* Total number of packets dropped. */
+	uint64_t tot_pkts_num_dropped;
+	/* Total size in bytes of packets dropped. */
+	uint64_t tot_pkts_size_dropped;
+};
+
 /* Structures for each GK instance. */
 struct gk_instance {
 	struct rte_hash   *ip_flow_hash_table;
@@ -58,6 +82,8 @@ struct gk_instance {
 	/* TX queue on the back interface. */
 	uint16_t          tx_queue_back;
 	struct mailbox    mb;
+	/* Data structure used for the GK basic measurements. */
+	struct gk_measurement_metrics traffic_stats;
 	/* Data structures used to limit the rate of icmp messages. */
 	struct token_bucket_ratelimit_state front_icmp_rs;
 	struct token_bucket_ratelimit_state back_icmp_rs;
@@ -121,6 +147,9 @@ struct gk_config {
 	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for GK block. */
 	uint32_t           log_ratelimit_burst;
+
+	/* Time for logging the basic measurements in ms. */
+	unsigned int       basic_measurement_logging_ms;
 
 	/*
 	 * The fields below are for internal use.
