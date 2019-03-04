@@ -58,11 +58,9 @@ lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 	ret = rte_lpm_lookup(lpm, ntohl(ip), &next_hop);
 	if (ret == -EINVAL) {
 		G_LOG(ERR, "lpm: incorrect arguments for IPv4 lookup\n");
-		ret = -1;
 		goto out;
 	} else if (ret == -ENOENT) {
 		G_LOG(WARNING, "lpm: IPv4 lookup miss\n");
-		ret = -1;
 		goto out;
 	}
 
@@ -105,11 +103,9 @@ lpm_lookup_ipv6(struct rte_lpm6 *lpm, uint8_t *ip)
 	ret = rte_lpm6_lookup(lpm, ip, &next_hop);
 	if (ret == -EINVAL) {
 		G_LOG(ERR, "lpm: incorrect arguments for IPv6 lookup\n");
-		ret = -1;
 		goto out;
 	} else if (ret == -ENOENT) {
 		G_LOG(WARNING, "lpm: IPv6 lookup miss\n");
-		ret = -1;
 		goto out;
 	}
 
