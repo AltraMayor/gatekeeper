@@ -20,7 +20,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- These variables are unlikely to need to be changed.
 	local tcp_port_bgp = 179
 	local num_attempts_kni_link_set = 5
-	local max_route_updates = 8
+	local max_rt_update_pkts = 8
 	local scan_interval_sec = 5
 
 	--
@@ -46,7 +46,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 
 	cps_conf.tcp_port_bgp = tcp_port_bgp
 	cps_conf.num_attempts_kni_link_set = num_attempts_kni_link_set
-	cps_conf.max_route_updates = max_route_updates
+	cps_conf.max_rt_update_pkts = max_rt_update_pkts
 	cps_conf.scan_interval_sec = scan_interval_sec
 
 	-- Netlink port ID to receive updates and scans from routing daemon.

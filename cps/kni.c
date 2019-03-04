@@ -44,6 +44,41 @@
 extern long init_module(void *, unsigned long, const char *);
 extern long delete_module(const char *, unsigned int);
 
+struct route_update {
+	/* Type of route update: RTM_NEWROUTE or RTM_DELROUTE. */
+	int      type;
+
+	/* Address family of route: AF_INET or AF_INET6. */
+	int      family;
+
+	/*
+	 * Whether this update has all the fields and attributes
+	 * necessary to update the LPM table.
+	 */
+	int      valid;
+
+	/* Route prefix length. */
+	uint8_t  prefix_len;
+
+	/* Route origin. See field rtm_protocol of struct rtmsg. */
+	uint8_t  rt_proto;
+
+	/* Output interface index of route. */
+	uint32_t oif_index;
+
+	/* IP address of route. */
+	union {
+		struct in_addr  v4;
+		struct in6_addr v6;
+	} ip;
+
+	/* IP address of route gateway. */
+	union {
+		struct in_addr  v4;
+		struct in6_addr v6;
+	} gw;
+};
+
 int
 kni_change_if(uint16_t port_id, uint8_t if_up)
 {
@@ -404,6 +439,142 @@ inet6_print(const char *msg, struct in6_addr *in6)
 		inet_ntop(AF_INET6, &in6->s6_addr, buf, sizeof(buf)));
 }
 
+static int
+new_route(struct route_update *update, struct cps_config *cps_conf)
+{
+	int ret;
+	uint16_t proto;
+	char ip_buf[INET6_ADDRSTRLEN];
+	char ipp_buf[INET6_ADDRSTRLEN + 4];
+	int gw_fib_id;
+	struct ip_prefix prefix_info;
+	struct ipaddr gw_addr;
+	struct gk_fib *gw_fib;
+	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+
+	if (update->family == AF_INET) {
+		proto = ETHER_TYPE_IPv4;
+		gw_fib_id = lpm_lookup_ipv4(ltbl->lpm, update->gw.v4.s_addr);
+		if (gw_fib_id < 0)
+			return -1;
+		gw_fib = &ltbl->fib_tbl[gw_fib_id];
+
+		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
+				ip_buf, sizeof(ip_buf)) == NULL)
+			return -1;
+
+		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
+			ip_buf, update->prefix_len);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
+	} else if (likely(update->family == AF_INET6)) {
+		proto = ETHER_TYPE_IPv6;
+		gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6, update->gw.v6.s6_addr);
+		if (gw_fib_id < 0)
+			return -1;
+		gw_fib = &ltbl->fib_tbl6[gw_fib_id];
+
+		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
+				ip_buf, sizeof(ip_buf)) == NULL)
+			return -1;
+
+		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
+			ip_buf, update->prefix_len);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
+	} else {
+		CPS_LOG(WARNING,
+			"cps update: unknown address family %d at %s\n",
+			update->family, __func__);
+		return -1;
+	}
+
+	prefix_info.str = ipp_buf;
+	prefix_info.addr.proto = proto;
+	rte_memcpy(&prefix_info.addr.ip, &update->ip,
+		sizeof(prefix_info.addr.ip));
+	prefix_info.len = update->prefix_len;
+
+	gw_addr.proto = proto;
+	rte_memcpy(&gw_addr.ip, &update->gw, sizeof(gw_addr.ip));
+
+	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
+		if (update->oif_index != 0) {
+			if (update->oif_index != cps_conf->front_kni_index) {
+				CPS_LOG(WARNING,
+					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
+					prefix_info.str);
+				return -1;
+			}
+		}
+
+		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
+			GK_FWD_GATEWAY_FRONT_NET, update->rt_proto,
+			cps_conf->gk);
+	}
+
+	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
+		if (update->oif_index != 0) {
+			if (update->oif_index != cps_conf->back_kni_index) {
+				CPS_LOG(WARNING,
+					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
+					prefix_info.str);
+				return -1;
+			}
+		}
+
+		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
+			GK_FWD_GATEWAY_BACK_NET, update->rt_proto,
+			cps_conf->gk);
+	}
+
+	return -1;
+}
+
+static int
+del_route(struct route_update *update, struct cps_config *cps_conf)
+{
+	int ret;
+	char ip_buf[INET6_ADDRSTRLEN];
+	char ipp_buf[INET6_ADDRSTRLEN + 4];
+	struct ip_prefix prefix_info;
+	struct gk_config *gk_conf = cps_conf->gk;
+
+	if (update->family == AF_INET) {
+		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
+				ip_buf, sizeof(ip_buf)) == NULL)
+			return -1;
+
+		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
+			ip_buf, update->prefix_len);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
+
+		prefix_info.addr.proto = ETHER_TYPE_IPv4;
+		rte_memcpy(&prefix_info.addr.ip.v4, &update->ip.v4,
+			sizeof(prefix_info.addr.ip.v4));
+	} else if (likely(update->family == AF_INET6)) {
+		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
+				ip_buf, sizeof(ip_buf)) == NULL)
+			return -1;
+
+		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
+			ip_buf, update->prefix_len);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
+
+		prefix_info.addr.proto = ETHER_TYPE_IPv6;
+		rte_memcpy(&prefix_info.addr.ip.v6, &update->ip.v6,
+			sizeof(prefix_info.addr.ip.v6));
+	} else {
+		CPS_LOG(WARNING,
+			"cps update: unknown address family %d at %s\n",
+			update->family, __func__);
+		return -1;
+	}
+
+	prefix_info.str = ipp_buf;
+	prefix_info.len = update->prefix_len;
+
+	return del_fib_entry_numerical(&prefix_info, gk_conf);
+}
+
 static void
 attr_get(struct route_update *update, int family, struct nlattr *tb[])
 {
@@ -629,13 +800,21 @@ data_ipv6_attr_cb(const struct nlattr *attr, void *data)
 }
 
 static int
-rd_modroute(const struct nlmsghdr *req, void *arg)
+rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
 	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
-	struct route_update *update = arg;
+	struct route_update update;
 
-	update->valid = false;
+	if (unlikely(cps_conf->gk == NULL)) {
+		/*
+		 * Grantor only runs CPS for ECMP support and
+		 * shouldn't be receiving route updates.
+		 */
+		CPS_LOG(WARNING,
+			"The system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving route update messages\n");
+		return MNL_CB_OK;
+	}
 
 	CPS_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
 		req->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
@@ -643,31 +822,44 @@ rd_modroute(const struct nlmsghdr *req, void *arg)
 		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
 		rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
 
-	update->type = req->nlmsg_type;
-	update->family = rm->rtm_family;
+	memset(&update, 0, sizeof(update));
+	update.valid = false;
+	update.type = req->nlmsg_type;
+	update.family = rm->rtm_family;
 
 	/* Destination prefix length, e.g., 24 or 32 for IPv4. */
-	update->prefix_len = rm->rtm_dst_len;
+	update.prefix_len = rm->rtm_dst_len;
 
 	/* Default to an invalid index number. */
-	update->oif_index = 0;
+	update.oif_index = 0;
 
 	/* Route origin (routing daemon). */
-	update->rt_proto = rm->rtm_protocol;
+	update.rt_proto = rm->rtm_protocol;
 
 	switch(rm->rtm_family) {
 	case AF_INET:
 		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
-		attr_get(update, rm->rtm_family, tb);
+		attr_get(&update, rm->rtm_family, tb);
 		break;
 	case AF_INET6:
 		mnl_attr_parse(req, sizeof(*rm), data_ipv6_attr_cb, tb);
-		attr_get(update, rm->rtm_family, tb);
+		attr_get(&update, rm->rtm_family, tb);
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
 			rm->rtm_family);
 		break;
+	}
+
+	if (update.valid) {
+		if (update.type == RTM_NEWROUTE)
+			new_route(&update, cps_conf);
+		else if (likely(update.type == RTM_DELROUTE))
+			del_route(&update, cps_conf);
+		else {
+			CPS_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
+				update.type);
+		}
 	}
 
 	return MNL_CB_OK;
@@ -676,11 +868,13 @@ rd_modroute(const struct nlmsghdr *req, void *arg)
 static int
 rd_cb(const struct nlmsghdr *req, void *arg)
 {
+	struct cps_config *cps_conf = arg;
+
 	switch (req->nlmsg_type) {
 	case RTM_NEWROUTE:
 		/* FALLTHROUGH */
 	case RTM_DELROUTE:
-		return rd_modroute(req, arg);
+		return rd_modroute(req, cps_conf);
 	default:
 		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
 			req->nlmsg_type);
@@ -730,151 +924,12 @@ mnl_socket_recvfrom_flags(const struct mnl_socket *nl, void *buf, size_t bufsiz,
 	return ret;
 }
 
-static int
-new_route(struct route_update *update, struct cps_config *cps_conf)
-{
-	int ret;
-	uint16_t proto;
-	char ip_buf[INET6_ADDRSTRLEN];
-	char ipp_buf[INET6_ADDRSTRLEN + 4];
-	int gw_fib_id;
-	struct ip_prefix prefix_info;
-	struct ipaddr gw_addr;
-	struct gk_fib *gw_fib;
-	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
-
-	if (update->family == AF_INET) {
-		proto = ETHER_TYPE_IPv4;
-		gw_fib_id = lpm_lookup_ipv4(ltbl->lpm, update->gw.v4.s_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl[gw_fib_id];
-
-		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
-				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
-
-		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
-			ip_buf, update->prefix_len);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
-	} else if (likely(update->family == AF_INET6)) {
-		proto = ETHER_TYPE_IPv6;
-		gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6, update->gw.v6.s6_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl6[gw_fib_id];
-
-		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
-				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
-
-		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
-			ip_buf, update->prefix_len);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
-	} else {
-		CPS_LOG(WARNING,
-			"cps update: unknown address family %d at %s\n",
-			update->family, __func__);
-		return -1;
-	}
-
-	prefix_info.str = ipp_buf;
-	prefix_info.addr.proto = proto;
-	rte_memcpy(&prefix_info.addr.ip, &update->ip,
-		sizeof(prefix_info.addr.ip));
-	prefix_info.len = update->prefix_len;
-
-	gw_addr.proto = proto;
-	rte_memcpy(&gw_addr.ip, &update->gw, sizeof(gw_addr.ip));
-
-	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->front_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
-					prefix_info.str);
-				return -1;
-			}
-		}
-
-		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
-			GK_FWD_GATEWAY_FRONT_NET, update->rt_proto,
-			cps_conf->gk);
-	}
-
-	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->back_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
-					prefix_info.str);
-				return -1;
-			}
-		}
-
-		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
-			GK_FWD_GATEWAY_BACK_NET, update->rt_proto,
-			cps_conf->gk);
-	}
-
-	return -1;
-}
-
-static int
-del_route(struct route_update *update, struct gk_config *gk_conf)
-{
-	int ret;
-	char ip_buf[INET6_ADDRSTRLEN];
-	char ipp_buf[INET6_ADDRSTRLEN + 4];
-	struct ip_prefix prefix_info;
-
-	if (update->family == AF_INET) {
-		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
-				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
-
-		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
-			ip_buf, update->prefix_len);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
-
-		prefix_info.addr.proto = ETHER_TYPE_IPv4;
-		rte_memcpy(&prefix_info.addr.ip.v4, &update->ip.v4,
-			sizeof(prefix_info.addr.ip.v4));
-	} else if (likely(update->family == AF_INET6)) {
-		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
-				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
-
-		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
-			ip_buf, update->prefix_len);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
-
-		prefix_info.addr.proto = ETHER_TYPE_IPv6;
-		rte_memcpy(&prefix_info.addr.ip.v6, &update->ip.v6,
-			sizeof(prefix_info.addr.ip.v6));
-	} else {
-		CPS_LOG(WARNING,
-			"cps update: unknown address family %d at %s\n",
-			update->family, __func__);
-		return -1;
-	}
-
-	prefix_info.str = ipp_buf;
-	prefix_info.len = update->prefix_len;
-
-	return del_fib_entry_numerical(&prefix_info, gk_conf);
-}
-
 void
 kni_cps_rd_event(struct cps_config *cps_conf)
 {
-	uint16_t max_route_updates = cps_conf->max_route_updates;
-	struct route_update updates[max_route_updates];
-	unsigned int i;
-	unsigned int num_updates = 0;
-	char buf[MNL_SOCKET_BUFFER_SIZE];
-
+	unsigned int update_pkts = cps_conf->max_rt_update_pkts;
 	do {
+		char buf[MNL_SOCKET_BUFFER_SIZE];
 		int ret = mnl_socket_recvfrom_flags(cps_conf->rd_nl, buf,
 			sizeof(buf), MSG_DONTWAIT);
 		if (ret == -1) {
@@ -884,40 +939,12 @@ kni_cps_rd_event(struct cps_config *cps_conf)
 			break;
 		}
 
-		ret = mnl_cb_run(buf, ret, 0, 0,
-			rd_cb, &updates[num_updates]);
+		ret = mnl_cb_run(buf, ret, 0, 0, rd_cb, cps_conf);
 		if (ret != MNL_CB_OK)
 			break;
 
-		if (updates[num_updates].valid)
-			num_updates++;
-	} while (num_updates < max_route_updates);
-
-	if (cps_conf->gk == NULL) {
-		/*
-		 * Grantor only runs CPS for ECMP support and
-		 * shouldn't be receiving route updates.
-		 */
-		if (unlikely(num_updates != 0)) {
-			CPS_LOG(WARNING,
-				"The system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving %u route update messages\n",
-				num_updates);
-		}
-
-		return;
-	}
-
-	for (i = 0; i < num_updates; i++) {
-		if (updates[i].type == RTM_NEWROUTE)
-			new_route(&updates[i], cps_conf);
-		else if (likely(updates[i].type == RTM_DELROUTE))
-			del_route(&updates[i], cps_conf->gk);
-		else {
-			CPS_LOG(WARNING,
-				"Receiving an unexpected update rule with type = %d\n",
-				updates[i].type);
-		}
-	}
+		update_pkts--;
+	} while (update_pkts > 0);
 }
 
 /*
