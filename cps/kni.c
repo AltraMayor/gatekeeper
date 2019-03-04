@@ -575,7 +575,7 @@ del_route(struct route_update *update, struct cps_config *cps_conf)
 	return del_fib_entry_numerical(&prefix_info, gk_conf);
 }
 
-static void
+static int
 attr_get(struct route_update *update, int family, struct nlattr *tb[])
 {
 	bool dst_present = false;
@@ -612,7 +612,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 			CPS_LOG(WARNING,
 				"cps update: unknown address family %d at %s\n",
 				family, __func__);
-			return;
+			return -EAFNOSUPPORT;
 		}
 
 		dst_present = true;
@@ -625,26 +625,28 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 				mnl_attr_get_payload(tb[RTA_SRC]);
 			if (inet_ntop(AF_INET, &addr->s_addr, buf,
 					sizeof(buf)) == NULL) {
+				int saved_errno = errno;
 				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv4 address (%s)\n",
 					__func__, strerror(errno));
-				return;
+				return -saved_errno; 
 			}
 		} else if (likely(family == AF_INET6)) {
 			struct in6_addr *addr =
 				mnl_attr_get_payload(tb[RTA_SRC]);
 			if (inet_ntop(AF_INET6, &addr->s6_addr, buf,
 					sizeof(buf)) == NULL) {
+				int saved_errno = errno;
 				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv6 address (%s)\n",
 					__func__, strerror(errno));
-				return;
+				return -saved_errno; 
 			}
 		} else {
 			CPS_LOG(WARNING,
 				"cps update: unknown address family %d at %s\n",
 				family, __func__);
-			return;
+			return -EAFNOSUPPORT;
 		}
 
 		CPS_LOG(WARNING,
@@ -668,26 +670,28 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 				mnl_attr_get_payload(tb[RTA_PREFSRC]);
 			if (inet_ntop(AF_INET, &addr->s_addr, buf,
 					sizeof(buf)) == NULL) {
+				int saved_errno = errno;
 				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv4 address (%s)\n",
 					__func__, strerror(errno));
-				return;
+				return -saved_errno;
 			}
 		} else if (likely(family == AF_INET6)) {
 			struct in6_addr *addr =
 				mnl_attr_get_payload(tb[RTA_PREFSRC]);
 			if (inet_ntop(AF_INET6, &addr->s6_addr, buf,
 					sizeof(buf)) == NULL) {
+				int saved_errno = errno;
 				CPS_LOG(ERR,
 					"%s: failed to convert a number to an IPv6 address (%s)\n",
 					__func__, strerror(errno));
-				return;
+				return -saved_errno;
 			}
 		} else {
 			CPS_LOG(WARNING,
 				"cps update: unknown address family %d at %s\n",
 				family, __func__);
-			return;
+			return -EAFNOSUPPORT;
 		}
 
 		CPS_LOG(WARNING,
@@ -711,7 +715,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 			CPS_LOG(WARNING,
 				"cps update: unknown address family %d at %s\n",
 				family, __func__);
-			return;
+			return -EAFNOSUPPORT;
 		}
 
 		gw_present = true;
@@ -725,6 +729,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	update->valid = dst_present &&
 		(update->type == RTM_DELROUTE ||
 		(update->type == RTM_NEWROUTE && gw_present));
+	return 0;
 }
 
 static int
@@ -799,8 +804,52 @@ data_ipv6_attr_cb(const struct nlattr *attr, void *data)
 	return MNL_CB_OK;
 }
 
+static void
+rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
+{
+	struct nlmsghdr *rep;
+	struct nlmsgerr *errmsg;
+	char buf[MNL_SOCKET_BUFFER_SIZE];
+	struct sockaddr_nl rd_sa;
+	unsigned int payload_len;
+	unsigned int errmsg_len;
+
+	memset(&rd_sa, 0, sizeof(rd_sa));
+	rd_sa.nl_family = AF_NETLINK;
+	rd_sa.nl_pid = req->nlmsg_pid;
+
+	rep = mnl_nlmsg_put_header(buf);
+	rep->nlmsg_type = NLMSG_ERROR;
+	rep->nlmsg_flags = 0;
+	rep->nlmsg_seq = req->nlmsg_seq;
+	rep->nlmsg_pid = cps_conf->nl_pid;
+
+	/*
+	 * For acknowledgements, just send the struct nlmsgerr.
+	 * For errors, send the struct nlmsgerr and the payload.
+	 */
+	payload_len = 0;
+	errmsg_len = sizeof(*errmsg);
+	if (err) {
+		payload_len += mnl_nlmsg_get_payload_len(req);
+		errmsg_len += payload_len;
+	}
+
+	errmsg = mnl_nlmsg_put_extra_header(rep, errmsg_len);
+	errmsg->error = err;
+	memcpy(&errmsg->msg, req, sizeof(errmsg->msg) + payload_len);
+
+	if (sendto(mnl_socket_get_fd(cps_conf->rd_nl),
+			rep, sizeof(*rep) + errmsg_len, 0,
+			(struct sockaddr *)&rd_sa, sizeof(rd_sa)) < 0) {
+		CPS_LOG(ERR, "sendto: cannot send NLMSG_ERROR to daemon (pid=%u seq=%u): %s\n",
+			req->nlmsg_pid, req->nlmsg_seq,
+			strerror(errno));
+	}
+}
+
 static int
-rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf)
+rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
 	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
@@ -813,7 +862,8 @@ rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf)
 		 */
 		CPS_LOG(WARNING,
 			"The system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving route update messages\n");
-		return MNL_CB_OK;
+		*err = -EOPNOTSUPP;
+		goto out;
 	}
 
 	CPS_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
@@ -839,29 +889,37 @@ rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf)
 	switch(rm->rtm_family) {
 	case AF_INET:
 		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
-		attr_get(&update, rm->rtm_family, tb);
+		*err = attr_get(&update, rm->rtm_family, tb);
+		if (*err)
+			goto out;
 		break;
 	case AF_INET6:
 		mnl_attr_parse(req, sizeof(*rm), data_ipv6_attr_cb, tb);
-		attr_get(&update, rm->rtm_family, tb);
+		*err = attr_get(&update, rm->rtm_family, tb);
+		if (*err)
+			goto out;
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
 			rm->rtm_family);
-		break;
+		*err = -EAFNOSUPPORT;
+		goto out;
 	}
 
 	if (update.valid) {
 		if (update.type == RTM_NEWROUTE)
-			new_route(&update, cps_conf);
+			*err = new_route(&update, cps_conf);
 		else if (likely(update.type == RTM_DELROUTE))
-			del_route(&update, cps_conf);
+			*err = del_route(&update, cps_conf);
 		else {
 			CPS_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
 				update.type);
+			*err = -EOPNOTSUPP;
 		}
-	}
+	} else
+		*err = -EINVAL;
 
+out:
 	return MNL_CB_OK;
 }
 
@@ -869,19 +927,31 @@ static int
 rd_cb(const struct nlmsghdr *req, void *arg)
 {
 	struct cps_config *cps_conf = arg;
+	int ret = MNL_CB_OK;
+	int err;
+
+	/* Only requests should be received here. */
+	if (!(req->nlmsg_flags & NLM_F_REQUEST)) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	switch (req->nlmsg_type) {
 	case RTM_NEWROUTE:
 		/* FALLTHROUGH */
 	case RTM_DELROUTE:
-		return rd_modroute(req, cps_conf);
+		ret = rd_modroute(req, cps_conf, &err);
+		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
 			req->nlmsg_type);
+		err = -EOPNOTSUPP;
 		break;
 	}
-
-	return MNL_CB_OK;
+out:
+	if ((req->nlmsg_flags & NLM_F_ACK) || err)
+		rd_send_err(req, cps_conf, err);
+	return ret;
 }
 
 /*
