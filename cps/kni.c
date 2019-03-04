@@ -850,6 +850,256 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 	}
 }
 
+static void
+rd_fill_getroute_reply(struct cps_config *cps_conf, struct nlmsghdr *reply,
+	struct gk_fib *fib, int family, uint32_t seq,
+	uint8_t prefix_len, struct ipaddr **gw_addr)
+{
+	struct rtmsg *rm;
+
+	reply->nlmsg_type = RTM_NEWROUTE;
+	reply->nlmsg_flags = NLM_F_MULTI;
+	reply->nlmsg_seq = seq;
+	reply->nlmsg_pid = cps_conf->nl_pid;
+
+	rm = mnl_nlmsg_put_extra_header(reply, sizeof(*rm));
+	rm->rtm_family = family;
+	rm->rtm_dst_len = prefix_len;
+	rm->rtm_src_len = 0;
+	rm->rtm_tos = 0;
+	rm->rtm_table = RT_TABLE_MAIN;
+	rm->rtm_scope = RT_SCOPE_UNIVERSE;
+	rm->rtm_type = RTN_UNICAST;
+	rm->rtm_flags = 0;
+
+	switch (fib->action) {
+	case GK_FWD_GRANTOR:
+		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		rm->rtm_protocol = RTPROT_STATIC;
+		*gw_addr = &fib->u.grantor.eth_cache->ip_addr;
+		break;
+	case GK_FWD_GATEWAY_FRONT_NET:
+		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
+		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
+		break;
+	case GK_FWD_GATEWAY_BACK_NET:
+		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
+		break;
+	case GK_FWD_NEIGHBOR_FRONT_NET:
+		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
+		rm->rtm_protocol = RTPROT_STATIC;
+		*gw_addr = NULL;
+		break;
+	case GK_FWD_NEIGHBOR_BACK_NET:
+		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		rm->rtm_protocol = RTPROT_STATIC;
+		*gw_addr = NULL;
+		break;
+	default:
+		rte_panic("Invalid FIB action (%u) in FIB while being processed by CPS block in %s\n",
+			fib->action, __func__);
+		return;
+	}
+}
+
+static int
+rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
+	const char *daemon, uint32_t seq, uint32_t pid, int done)
+{
+	/* Address of routing daemon. */
+	struct sockaddr_nl rd_sa;
+	int ret = 0;
+
+	memset(&rd_sa, 0, sizeof(rd_sa));
+	rd_sa.nl_family = AF_NETLINK;
+	rd_sa.nl_pid = pid;
+
+	if (done) {
+		struct nlmsghdr *done =
+			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+		done->nlmsg_type = NLMSG_DONE;
+		done->nlmsg_flags = NLM_F_MULTI;
+		done->nlmsg_seq = seq;
+		done->nlmsg_pid = cps_conf->nl_pid;
+	}
+
+	if (sendto(mnl_socket_get_fd(cps_conf->rd_nl),
+			mnl_nlmsg_batch_head(batch),
+			mnl_nlmsg_batch_size(batch), 0,
+			(struct sockaddr *)&rd_sa, sizeof(rd_sa)) < 0) {
+		ret = -errno;
+		CPS_LOG(ERR,
+			"sendto: cannot dump route batch to %s daemon (pid=%u seq=%u): %s\n",
+			daemon, pid, seq, strerror(errno));
+	}
+
+	mnl_nlmsg_batch_reset(batch);
+	return ret;
+}
+
+static int
+rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
+{
+	struct rte_lpm_iterator_state state;
+	const struct rte_lpm_rule *re4;
+	int index;
+
+	int ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
+	if (ret < 0) {
+		CPS_LOG(ERR, "Failed to initialize the IPv4 LPM rule iterator state in %s\n",
+			__func__);
+		return ret;
+	}
+
+	index = rte_lpm_rule_iterate(&state, &re4);
+	while (index >= 0) {
+		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
+		struct ipaddr *gw_addr;
+		struct nlmsghdr *reply =
+			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+
+		rd_fill_getroute_reply(cps_conf, reply, fib,
+			family, req->nlmsg_seq, state.depth, &gw_addr);
+
+		/* Add address. */
+		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
+
+		/*
+		 * If gateway is NULL, then the entry is for a
+		 * neighbor and the gateway should be 0.0.0.0.
+		 */
+		mnl_attr_put_u32(reply, RTA_GATEWAY,
+			gw_addr == NULL ? 0 : gw_addr->ip.v4.s_addr);
+
+		if (!mnl_nlmsg_batch_next(batch)) {
+			ret = rd_send_batch(cps_conf, batch, "IPv4",
+				req->nlmsg_seq, req->nlmsg_pid, false);
+			if (ret < 0)
+				return ret;
+		}
+
+		index = rte_lpm_rule_iterate(&state, &re4);
+	}
+
+	return 0;
+}
+
+static int
+rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
+{
+	struct rte_lpm6_iterator_state state6;
+	struct rte_lpm6_rule re6;
+	int index;
+
+	int ret = rte_lpm6_iterator_state_init(ltbl->lpm6, 0, 0, &state6);
+	if (ret < 0) {
+		CPS_LOG(ERR, "Failed to initialize the IPv6 LPM rule iterator state in %s\n",
+			__func__);
+		return ret;
+	}
+
+	index = rte_lpm6_rule_iterate(&state6, &re6);
+	while (index >= 0) {
+		const struct in6_addr neighbor_gw = { 0 };
+		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
+		struct ipaddr *gw_addr;
+		struct nlmsghdr *reply =
+			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+
+		rd_fill_getroute_reply(cps_conf, reply, fib,
+			family, req->nlmsg_seq, state6.depth, &gw_addr);
+
+		/* Add address. */
+		mnl_attr_put(reply, RTA_DST,
+			sizeof(struct in6_addr), re6.ip);
+
+		/*
+		 * If gateway is NULL, then the entry is for a
+		 * neighbor and the gateway should be ::.
+		 */
+		mnl_attr_put(reply, RTA_GATEWAY, sizeof(struct in6_addr),
+			gw_addr == NULL ? &neighbor_gw : &gw_addr->ip.v6);
+
+		if (!mnl_nlmsg_batch_next(batch)) {
+			ret = rd_send_batch(cps_conf, batch, "IPv6",
+				req->nlmsg_seq, req->nlmsg_pid, false);
+			if (ret < 0)
+				return ret;
+		}
+
+		index = rte_lpm6_rule_iterate(&state6, &re6);
+	}
+
+	return 0;
+}
+
+static int
+rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
+{
+	/*
+	 * Buffer length set according to libmnl documentation:
+	 * the buffer that you have to use to store the batch must be
+	 * double of MNL_SOCKET_BUFFER_SIZE to ensure that the last
+	 * message (message N+1) that did not fit into the batch is
+	 * written inside valid memory boundaries.
+	 */
+	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
+	struct mnl_nlmsg_batch *batch;
+	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	int family;
+
+	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
+		CPS_LOG(ERR, "Not enough room in CPS GETROUTE message from routing daemon in %s\n",
+			__func__);
+		*err = -EINVAL;
+		goto out;
+	}
+
+	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
+
+	/* We don't support AF_UNSPEC to dump both tables at once. */
+	if (family != AF_INET && family != AF_INET6) {
+		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
+			family, __func__);
+		*err = -EAFNOSUPPORT;
+		goto out;
+	}
+
+	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
+	if (batch == NULL) {
+		CPS_LOG(ERR, "Failed to allocate a batch for a GETROUTE reply\n");
+		*err = -ENOMEM;
+		goto out;
+	}
+
+	rte_spinlock_lock_tm(&ltbl->lock);
+	if (family == AF_INET) {
+		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
+			batch, req, family);
+	} else {
+		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
+			batch, req, family);
+	}
+	rte_spinlock_unlock_tm(&ltbl->lock);
+	if (*err < 0)
+		goto free_batch;
+
+	/* In the case of no entries, the only message sent is NLMSG_DONE. */
+	*err = rd_send_batch(cps_conf, batch,
+		family == AF_INET ? "IPv4" : "IPv6",
+		req->nlmsg_seq, req->nlmsg_pid, true);
+
+free_batch:
+	mnl_nlmsg_batch_stop(batch);
+out:
+	return MNL_CB_OK;
+}
+
 static int
 rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
@@ -943,6 +1193,9 @@ rd_cb(const struct nlmsghdr *req, void *arg)
 		/* FALLTHROUGH */
 	case RTM_DELROUTE:
 		ret = rd_modroute(req, cps_conf, &err);
+		break;
+	case RTM_GETROUTE:
+		ret = rd_getroute(req, cps_conf, &err);
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
