@@ -580,6 +580,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 {
 	bool dst_present = false;
 	bool gw_present = false;
+	bool oif_present = false;
 
 	if (tb[RTA_MULTIPATH]) {
 		/*
@@ -656,6 +657,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	if (tb[RTA_OIF]) {
 		update->oif_index = mnl_attr_get_u32(tb[RTA_OIF]);
 		CPS_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
+		oif_present = true;
 	}
 	if (tb[RTA_FLOW]) {
 		CPS_LOG(WARNING,
@@ -728,7 +730,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 
 	update->valid = dst_present &&
 		(update->type == RTM_DELROUTE ||
-		(update->type == RTM_NEWROUTE && gw_present));
+		(update->type == RTM_NEWROUTE && gw_present && oif_present));
 	return 0;
 }
 
