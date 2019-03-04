@@ -56,8 +56,8 @@ struct cps_config {
 	/* Number of times to attempt bring a KNI interface up or down. */
 	unsigned int      num_attempts_kni_link_set;
 
-	/* Maximum number of updates for LPM table to serve at once. */
-	unsigned int      max_route_updates;
+	/* Maximum number of route update packets to serve at once. */
+	unsigned int      max_rt_update_pkts;
 
 	/*
 	 * Period between scans of the outstanding
@@ -175,37 +175,6 @@ struct cps_request {
 		/* If @ty is CPS_REQ_ND, use @nd. */
 		struct cps_nd_req nd;
 	} u;
-};
-
-struct route_update {
-	/* Type of update: RTM_NEWROUTE or RTM_DELROUTE. */
-	int      type;
-
-	/* Address family of update: AF_INET or AF_INET6. */
-	int      family;
-
-	/*
-	 * Whether this update has all the fields and attributes
-	 * necessary to update the LPM table.
-	 */
-	int      valid;
-
-	uint8_t  prefix_len;
-
-	uint32_t oif_index;
-
-	/* Route origin. See field rtm_protocol of struct rtmsg. */
-	uint8_t  rt_proto;
-
-	union {
-		struct in_addr  v4;
-		struct in6_addr v6;
-	} ip;
-
-	union {
-		struct in_addr  v4;
-		struct in6_addr v6;
-	} gw;
 };
 
 struct cps_config *get_cps_conf(void);
