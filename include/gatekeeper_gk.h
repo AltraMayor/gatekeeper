@@ -167,6 +167,14 @@ struct gk_config {
 	/* The number of lcore ids in @lcores. */
 	int                num_lcores;
 
+	/*
+	 * Array that maps a front interface
+	 * RX queue ID to the associated GK
+	 * instance index. Queue IDs not
+	 * associated to a GK instance return -1.
+	 */
+	int                *queue_id_to_instance;
+
 	struct gk_instance *instances;
 	struct net_config  *net;
 	struct sol_config  *sol_conf;

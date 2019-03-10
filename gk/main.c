@@ -1972,6 +1972,7 @@ cleanup_gk(struct gk_config *gk_conf)
 
 	destroy_gk_lpm(&gk_conf->lpm_tbl);
 
+	rte_free(gk_conf->queue_id_to_instance);
 	rte_free(gk_conf->instances);
 	rte_free(gk_conf->lcores);
 	rte_free(gk_conf);
@@ -1996,12 +1997,21 @@ static int
 gk_stage1(void *arg)
 {
 	struct gk_config *gk_conf = arg;
+	int num_rx_queues = gk_conf->net->front.num_rx_queues;
 	int ret, i;
 
 	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
 		sizeof(struct gk_instance), 0);
 	if (gk_conf->instances == NULL)
 		goto cleanup;
+
+	gk_conf->queue_id_to_instance = rte_malloc(__func__,
+		num_rx_queues * sizeof(*gk_conf->queue_id_to_instance), 0);
+	if (gk_conf->queue_id_to_instance == NULL)
+		goto cleanup;
+
+	for(i = 0; i < num_rx_queues; i++)
+		gk_conf->queue_id_to_instance[i] = -1;
 
 	/*
 	 * Set up the GK LPM table. We assume that
@@ -2025,6 +2035,7 @@ gk_stage1(void *arg)
 			goto cleanup;
 		}
 		inst_ptr->rx_queue_front = ret;
+		gk_conf->queue_id_to_instance[ret] = i;
 
 		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_TX, lcore);
 		if (ret < 0) {
@@ -2202,7 +2213,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	uint32_t idx;
 	uint32_t shift;
 	uint16_t queue_id;
-	int i, block_idx = -1;
+	int block_idx;
 
 	/*
 	 * XXX #149 Change the mapping rss hash value to rss reta entry
@@ -2218,13 +2229,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	idx = rss_hash_val / RTE_RETA_GROUP_SIZE;
 	shift = rss_hash_val % RTE_RETA_GROUP_SIZE;
 	queue_id = gk_conf->rss_conf_front.reta_conf[idx].reta[shift];
-
-	/* XXX #150 Change mapping queue id to the GK instance id efficiently. */
-	for (i = 0; i < gk_conf->num_lcores; i++)
-		if (gk_conf->instances[i].rx_queue_front == queue_id) {
-			block_idx = i;
-			break;
-		}
+	block_idx = gk_conf->queue_id_to_instance[queue_id];
 
 	if (block_idx == -1)
 		GK_LOG(ERR, "Wrong RSS configuration for GK blocks\n");
