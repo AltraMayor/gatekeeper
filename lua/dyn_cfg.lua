@@ -8,7 +8,7 @@ return function (gk_conf, gt_conf, numa_table)
 
 	local server_path = "/tmp/dyn_cfg.socket"
 	local lua_dy_base_dir = "./lua"
-	local dynamic_config_file = "dylib.lua"
+	local dynamic_config_file = "gatekeeper/dylib.lua"
 
 	dy_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
 

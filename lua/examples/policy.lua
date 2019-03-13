@@ -1,4 +1,4 @@
-local policylib = require("policylib")
+local policylib = require("gatekeeper/policylib")
 local ffi = require("ffi")
 
 GLOBAL_POLICIES = {}

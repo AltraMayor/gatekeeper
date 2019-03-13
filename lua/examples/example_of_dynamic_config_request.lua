@@ -1,4 +1,4 @@
-require "dylib"
+require "gatekeeper/dylib"
 
 local acc_start = ""
 local reply_msg = ""
