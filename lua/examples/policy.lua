@@ -71,33 +71,33 @@ local simple_policies = {
 GLOBAL_POLICIES["simple_policy"] = simple_policies
 
 -- Function that looks up the simple policy for the packet.
-local function lookup_simple_policy(policies, pkt_info)
+local function lookup_simple_policy(simple_policy, pkt_info)
 
 	local dest_port
-	local ph = ffi.cast("struct gt_packet_headers *", pkt_info)
 
-	if ph.l4_proto == policylib.c.TCP then
-		if ph.upper_len < ffi.sizeof("struct tcp_hdr") then
+	if pkt_info.l4_proto == policylib.c.TCP then
+		if pkt_info.upper_len < ffi.sizeof("struct tcp_hdr") then
 			return malformed
 		end
 
-		local tcphdr = ffi.cast("struct tcp_hdr *", ph.l4_hdr)
+		local tcphdr = ffi.cast("struct tcp_hdr *", pkt_info.l4_hdr)
 		dest_port = tcphdr.dst_port
-	elseif ph.l4_proto == policylib.c.UDP then
-		if ph.upper_len < ffi.sizeof("struct udp_hdr") then
+	elseif pkt_info.l4_proto == policylib.c.UDP then
+		if pkt_info.upper_len < ffi.sizeof("struct udp_hdr") then
 			return malformed
 		end
 
-		local udphdr = ffi.cast("struct udp_hdr *", ph.l4_hdr)
+		local udphdr = ffi.cast("struct udp_hdr *", pkt_info.l4_hdr)
 		dest_port = udphdr.dst_port
-	elseif ph.inner_ip_ver == policylib.c.IPV4 and
-			ph.l4_proto == policylib.c.ICMP then
-		if ph.upper_len < ffi.sizeof("struct icmp_hdr") then
+	elseif pkt_info.inner_ip_ver == policylib.c.IPV4 and
+			pkt_info.l4_proto == policylib.c.ICMP then
+		if pkt_info.upper_len < ffi.sizeof("struct icmp_hdr") then
 			return malformed
 		end
 
-		local ipv4_hdr = ffi.cast("struct ipv4_hdr *", ph.inner_l3_hdr)
-		local icmp_hdr = ffi.cast("struct icmp_hdr *", ph.l4_hdr)
+		local ipv4_hdr = ffi.cast("struct ipv4_hdr *",
+			pkt_info.inner_l3_hdr)
+		local icmp_hdr = ffi.cast("struct icmp_hdr *", pkt_info.l4_hdr)
 		local icmp_type = icmp_hdr.icmp_type
 		local icmp_code = icmp_hdr.icmp_code
 
@@ -110,14 +110,16 @@ local function lookup_simple_policy(policies, pkt_info)
 		end
 
 		return default
-	elseif ph.inner_ip_ver == policylib.c.IPV6 and
-			ph.l4_proto == policylib.c.ICMPV6 then
-		if ph.upper_len < ffi.sizeof("struct icmpv6_hdr") then
+	elseif pkt_info.inner_ip_ver == policylib.c.IPV6 and
+			pkt_info.l4_proto == policylib.c.ICMPV6 then
+		if pkt_info.upper_len < ffi.sizeof("struct icmpv6_hdr") then
 			return malformed
 		end
 
-		local ipv6_hdr = ffi.cast("struct ipv6_hdr *", ph.inner_l3_hdr)
-		local icmpv6_hdr = ffi.cast("struct icmpv6_hdr *", ph.l4_hdr)
+		local ipv6_hdr = ffi.cast("struct ipv6_hdr *",
+			pkt_info.inner_l3_hdr)
+		local icmpv6_hdr = ffi.cast("struct icmpv6_hdr *",
+			pkt_info.l4_hdr)
 		local icmpv6_type = icmpv6_hdr.icmpv6_type
 		local icmpv6_code = icmpv6_hdr.icmpv6_code
 
@@ -134,7 +136,7 @@ local function lookup_simple_policy(policies, pkt_info)
 		return nil
 	end
 
-	for i, v in ipairs(policies[ph.inner_ip_ver]) do
+	for i, v in ipairs(simple_policy[pkt_info.inner_ip_ver]) do
 		for j, g in ipairs(v) do
 			if g["dest_port"] == dest_port then
 				return g["policy_id"]
@@ -146,26 +148,25 @@ local function lookup_simple_policy(policies, pkt_info)
 end
 
 function lookup_policy(pkt_info, policy)
-	local ph = ffi.cast("struct gt_packet_headers *",pkt_info)
-	local pl = ffi.cast("struct ggu_policy *", policy)
 
 	-- Lookup the simple policy.
-	local group = lookup_simple_policy(GLOBAL_POLICIES["simple_policy"], ph)
+	local group = lookup_simple_policy(GLOBAL_POLICIES["simple_policy"],
+		pkt_info)
 	if group == nil then group = default end
 
-	pl.state = group["params"]["action"]
+	policy.state = group["params"]["action"]
 
-	if pl.state == policylib.c.GK_DECLINED then
-		pl.params.declined.expire_sec =
+	if policy.state == policylib.c.GK_DECLINED then
+		policy.params.declined.expire_sec =
 			group["params"]["expire_sec"]
 	else
-		pl.params.granted.tx_rate_kb_sec =
+		policy.params.granted.tx_rate_kb_sec =
 			group["params"]["tx_rate_kb_sec"]
-		pl.params.granted.cap_expire_sec =
+		policy.params.granted.cap_expire_sec =
 			group["params"]["cap_expire_sec"]
-		pl.params.granted.next_renewal_ms =
+		policy.params.granted.next_renewal_ms =
 			group["params"]["next_renewal_ms"]
-		pl.params.granted.renewal_step_ms =
+		policy.params.granted.renewal_step_ms =
 			group["params"]["renewal_step_ms"]
 	end
 end
@@ -180,7 +181,6 @@ is essentially a policy decision stated in the configuration files
 to be applied to these cases. For example, decline the flow for 10 minutes.
 --]]
 function lookup_frag_punish_policy(policy)
-	local pl = ffi.cast("struct ggu_policy *", policy)
-	pl.state = policylib.c.GK_DECLINED
-	pl.params.declined.expire_sec = 600
+	policy.state = policylib.c.GK_DECLINED
+	policy.params.declined.expire_sec = 600
 end

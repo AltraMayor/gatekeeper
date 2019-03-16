@@ -224,10 +224,20 @@ gt_reassemble_incoming_pkt(struct rte_mbuf *pkt,
 	return NULL;
 }
 
+#define CTYPE_STRUCT_GT_PACKET_HEADERS_PTR "struct gt_packet_headers *"
+#define CTYPE_STRUCT_GGU_POLICY_PTR "struct ggu_policy *"
+
 static int
 lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	struct ggu_policy *policy, struct gt_instance *instance)
 {
+	void *gt_pkt_hdr_cdata;
+	void *ggu_policy_cdata;
+	uint32_t correct_ctypeid_gt_packet_headers = luaL_get_ctypeid(
+		instance->lua_state, CTYPE_STRUCT_GT_PACKET_HEADERS_PTR);
+	uint32_t correct_ctypeid_ggu_policy = luaL_get_ctypeid(
+		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
+
 	policy->flow.proto = pkt_info->inner_ip_ver;
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
@@ -249,8 +259,13 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	}
 
 	lua_getglobal(instance->lua_state, "lookup_policy");
-	lua_pushlightuserdata(instance->lua_state, pkt_info);
-	lua_pushlightuserdata(instance->lua_state, policy);
+	gt_pkt_hdr_cdata = luaL_pushcdata(instance->lua_state,
+		correct_ctypeid_gt_packet_headers,
+		sizeof(struct gt_packet_headers *));
+	*(struct gt_packet_headers **)gt_pkt_hdr_cdata = pkt_info;
+	ggu_policy_cdata = luaL_pushcdata(instance->lua_state,
+		correct_ctypeid_ggu_policy, sizeof(struct ggu_policy *));
+	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 2, 0, 0) != 0) {
 		GT_LOG(ERR,
@@ -266,6 +281,10 @@ static int
 lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 	struct ggu_policy *policy, struct gt_instance *instance)
 {
+	void *ggu_policy_cdata;
+	uint32_t correct_ctypeid_ggu_policy = luaL_get_ctypeid(
+		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
+
 	policy->flow.proto = pkt_info->inner_ip_ver;
 	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
 		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
@@ -287,7 +306,9 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 	}
 
 	lua_getglobal(instance->lua_state, "lookup_frag_punish_policy");
-	lua_pushlightuserdata(instance->lua_state, policy);
+	ggu_policy_cdata = luaL_pushcdata(instance->lua_state,
+		correct_ctypeid_ggu_policy, sizeof(struct ggu_policy *));
+	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 1, 0, 0) != 0) {
 		GT_LOG(ERR,
