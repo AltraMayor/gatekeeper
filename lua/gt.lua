@@ -55,7 +55,7 @@ return function (net_conf, lls_conf, numa_table)
 
 	-- Setup the GT functional block.
 	local lua_base_directory = "./lua"
-	local lua_policy_file = "policy.lua"
+	local lua_policy_file = "examples/policy.lua"
 	local ret = gatekeeper.c.run_gt(net_conf, gt_conf,
 		lua_base_directory, lua_policy_file)
 	if ret < 0 then
