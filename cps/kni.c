@@ -21,6 +21,7 @@
 #include <libmnl/libmnl.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <stdbool.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -1111,6 +1112,80 @@ out:
 	return MNL_CB_OK;
 }
 
+static void
+rd_fill_getlink_reply(const struct cps_config *cps_conf,
+	struct mnl_nlmsg_batch *batch,
+	const char *kni_name, unsigned int kni_index, unsigned int kni_mtu,
+	uint32_t seq)
+{
+	struct nlmsghdr *reply;
+	struct ifinfomsg *ifim;
+
+	reply = mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+	reply->nlmsg_type = RTM_NEWLINK;
+	reply->nlmsg_flags = NLM_F_MULTI;
+	reply->nlmsg_seq = seq;
+	reply->nlmsg_pid = cps_conf->nl_pid;
+
+	ifim = mnl_nlmsg_put_extra_header(reply, sizeof(*ifim));
+	ifim->ifi_family = AF_UNSPEC;
+	ifim->ifi_type = ARPHRD_ETHER;
+	ifim->ifi_index = kni_index;
+	ifim->ifi_flags = 0;
+	ifim->ifi_change = 0xFFFFFFFF;
+
+	mnl_attr_put_str(reply, IFLA_IFNAME, kni_name);
+	mnl_attr_put_u32(reply, IFLA_MTU, kni_mtu);
+}
+
+static int
+rd_getlink(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
+{
+	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
+	struct mnl_nlmsg_batch *batch;
+
+	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
+	if (batch == NULL) {
+		CPS_LOG(ERR, "Failed to allocate a batch for a GETLINK reply\n");
+		*err = -ENOMEM;
+		goto out;
+	}
+
+	rd_fill_getlink_reply(cps_conf, batch,
+		rte_kni_get_name(cps_conf->front_kni),
+		cps_conf->front_kni_index, kni_mtu(&cps_conf->net->front),
+		req->nlmsg_seq);
+	if (!mnl_nlmsg_batch_next(batch)) {
+		/* Send whatever was in the batch, if anything. */
+		*err = rd_send_batch(cps_conf, batch, "LINK",
+			req->nlmsg_seq, req->nlmsg_pid, false);
+		if (*err < 0)
+			goto free_batch;
+	}
+
+	if (cps_conf->net->back_iface_enabled) {
+		rd_fill_getlink_reply(cps_conf, batch,
+			rte_kni_get_name(cps_conf->back_kni),
+			cps_conf->back_kni_index,
+			kni_mtu(&cps_conf->net->back), req->nlmsg_seq);
+		if (!mnl_nlmsg_batch_next(batch)) {
+			*err = rd_send_batch(cps_conf, batch, "LINK",
+				req->nlmsg_seq, req->nlmsg_pid, false);
+			if (*err < 0)
+				goto free_batch;
+		}
+	}
+
+	*err = rd_send_batch(cps_conf, batch, "LINK",
+		req->nlmsg_seq, req->nlmsg_pid, true);
+
+free_batch:
+	mnl_nlmsg_batch_stop(batch);
+out:
+	return MNL_CB_OK;
+}
+
 static int
 rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
@@ -1207,6 +1282,9 @@ rd_cb(const struct nlmsghdr *req, void *arg)
 		break;
 	case RTM_GETROUTE:
 		ret = rd_getroute(req, cps_conf, &err);
+		break;
+	case RTM_GETLINK:
+		ret = rd_getlink(req, cps_conf, &err);
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
