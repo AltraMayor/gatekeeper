@@ -1261,6 +1261,145 @@ out:
 	return MNL_CB_OK;
 }
 
+static void
+rd_fill_getaddr_reply(const struct cps_config *cps_conf,
+	struct mnl_nlmsg_batch *batch, struct gatekeeper_if *iface,
+	uint8_t family, unsigned int kni_index, uint32_t seq)
+{
+	struct nlmsghdr *reply;
+	struct ifaddrmsg *ifam;
+
+	reply = mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+	reply->nlmsg_type = RTM_NEWADDR;
+	reply->nlmsg_flags = NLM_F_MULTI;
+	reply->nlmsg_seq = seq;
+	reply->nlmsg_pid = cps_conf->nl_pid;
+
+	ifam = mnl_nlmsg_put_extra_header(reply, sizeof(*ifam));
+	ifam->ifa_family = family;
+	ifam->ifa_flags = IFA_F_PERMANENT;
+	ifam->ifa_scope = RT_SCOPE_UNIVERSE;
+	ifam->ifa_index = kni_index;
+
+	/*
+	 * The exact meaning of IFA_LOCAL and IFA_ADDRESS depend
+	 * on the address family being used and the device type.
+	 * For broadcast devices (like the interfaces we use),
+	 * for IPv4 we specify both and they are used interchangeably.
+	 * For IPv6, only IFA_ADDRESS needs to be set.
+	 */
+
+	if (family == AF_INET) {
+		mnl_attr_put_u32(reply, IFA_LOCAL, iface->ip4_addr.s_addr);
+		mnl_attr_put_u32(reply, IFA_ADDRESS, iface->ip4_addr.s_addr);
+		ifam->ifa_prefixlen = iface->ip4_addr_plen;
+	} else if (likely(family == AF_INET6)) {
+		mnl_attr_put(reply, IFA_ADDRESS,
+			sizeof(iface->ip6_addr), &iface->ip6_addr);
+		ifam->ifa_prefixlen = iface->ip6_addr_plen;
+	} else {
+		rte_panic("Invalid address family (%hhu) in request while being processed by CPS block in %s\n",
+			family, __func__);
+	}
+}
+
+static int
+rd_getaddr_iface(const struct cps_config *cps_conf,
+	struct mnl_nlmsg_batch *batch, struct gatekeeper_if *iface,
+	uint8_t family, unsigned int kni_index, uint32_t seq, uint32_t pid)
+{
+	int ret = 0;
+
+	if ((family == AF_INET || family == AF_UNSPEC)
+			&& ipv4_if_configured(iface)) {
+		rd_fill_getaddr_reply(cps_conf, batch, iface,
+			AF_INET, kni_index, seq);
+		if (!mnl_nlmsg_batch_next(batch)) {
+			/* Send whatever was in the batch, if anything. */
+			ret = rd_send_batch(cps_conf, batch, "IPv4",
+				seq, pid, false);
+			if (ret < 0)
+				return ret;
+		}
+	}
+
+	if ((family == AF_INET6 || family == AF_UNSPEC)
+			&& ipv6_if_configured(iface)) {
+		rd_fill_getaddr_reply(cps_conf, batch, iface,
+			AF_INET6, kni_index, seq);
+		if (!mnl_nlmsg_batch_next(batch)) {
+			/* Send whatever was in the batch, if anything. */
+			ret = rd_send_batch(cps_conf, batch, "IPv6",
+				seq, pid, false);
+			if (ret < 0)
+				return ret;
+		}
+	}
+
+	return ret;
+}
+
+static int
+rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
+{
+	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
+	struct mnl_nlmsg_batch *batch;
+	struct net_config *net_conf = cps_conf->net;
+	int family;
+	const char *family_str;
+
+	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
+		CPS_LOG(ERR, "Not enough room in CPS GETADDR message from routing daemon in %s\n",
+			__func__);
+		*err = -EINVAL;
+		goto out;
+	}
+
+	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
+
+	if (family != AF_INET && family != AF_INET6 && family != AF_UNSPEC) {
+		CPS_LOG(ERR, "Unsupported address family type (%hhu) in %s\n",
+			family, __func__);
+		*err = -EAFNOSUPPORT;
+		goto out;
+	}
+
+	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
+	if (batch == NULL) {
+		CPS_LOG(ERR, "Failed to allocate a batch for a GETADDR reply\n");
+		*err = -ENOMEM;
+		goto out;
+	}
+
+	*err = rd_getaddr_iface(cps_conf, batch, &net_conf->front, family,
+		cps_conf->front_kni_index, req->nlmsg_seq, req->nlmsg_pid);
+	if (*err < 0)
+		goto free_batch;
+
+	if (net_conf->back_iface_enabled) {
+		*err = rd_getaddr_iface(cps_conf, batch, &net_conf->back,
+			family, cps_conf->back_kni_index,
+			req->nlmsg_seq, req->nlmsg_pid);
+		if (*err < 0)
+			goto free_batch;
+	}
+
+	if (family == AF_INET)
+		family_str = "IPv4";
+	else if (family == AF_INET6)
+		family_str = "IPv6";
+	else
+		family_str = "IPv4/IPv6";
+	*err = rd_send_batch(cps_conf, batch, family_str,
+		req->nlmsg_seq, req->nlmsg_pid, true);
+
+free_batch:
+	mnl_nlmsg_batch_stop(batch);
+out:
+	return MNL_CB_OK;
+}
+
 static int
 rd_cb(const struct nlmsghdr *req, void *arg)
 {
@@ -1285,6 +1424,9 @@ rd_cb(const struct nlmsghdr *req, void *arg)
 		break;
 	case RTM_GETLINK:
 		ret = rd_getlink(req, cps_conf, &err);
+		break;
+	case RTM_GETADDR:
+		ret = rd_getaddr(req, cps_conf, &err);
 		break;
 	default:
 		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
