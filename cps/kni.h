@@ -35,6 +35,18 @@ struct nd_request {
 	int              stale;
 };
 
+static inline uint16_t
+kni_mtu(struct gatekeeper_if *iface)
+{
+	/*
+	 * If the physical interface has a VLAN ID, we need
+	 * to account for that in the MTU of the KNI.
+	 */
+	return iface->vlan_insert
+		? iface->mtu - sizeof(struct vlan_hdr)
+		: iface->mtu;
+}
+
 int kni_disable_change_mtu(uint16_t port_id, unsigned int new_mtu);
 int kni_change_if(uint16_t port_id, uint8_t if_up);
 int kni_disable_change_mac_address(uint16_t port_id, uint8_t *mac_addr);

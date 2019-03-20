@@ -675,6 +675,7 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
 	strcpy(conf.name, kni_name);
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
+	conf.mtu = kni_mtu(iface);
 
 	/* If the interface is bonded, take PCI info from the primary slave. */
 	if (iface->num_ports > 1 || iface->bonding_mode == BONDING_MODE_8023AD)

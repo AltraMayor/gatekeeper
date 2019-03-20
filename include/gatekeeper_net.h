@@ -153,10 +153,6 @@ struct gatekeeper_if {
 	 * in Gatekeeper. By default, the mbuf segment size and MTU are
 	 * both set to 2048.
 	 *
-	 * The KNI device type only supports an MTU up to 1500 bytes, so
-	 * any control plane packets that are above MTU will be dropped at
-	 * Gatekeeper.
-	 *
 	 * Gatekeeper servers do not fragment packets on the back interface.
 	 * If the back network does not support frame sizes sent by Gatekeeper,
 	 * the packet will be dropped. For example, if Gatekeeper receives
