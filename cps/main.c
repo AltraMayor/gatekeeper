@@ -704,7 +704,7 @@ nodev:
 
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
-	ops.change_mtu = kni_change_mtu;
+	ops.change_mtu = kni_disable_change_mtu;
 	ops.config_network_if = kni_change_if;
 	ops.config_mac_address = kni_disable_change_mac_address;
 

@@ -102,14 +102,17 @@ kni_change_if(uint16_t port_id, uint8_t if_up)
 }
 
 int
-kni_change_mtu(uint16_t port_id, unsigned int new_mtu)
+kni_disable_change_mtu(__attribute__((unused)) uint16_t port_id,
+__attribute__((unused)) unsigned int new_mtu)
 {
-	if (unlikely((new_mtu < ETHER_MIN_MTU) ||
-			(new_mtu > ETHER_MAX_JUMBO_FRAME_LEN -
-				(ETHER_HDR_LEN + ETHER_CRC_LEN))))
-		return -EINVAL;
-
-	return rte_eth_dev_set_mtu(port_id, new_mtu);
+	/*
+	 * Gatekeeper does not support changing the MTU of its NICs.
+	 * The MTU is set for both physical interfaces and the KNIs,
+	 * and Gatekeeper performs encapsulation. Changing the MTU
+	 * could have side effects on these features that are not
+	 * yet fully considered so we disable MTU changes.
+	 */
+	return -ENOTSUP;
 }
 
 int

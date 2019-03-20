@@ -35,7 +35,7 @@ struct nd_request {
 	int              stale;
 };
 
-int kni_change_mtu(uint16_t port_id, unsigned int new_mtu);
+int kni_disable_change_mtu(uint16_t port_id, unsigned int new_mtu);
 int kni_change_if(uint16_t port_id, uint8_t if_up);
 int kni_disable_change_mac_address(uint16_t port_id, uint8_t *mac_addr);
 int kni_config_ip_addrs(struct rte_kni *kni, unsigned int kni_index,
