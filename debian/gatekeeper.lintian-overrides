@@ -1,0 +1,4 @@
+gatekeeper: binary-without-manpage usr/sbin/gatekeeper
+gatekeeper: binary-without-manpage usr/sbin/gkctl
+gatekeeper: missing-dependency-on-libc needed by usr/sbin/gatekeeper and 1 others
+gatekeeper: binary-without-manpage usr/sbin/generate_if_map

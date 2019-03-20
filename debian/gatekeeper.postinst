@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    if ! getent passwd gatekeeper > /dev/null; then
+        adduser --quiet --system --group --no-create-home --home /run/gatekeeper gatekeeper
+    fi
+
+    generate_if_map /etc/gatekeeper/if_map.lua
+
+    dpkg-statoverride --list /usr/share/gatekeeper/devbind.sh > /dev/null || \
+      dpkg-statoverride --update --add root root 0755 /usr/share/gatekeeper/devbind.sh
+
+    dpkg-statoverride --list /var/log/gatekeeper > /dev/null || \
+      dpkg-statoverride --update --add gatekeeper gatekeeper 0750 /var/log/gatekeeper
+
+    dpkg-statoverride --list /etc/gatekeeper > /dev/null || \
+      dpkg-statoverride --update --add root gatekeeper 0750 /etc/gatekeeper
+
+    chown root:gatekeeper /etc/gatekeeper/*.lua
+    chmod 640 /etc/gatekeeper/*.lua
+fi
+
+#DEBHELPER#
+
+exit 0

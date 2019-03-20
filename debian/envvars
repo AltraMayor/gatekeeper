@@ -1,0 +1,3 @@
+DPDK_ARGS=""
+GATEKEEPER_ARGS="--lua-base-dir /etc/gatekeeper --log-base-dir /var/log/gatekeeper"
+GATEKEEPER_INTERFACES=""

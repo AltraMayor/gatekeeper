@@ -1,0 +1,6 @@
+etc/gatekeeper
+usr/sbin
+usr/share/doc/gatekeeper/examples
+usr/share/gatekeeper
+usr/share/lua/5.1/gatekeeper
+var/log/gatekeeper

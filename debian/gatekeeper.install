@@ -1,0 +1,10 @@
+lua/*.lua etc/gatekeeper/
+lua/gatekeeper/*.lua usr/share/lua/5.1/gatekeeper/
+lua/examples/*.lua usr/share/doc/gatekeeper/examples
+
+build/gatekeeper usr/sbin/
+generate_if_map usr/sbin/
+gkctl/gkctl usr/sbin/
+
+debian/devbind.sh usr/share/gatekeeper/
+debian/envvars etc/gatekeeper/

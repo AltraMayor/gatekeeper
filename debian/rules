@@ -1,0 +1,58 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
+
+CFLAGS  += -g -O2 -fno-strict-aliasing -fno-strict-overflow -fPIC
+LDFLAGS += -g -O2 -fno-strict-aliasing -fno-strict-overflow -fPIC -Wl,-z,defs -Wl,--as-needed
+
+RTE_SDK    = $(shell pwd)/dependencies/dpdk
+RTE_TARGET = x86_64-native-linuxapp-gcc
+LUA_PATH = $(shell pwd)/dependencies/luajit-2.0/src
+
+%:
+	dh $@ --with systemd
+
+override_dh_auto_configure:
+
+override_dh_auto_build: build_luajit build_dpdk build_gatekeeper
+
+build_luajit:
+	cd dependencies/luajit-2.0; \
+		make PREFIX=/usr CFLAGS="$(CFLAGS)"
+	cp "$(LUA_PATH)/libluajit.a" "$(LUA_PATH)/libluajit-5.1.a"
+
+build_dpdk:
+	cd dependencies/dpdk;            \
+		make config T="$(RTE_TARGET)"; \
+		RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make
+
+build_gatekeeper: build_luajit build_dpdk
+	gcc -Wall -o generate_if_map generate_if_map.c
+	cd gkctl; gcc -Wall -Wextra -pedantic -o gkctl main.c
+	ln -s "$(RTE_SDK)/build" "$(RTE_SDK)/$(RTE_TARGET)"
+	RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)"     \
+		EXTRA_CFLAGS="-I$(LUA_PATH)" LDIR="-L$(LUA_PATH)" \
+		make
+
+override_dh_clean: clean_luajit clean_dpdk clean_gatekeeper
+	dh_clean
+
+clean_luajit:
+	cd dependencies/luajit-2.0; \
+		make clean
+
+clean_dpdk:
+	if [ -f "$(RTE_SDK)/build/.config" ]; then \
+		cd dependencies/dpdk && make clean;      \
+	fi
+
+clean_gatekeeper:
+	RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make clean; true
+
+override_dh_auto_install:
+
+override_dh_auto_clean:
+
+override_dh_auto_test:
