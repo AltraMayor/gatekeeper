@@ -906,16 +906,12 @@ rd_fill_getroute_reply(struct cps_config *cps_conf, struct nlmsghdr *reply,
 }
 
 static int
-rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
+rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 	const char *daemon, uint32_t seq, uint32_t pid, int done)
 {
 	/* Address of routing daemon. */
 	struct sockaddr_nl rd_sa;
 	int ret = 0;
-
-	memset(&rd_sa, 0, sizeof(rd_sa));
-	rd_sa.nl_family = AF_NETLINK;
-	rd_sa.nl_pid = pid;
 
 	if (done) {
 		struct nlmsghdr *done =
@@ -924,7 +920,19 @@ rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 		done->nlmsg_flags = NLM_F_MULTI;
 		done->nlmsg_seq = seq;
 		done->nlmsg_pid = cps_conf->nl_pid;
+		if (!mnl_nlmsg_batch_next(batch)) {
+			/* Send the *full* batch without the DONE message. */
+			ret = rd_send_batch(cps_conf, batch,
+				daemon, seq, pid, false);
+			if (ret < 0)
+				return ret;
+			/* Go on to send the DONE message. */
+		}
 	}
+
+	memset(&rd_sa, 0, sizeof(rd_sa));
+	rd_sa.nl_family = AF_NETLINK;
+	rd_sa.nl_pid = pid;
 
 	if (sendto(mnl_socket_get_fd(cps_conf->rd_nl),
 			mnl_nlmsg_batch_head(batch),
