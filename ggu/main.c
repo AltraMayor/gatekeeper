@@ -487,7 +487,7 @@ ggu_proc(void *arg)
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	unsigned int i;
-	uint16_t ggu_max_pkt_burst = ggu_conf->ggu_max_pkt_burst;
+	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
 	GGU_LOG(NOTICE, "The GK-GT unit is running at lcore = %u\n", lcore);
 
@@ -497,9 +497,9 @@ ggu_proc(void *arg)
 	 */
 	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
 		while (likely(!exiting)) {
-			struct rte_mbuf *bufs[ggu_max_pkt_burst];
+			struct rte_mbuf *bufs[max_pkt_burst];
 			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
-				bufs, ggu_max_pkt_burst);
+				bufs, max_pkt_burst);
 
 			if (unlikely(num_rx == 0))
 				continue;
@@ -701,7 +701,7 @@ run_ggu(struct net_config *net_conf,
 		ggu_conf->log_ratelimit_interval_ms,
 		ggu_conf->log_ratelimit_burst);
 
-	back_inc = ggu_conf->ggu_max_pkt_burst;
+	back_inc = ggu_conf->max_pkt_burst;
 	net_conf->back.total_pkt_burst += back_inc;
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_stage1, ggu_conf);

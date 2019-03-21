@@ -13,7 +13,7 @@ return function (net_conf, gk_conf, lcore)
 	local mailbox_burst_size = 32
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
-	local ggu_max_pkt_burst = 32
+	local max_pkt_burst = 32
 
 	-- These variables are unlikely to need to be changed.
 	local ggu_src_port = 0xA0A0
@@ -37,7 +37,7 @@ return function (net_conf, gk_conf, lcore)
 	ggu_conf.mailbox_burst_size = mailbox_burst_size
 	ggu_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	ggu_conf.log_ratelimit_burst = log_ratelimit_burst
-	ggu_conf.ggu_max_pkt_burst = ggu_max_pkt_burst
+	ggu_conf.max_pkt_burst = max_pkt_burst
 
 	ggu_conf.ggu_src_port = ggu_src_port
 	ggu_conf.ggu_dst_port = ggu_dst_port
