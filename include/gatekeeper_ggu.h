@@ -34,7 +34,7 @@ struct ggu_config {
 	uint16_t          ggu_dst_port;
 
 	/* The maximum number of packets to retrieve/transmit. */
-	uint16_t          ggu_max_pkt_burst;
+	uint16_t          max_pkt_burst;
 
 	/* Parameters to setup the mailbox instance. */
 	unsigned int      mailbox_max_entries_exp;
