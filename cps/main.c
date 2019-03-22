@@ -675,6 +675,7 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
 	strcpy(conf.name, kni_name);
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
+	conf.mtu = kni_mtu(iface);
 
 	/* If the interface is bonded, take PCI info from the primary slave. */
 	if (iface->num_ports > 1 || iface->bonding_mode == BONDING_MODE_8023AD)
@@ -704,7 +705,7 @@ nodev:
 
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
-	ops.change_mtu = kni_change_mtu;
+	ops.change_mtu = kni_disable_change_mtu;
 	ops.config_network_if = kni_change_if;
 	ops.config_mac_address = kni_disable_change_mac_address;
 
