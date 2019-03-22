@@ -1266,7 +1266,8 @@ put_ether_cache:
 }
 
 static struct gk_fib *
-init_drop_fib_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
+init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
+	struct gk_config *gk_conf)
 {
 	int ret;
 	struct gk_fib *ip_prefix_fib;
@@ -1286,6 +1287,7 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 			ip_prefix->addr.proto, __func__);
 
 	ip_prefix_fib->action = GK_DROP;
+	ip_prefix_fib->u.drop.rt_proto = rt_proto;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0) {
@@ -1339,7 +1341,8 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 		if (gt_addr != NULL || gw_addr != NULL)
 			return -1;
 
-		ip_prefix_fib = init_drop_fib_locked(prefix, gk_conf);
+		ip_prefix_fib = init_drop_fib_locked(
+			prefix, rt_proto, gk_conf);
 		if (ip_prefix_fib == NULL)
 			return -1;
 

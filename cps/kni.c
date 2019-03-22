@@ -873,33 +873,42 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 	rm->rtm_tos = 0;
 	rm->rtm_table = RT_TABLE_MAIN;
 	rm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rm->rtm_type = RTN_UNICAST;
 	rm->rtm_flags = 0;
 
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.grantor.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
 		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_BACK_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = NULL;
 		break;
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
+		*gw_addr = NULL;
+		break;
+	case GK_DROP:
+		rm->rtm_protocol = fib->u.drop.rt_proto;
+		rm->rtm_type = RTN_BLACKHOLE;
 		*gw_addr = NULL;
 		break;
 	default:
