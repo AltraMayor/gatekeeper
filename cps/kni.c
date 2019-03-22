@@ -444,7 +444,7 @@ inet6_print(const char *msg, struct in6_addr *in6)
 }
 
 static int
-new_route(struct route_update *update, struct cps_config *cps_conf)
+new_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	int ret;
 	uint16_t proto;
@@ -534,7 +534,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 }
 
 static int
-del_route(struct route_update *update, struct cps_config *cps_conf)
+del_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	int ret;
 	char ip_buf[INET6_ADDRSTRLEN];
@@ -855,8 +855,8 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 }
 
 static void
-rd_fill_getroute_reply(struct cps_config *cps_conf, struct nlmsghdr *reply,
-	struct gk_fib *fib, int family, uint32_t seq,
+rd_fill_getroute_reply(const struct cps_config *cps_conf,
+	struct nlmsghdr *reply, struct gk_fib *fib, int family, uint32_t seq,
 	uint8_t prefix_len, struct ipaddr **gw_addr)
 {
 	struct rtmsg *rm;
@@ -953,7 +953,7 @@ rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 }
 
 static int
-rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
 {
 	struct rte_lpm_iterator_state state;
@@ -1000,7 +1000,7 @@ rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 }
 
 static int
-rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
 {
 	struct rte_lpm6_iterator_state state6;
@@ -1048,7 +1048,8 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 }
 
 static int
-rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
+rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
 {
 	/*
 	 * Buffer length set according to libmnl documentation:
@@ -1202,7 +1203,8 @@ out:
 }
 
 static int
-rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
+rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
 	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
