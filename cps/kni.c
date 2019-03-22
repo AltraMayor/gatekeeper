@@ -980,12 +980,11 @@ rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		/* Add address. */
 		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
 
-		/*
-		 * If gateway is NULL, then the entry is for a
-		 * neighbor and the gateway should be 0.0.0.0.
-		 */
-		mnl_attr_put_u32(reply, RTA_GATEWAY,
-			gw_addr == NULL ? 0 : gw_addr->ip.v4.s_addr);
+		/* Only report gateway for main routes. */
+		if (gw_addr != NULL) {
+			mnl_attr_put_u32(reply, RTA_GATEWAY,
+				gw_addr->ip.v4.s_addr);
+		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
 			ret = rd_send_batch(cps_conf, batch, "IPv4",
@@ -1017,7 +1016,6 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 
 	index = rte_lpm6_rule_iterate(&state6, &re6);
 	while (index >= 0) {
-		const struct in6_addr neighbor_gw = { 0 };
 		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
 		struct ipaddr *gw_addr;
 		struct nlmsghdr *reply =
@@ -1030,12 +1028,11 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		mnl_attr_put(reply, RTA_DST,
 			sizeof(struct in6_addr), re6.ip);
 
-		/*
-		 * If gateway is NULL, then the entry is for a
-		 * neighbor and the gateway should be ::.
-		 */
-		mnl_attr_put(reply, RTA_GATEWAY, sizeof(struct in6_addr),
-			gw_addr == NULL ? &neighbor_gw : &gw_addr->ip.v6);
+		/* Only report gateway for main routes. */
+		if (gw_addr != NULL) {
+			mnl_attr_put(reply, RTA_GATEWAY,
+				sizeof(struct in6_addr), &gw_addr->ip.v6);
+		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
 			ret = rd_send_batch(cps_conf, batch, "IPv6",
