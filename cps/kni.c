@@ -1072,13 +1072,15 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
 
-	/* We don't support AF_UNSPEC to dump both tables at once. */
 	switch (family) {
 	case AF_INET:
 		family_str = "IPv4";
 		break;
 	case AF_INET6:
 		family_str = "IPv6";
+		break;
+	case AF_UNSPEC:
+		family_str = "IPV4/IPv6";
 		break;
 	case AF_MPLS:
 		family_str = "MPLS";
@@ -1097,14 +1099,16 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		goto out;
 	}
 
-	if (family == AF_INET) {
+	if (family == AF_INET || family == AF_UNSPEC) {
 		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
 			batch, req, family);
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		if (*err < 0)
 			goto free_batch;
-	} else if (family == AF_INET6) {
+	}
+
+	if (family == AF_INET6 || family == AF_UNSPEC) {
 		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
 			batch, req, family);
