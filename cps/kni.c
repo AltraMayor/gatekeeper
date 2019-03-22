@@ -1060,6 +1060,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
 	struct mnl_nlmsg_batch *batch;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	const char *family_str;
 	int family;
 
 	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
@@ -1072,7 +1073,17 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
 
 	/* We don't support AF_UNSPEC to dump both tables at once. */
-	if (family != AF_INET && family != AF_INET6) {
+	switch (family) {
+	case AF_INET:
+		family_str = "IPv4";
+		break;
+	case AF_INET6:
+		family_str = "IPv6";
+		break;
+	case AF_MPLS:
+		family_str = "MPLS";
+		break;
+	default:
 		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
@@ -1086,21 +1097,24 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		goto out;
 	}
 
-	rte_spinlock_lock_tm(&ltbl->lock);
 	if (family == AF_INET) {
+		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
 			batch, req, family);
-	} else {
+		rte_spinlock_unlock_tm(&ltbl->lock);
+		if (*err < 0)
+			goto free_batch;
+	} else if (family == AF_INET6) {
+		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
 			batch, req, family);
+		rte_spinlock_unlock_tm(&ltbl->lock);
+		if (*err < 0)
+			goto free_batch;
 	}
-	rte_spinlock_unlock_tm(&ltbl->lock);
-	if (*err < 0)
-		goto free_batch;
 
 	/* In the case of no entries, the only message sent is NLMSG_DONE. */
-	*err = rd_send_batch(cps_conf, batch,
-		family == AF_INET ? "IPv4" : "IPv6",
+	*err = rd_send_batch(cps_conf, batch, family_str,
 		req->nlmsg_seq, req->nlmsg_pid, true);
 
 free_batch:
