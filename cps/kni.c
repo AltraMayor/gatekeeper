@@ -1373,8 +1373,18 @@ rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 
 	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
 
-	if (family != AF_INET && family != AF_INET6 && family != AF_UNSPEC) {
-		CPS_LOG(ERR, "Unsupported address family type (%hhu) in %s\n",
+	switch (family) {
+	case AF_INET:
+		family_str = "IPv4";
+		break;
+	case AF_INET6:
+		family_str = "IPv6";
+		break;
+	case AF_UNSPEC:
+		family_str = "IPV4/IPv6";
+		break;
+	default:
+		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
 		goto out;
@@ -1400,12 +1410,6 @@ rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 			goto free_batch;
 	}
 
-	if (family == AF_INET)
-		family_str = "IPv4";
-	else if (family == AF_INET6)
-		family_str = "IPv6";
-	else
-		family_str = "IPv4/IPv6";
 	*err = rd_send_batch(cps_conf, batch, family_str,
 		req->nlmsg_seq, req->nlmsg_pid, true);
 
