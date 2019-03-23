@@ -453,7 +453,6 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	uint16_t proto;
 	char ip_buf[INET6_ADDRSTRLEN];
 	char ipp_buf[INET6_ADDRSTRLEN + 4];
-	int gw_fib_id;
 	struct ip_prefix prefix_info;
 	struct ipaddr gw_addr;
 	struct gk_fib *gw_fib = NULL;
@@ -463,16 +462,16 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		proto = ETHER_TYPE_IPv4;
 
 		if (update->rt_type != RTN_BLACKHOLE) {
-			gw_fib_id = lpm_lookup_ipv4(ltbl->lpm,
+			ret = lpm_lookup_ipv4(ltbl->lpm,
 				update->gw.v4.s_addr);
-			if (gw_fib_id < 0)
-				return -1;
-			gw_fib = &ltbl->fib_tbl[gw_fib_id];
+			if (ret < 0)
+				return ret;
+			gw_fib = &ltbl->fib_tbl[ret];
 		}
 
 		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -481,16 +480,16 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		proto = ETHER_TYPE_IPv6;
 
 		if (update->rt_type != RTN_BLACKHOLE) {
-			gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6,
+			ret = lpm_lookup_ipv6(ltbl->lpm6,
 				update->gw.v6.s6_addr);
-			if (gw_fib_id < 0)
-				return -1;
-			gw_fib = &ltbl->fib_tbl6[gw_fib_id];
+			if (ret < 0)
+				return ret;
+			gw_fib = &ltbl->fib_tbl6[ret];
 		}
 
 		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -499,7 +498,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		CPS_LOG(WARNING,
 			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
-		return -1;
+		return -EAFNOSUPPORT;
 	}
 
 	prefix_info.str = ipp_buf;
@@ -524,7 +523,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
 					prefix_info.str);
-				return -1;
+				return -EINVAL;
 			}
 		}
 
@@ -539,7 +538,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
 					prefix_info.str);
-				return -1;
+				return -EINVAL;
 			}
 		}
 
@@ -548,7 +547,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			cps_conf->gk);
 	}
 
-	return -1;
+	return -EINVAL;
 }
 
 static int
@@ -563,7 +562,7 @@ del_route(struct route_update *update, const struct cps_config *cps_conf)
 	if (update->family == AF_INET) {
 		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -575,7 +574,7 @@ del_route(struct route_update *update, const struct cps_config *cps_conf)
 	} else if (likely(update->family == AF_INET6)) {
 		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -588,7 +587,7 @@ del_route(struct route_update *update, const struct cps_config *cps_conf)
 		CPS_LOG(WARNING,
 			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
-		return -1;
+		return -EAFNOSUPPORT;
 	}
 
 	prefix_info.str = ipp_buf;
