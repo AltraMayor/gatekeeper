@@ -44,6 +44,7 @@
 #include "gatekeeper_launch.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
+#include "lua_lpm.h"
 #include "luajit-ffi-cdata.h"
 
 int gt_logtype;
@@ -1553,6 +1554,7 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf)
 	}
 
 	luaL_openlibs(lua_state);
+	lualpm_openlib(lua_state);
 	set_lua_path(lua_state, gt_conf->lua_base_directory);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
