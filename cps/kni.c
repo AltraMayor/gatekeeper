@@ -1253,7 +1253,7 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		req->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
 		rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
 		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
-		rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
+		rm->rtm_scope, rm->rtm_type, rm->rtm_flags);
 
 	memset(&update, 0, sizeof(update));
 	update.valid = false;
