@@ -1129,6 +1129,15 @@ rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 	}
 
 	if (family == AF_INET || family == AF_UNSPEC) {
+		if (!ipv4_configured(cps_conf->net)) {
+			if (family == AF_UNSPEC)
+				goto ipv6;
+			else {
+				*err = -EAFNOSUPPORT;
+				goto free_batch;
+			}
+		}
+
 		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
 			batch, req, family);
@@ -1136,8 +1145,17 @@ rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		if (*err < 0)
 			goto free_batch;
 	}
-
+ipv6:
 	if (family == AF_INET6 || family == AF_UNSPEC) {
+		if (!ipv6_configured(cps_conf->net)) {
+			if (family == AF_UNSPEC)
+				goto send;
+			else {
+				*err = -EAFNOSUPPORT;
+				goto free_batch;
+			}
+		}
+
 		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
 			batch, req, family);
@@ -1145,7 +1163,7 @@ rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		if (*err < 0)
 			goto free_batch;
 	}
-
+send:
 	/* In the case of no entries, the only message sent is NLMSG_DONE. */
 	*err = rd_send_batch(cps_conf, batch, family_str,
 		req->nlmsg_seq, req->nlmsg_pid, true);
@@ -1272,14 +1290,22 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 	/* Route type. */
 	update.rt_type = rm->rtm_type;
 
-	switch(rm->rtm_family) {
+	switch (rm->rtm_family) {
 	case AF_INET:
+		if (!ipv4_configured(cps_conf->net)) {
+			*err = -EAFNOSUPPORT;
+			goto out;
+		}
 		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
 		*err = attr_get(&update, rm->rtm_family, tb);
 		if (*err)
 			goto out;
 		break;
 	case AF_INET6:
+		if (!ipv6_configured(cps_conf->net)) {
+			*err = -EAFNOSUPPORT;
+			goto out;
+		}
 		mnl_attr_parse(req, sizeof(*rm), data_ipv6_attr_cb, tb);
 		*err = attr_get(&update, rm->rtm_family, tb);
 		if (*err)
