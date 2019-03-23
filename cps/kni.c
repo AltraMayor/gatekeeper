@@ -64,6 +64,9 @@ struct route_update {
 	/* Route origin. See field rtm_protocol of struct rtmsg. */
 	uint8_t  rt_proto;
 
+	/* Route type. See field rtm_type of struct rtmsg. */
+	uint8_t  rt_type;
+
 	/* Output interface index of route. */
 	uint32_t oif_index;
 
@@ -453,15 +456,19 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	int gw_fib_id;
 	struct ip_prefix prefix_info;
 	struct ipaddr gw_addr;
-	struct gk_fib *gw_fib;
+	struct gk_fib *gw_fib = NULL;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 
 	if (update->family == AF_INET) {
 		proto = ETHER_TYPE_IPv4;
-		gw_fib_id = lpm_lookup_ipv4(ltbl->lpm, update->gw.v4.s_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl[gw_fib_id];
+
+		if (update->rt_type != RTN_BLACKHOLE) {
+			gw_fib_id = lpm_lookup_ipv4(ltbl->lpm,
+				update->gw.v4.s_addr);
+			if (gw_fib_id < 0)
+				return -1;
+			gw_fib = &ltbl->fib_tbl[gw_fib_id];
+		}
 
 		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
@@ -472,10 +479,14 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 	} else if (likely(update->family == AF_INET6)) {
 		proto = ETHER_TYPE_IPv6;
-		gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6, update->gw.v6.s6_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl6[gw_fib_id];
+
+		if (update->rt_type != RTN_BLACKHOLE) {
+			gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6,
+				update->gw.v6.s6_addr);
+			if (gw_fib_id < 0)
+				return -1;
+			gw_fib = &ltbl->fib_tbl6[gw_fib_id];
+		}
 
 		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
@@ -497,8 +508,15 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		sizeof(prefix_info.addr.ip));
 	prefix_info.len = update->prefix_len;
 
+	if (update->rt_type == RTN_BLACKHOLE) {
+		return add_fib_entry_numerical(&prefix_info, NULL, NULL,
+			GK_DROP, update->rt_proto, cps_conf->gk);
+	}
+
 	gw_addr.proto = proto;
 	rte_memcpy(&gw_addr.ip, &update->gw, sizeof(gw_addr.ip));
+
+	RTE_VERIFY(gw_fib != NULL);
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
 		if (update->oif_index != 0) {
@@ -734,7 +752,9 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 
 	update->valid = dst_present &&
 		(update->type == RTM_DELROUTE ||
-		(update->type == RTM_NEWROUTE && gw_present && oif_present));
+		(update->type == RTM_NEWROUTE && gw_present && oif_present) ||
+		(update->type == RTM_NEWROUTE &&
+			update->rt_type == RTN_BLACKHOLE));
 	return 0;
 }
 
@@ -1249,6 +1269,9 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 
 	/* Route origin (routing daemon). */
 	update.rt_proto = rm->rtm_protocol;
+
+	/* Route type. */
+	update.rt_type = rm->rtm_type;
 
 	switch(rm->rtm_family) {
 	case AF_INET:
