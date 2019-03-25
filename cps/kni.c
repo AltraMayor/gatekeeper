@@ -64,6 +64,9 @@ struct route_update {
 	/* Route origin. See field rtm_protocol of struct rtmsg. */
 	uint8_t  rt_proto;
 
+	/* Route type. See field rtm_type of struct rtmsg. */
+	uint8_t  rt_type;
+
 	/* Output interface index of route. */
 	uint32_t oif_index;
 
@@ -444,42 +447,49 @@ inet6_print(const char *msg, struct in6_addr *in6)
 }
 
 static int
-new_route(struct route_update *update, struct cps_config *cps_conf)
+new_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	int ret;
 	uint16_t proto;
 	char ip_buf[INET6_ADDRSTRLEN];
 	char ipp_buf[INET6_ADDRSTRLEN + 4];
-	int gw_fib_id;
 	struct ip_prefix prefix_info;
 	struct ipaddr gw_addr;
-	struct gk_fib *gw_fib;
+	struct gk_fib *gw_fib = NULL;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 
 	if (update->family == AF_INET) {
 		proto = ETHER_TYPE_IPv4;
-		gw_fib_id = lpm_lookup_ipv4(ltbl->lpm, update->gw.v4.s_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl[gw_fib_id];
+
+		if (update->rt_type != RTN_BLACKHOLE) {
+			ret = lpm_lookup_ipv4(ltbl->lpm,
+				update->gw.v4.s_addr);
+			if (ret < 0)
+				return ret;
+			gw_fib = &ltbl->fib_tbl[ret];
+		}
 
 		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 	} else if (likely(update->family == AF_INET6)) {
 		proto = ETHER_TYPE_IPv6;
-		gw_fib_id = lpm_lookup_ipv6(ltbl->lpm6, update->gw.v6.s6_addr);
-		if (gw_fib_id < 0)
-			return -1;
-		gw_fib = &ltbl->fib_tbl6[gw_fib_id];
+
+		if (update->rt_type != RTN_BLACKHOLE) {
+			ret = lpm_lookup_ipv6(ltbl->lpm6,
+				update->gw.v6.s6_addr);
+			if (ret < 0)
+				return ret;
+			gw_fib = &ltbl->fib_tbl6[ret];
+		}
 
 		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -488,7 +498,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		CPS_LOG(WARNING,
 			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
-		return -1;
+		return -EAFNOSUPPORT;
 	}
 
 	prefix_info.str = ipp_buf;
@@ -497,8 +507,15 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		sizeof(prefix_info.addr.ip));
 	prefix_info.len = update->prefix_len;
 
+	if (update->rt_type == RTN_BLACKHOLE) {
+		return add_fib_entry_numerical(&prefix_info, NULL, NULL,
+			GK_DROP, update->rt_proto, cps_conf->gk);
+	}
+
 	gw_addr.proto = proto;
 	rte_memcpy(&gw_addr.ip, &update->gw, sizeof(gw_addr.ip));
+
+	RTE_VERIFY(gw_fib != NULL);
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
 		if (update->oif_index != 0) {
@@ -506,7 +523,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the front interface while the gateway for the prefix in Gatekeeper is a neighbor of the front network\n",
 					prefix_info.str);
-				return -1;
+				return -EINVAL;
 			}
 		}
 
@@ -521,7 +538,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 				CPS_LOG(WARNING,
 					"The output KNI interface for prefix %s is not the back interface while the gateway for the prefix in Gatekeeper is a neighbor of the back network\n",
 					prefix_info.str);
-				return -1;
+				return -EINVAL;
 			}
 		}
 
@@ -530,11 +547,11 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 			cps_conf->gk);
 	}
 
-	return -1;
+	return -EINVAL;
 }
 
 static int
-del_route(struct route_update *update, struct cps_config *cps_conf)
+del_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	int ret;
 	char ip_buf[INET6_ADDRSTRLEN];
@@ -545,7 +562,7 @@ del_route(struct route_update *update, struct cps_config *cps_conf)
 	if (update->family == AF_INET) {
 		if (inet_ntop(AF_INET, &update->ip.v4.s_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -557,7 +574,7 @@ del_route(struct route_update *update, struct cps_config *cps_conf)
 	} else if (likely(update->family == AF_INET6)) {
 		if (inet_ntop(AF_INET6, &update->ip.v6.s6_addr,
 				ip_buf, sizeof(ip_buf)) == NULL)
-			return -1;
+			return -errno;
 
 		ret = snprintf(ipp_buf, sizeof(ipp_buf), "%s/%hhu",
 			ip_buf, update->prefix_len);
@@ -570,7 +587,7 @@ del_route(struct route_update *update, struct cps_config *cps_conf)
 		CPS_LOG(WARNING,
 			"cps update: unknown address family %d at %s\n",
 			update->family, __func__);
-		return -1;
+		return -EAFNOSUPPORT;
 	}
 
 	prefix_info.str = ipp_buf;
@@ -734,7 +751,9 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 
 	update->valid = dst_present &&
 		(update->type == RTM_DELROUTE ||
-		(update->type == RTM_NEWROUTE && gw_present && oif_present));
+		(update->type == RTM_NEWROUTE && gw_present && oif_present) ||
+		(update->type == RTM_NEWROUTE &&
+			update->rt_type == RTN_BLACKHOLE));
 	return 0;
 }
 
@@ -855,8 +874,8 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 }
 
 static void
-rd_fill_getroute_reply(struct cps_config *cps_conf, struct nlmsghdr *reply,
-	struct gk_fib *fib, int family, uint32_t seq,
+rd_fill_getroute_reply(const struct cps_config *cps_conf,
+	struct nlmsghdr *reply, struct gk_fib *fib, int family, uint32_t seq,
 	uint8_t prefix_len, struct ipaddr **gw_addr)
 {
 	struct rtmsg *rm;
@@ -873,33 +892,42 @@ rd_fill_getroute_reply(struct cps_config *cps_conf, struct nlmsghdr *reply,
 	rm->rtm_tos = 0;
 	rm->rtm_table = RT_TABLE_MAIN;
 	rm->rtm_scope = RT_SCOPE_UNIVERSE;
-	rm->rtm_type = RTN_UNICAST;
 	rm->rtm_flags = 0;
 
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.grantor.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
 		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_BACK_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = NULL;
 		break;
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
+		*gw_addr = NULL;
+		break;
+	case GK_DROP:
+		rm->rtm_protocol = fib->u.drop.rt_proto;
+		rm->rtm_type = RTN_BLACKHOLE;
 		*gw_addr = NULL;
 		break;
 	default:
@@ -953,7 +981,7 @@ rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 }
 
 static int
-rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
 {
 	struct rte_lpm_iterator_state state;
@@ -980,12 +1008,11 @@ rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		/* Add address. */
 		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
 
-		/*
-		 * If gateway is NULL, then the entry is for a
-		 * neighbor and the gateway should be 0.0.0.0.
-		 */
-		mnl_attr_put_u32(reply, RTA_GATEWAY,
-			gw_addr == NULL ? 0 : gw_addr->ip.v4.s_addr);
+		/* Only report gateway for main routes. */
+		if (gw_addr != NULL) {
+			mnl_attr_put_u32(reply, RTA_GATEWAY,
+				gw_addr->ip.v4.s_addr);
+		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
 			ret = rd_send_batch(cps_conf, batch, "IPv4",
@@ -1001,7 +1028,7 @@ rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 }
 
 static int
-rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
 {
 	struct rte_lpm6_iterator_state state6;
@@ -1017,7 +1044,6 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 
 	index = rte_lpm6_rule_iterate(&state6, &re6);
 	while (index >= 0) {
-		const struct in6_addr neighbor_gw = { 0 };
 		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
 		struct ipaddr *gw_addr;
 		struct nlmsghdr *reply =
@@ -1030,12 +1056,11 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		mnl_attr_put(reply, RTA_DST,
 			sizeof(struct in6_addr), re6.ip);
 
-		/*
-		 * If gateway is NULL, then the entry is for a
-		 * neighbor and the gateway should be ::.
-		 */
-		mnl_attr_put(reply, RTA_GATEWAY, sizeof(struct in6_addr),
-			gw_addr == NULL ? &neighbor_gw : &gw_addr->ip.v6);
+		/* Only report gateway for main routes. */
+		if (gw_addr != NULL) {
+			mnl_attr_put(reply, RTA_GATEWAY,
+				sizeof(struct in6_addr), &gw_addr->ip.v6);
+		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
 			ret = rd_send_batch(cps_conf, batch, "IPv6",
@@ -1051,7 +1076,8 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 }
 
 static int
-rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
+rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
 {
 	/*
 	 * Buffer length set according to libmnl documentation:
@@ -1063,6 +1089,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
 	struct mnl_nlmsg_batch *batch;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	const char *family_str;
 	int family;
 
 	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
@@ -1074,8 +1101,20 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
 
-	/* We don't support AF_UNSPEC to dump both tables at once. */
-	if (family != AF_INET && family != AF_INET6) {
+	switch (family) {
+	case AF_INET:
+		family_str = "IPv4";
+		break;
+	case AF_INET6:
+		family_str = "IPv6";
+		break;
+	case AF_UNSPEC:
+		family_str = "IPV4/IPv6";
+		break;
+	case AF_MPLS:
+		family_str = "MPLS";
+		break;
+	default:
 		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
@@ -1089,21 +1128,44 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		goto out;
 	}
 
-	rte_spinlock_lock_tm(&ltbl->lock);
-	if (family == AF_INET) {
+	if (family == AF_INET || family == AF_UNSPEC) {
+		if (!ipv4_configured(cps_conf->net)) {
+			if (family == AF_UNSPEC)
+				goto ipv6;
+			else {
+				*err = -EAFNOSUPPORT;
+				goto free_batch;
+			}
+		}
+
+		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
 			batch, req, family);
-	} else {
+		rte_spinlock_unlock_tm(&ltbl->lock);
+		if (*err < 0)
+			goto free_batch;
+	}
+ipv6:
+	if (family == AF_INET6 || family == AF_UNSPEC) {
+		if (!ipv6_configured(cps_conf->net)) {
+			if (family == AF_UNSPEC)
+				goto send;
+			else {
+				*err = -EAFNOSUPPORT;
+				goto free_batch;
+			}
+		}
+
+		rte_spinlock_lock_tm(&ltbl->lock);
 		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
 			batch, req, family);
+		rte_spinlock_unlock_tm(&ltbl->lock);
+		if (*err < 0)
+			goto free_batch;
 	}
-	rte_spinlock_unlock_tm(&ltbl->lock);
-	if (*err < 0)
-		goto free_batch;
-
+send:
 	/* In the case of no entries, the only message sent is NLMSG_DONE. */
-	*err = rd_send_batch(cps_conf, batch,
-		family == AF_INET ? "IPv4" : "IPv6",
+	*err = rd_send_batch(cps_conf, batch, family_str,
 		req->nlmsg_seq, req->nlmsg_pid, true);
 
 free_batch:
@@ -1187,7 +1249,8 @@ out:
 }
 
 static int
-rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
+rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
+	int *err)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
 	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
@@ -1208,7 +1271,7 @@ rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		req->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
 		rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
 		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
-		rm->rtm_protocol, rm->rtm_scope, rm->rtm_flags);
+		rm->rtm_scope, rm->rtm_type, rm->rtm_flags);
 
 	memset(&update, 0, sizeof(update));
 	update.valid = false;
@@ -1224,14 +1287,25 @@ rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	/* Route origin (routing daemon). */
 	update.rt_proto = rm->rtm_protocol;
 
-	switch(rm->rtm_family) {
+	/* Route type. */
+	update.rt_type = rm->rtm_type;
+
+	switch (rm->rtm_family) {
 	case AF_INET:
+		if (!ipv4_configured(cps_conf->net)) {
+			*err = -EAFNOSUPPORT;
+			goto out;
+		}
 		mnl_attr_parse(req, sizeof(*rm), data_ipv4_attr_cb, tb);
 		*err = attr_get(&update, rm->rtm_family, tb);
 		if (*err)
 			goto out;
 		break;
 	case AF_INET6:
+		if (!ipv6_configured(cps_conf->net)) {
+			*err = -EAFNOSUPPORT;
+			goto out;
+		}
 		mnl_attr_parse(req, sizeof(*rm), data_ipv6_attr_cb, tb);
 		*err = attr_get(&update, rm->rtm_family, tb);
 		if (*err)
@@ -1358,8 +1432,18 @@ rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 
 	family = ((struct rtgenmsg *)mnl_nlmsg_get_payload(req))->rtgen_family;
 
-	if (family != AF_INET && family != AF_INET6 && family != AF_UNSPEC) {
-		CPS_LOG(ERR, "Unsupported address family type (%hhu) in %s\n",
+	switch (family) {
+	case AF_INET:
+		family_str = "IPv4";
+		break;
+	case AF_INET6:
+		family_str = "IPv6";
+		break;
+	case AF_UNSPEC:
+		family_str = "IPV4/IPv6";
+		break;
+	default:
+		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
 		goto out;
@@ -1385,12 +1469,6 @@ rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 			goto free_batch;
 	}
 
-	if (family == AF_INET)
-		family_str = "IPv4";
-	else if (family == AF_INET6)
-		family_str = "IPv6";
-	else
-		family_str = "IPv4/IPv6";
 	*err = rd_send_batch(cps_conf, batch, family_str,
 		req->nlmsg_seq, req->nlmsg_pid, true);
 

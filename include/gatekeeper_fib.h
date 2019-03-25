@@ -171,6 +171,16 @@ struct gk_fib {
 		struct neighbor_hash_table neigh;
 
 		struct neighbor_hash_table neigh6;
+
+		/* Route information when the action is GK_DROP. */
+		struct {
+			/*
+			 * Routing table protocol - origin of the root.
+			 * RTPROT_STATIC for routes added by user.
+			 * RTPROT_BIRD for routes added by BIRD daemon, etc.
+			 */
+			uint8_t rt_proto;
+		} drop;
 	} u;
 };
 
