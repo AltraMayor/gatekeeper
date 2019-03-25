@@ -982,7 +982,7 @@ rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 
 static int
 rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
-	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
+	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm_iterator_state state;
 	const struct rte_lpm_rule *re4;
@@ -1003,7 +1003,7 @@ rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
 
 		rd_fill_getroute_reply(cps_conf, reply, fib,
-			family, req->nlmsg_seq, state.depth, &gw_addr);
+			AF_INET, req->nlmsg_seq, state.depth, &gw_addr);
 
 		/* Add address. */
 		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
@@ -1029,7 +1029,7 @@ rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 
 static int
 rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
-	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req, int family)
+	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm6_iterator_state state6;
 	struct rte_lpm6_rule re6;
@@ -1050,7 +1050,7 @@ rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
 
 		rd_fill_getroute_reply(cps_conf, reply, fib,
-			family, req->nlmsg_seq, state6.depth, &gw_addr);
+			AF_INET6, req->nlmsg_seq, state6.depth, &gw_addr);
 
 		/* Add address. */
 		mnl_attr_put(reply, RTA_DST,
@@ -1139,8 +1139,7 @@ rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		}
 
 		rte_spinlock_lock_tm(&ltbl->lock);
-		*err = rd_getroute_ipv4_locked(cps_conf, ltbl,
-			batch, req, family);
+		*err = rd_getroute_ipv4_locked(cps_conf, ltbl, batch, req);
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		if (*err < 0)
 			goto free_batch;
@@ -1157,8 +1156,7 @@ ipv6:
 		}
 
 		rte_spinlock_lock_tm(&ltbl->lock);
-		*err = rd_getroute_ipv6_locked(cps_conf, ltbl,
-			batch, req, family);
+		*err = rd_getroute_ipv6_locked(cps_conf, ltbl, batch, req);
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		if (*err < 0)
 			goto free_batch;
