@@ -290,7 +290,7 @@ main(int argc, char **argv)
 	struct args args = {
 		/* Defaults. */
 		.lua_base_dir = "./lua",
-		.gatekeeper_config_file = "gatekeeper_config.lua",
+		.gatekeeper_config_file = "main_config.lua",
 		.log_file_name_format = "gatekeeper_%Y_%m_%d_%H_%M.log",
 		.log_base_dir = ".",
 	};

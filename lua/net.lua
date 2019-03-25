@@ -1,4 +1,4 @@
-require "gatekeeper"
+require "gatekeeper/staticlib"
 return function (gatekeeper_server)
 
 	--
@@ -47,7 +47,7 @@ return function (gatekeeper_server)
 	-- not associated with a functional block. Only activated
 	-- when network starts; for early log entries, set using
 	-- the --log-level EAL command line option.
-	local log_level = gatekeeper.c.RTE_LOG_DEBUG
+	local log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- How often the log file should be rotated. The unit is second.
 	local rotate_log_interval_sec = 60 * 60 -- 1h
@@ -58,7 +58,7 @@ return function (gatekeeper_server)
 	local front_ips  = {"10.0.1.1/24", "2001:db8:1::1/48"}
 	local front_arp_cache_timeout_sec = 7200
 	local front_nd_cache_timeout_sec = 7200
-	local front_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
+	local front_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
 	local front_vlan_tag = 0x1234
 	local front_vlan_insert = true
 	local front_mtu = 1500
@@ -79,7 +79,7 @@ return function (gatekeeper_server)
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
 	local back_arp_cache_timeout_sec = 7200
 	local back_nd_cache_timeout_sec = 7200
-	local back_bonding_mode = gatekeeper.c.BONDING_MODE_ROUND_ROBIN
+	local back_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
 	local back_vlan_tag = 0x5678
 	local back_vlan_insert = true
 	local back_mtu = 2048
@@ -95,13 +95,13 @@ return function (gatekeeper_server)
 	-- Code below this point should not need to be changed by operators.
 	--
 
-	local net_conf = gatekeeper.c.get_net_conf()
+	local net_conf = staticlib.c.get_net_conf()
 	net_conf.guarantee_random_entropy = guarantee_random_entropy
 	net_conf.num_attempts_link_get = num_attempts_link_get
 	net_conf.log_level = log_level
 	net_conf.rotate_log_interval_sec = rotate_log_interval_sec
 
-	local front_iface = gatekeeper.c.get_if_front(net_conf)
+	local front_iface = staticlib.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec
 	front_iface.bonding_mode = front_bonding_mode
@@ -110,7 +110,7 @@ return function (gatekeeper_server)
 	front_iface.ipv6_default_hop_limits = front_ipv6_default_hop_limits
 	front_iface.num_rx_desc = front_num_rx_desc
 	front_iface.num_tx_desc = front_num_tx_desc
-	local ret = gatekeeper.init_iface(front_iface, "front",
+	local ret = staticlib.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
 	if ret < 0 then
 		error("Failed to initialize the front interface")
@@ -118,7 +118,7 @@ return function (gatekeeper_server)
 
 	net_conf.back_iface_enabled = back_iface_enabled
 	if back_iface_enabled then
-		local back_iface = gatekeeper.c.get_if_back(net_conf)
+		local back_iface = staticlib.c.get_if_back(net_conf)
 		back_iface.arp_cache_timeout_sec = back_arp_cache_timeout_sec
 		back_iface.nd_cache_timeout_sec = back_nd_cache_timeout_sec
 		back_iface.bonding_mode = back_bonding_mode
@@ -128,7 +128,7 @@ return function (gatekeeper_server)
 			back_ipv6_default_hop_limits
 		back_iface.num_rx_desc = back_num_rx_desc
 		back_iface.num_tx_desc = back_num_tx_desc
-		ret = gatekeeper.init_iface(back_iface, "back",
+		ret = staticlib.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
 		if ret < 0 then
 			error("Failed to initialize the back interface")
@@ -136,7 +136,7 @@ return function (gatekeeper_server)
 	end
 
 	-- Initialize the network.
-	ret = gatekeeper.c.gatekeeper_init_network(net_conf)
+	ret = staticlib.c.gatekeeper_init_network(net_conf)
 	if ret < 0 then
 		error("Failed to initilize the network")
 	end

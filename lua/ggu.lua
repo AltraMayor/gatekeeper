@@ -5,7 +5,7 @@ return function (net_conf, gk_conf, lcore)
 	--
 
 	-- These parameters should likely be initially changed.
-	local log_level = gatekeeper.c.RTE_LOG_DEBUG
+	local log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local mailbox_max_entries_exp = 7
@@ -23,7 +23,7 @@ return function (net_conf, gk_conf, lcore)
 	-- End configuration of GGU block.
 	--
 
-	local ggu_conf = gatekeeper.c.alloc_ggu_conf()
+	local ggu_conf = staticlib.c.alloc_ggu_conf()
 	if ggu_conf == nil then
 		error("Failed to allocate ggu_conf")
 	end
@@ -42,7 +42,7 @@ return function (net_conf, gk_conf, lcore)
 	ggu_conf.ggu_src_port = ggu_src_port
 	ggu_conf.ggu_dst_port = ggu_dst_port
 
-	local ret = gatekeeper.c.run_ggu(net_conf, gk_conf, ggu_conf)
+	local ret = staticlib.c.run_ggu(net_conf, gk_conf, ggu_conf)
 	if ret < 0 then
 		error("Failed to run ggu block")
 	end

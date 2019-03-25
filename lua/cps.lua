@@ -6,7 +6,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 
 	-- These parameters should likely be initially changed.
 	local kni_kmod_path = "/home/user/gatekeeper/dependencies/dpdk/build/kmod/rte_kni.ko"
-	local log_level = gatekeeper.c.RTE_LOG_DEBUG
+	local log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local mailbox_max_entries_exp = 7
@@ -27,12 +27,12 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- End configuration of CPS block.
 	--
 
-	local cps_conf = gatekeeper.c.get_cps_conf()
+	local cps_conf = staticlib.c.get_cps_conf()
 	if cps_conf == nil then
 		error("Failed to allocate cps_conf")
 	end
 
-	cps_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
+	cps_conf.lcore_id = staticlib.alloc_an_lcore(numa_table)
 
 	cps_conf.log_level = log_level
 
@@ -52,7 +52,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	-- Netlink port ID to receive updates and scans from routing daemon.
 	cps_conf.nl_pid = 0x6A7E
 
-	local ret = gatekeeper.c.run_cps(net_conf, gk_conf, gt_conf,
+	local ret = staticlib.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)
 	if ret < 0 then
 		error("Failed to run cps block")

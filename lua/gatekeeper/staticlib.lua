@@ -1,4 +1,4 @@
-module(..., package.seeall)
+module("staticlib", package.seeall)
 
 --
 -- Functions to allocate lcores

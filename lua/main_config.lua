@@ -2,8 +2,8 @@
 -- C functions statically linked.
 -- Unsetting its package.loaded entry allows Lua to load
 -- the Lua functions of the module.
-package.loaded["gatekeeper"] = nil
-require "gatekeeper"
+package.loaded["gatekeeper/staticlib"] = nil
+require "gatekeeper/staticlib"
 
 function gatekeeper_init()
 
@@ -15,13 +15,13 @@ function gatekeeper_init()
 	-- Set the global log level to one of
 	-- RTE_LOG_{EMERG,ALERT,CRIT,ERR,WARNING,NOTICE,INFO,DEBUG}.
 	-- All logs equal to or to the left will be output.
-	local global_log_level = gatekeeper.c.RTE_LOG_DEBUG
-	gatekeeper.c.rte_log_set_global_level(global_log_level)
+	local global_log_level = staticlib.c.RTE_LOG_DEBUG
+	staticlib.c.rte_log_set_global_level(global_log_level)
 
 	local netf = require("net")
 	local net_conf = netf(gatekeeper_server)
 
-	local numa_table = gatekeeper.get_numa_table(net_conf)
+	local numa_table = staticlib.get_numa_table(net_conf)
 
 	-- LLS should be the first block initialized, since it should have
 	-- queue IDs of 0 so that when ARP filters are not supported ARP
@@ -39,7 +39,7 @@ function gatekeeper_init()
 		-- n_lcores + 2 on same NUMA: for GK-GT Unit and Solicitor.
 		local n_lcores = 2
 		local gk_lcores =
-			gatekeeper.alloc_lcores_from_same_numa(numa_table,
+			staticlib.alloc_lcores_from_same_numa(numa_table,
 				n_lcores + 2)
 		local sol_lcore = table.remove(gk_lcores)
 		local ggu_lcore = table.remove(gk_lcores)
