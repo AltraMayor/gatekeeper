@@ -344,6 +344,26 @@ c = ffi.C
 
 local ifaces = require("if_map")
 
+function check_ifaces(front_ports, back_ports)
+	for i1, v1 in ipairs(front_ports) do
+		pci1 = ifaces[v1]
+		if pci1 == nil then
+			error("There is no map for " .. v1 .. " in the front interface configuration")
+		end
+
+		for i2, v2 in ipairs(back_ports) do
+			pci2 = ifaces[v2]
+			if pci2 == nil then
+				error("There is no map for " .. v2 .. " in the back interface configuration")
+			end
+
+			if pci1 == pci2 then
+				error("Configured interfaces on the front [" .. v1 .. " (" .. pci1 .. ")] and back [" .. v2 .. " (" .. pci2 .. ")] are the same")
+			end
+		end
+	end
+end
+
 function init_iface(iface, name, ports, cidrs, vlan_tag)
 	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
 	for i, v in ipairs(ports) do
@@ -351,6 +371,13 @@ function init_iface(iface, name, ports, cidrs, vlan_tag)
 		if pci_addr == nil then
 			error("There is no map for interface " .. v)
 		end
+
+		for i2, v2 in ipairs(ports) do
+			if i2 > i and pci_addr == ifaces[v2] then
+				error("Duplicate interfaces: " .. v .. " and " .. v2 .. " map to the same PCI address (" .. pci_addr .. ") in the " .. name .. " configuration")
+			end
+		end
+
 		pci_strs[i - 1] = pci_addr
 	end
 

@@ -101,6 +101,10 @@ return function (gatekeeper_server)
 	net_conf.log_level = log_level
 	net_conf.rotate_log_interval_sec = rotate_log_interval_sec
 
+	if back_iface_enabled then
+		staticlib.check_ifaces(front_ports, back_ports)
+	end
+
 	local front_iface = staticlib.c.get_if_front(net_conf)
 	front_iface.arp_cache_timeout_sec = front_arp_cache_timeout_sec
 	front_iface.nd_cache_timeout_sec = front_nd_cache_timeout_sec
