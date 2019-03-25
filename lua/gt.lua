@@ -1,7 +1,7 @@
 return function (net_conf, lls_conf, numa_table)
 
 	-- Init the GT configuration structure.
-	local gt_conf = gatekeeper.c.alloc_gt_conf()
+	local gt_conf = staticlib.c.alloc_gt_conf()
 	if gt_conf == nil then
 		error("Failed to allocate gt_conf")
 	end
@@ -26,9 +26,9 @@ return function (net_conf, lls_conf, numa_table)
 
 	local n_lcores = 2
 
-	local gt_lcores = gatekeeper.alloc_lcores_from_same_numa(numa_table,
+	local gt_lcores = staticlib.alloc_lcores_from_same_numa(numa_table,
 		n_lcores)
-	gatekeeper.gt_assign_lcores(gt_conf, gt_lcores)
+	staticlib.gt_assign_lcores(gt_conf, gt_lcores)
 
 	gt_conf.max_num_ipv6_neighbors = 1024
 
@@ -38,13 +38,13 @@ return function (net_conf, lls_conf, numa_table)
 	gt_conf.mailbox_burst_size = 32
 
 	-- Log level for GT.
-	gt_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+	gt_conf.log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- Log ratelimit interval and burst size.
 	gt_conf.log_ratelimit_interval_ms = 5000
 	gt_conf.log_ratelimit_burst = 10
 
-	gt_conf.gt_max_pkt_burst = gatekeeper.get_front_burst_config(
+	gt_conf.gt_max_pkt_burst = staticlib.get_front_burst_config(
 		gt_max_pkt_burst, net_conf)
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
@@ -56,7 +56,7 @@ return function (net_conf, lls_conf, numa_table)
 	-- Setup the GT functional block.
 	local lua_base_directory = "./lua"
 	local lua_policy_file = "examples/policy.lua"
-	local ret = gatekeeper.c.run_gt(net_conf, gt_conf,
+	local ret = staticlib.c.run_gt(net_conf, gt_conf,
 		lua_base_directory, lua_policy_file)
 	if ret < 0 then
 		error("Failed to run gt block(s)")

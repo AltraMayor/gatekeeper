@@ -1,7 +1,7 @@
 return function (net_conf, lcore)
 
 	-- Init the Solicitor configuration structure.
-	local sol_conf = gatekeeper.c.alloc_sol_conf()
+	local sol_conf = staticlib.c.alloc_sol_conf()
 	if sol_conf == nil then
 		error("Failed to allocate sol_conf")
 	end
@@ -15,7 +15,7 @@ return function (net_conf, lcore)
 	sol_conf.mailbox_mem_cache_size = 0
 
 	-- Log level for SOL.
-	sol_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+	sol_conf.log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- Token bucket rate approximation error.
 	sol_conf.tb_rate_approx_err = 1e-7
@@ -30,7 +30,7 @@ return function (net_conf, lcore)
 	sol_conf.log_ratelimit_burst = 10
 
 	-- Setup the sol functional block.
-	local ret = gatekeeper.c.run_sol(net_conf, sol_conf)
+	local ret = staticlib.c.run_sol(net_conf, sol_conf)
 	if ret < 0 then
 		error("Failed to run sol block")
 	end

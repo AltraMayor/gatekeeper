@@ -3,7 +3,7 @@ require "gatekeeper/dylib"
 local acc_start = ""
 local reply_msg = ""
 
-local dyc = gatekeeper.c.get_dy_conf()
+local dyc = staticlib.c.get_dy_conf()
 
 if dyc.gt ~= nil then
 	dylib.update_lua_states(dyc.gt)
@@ -17,20 +17,20 @@ if ret < 0 then
 end
 
 -- Examples of temporarily changing global and block log levels.
-local old_log_level = gatekeeper.c.rte_log_get_global_level()
-gatekeeper.c.rte_log_set_global_level(gatekeeper.c.RTE_LOG_ERR)
+local old_log_level = staticlib.c.rte_log_get_global_level()
+staticlib.c.rte_log_set_global_level(staticlib.c.RTE_LOG_ERR)
 
-local cpsc = gatekeeper.c.get_cps_conf()
+local cpsc = staticlib.c.get_cps_conf()
 if cpsc == nil then
 	return "cps: failed to fetch config to update log level"
 end
 
-local old_cps_log_level = gatekeeper.c.rte_log_get_level(cpsc.log_type)
+local old_cps_log_level = staticlib.c.rte_log_get_level(cpsc.log_type)
 if old_cps_log_level < 0 then
 	return "cps: failed to fetch log level"
 end
 
-ret = gatekeeper.c.rte_log_set_level(cpsc.log_type, gatekeeper.c.RTE_LOG_ERR)
+ret = staticlib.c.rte_log_set_level(cpsc.log_type, staticlib.c.RTE_LOG_ERR)
 if ret < 0 then
 	return "cps: failed to set new log level"
 end
@@ -42,8 +42,8 @@ if ret < 0 then
 end
 
 -- Revert log levels.
-gatekeeper.c.rte_log_set_global_level(old_log_level)
-ret = gatekeeper.c.rte_log_set_level(cpsc.log_type, old_cps_log_level)
+staticlib.c.rte_log_set_global_level(old_log_level)
+ret = staticlib.c.rte_log_set_level(cpsc.log_type, old_cps_log_level)
 if ret < 0 then
 	return "cps: failed to revert to old log level"
 end
@@ -122,7 +122,7 @@ reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
 reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
 	dylib.print_neighbor_dump_entry, acc_start)
 
-local llsc = gatekeeper.c.get_lls_conf()
+local llsc = staticlib.c.get_lls_conf()
 if cpsc == nil then
 	return "lls: failed to fetch config to dump caches"
 end

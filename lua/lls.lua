@@ -1,7 +1,7 @@
 return function (net_conf, numa_table)
 
 	-- Init the LLS configuration structure.
-	local lls_conf = gatekeeper.c.get_lls_conf()
+	local lls_conf = staticlib.c.get_lls_conf()
 	if lls_conf == nil then
 		error("Failed to allocate lls_conf")
 	end
@@ -11,7 +11,7 @@ return function (net_conf, numa_table)
 	-- Log level for LLS. Note: set to RTE_LOG_DEBUG
 	-- to log routing table updates and to log all
 	-- the cache when it is periodically scanned.
-	lls_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+	lls_conf.log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- XXX #155 Sample parameters, need to be tested for better performance.
 	lls_conf.mailbox_max_entries_exp = 7
@@ -36,8 +36,8 @@ return function (net_conf, numa_table)
 	lls_conf.log_ratelimit_burst = 10
 
 	-- Setup the LLS functional block.
-	lls_conf.lcore_id = gatekeeper.alloc_an_lcore(numa_table)
-	local ret = gatekeeper.c.run_lls(net_conf, lls_conf)
+	lls_conf.lcore_id = staticlib.alloc_an_lcore(numa_table)
+	local ret = staticlib.c.run_lls(net_conf, lls_conf)
 	if ret < 0 then
 		error("Failed to run lls block")
 	end

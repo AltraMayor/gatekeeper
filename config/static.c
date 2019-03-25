@@ -207,7 +207,7 @@ l_gt_assign_lcores(lua_State *l)
 	return 0;
 }
 
-static const struct luaL_reg gatekeeper [] = {
+static const struct luaL_reg staticlib [] = {
 	{"list_lcores",			l_list_lcores},
 	{"rte_lcore_to_socket_id",	l_rte_lcore_to_socket_id},
 	{"gk_assign_lcores",		l_gk_assign_lcores},
@@ -254,7 +254,7 @@ config_gatekeeper(const char *lua_base_dir, const char *gatekeeper_config_file)
 	}
 
 	luaL_openlibs(lua_state);
-	luaL_register(lua_state, "gatekeeper", gatekeeper);
+	luaL_register(lua_state, "staticlib", staticlib);
 	set_lua_path(lua_state, lua_base_dir);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {

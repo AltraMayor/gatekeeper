@@ -10,7 +10,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local log_ratelimit_burst = 10
 
 	-- Init the GK configuration structure.
-	local gk_conf = gatekeeper.c.alloc_gk_conf()
+	local gk_conf = staticlib.c.alloc_gk_conf()
 	if gk_conf == nil then
 		error("Failed to allocate gk_conf")
 	end
@@ -21,9 +21,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.flow_ht_size = 1024
 
 	-- Log level for GK.
-	gk_conf.log_level = gatekeeper.c.RTE_LOG_DEBUG
+	gk_conf.log_level = staticlib.c.RTE_LOG_DEBUG
 
-	gatekeeper.gk_assign_lcores(gk_conf, gk_lcores)
+	staticlib.gk_assign_lcores(gk_conf, gk_lcores)
 
 	gk_conf.max_num_ipv4_rules = 1024
 	gk_conf.num_ipv4_tbl8s = 256
@@ -31,7 +31,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.num_ipv6_tbl8s = 65536
 
 	-- 48h.
-	gatekeeper.c.set_gk_request_timeout(48 * 60 * 60, gk_conf)
+	staticlib.c.set_gk_request_timeout(48 * 60 * 60, gk_conf)
 
 	gk_conf.max_num_ipv6_neighbors = 65536
 	gk_conf.gk_max_num_ipv4_fib_entries = 256
@@ -64,19 +64,19 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	gk_conf.log_ratelimit_burst = log_ratelimit_burst
 
-	if not gatekeeper.c.ipv4_configured(net_conf) then
+	if not staticlib.c.ipv4_configured(net_conf) then
 		gk_conf.gk_max_num_ipv4_fib_entries = 0
 	end
 
-	if not gatekeeper.c.ipv6_configured(net_conf) then
+	if not staticlib.c.ipv6_configured(net_conf) then
 		gk_conf.gk_max_num_ipv6_fib_entries = 0
 	end
 
 	gk_conf.front_max_pkt_burst =
-		gatekeeper.get_front_burst_config(
+		staticlib.get_front_burst_config(
 			gk_max_pkt_burst_front, net_conf)
 	gk_conf.back_max_pkt_burst =
-		gatekeeper.get_back_burst_config(
+		staticlib.get_back_burst_config(
 			gk_max_pkt_burst_back, net_conf)
 
 	gk_conf.front_icmp_msgs_per_sec = math.floor(front_icmp_msgs_per_sec /
@@ -94,7 +94,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 		gk_conf.front_max_pkt_burst, gk_conf.back_max_pkt_burst)
 
 	-- Setup the GK functional block.
-	local ret = gatekeeper.c.run_gk(net_conf, gk_conf, sol_conf)
+	local ret = staticlib.c.run_gk(net_conf, gk_conf, sol_conf)
 	if ret < 0 then
 		error("Failed to run gk block(s)")
 	end
