@@ -13,8 +13,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local mailbox_burst_size = 32
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
-	local gk_max_pkt_burst_front = 32
-	local gk_max_pkt_burst_back = 32
+	local max_pkt_burst_front = 32
+	local max_pkt_burst_back = 32
 
 	local flow_ht_size = 1024
 	local flow_table_full_scan_ms = 10 * 60 * 1000 -- (10 minutes)
@@ -24,10 +24,10 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local max_num_ipv6_rules = 1024
 	local num_ipv6_tbl8s = 65536
 	local max_num_ipv6_neighbors = 65536
-	local gk_max_num_ipv4_fib_entries = 256
-	local gk_max_num_ipv6_fib_entries = 65536
+	local max_num_ipv4_fib_entries = 256
+	local max_num_ipv6_fib_entries = 65536
 
-	local gk_request_timeout_sec = 48 * 60 * 60    -- (48 hours)
+	local request_timeout_sec = 48 * 60 * 60       -- (48 hours)
 	local basic_measurement_logging_ms = 60 * 1000 -- (1 minute)
 
 	local front_icmp_msgs_per_sec = 1000
@@ -66,20 +66,18 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.max_num_ipv6_neighbors = max_num_ipv6_neighbors
 
 	if staticlib.c.ipv4_configured(net_conf) then
-		gk_conf.gk_max_num_ipv4_fib_entries =
-			gk_max_num_ipv4_fib_entries
+		gk_conf.max_num_ipv4_fib_entries = max_num_ipv4_fib_entries
 	else
-		gk_conf.gk_max_num_ipv4_fib_entries = 0
+		gk_conf.max_num_ipv4_fib_entries = 0
 	end
 
 	if staticlib.c.ipv6_configured(net_conf) then
-		gk_conf.gk_max_num_ipv6_fib_entries =
-			gk_max_num_ipv6_fib_entries
+		gk_conf.max_num_ipv6_fib_entries = max_num_ipv6_fib_entries
 	else
-		gk_conf.gk_max_num_ipv6_fib_entries = 0
+		gk_conf.max_num_ipv6_fib_entries = 0
 	end
 
-	staticlib.c.set_gk_request_timeout(gk_request_timeout_sec, gk_conf)
+	staticlib.c.set_gk_request_timeout(request_timeout_sec, gk_conf)
 	gk_conf.flow_table_full_scan_ms = flow_table_full_scan_ms
 	gk_conf.basic_measurement_logging_ms = basic_measurement_logging_ms
 
@@ -91,11 +89,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	gk_conf.back_icmp_msgs_burst = back_icmp_msgs_burst
 
 	gk_conf.front_max_pkt_burst =
-		staticlib.get_front_burst_config(
-			gk_max_pkt_burst_front, net_conf)
+		staticlib.get_front_burst_config(max_pkt_burst_front, net_conf)
 	gk_conf.back_max_pkt_burst =
-		staticlib.get_back_burst_config(
-			gk_max_pkt_burst_back, net_conf)
+		staticlib.get_back_burst_config(max_pkt_burst_back, net_conf)
 
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
