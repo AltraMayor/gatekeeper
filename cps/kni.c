@@ -18,12 +18,14 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <libkmod.h>
 #include <libmnl/libmnl.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -1738,13 +1740,122 @@ loaded_kmod_matches_file(void *file, unsigned long len)
 	return false;
 }
 
+static int
+find_kni_kmod_path(char *path, size_t path_len, const char *alias)
+{
+	struct kmod_ctx *ctx;
+	char dirname[PATH_MAX];
+	struct utsname u;
+	struct kmod_list *l, *filtered, *list = NULL;
+	int ret;
+
+	/* Get kernel name and build module path. */
+	if (uname(&u) < 0) {
+		CPS_LOG(ERR, "uname: %s\n", strerror(errno));
+		return -1;
+	}
+	ret = snprintf(dirname, sizeof(dirname),
+		"/lib/modules/%s", u.release);
+	if (ret <= 0 || ret >= (int)sizeof(dirname)) {
+		CPS_LOG(ERR, "Could not build path name for release %s and module %s\n",
+			u.release, alias);
+		return -1;
+	}
+
+	/*
+	 * Create kmod library context using default configuration.
+	 * The context that's created has an inital refcount of 1.
+	 */
+	ctx = kmod_new(dirname, NULL);
+	if (ctx == NULL) {
+		CPS_LOG(ERR, "kmod_new failed\n");
+		return -1;
+	}
+
+	/*
+	 * Create a list of kernel modules that match the alias.
+	 * The initial refcount of the list is 1 and must be released.
+	 */
+	ret = kmod_module_new_from_lookup(ctx, alias, &list);
+	if (ret < 0) {
+		CPS_LOG(ERR, "Failed to lookup module alias %s\n", alias);
+		ret = -1;
+		goto put_ctx;
+	}
+	if (list == NULL) {
+		CPS_LOG(ERR, "Module %s not found\n", alias);
+		ret = -1;
+		goto put_ctx;
+	}
+
+	/* Filter out builtin modules from the list.*/
+	ret = kmod_module_apply_filter(ctx, KMOD_FILTER_BUILTIN,
+		list, &filtered);
+
+	/* Filtered list is now stored in @filtered, so release @list. */
+	kmod_module_unref_list(list);
+
+	if (ret < 0) {
+		CPS_LOG(ERR, "Failed to filter kernel module list to find %s\n",
+			alias);
+		ret = -1;
+		goto put_ctx;
+	}
+	if (filtered == NULL) {
+		CPS_LOG(ERR, "Module %s not found\n", alias);
+		ret = -1;
+		goto put_ctx;
+	}
+
+	kmod_list_foreach(l, filtered) {
+		struct kmod_module *mod = kmod_module_get_module(l);
+		const char *kmod_name = kmod_module_get_name(mod);
+		const char *kmod_path;
+
+		/* Not the module we're looking for. */
+		if (strcmp(kmod_name, alias) != 0) {
+			kmod_module_unref(mod);
+			continue;
+		}
+
+		kmod_path = kmod_module_get_path(mod);
+		if (strlen(kmod_path) > path_len - 1) {
+			CPS_LOG(ERR, "Found kernel module path (%s) but buffer is too short to hold it\n",
+				kmod_path);
+			ret = -1;
+		} else {
+			strcpy(path, kmod_path);
+			ret = 0;
+		}
+
+		kmod_module_unref(mod);
+		break;
+	}
+
+	kmod_module_unref_list(filtered);
+put_ctx:
+	kmod_unref(ctx);
+	return ret;
+}
+
 int
 init_kni(const char *kni_kmod_path, unsigned int num_kni)
 {
+	char path[PATH_MAX];
+	void *file;
 	unsigned long len;
 	int ret;
 
-	void *file = grab_file(kni_kmod_path, &len);
+	if (kni_kmod_path == NULL) {
+		ret = find_kni_kmod_path(path, sizeof(path), KNI_MODULE_NAME);
+		if (ret < 0) {
+			CPS_LOG(ERR, "KNI kernel module path not found; must be set in CPS configuration file\n");
+			return ret;
+		}
+		kni_kmod_path = path;
+	}
+
+	file = grab_file(kni_kmod_path, &len);
 	if (file == NULL) {
 		CPS_LOG(ERR, "%s: can't read '%s'\n", __func__, kni_kmod_path);
 		return -1;
