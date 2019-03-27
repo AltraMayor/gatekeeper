@@ -192,7 +192,7 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	};
 	int ret;
 
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_burst);
+	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
 	rte_memcpy(arp_req.pkts, pkts, sizeof(*arp_req.pkts) * num_pkts);
 
@@ -214,7 +214,7 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 	};
 	int ret;
 
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_burst);
+	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
 	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
 
@@ -714,10 +714,10 @@ lls_stage1(void *arg)
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
 		RTE_MAX(offsetof(struct lls_request, end_of_header) +
 			sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) *
-			lls_conf->mailbox_max_pkt_burst,
+			lls_conf->mailbox_max_pkt_sub,
 			offsetof(struct lls_request, end_of_header) +
 			sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) *
-			lls_conf->mailbox_max_pkt_burst));
+			lls_conf->mailbox_max_pkt_sub));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
 		return ret;
@@ -726,8 +726,8 @@ lls_stage1(void *arg)
 	 * Since run_lls() in lua/lls.lua will be called before lua/gk.lua
 	 * or lua/gt.lua, if we put init_mailbox() in run_lls(), then we have
 	 * already initialized LLS' mailbox with the initial
-	 * lls_conf.mailbox_max_pkt_burst specified in lua/lls.lua, even if we
-	 * change the value of lls_conf.mailbox_max_pkt_burst in lua/gk.lua or
+	 * lls_conf.mailbox_max_pkt_sub specified in lua/lls.lua, even if we
+	 * change the value of lls_conf.mailbox_max_pkt_sub in lua/gk.lua or
 	 * lua/gt.lua, it won't change the size of the entries in LLS mailbox.
 	 *
 	 * To initialize the LLS mailbox only after we get the final
@@ -855,12 +855,12 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto stage2;
 
 	/*
-	 * Do LLS cache scan every @lls_conf->lls_cache_scan_interval_sec
+	 * Do LLS cache scan every @lls_conf->cache_scan_interval_sec
 	 * seconds.
 	 */
 	rte_timer_init(&lls_conf->scan_timer);
 	ret = rte_timer_reset(&lls_conf->scan_timer,
-		lls_conf->lls_cache_scan_interval_sec * rte_get_timer_hz(),
+		lls_conf->cache_scan_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Cannot set LLS scan timer\n");
