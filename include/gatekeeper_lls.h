@@ -183,7 +183,7 @@ struct lls_config {
 	uint16_t          back_max_pkt_burst;
 
 	/* The maximum number of ARP or ND packets submitted by GK or GT. */
-	unsigned int      mailbox_max_pkt_burst;
+	unsigned int      mailbox_max_pkt_sub;
 
 	/* Parameters to setup the mailbox instance. */
 	unsigned int      mailbox_max_entries_exp;

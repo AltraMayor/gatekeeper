@@ -96,8 +96,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
 	-- be at least the same with the maximum configured value of GK.
-	lls_conf.mailbox_max_pkt_burst =
-		math.max(lls_conf.mailbox_max_pkt_burst,
+	lls_conf.mailbox_max_pkt_sub =
+		math.max(lls_conf.mailbox_max_pkt_sub,
 		gk_conf.front_max_pkt_burst, gk_conf.back_max_pkt_burst)
 
 	local ret = staticlib.c.run_gk(net_conf, gk_conf, sol_conf)

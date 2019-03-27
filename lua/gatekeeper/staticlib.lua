@@ -199,7 +199,7 @@ struct lls_config {
 	unsigned int lcore_id;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
-	unsigned int mailbox_max_pkt_burst;
+	unsigned int mailbox_max_pkt_sub;
 	unsigned int mailbox_max_entries_exp;
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;

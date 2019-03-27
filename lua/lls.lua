@@ -11,7 +11,7 @@ return function (net_conf, numa_table)
 	local mailbox_max_entries_exp = 7
 	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
-	local mailbox_max_pkt_burst = 32
+	local mailbox_max_pkt_sub = 32
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
 	local front_max_pkt_burst = 32
@@ -35,7 +35,7 @@ return function (net_conf, numa_table)
 	lls_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
 	lls_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	lls_conf.mailbox_burst_size = mailbox_burst_size
-	lls_conf.mailbox_max_pkt_burst = mailbox_max_pkt_burst
+	lls_conf.mailbox_max_pkt_sub = mailbox_max_pkt_sub
 	lls_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	lls_conf.log_ratelimit_burst = log_ratelimit_burst
 	lls_conf.front_max_pkt_burst = front_max_pkt_burst

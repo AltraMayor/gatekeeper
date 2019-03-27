@@ -49,8 +49,8 @@ return function (net_conf, lls_conf, numa_table)
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
 	-- be at least the same with the maximum configured value of GT.
-	lls_conf.mailbox_max_pkt_burst =
-		math.max(lls_conf.mailbox_max_pkt_burst,
+	lls_conf.mailbox_max_pkt_sub =
+		math.max(lls_conf.mailbox_max_pkt_sub,
 		gt_conf.gt_max_pkt_burst)
 
 	-- Setup the GT functional block.
