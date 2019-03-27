@@ -191,10 +191,10 @@ struct lls_config {
 	unsigned int      mailbox_burst_size;
 
 	/* Number of records that a LLS cache can hold. */
-	unsigned int      lls_cache_records;
+	unsigned int      max_num_cache_records;
 
 	/* Length of time (in seconds) to wait between scans of the cache. */
-	unsigned int      lls_cache_scan_interval_sec;
+	unsigned int      cache_scan_interval_sec;
 
 	/* Log level for LLS block. */
 	uint32_t          log_level;

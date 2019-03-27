@@ -855,12 +855,12 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		goto stage2;
 
 	/*
-	 * Do LLS cache scan every @lls_conf->lls_cache_scan_interval_sec
+	 * Do LLS cache scan every @lls_conf->cache_scan_interval_sec
 	 * seconds.
 	 */
 	rte_timer_init(&lls_conf->scan_timer);
 	ret = rte_timer_reset(&lls_conf->scan_timer,
-		lls_conf->lls_cache_scan_interval_sec * rte_get_timer_hz(),
+		lls_conf->cache_scan_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Cannot set LLS scan timer\n");

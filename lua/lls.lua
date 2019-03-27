@@ -18,8 +18,8 @@ return function (net_conf, numa_table)
 	local back_max_pkt_burst = 32
 
 	-- These variables are unlikely to need to be changed.
-	local lls_cache_records = 1024
-	local lls_cache_scan_interval_sec = 10
+	local max_num_cache_records = 1024
+	local cache_scan_interval_sec = 10
 
 	--
 	-- End configuration of LLS block.
@@ -41,8 +41,8 @@ return function (net_conf, numa_table)
 	lls_conf.front_max_pkt_burst = front_max_pkt_burst
 	lls_conf.back_max_pkt_burst = back_max_pkt_burst
 
-	lls_conf.lls_cache_records = lls_cache_records
-	lls_conf.lls_cache_scan_interval_sec = lls_cache_scan_interval_sec
+	lls_conf.max_num_cache_records = max_num_cache_records
+	lls_conf.cache_scan_interval_sec = cache_scan_interval_sec
 
 	lls_conf.lcore_id = staticlib.alloc_an_lcore(numa_table)
 	local ret = staticlib.c.run_lls(net_conf, lls_conf)

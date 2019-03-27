@@ -480,9 +480,9 @@ lls_cache_scan(struct lls_config *lls_conf, struct lls_cache *cache)
 			if (record->num_holds > 0)
 				lls_send_request(lls_conf, cache, addr,
 					&record->map.ha);
-		} else if (timeout > lls_conf->lls_cache_scan_interval_sec &&
+		} else if (timeout > lls_conf->cache_scan_interval_sec &&
 				(now - record->ts >= timeout - lls_conf->
-					lls_cache_scan_interval_sec)) {
+					cache_scan_interval_sec)) {
 			/*
 			 * If the record is close to being stale,
 			 * preemptively send a unicast probe.
@@ -515,7 +515,7 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 {
 	struct rte_hash_parameters lls_cache_params = {
 		.name = cache->name,
-		.entries = lls_conf->lls_cache_records,
+		.entries = lls_conf->max_num_cache_records,
 		.reserved = 0,
 		.key_len = key_len,
 		.hash_func = DEFAULT_HASH_FUNC,
@@ -529,7 +529,7 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 	};
 
 	cache->records = rte_calloc("lls_records",
-		lls_conf->lls_cache_records, sizeof(*cache->records), 0);
+		lls_conf->max_num_cache_records, sizeof(*cache->records), 0);
 	if (cache->records == NULL) {
 		LLS_LOG(ERR, "Could not allocate %s cache records\n",
 			cache->name);
