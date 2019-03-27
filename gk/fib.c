@@ -311,12 +311,12 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf)
 	/* Find an empty FIB entry. */
 	if (ip_proto == ETHER_TYPE_IPv4) {
 		return __get_empty_fib_id(ltbl->fib_tbl,
-			gk_conf->gk_max_num_ipv4_fib_entries, gk_conf);
+			gk_conf->max_num_ipv4_fib_entries, gk_conf);
 	}
 
 	if (likely(ip_proto == ETHER_TYPE_IPv6)) {
 		return __get_empty_fib_id(ltbl->fib_tbl6,
-			gk_conf->gk_max_num_ipv6_fib_entries, gk_conf);
+			gk_conf->max_num_ipv6_fib_entries, gk_conf);
 	}
 
 	rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
@@ -569,12 +569,12 @@ init_fib_tbl(struct gk_config *gk_conf)
 
 	rte_spinlock_init(&ltbl->lock);
 
-	for (i = 0; i < gk_conf->gk_max_num_ipv4_fib_entries; i++) {
+	for (i = 0; i < gk_conf->max_num_ipv4_fib_entries; i++) {
 		ltbl->fib_tbl[i].action = GK_FIB_MAX;
 		rte_atomic16_init(&ltbl->fib_tbl[i].num_updated_instances);
 	}
 
-	for (i = 0; i < gk_conf->gk_max_num_ipv6_fib_entries; i++) {
+	for (i = 0; i < gk_conf->max_num_ipv6_fib_entries; i++) {
 		ltbl->fib_tbl6[i].action = GK_FIB_MAX;
 		rte_atomic16_init(&ltbl->fib_tbl6[i].num_updated_instances);
 	}
@@ -653,7 +653,7 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		}
 
 		ltbl->fib_tbl = rte_calloc(NULL,
-			gk_conf->gk_max_num_ipv4_fib_entries,
+			gk_conf->max_num_ipv4_fib_entries,
 			sizeof(struct gk_fib), 0);
 		if (ltbl->fib_tbl == NULL) {
 			GK_LOG(ERR,
@@ -684,7 +684,7 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		}
 
 		ltbl->fib_tbl6 = rte_calloc(NULL,
-			gk_conf->gk_max_num_ipv6_fib_entries,
+			gk_conf->max_num_ipv6_fib_entries,
 			sizeof(struct gk_fib), 0);
 		if (ltbl->fib_tbl6 == NULL) {
 			GK_LOG(ERR,

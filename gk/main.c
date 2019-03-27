@@ -1949,7 +1949,7 @@ cleanup_gk(struct gk_config *gk_conf)
 	}
 
 	if (gk_conf->lpm_tbl.fib_tbl != NULL) {
-		for (ui = 0; ui < gk_conf->gk_max_num_ipv4_fib_entries; ui++) {
+		for (ui = 0; ui < gk_conf->max_num_ipv4_fib_entries; ui++) {
 			struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl[ui];
 			if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 					fib->action ==
@@ -1960,7 +1960,7 @@ cleanup_gk(struct gk_config *gk_conf)
 	}
 
 	if (gk_conf->lpm_tbl.fib_tbl6 != NULL) {
-		for (ui = 0; ui < gk_conf->gk_max_num_ipv6_fib_entries; ui++) {
+		for (ui = 0; ui < gk_conf->max_num_ipv6_fib_entries; ui++) {
 			struct gk_fib *fib = &gk_conf->lpm_tbl.fib_tbl6[ui];
 			if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 					fib->action ==
@@ -2131,19 +2131,19 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	}
 
 	if (!ipv4_configured(net_conf) &&
-			gk_conf->gk_max_num_ipv4_fib_entries != 0) {
+			gk_conf->max_num_ipv4_fib_entries != 0) {
 		GK_LOG(ERR,
 			"IPv4 is not configured, but the number of FIB entries for IPv4 is non-zero %u\n",
-			gk_conf->gk_max_num_ipv4_fib_entries);
+			gk_conf->max_num_ipv4_fib_entries);
 		ret = -1;
 		goto out;
 	}
 
 	if (!ipv6_configured(net_conf) &&
-			gk_conf->gk_max_num_ipv6_fib_entries != 0) {
+			gk_conf->max_num_ipv6_fib_entries != 0) {
 		GK_LOG(ERR,
 			"IPv6 is not configured, but the number of FIB entries for IPv6 is non-zero %u\n",
-			gk_conf->gk_max_num_ipv6_fib_entries);
+			gk_conf->max_num_ipv6_fib_entries);
 		ret = -1;
 		goto out;
 	}

@@ -118,8 +118,8 @@ struct gk_config {
 	 * The IPv4 LPM reserves 24 bits for the next-hop field,
 	 * whereas IPv6 LPM reserves 21 bits.
 	 */
-	unsigned int       gk_max_num_ipv4_fib_entries;
-	unsigned int       gk_max_num_ipv6_fib_entries;
+	unsigned int       max_num_ipv4_fib_entries;
+	unsigned int       max_num_ipv6_fib_entries;
 
 	/* Time for scanning the whole flow table in ms. */
 	unsigned int       flow_table_full_scan_ms;
