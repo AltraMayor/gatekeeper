@@ -7,10 +7,11 @@
 Install the following software dependencies:
 
     $ sudo apt-get update
-    $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
+    $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
-`libnuma-dev` is needed to compile the latest DPDK and/or support NUMA system. The `autoconf`, `flex`, `bison`, `libncurses5-dev` and `libreadline-dev` packages are for BIRD.
+Both `libkmod2` and `libkmod-dev` are needed to compile and run `gatekeeper`, but only `libkmod2` is needed for simply running `gatekeeper`.
+`libnuma-dev` is needed to compile the latest DPDK and/or support the NUMA system. The `autoconf`, `flex`, `bison`, `libncurses5-dev` and `libreadline-dev` packages are for BIRD.
 
 To use DPDK, make sure you have all of the environmental requirements: <http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-applications>.
 

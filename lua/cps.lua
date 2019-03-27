@@ -5,7 +5,6 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	--
 
 	-- These parameters should likely be initially changed.
-	local kni_kmod_path = "/home/user/gatekeeper/dependencies/dpdk/build/kmod/rte_kni.ko"
 	local log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
@@ -22,6 +21,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	local num_attempts_kni_link_set = 5
 	local max_rt_update_pkts = 8
 	local scan_interval_sec = 5
+	local kni_kmod_path
 
 	--
 	-- End configuration of CPS block.
