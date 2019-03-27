@@ -1216,7 +1216,7 @@ rd_getlink(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 
 	rd_fill_getlink_reply(cps_conf, batch,
 		rte_kni_get_name(cps_conf->front_kni),
-		cps_conf->front_kni_index, kni_mtu(&cps_conf->net->front),
+		cps_conf->front_kni_index, cps_conf->net->front.mtu,
 		req->nlmsg_seq);
 	if (!mnl_nlmsg_batch_next(batch)) {
 		/* Send whatever was in the batch, if anything. */
@@ -1230,7 +1230,7 @@ rd_getlink(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		rd_fill_getlink_reply(cps_conf, batch,
 			rte_kni_get_name(cps_conf->back_kni),
 			cps_conf->back_kni_index,
-			kni_mtu(&cps_conf->net->back), req->nlmsg_seq);
+			cps_conf->net->back.mtu, req->nlmsg_seq);
 		if (!mnl_nlmsg_batch_next(batch)) {
 			*err = rd_send_batch(cps_conf, batch, "LINK",
 				req->nlmsg_seq, req->nlmsg_pid, false);
