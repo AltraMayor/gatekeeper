@@ -16,7 +16,7 @@ return function (net_conf, lls_conf, numa_table)
 	local mailbox_burst_size = 32
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
-	local gt_max_pkt_burst = 32
+	local max_pkt_burst = 32
 
 	local max_num_ipv6_neighbors = 1024
 
@@ -65,15 +65,15 @@ return function (net_conf, lls_conf, numa_table)
 	gt_conf.ggu_src_port = ggu_src_port
 	gt_conf.ggu_dst_port = ggu_dst_port
 
-	gt_conf.gt_max_pkt_burst = staticlib.get_front_burst_config(
-		gt_max_pkt_burst, net_conf)
+	gt_conf.max_pkt_burst = staticlib.get_front_burst_config(
+		max_pkt_burst, net_conf)
 
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
 	-- be at least the same with the maximum configured value of GT.
 	lls_conf.mailbox_max_pkt_sub =
 		math.max(lls_conf.mailbox_max_pkt_sub,
-		gt_conf.gt_max_pkt_burst)
+		gt_conf.max_pkt_burst)
 
 	local gt_lcores = staticlib.alloc_lcores_from_same_numa(numa_table,
 		n_lcores)

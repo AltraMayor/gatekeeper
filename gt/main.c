@@ -1304,7 +1304,7 @@ gt_proc(void *arg)
 	uint16_t gt_max_pkt_burst;
 
 	death_row.cnt = 0;
-	gt_max_pkt_burst = gt_conf->gt_max_pkt_burst;
+	gt_max_pkt_burst = gt_conf->max_pkt_burst;
 
 	GT_LOG(NOTICE, "The GT block is running at lcore = %u\n", lcore);
 
@@ -1645,7 +1645,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
-	instance->acl4 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
+	instance->acl4 = alloc_acl_search(gt_conf->max_pkt_burst);
 	if (instance->acl4 == NULL) {
 		GT_LOG(ERR,
 			"The GT block can't create acl search for IPv4 at lcore %u\n",
@@ -1655,7 +1655,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
-	instance->acl6 = alloc_acl_search(gt_conf->gt_max_pkt_burst);
+	instance->acl6 = alloc_acl_search(gt_conf->max_pkt_burst);
 	if (instance->acl6 == NULL) {
 		GT_LOG(ERR,
 			"The GT block can't create acl search for IPv6 at lcore %u\n",
@@ -1819,7 +1819,7 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	}
 
 	front_inc = gt_conf->num_lcores *
-		(gt_conf->gt_max_pkt_burst + gt_conf->frag_max_entries);
+		(gt_conf->max_pkt_burst + gt_conf->frag_max_entries);
 	net_conf->front.total_pkt_burst += front_inc;
 
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",
@@ -1832,7 +1832,7 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	if (gt_conf->lua_policy_file == NULL)
 		goto policy_dir;
 
-	if (!(gt_conf->gt_max_pkt_burst > 0))
+	if (!(gt_conf->max_pkt_burst > 0))
 		goto gt_config_file;
 
 	if (gt_conf->batch_interval == 0) {

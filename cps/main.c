@@ -1189,7 +1189,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	if (gt_conf != NULL) {
 		cps_conf->mailbox_max_pkt_burst =
 			RTE_MAX(cps_conf->mailbox_max_pkt_burst,
-				gt_conf->gt_max_pkt_burst);
+				gt_conf->max_pkt_burst);
 	}
 
 	ele_size = RTE_MAX(sizeof(struct cps_request),
