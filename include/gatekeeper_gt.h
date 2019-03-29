@@ -136,7 +136,7 @@ struct gt_config {
 	uint32_t           frag_max_flow_ttl_ms;
 
 	/* The maximum number of packets to retrieve/transmit. */
-	uint16_t           gt_max_pkt_burst;
+	uint16_t           max_pkt_burst;
 
 	/*
 	 * Number of iterations of packets processed by each GT
