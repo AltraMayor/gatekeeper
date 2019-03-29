@@ -1,35 +1,49 @@
 return function (net_conf, lcore)
 
-	-- Init the Solicitor configuration structure.
+	--
+	-- Configure the variables below for the SOL block.
+	--
+
+	-- These parameters should likely be initially changed.
+	local log_level = staticlib.c.RTE_LOG_DEBUG
+
+	-- XXX #155 These parameters should only be changed for performance reasons.
+	local mailbox_mem_cache_size = 0
+	local log_ratelimit_interval_ms = 5000
+	local log_ratelimit_burst = 10
+	local pri_req_max_len = 1024
+	local req_bw_rate = 0.05
+	local enq_burst_size = 32
+	local deq_burst_size = 32
+
+	-- These variables are unlikely to need to be changed.
+	local tb_rate_approx_err = 1e-7
+	local req_channel_bw_mbps = 0.0
+
+	--
+	-- End configuration of SOL block.
+	--
+
 	local sol_conf = staticlib.c.alloc_sol_conf()
 	if sol_conf == nil then
 		error("Failed to allocate sol_conf")
 	end
 
 	sol_conf.lcore_id = lcore
-	sol_conf.pri_req_max_len = 1024
-	sol_conf.req_bw_rate = 0.05
-	-- These values should be tested to find optimal values.
-	sol_conf.enq_burst_size = 32
-	sol_conf.deq_burst_size = 32
-	sol_conf.mailbox_mem_cache_size = 0
 
-	-- Log level for SOL.
-	sol_conf.log_level = staticlib.c.RTE_LOG_DEBUG
+	sol_conf.log_level = log_level
 
-	-- Token bucket rate approximation error.
-	sol_conf.tb_rate_approx_err = 1e-7
+	sol_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
+	sol_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
+	sol_conf.log_ratelimit_burst = log_ratelimit_burst
+	sol_conf.pri_req_max_len = pri_req_max_len
+	sol_conf.req_bw_rate = req_bw_rate
+	sol_conf.enq_burst_size = enq_burst_size
+	sol_conf.deq_burst_size = deq_burst_size
 
-	-- Only used when the NIC does not provide a
-	-- guaranteed bandwidth, such as Amazon ENA.
-	-- Otherwise, should be kept as 0.
-	sol_conf.req_channel_bw_mbps = 0.0
+	sol_conf.tb_rate_approx_err = tb_rate_approx_err
+	sol_conf.req_channel_bw_mbps = req_channel_bw_mbps
 
-	-- Log ratelimit interval and burst size.
-	sol_conf.log_ratelimit_interval_ms = 5000
-	sol_conf.log_ratelimit_burst = 10
-
-	-- Setup the sol functional block.
 	local ret = staticlib.c.run_sol(net_conf, sol_conf)
 	if ret < 0 then
 		error("Failed to run sol block")
