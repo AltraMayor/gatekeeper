@@ -1,7 +1,5 @@
 module("dylib", package.seeall)
 
-require "gatekeeper/staticlib"
-
 --
 -- C functions exported through FFI
 --

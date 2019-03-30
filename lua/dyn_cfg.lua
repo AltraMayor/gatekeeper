@@ -13,8 +13,8 @@ return function (gk_conf, gt_conf, numa_table)
 
 	-- These variables are unlikely to need to be changed.
 	local server_path = "/tmp/dyn_cfg.socket"
-	local lua_dy_base_dir = "./lua/gatekeeper"
-	local lua_dy_lib = "dylib.lua"
+	local lua_dy_base_dir = "./lua"
+	local lua_dy_lib = "gatekeeper/dylib.lua"
 	local rcv_timeout_sec = 30
 	local rcv_timeout_usec = 0
 
