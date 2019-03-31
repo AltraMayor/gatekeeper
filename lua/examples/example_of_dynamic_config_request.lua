@@ -1,4 +1,4 @@
-require "gatekeeper/dylib"
+require "gatekeeper/staticlib"
 
 local acc_start = ""
 local reply_msg = ""
@@ -6,7 +6,7 @@ local reply_msg = ""
 local dyc = staticlib.c.get_dy_conf()
 
 if dyc.gt ~= nil then
-	dylib.update_lua_states(dyc.gt)
+	dylib.update_gt_lua_states(dyc.gt)
 	return "gt: successfully updated the lua states\n"
 end
 
