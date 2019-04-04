@@ -68,4 +68,13 @@ This command binds the interface `enp131s0f0` to the `uio_pci_generic` driver so
 
 Once `gatekeeper` is compiled and the environment is configured correctly, run:
 
-    $ sudo build/gatekeeper
+    $ sudo build/gatekeeper [EAL OPTIONS] -- [GATEKEEPER OPTIONS]
+
+Where `[EAL OPTIONS]` are specified before a double dash and represent the
+parameters for DPDK's [Environmental Abstraction Layer](https://doc.dpdk.org/guides/linux_gsg/linux_eal_parameters.html)
+and `[GATEKEEPER OPTIONS]` are specified after the double dash and
+represent [Gatekeeper-specific options](https://github.com/AltraMayor/gatekeeper/wiki/Configuration#application-configuration).
+
+The early configuration of the system, including device and memory
+configuration in DPDK, will be logged to stdout. Once Gatekeeper is booted,
+all information is output to the Gatekeeper log.
