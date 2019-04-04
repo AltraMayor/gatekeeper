@@ -529,8 +529,8 @@ ip4_same_subnet(uint32_t addr1, uint32_t addr2, uint32_t ip4_mask)
 }
 
 static inline bool
-ip6_same_subnet(const uint8_t *addr1, const uint8_t *addr2,
-	const uint8_t *ip6_mask)
+ip6_same_subnet(const struct in6_addr *addr1, const struct in6_addr *addr2,
+	const struct in6_addr *ip6_mask)
 {
 	const uint64_t *paddr_p1 = (const uint64_t *)addr1;
 	const uint64_t *paddr_p2 = (const uint64_t *)addr2;
