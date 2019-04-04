@@ -19,24 +19,30 @@ For more information, see the [Gatekeeper wiki](https://github.com/AltraMayor/ga
 
 ## How to Set Up
 
-### Install and Configure Dependencies
+### Install Dependencies and Configure Hugepages
 
 Install the following software dependencies:
 
     $ sudo apt-get update
     $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
 
-Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
-Both `libkmod2` and `libkmod-dev` are needed to compile and run `gatekeeper`, but only `libkmod2` is needed for simply running `gatekeeper`.
-`libnuma-dev` is needed to compile the latest DPDK and/or support the NUMA system. The `autoconf`, `flex`, `bison`, `libncurses5-dev` and `libreadline-dev` packages are for BIRD.
+Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
+`gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
+Both `libkmod2` and `libkmod-dev` are needed to compile and run `gatekeeper`,
+but only `libkmod2` is needed for simply running `gatekeeper`.
+`libnuma-dev` is needed to compile the latest DPDK and/or support the NUMA
+system. The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
+`libreadline-dev` packages are for BIRD.
 
-To use DPDK, make sure you have all of the environmental requirements: <http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-applications>.
+To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
-Note that DPDK requires the use of hugepages; instructions for mounting hugepages are available in the link above.
+Note that DPDK requires the use of hugepages; instructions for mounting
+hugepages are available in the link above. On many systems, the following
+hugepages setup is sufficient:
 
-Once the software dependencies have been installed and the hugepages have been configured, you are ready to build `gatekeeper`.
+    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
-### Obtain Source
+### Build from Source
 
 Upon cloning the `gatekeeper` repository, you need to obtain the sources of
 the dependencies:
