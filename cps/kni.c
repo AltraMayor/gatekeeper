@@ -482,8 +482,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		proto = ETHER_TYPE_IPv6;
 
 		if (update->rt_type != RTN_BLACKHOLE) {
-			ret = lpm_lookup_ipv6(ltbl->lpm6,
-				update->gw.v6.s6_addr);
+			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.v6);
 			if (ret < 0)
 				return ret;
 			gw_fib = &ltbl->fib_tbl6[ret];
