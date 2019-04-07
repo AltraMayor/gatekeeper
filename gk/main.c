@@ -2215,12 +2215,8 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	uint16_t queue_id;
 	int block_idx;
 
-	/*
-	 * XXX #149 Change the mapping rss hash value to rss reta entry
-	 * if the reta size is not 128.
-	 */
-	RTE_VERIFY(gk_conf->rss_conf_front.reta_size == 128);
-	rss_hash_val = (rss_hash_val & 127);
+	RTE_VERIFY(gk_conf->rss_conf_front.reta_size > 0);
+	rss_hash_val = rss_hash_val % gk_conf->rss_conf_front.reta_size;
 
 	/*
 	 * Identify which GK block is responsible for the
