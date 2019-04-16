@@ -123,7 +123,7 @@ parse_opt(int key, char *arg, struct argp_state *state)
 			argp_error(state, "the log file mode \"%s\" is not an number",
 				arg);
 		}
-		RTE_VERIFY(LONG_MIN < 0 && MAX_MODE < LONG_MAX);
+		RTE_BUILD_BUG_ON(LONG_MIN >= 0 || MAX_MODE >= LONG_MAX);
 		if (mode < 0 || MAX_MODE < mode) {
 			argp_error(state, "the log file mode \"%s\" is out of range",
 				arg);
