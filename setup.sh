@@ -76,7 +76,7 @@ gcc generate_if_map.c -o generate_if_map -Wall
 
 # Build client.
 cd gkctl
-gcc main.c -o client -Wall -Wextra -pedantic
+gcc main.c -o gkctl -Wall -Wextra -pedantic
 
 cd ..
 
