@@ -124,6 +124,39 @@ enum bonding_modes {
 	BONDING_MODE_ALB = 6,
 };
 
+enum file_modes {
+	/* RWX mask for owner. */
+	S_IRWXU = 0000700,
+	/* R for owner. */
+	S_IRUSR = 0000400,
+	/* W for owner. */
+	S_IWUSR = 0000200,
+	/* X for owner. */
+	S_IXUSR = 0000100,
+	/* RWX mask for group. */
+	S_IRWXG = 0000070,
+	/* R for group. */
+	S_IRGRP = 0000040,
+	/* W for group. */
+	S_IWGRP = 0000020,
+	/* X for group. */
+	S_IXGRP = 0000010,
+	/* RWX mask for other. */
+	S_IRWXO = 0000007,
+	/* R for other. */
+	S_IROTH = 0000004,
+	/* W for other. */
+	S_IWOTH = 0000002,
+	/* X for other. */
+	S_IXOTH = 0000001,
+	/* Set user id on execution. */
+	S_ISUID = 0004000,
+	/* Set group id on execution. */
+	S_ISGID = 0002000,
+	/* Save swapped text even after use. */
+	S_ISVTX = 0001000,
+};
+
 struct gatekeeper_if {
 	char     **pci_addrs;
 	uint8_t  num_ports;
@@ -300,6 +333,8 @@ bool ipv6_configured(struct net_config *net_conf);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
+int gatekeeper_setup_user(struct net_config *net_conf,
+	const char *user);
 int gatekeeper_init_network(struct net_config *net_conf);
 
 struct gk_config *alloc_gk_conf(void);
@@ -327,9 +362,11 @@ int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
+int run_dynamic_config(struct net_config *net_conf,
+	struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, const char *lua_dy_base_dir,
-	const char *dynamic_config_file, struct dynamic_config *dy_conf);
+	const char *dynamic_config_file, struct dynamic_config *dy_conf,
+	int mode);
 
 struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);

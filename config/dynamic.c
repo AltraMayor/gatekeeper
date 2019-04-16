@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <lualib.h>
 #include <lauxlib.h>
 
@@ -473,9 +474,11 @@ set_dyc_timeout(unsigned int sec,
 }
 
 int
-run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
+run_dynamic_config(struct net_config *net_conf,
+	struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, const char *lua_dy_base_dir,
-	const char *dynamic_config_file, struct dynamic_config *dy_conf)
+	const char *dynamic_config_file, struct dynamic_config *dy_conf,
+	int mode)
 {
 	int ret;
 	struct sockaddr_un server_addr;
@@ -489,7 +492,8 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	 * This way, not only will the dynamic config block work for
 	 * the Grantor case, it could work for unforeseen cases as well.
 	 */
-	if (server_path == NULL || lua_dy_base_dir == NULL ||
+	if (net_conf == NULL || server_path == NULL ||
+			lua_dy_base_dir == NULL ||
 			dynamic_config_file == NULL || dy_conf == NULL) {
 		ret = -1;
 		goto out;
@@ -595,6 +599,24 @@ run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
 	if (gt_conf != NULL)
 		gt_conf_hold(gt_conf);
 	dy_conf->gt = gt_conf;
+
+	if (net_conf->pw_uid != 0) {
+		ret = fchown(dy_conf->sock_fd,
+			net_conf->pw_uid, net_conf->pw_gid);
+		if (ret < 0) {
+			DYC_LOG(ERR, "Failed to change the owner of the file (%s) to user with uid %u and gid %u - %s\n",
+				dy_conf->server_path, net_conf->pw_uid,
+				net_conf->pw_gid, strerror(errno));
+			goto put_gk_gt_config;
+		}
+	}
+
+	ret = fchmod(dy_conf->sock_fd, mode);
+	if (ret != 0) {
+		DYC_LOG(ERR, "Failed to change the mode of the file (%s) - %s\n",
+			dy_conf->server_path, strerror(errno));
+		goto put_gk_gt_config;
+	}
 
 	ret = launch_at_stage3("dynamic_conf",
 		dyn_cfg_proc, dy_conf, dy_conf->lcore_id);

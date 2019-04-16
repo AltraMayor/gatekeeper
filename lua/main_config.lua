@@ -63,7 +63,7 @@ function gatekeeper_init()
 	local cps_conf = cpsf(net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 
 	local dyf = require("dyn_cfg")
-	local dy_conf = dyf(gk_conf, gt_conf, numa_table)
+	local dy_conf = dyf(net_conf, gk_conf, gt_conf, numa_table)
 
 	return 0
 end

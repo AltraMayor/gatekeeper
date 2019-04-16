@@ -23,6 +23,8 @@
 #include <arpa/inet.h>
 #include <linux/random.h>
 #include <sys/syscall.h>
+#include <pwd.h>
+#include <grp.h>
 
 #include <rte_mbuf.h>
 #include <rte_thash.h>
@@ -1038,6 +1040,28 @@ out:
 	return ret;
 }
 
+int
+gatekeeper_setup_user(struct net_config *net_conf, const char *user)
+{
+	struct passwd *pw;
+
+	if (user == NULL) {
+		net_conf->pw_uid = 0;
+		net_conf->pw_gid = 0;
+		return 0;
+	}
+
+	if ((pw = getpwnam(user)) == NULL) {
+		G_LOG(ERR, "%s: failed to call getpwnam() for user %s - %s\n",
+			__func__, user, strerror(errno));
+		return -1;
+	}
+
+	net_conf->pw_uid = pw->pw_uid;
+	net_conf->pw_gid = pw->pw_gid;
+	return 0;
+}
+
 /*
  * @port_idx represents index of port in iface->ports when it is >= 0.
  * When it is -1, @port_id is a bonded port and has no entry in iface->ports.
@@ -1555,28 +1579,72 @@ fail:
 	return ret;
 }
 
-int
-finalize_stage2(__attribute__((unused)) void *arg)
+static int
+drop_privileges(void)
 {
+	int ret;
+	char user[128];
+
+	ret = getlogin_r(user, sizeof(user));
+	if (ret != 0) {
+		G_LOG(ERR, "%s: failed to get the current logged in user - %s\n",
+			__func__, strerror(errno));
+		return ret;
+	}
+
+	ret = initgroups(user, config.pw_gid);
+	if (ret != 0) {
+		G_LOG(ERR, "%s: failed to call initgrous(%s, %u) - %s\n",
+			__func__, user, config.pw_gid, strerror(errno));
+		return ret;
+	}
+
+	/* Drop privileges. */
+	if (setgid(config.pw_gid) != 0 || setuid(config.pw_uid) != 0) {
+		G_LOG(ERR, "%s: failed to drop privileges for user with user id %u and group id %u: %s\n",
+			__func__, config.pw_uid,
+			config.pw_gid, strerror(errno));
+		return -1;
+	}
+
+	return (seteuid(0) == -1 && setegid(0) == -1) ? 0 : -1;
+}
+
+int
+finalize_stage2(void *arg)
+{
+	int ret;
+
 	if (ipv4_acl_enabled(&config.front)) {
-		int ret = build_ipv4_acls(&config.front);
+		ret = build_ipv4_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
 	if (ipv4_acl_enabled(&config.back)) {
-		int ret = build_ipv4_acls(&config.back);
+		ret = build_ipv4_acls(&config.back);
 		if (ret < 0)
 			return ret;
 	}
 	if (ipv6_acl_enabled(&config.front)) {
-		int ret = build_ipv6_acls(&config.front);
+		ret = build_ipv6_acls(&config.front);
 		if (ret < 0)
 			return ret;
 	}
 	if (ipv6_acl_enabled(&config.back)) {
-		int ret = build_ipv6_acls(&config.back);
+		ret = build_ipv6_acls(&config.back);
 		if (ret < 0)
 			return ret;
+	}
+	if (config.pw_uid != 0) {
+		int log_fd = (intptr_t)arg;
+		ret = fchown(log_fd, config.pw_uid, config.pw_gid);
+		if (ret != 0) {
+			G_LOG(ERR, "Failed to change the owner of the file (with descriptor %d) to user with uid %u and gid %u - %s\n",
+				log_fd, config.pw_uid,
+				config.pw_gid, strerror(errno));
+			return ret;
+		}
+		return drop_privileges();
 	}
 	return 0;
 }

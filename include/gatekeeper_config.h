@@ -75,8 +75,10 @@ int set_lua_path(lua_State *l, const char *path);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);
-int run_dynamic_config(struct gk_config *gk_conf, struct gt_config *gt_conf,
+int run_dynamic_config(struct net_config *net_conf,
+	struct gk_config *gk_conf, struct gt_config *gt_conf,
 	const char *server_path, const char *lua_dy_base_dir,
-	const char *dynamic_config_file, struct dynamic_config *dy_conf);
+	const char *dynamic_config_file, struct dynamic_config *dy_conf,
+	int mode);
 
 #endif /* _GATEKEEPER_CONFIG_H_ */

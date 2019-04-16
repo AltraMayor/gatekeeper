@@ -7,6 +7,7 @@ return function (gatekeeper_server)
 
 	-- These parameters should likely be initially changed.
 	local log_level = staticlib.c.RTE_LOG_DEBUG
+	local user --= "gatekeeper"
 
 	local front_ports = {"enp133s0f0"}
 	local front_ips  = {"10.0.1.1/24", "2001:db8:1::1/48"}
@@ -87,6 +88,14 @@ return function (gatekeeper_server)
 			back_ports, back_ips, back_vlan_tag)
 		if ret < 0 then
 			error("Failed to initialize the back interface")
+		end
+	end
+
+	-- Setup the user that Gatekeeper runs on after it boots.
+	if user ~= nil then
+		ret = staticlib.c.gatekeeper_setup_user(net_conf, user)
+		if ret < 0 then
+			error("Failed to setup the user")
 		end
 	end
 

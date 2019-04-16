@@ -17,11 +17,16 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <signal.h>
 #include <time.h>
 #include <inttypes.h>
 #include <argp.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <rte_eal.h>
 #include <rte_log.h>
@@ -51,6 +56,7 @@ uint64_t picosec_per_cycle;
 
 const char *log_file_name_format;
 const char *log_base_dir;
+mode_t log_file_mode;
 
 /* Argp's global variables. */
 const char *argp_program_version = "Gatekeeper 1.0";
@@ -70,6 +76,8 @@ static struct argp_option options[] = {
 		"The name format of log files", 0},
 	{"log-base-dir", 'g', "DIR", 0,
 		"Base directory DIR for Gatekeeper log files", 0},
+	{"log-file-mode", 'm', "MODE", 0,
+		"The mode of log files", 0},
 	{ 0 }
 };
 
@@ -78,7 +86,10 @@ struct args {
 	const char *gatekeeper_config_file;
 	const char *log_file_name_format;
 	const char *log_base_dir;
+	mode_t     log_file_mode;
 };
+
+#define MAX_MODE (07777)
 
 static error_t
 parse_opt(int key, char *arg, struct argp_state *state)
@@ -101,6 +112,25 @@ parse_opt(int key, char *arg, struct argp_state *state)
 	case 'g':
 		args->log_base_dir = arg;
 		break;
+
+	case 'm': {
+		long mode;
+		char *end;
+
+		/* Assuming the file mode is in octal. */
+		mode = strtol(arg, &end, 8);
+		if (!*arg || *end) {
+			argp_error(state, "the log file mode \"%s\" is not an number",
+				arg);
+		}
+		RTE_BUILD_BUG_ON(LONG_MIN >= 0 || MAX_MODE >= LONG_MAX);
+		if (mode < 0 || MAX_MODE < mode) {
+			argp_error(state, "the log file mode \"%s\" is out of range",
+				arg);
+		}
+		args->log_file_mode = mode;
+		break;
+	}
 
 	default:
 		return ARGP_ERR_UNKNOWN;
@@ -138,6 +168,7 @@ int
 gatekeeper_log_init(void)
 {
 	int ret;
+	int log_fd;
 	time_t now;
 	struct tm time_info;
 	char log_file_name[128];
@@ -172,22 +203,32 @@ gatekeeper_log_init(void)
 		return -1;
 	}
 
-	new_log_file = fopen(log_file_path, "a");
-	if (new_log_file == NULL) {
-		G_LOG(ERR, "gatekeeper: Failed to open log file %s - %s\n",
+	log_fd = open(log_file_path, O_CREAT | O_WRONLY, log_file_mode);
+	if (log_fd < 0) {
+		G_LOG(ERR, "gatekeeper: Failed to get log file descriptor %s - %s\n",
 			log_file_path, strerror(errno));
 		return -1;
 	}
 
-	ret = rte_openlog_stream(new_log_file);
-	if (ret != 0)
+	new_log_file = fdopen(log_fd, "a");
+	if (new_log_file == NULL) {
+		G_LOG(ERR, "gatekeeper: Failed to open log file %s - %s\n",
+			log_file_path, strerror(errno));
+		close(log_fd);
 		return -1;
+	}
+
+	ret = rte_openlog_stream(new_log_file);
+	if (ret != 0) {
+		fclose(new_log_file);
+		return -1;
+	}
 
 	if (log_file != stderr)
 		fclose(log_file);
 	log_file = new_log_file;
 
-	return 0;
+	return log_fd;
 }
 
 /* Obtain the system time resolution. */
@@ -293,8 +334,9 @@ main(int argc, char **argv)
 		.gatekeeper_config_file = "main_config.lua",
 		.log_file_name_format = "gatekeeper_%Y_%m_%d_%H_%M.log",
 		.log_base_dir = ".",
+		.log_file_mode = S_IRUSR | S_IWUSR,
 	};
-	int ret;
+	int ret, log_fd;
 
 	gatekeeper_logtype = rte_log_register("gatekeeper");
 	if (gatekeeper_logtype < 0)
@@ -314,10 +356,12 @@ main(int argc, char **argv)
 
 	log_file_name_format = args.log_file_name_format;
 	log_base_dir = args.log_base_dir;
+	log_file_mode = args.log_file_mode;
 
 	ret = gatekeeper_log_init();
 	if (ret < 0)
 		goto out;
+	log_fd = ret;
 
 	/* Used by the LLS block. */
 	rte_timer_subsystem_init();
@@ -346,8 +390,11 @@ main(int argc, char **argv)
 	 * after blocks have had a chance to make use of network state
 	 * during stage 2. This is needed because there is no stage 3 for
 	 * the network configuration.
+	 *
+	 * Finalize any user configuration, such as changing file permissions
+	 * and dropping user privileges.
 	 */
-	ret = launch_at_stage2(finalize_stage2, NULL);
+	ret = launch_at_stage2(finalize_stage2, (void *)(intptr_t)log_fd);
 	if (ret < 0)
 		goto net;
 
