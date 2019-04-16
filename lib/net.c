@@ -1059,7 +1059,6 @@ gatekeeper_setup_user(struct net_config *net_conf, const char *user)
 
 	net_conf->pw_uid = pw->pw_uid;
 	net_conf->pw_gid = pw->pw_gid;
-
 	return 0;
 }
 
