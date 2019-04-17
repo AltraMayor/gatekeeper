@@ -19,7 +19,21 @@ For more information, see the [Gatekeeper wiki](https://github.com/AltraMayor/ga
 
 ## How to Set Up
 
-### Install Dependencies and Configure Hugepages
+### Configure Hugepages
+
+DPDK requires the use of hugepages; instructions for mounting hugepages are
+available in the [requirements documentation](http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
+On many systems, the following hugepages setup is sufficient:
+
+    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+
+### Option 1: Obtain Packages
+
+Debian packages for Gatekeeper aren't yet available, but will be soon.
+
+### Option 2: Build from Source
+
+#### Install Dependencies
 
 Install the following software dependencies:
 
@@ -35,18 +49,6 @@ system. The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
-
-Note that DPDK requires the use of hugepages; instructions for mounting
-hugepages are available in the link above. On many systems, the following
-hugepages setup is sufficient:
-
-    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
-
-### Option 1: Obtain Packages
-
-Debian packages for Gatekeeper aren't yet available, but will be soon.
-
-### Option 2: Build from Source
 
 #### Clone Repository
 
