@@ -91,7 +91,7 @@ Once DPDK is compiled and the variables are set, `gatekeeper` can be compiled:
 
     $ make
 
-### Configure Network Adapters
+#### Configure Network Adapters
 
 Before `gatekeeper` can be used, the network adapters must be bound to DPDK.
 For this, you can use the script `dependencies/dpdk/usertools/dpdk-devbind.py`.
@@ -105,7 +105,7 @@ that this binding must take place after Gatekeeper is setup in the steps
 above so that the bound interface appears in the list of interfaces in
 `lua/if_map.lua`.
 
-## How to Run
+#### How to Run
 
 Once `gatekeeper` is compiled and the environment is configured correctly, run:
 
