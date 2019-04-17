@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+if test "$1" = "purge"; then
+    dpkg-statoverride --remove /usr/share/gatekeeper/devbind.sh > /dev/null 2>/dev/null || true
+    dpkg-statoverride --remove /var/log/gatekeeper >/dev/null 2>/dev/null || true
+    dpkg-statoverride --remove /etc/gatekeeper >/dev/null 2>/dev/null || true
+
+    deluser --quiet gatekeeper > /dev/null || true
+fi
+
+#DEBHELPER#
+
+exit 0

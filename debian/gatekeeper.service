@@ -1,0 +1,13 @@
+[Unit]
+Description=Gatekeeper DDoS protection system
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/gatekeeper/envvars
+ExecStartPre=/bin/mkdir -p /var/run/gatekeeper
+ExecStartPre=/usr/share/gatekeeper/devbind.sh $GATEKEEPER_INTERFACES
+ExecStart=/usr/sbin/gatekeeper $DPDK_ARGS -- $GATEKEEPER_ARGS
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
