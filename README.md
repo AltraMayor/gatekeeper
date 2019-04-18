@@ -19,7 +19,60 @@ For more information, see the [Gatekeeper wiki](https://github.com/AltraMayor/ga
 
 ## How to Set Up
 
-### Install Dependencies and Configure Hugepages
+### Configure Hugepages
+
+DPDK requires the use of hugepages; instructions for mounting hugepages are
+available in the [requirements documentation](http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
+On many systems, the following hugepages setup is sufficient:
+
+    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+
+### Option 1: Obtain Packages
+
+Debian packages for Gatekeeper are available at the project's
+[Releases](https://github.com/AltraMayor/gatekeeper/releases)
+page.
+
+#### Install
+
+Once the packages are downloaded, they can be installed with the commands below:
+
+    $ sudo dpkg -i libgkrte-*.deb \
+        gatekeeper-dpdk_18.11.0-0_amd64.deb \
+        gatekeeper-dpdk-dev_18.11.0-0_amd64.deb \
+        gatekeeper-dpdk-igb-uio-dkms_18.11.0-0_amd64.deb \
+        gatekeeper-dpdk-igb-uio-dkms_18.11.0-0_amd64.deb \
+        gatekeeper-bird_2.0.4-0_amd64.deb \
+        gatekeeper-1.0.0-0_amd64.deb
+
+#### Configure Network Adapters
+
+Edit the `/etc/gatekeeper/envvars` file and insert names of the network adapters
+to be bound to DPDK. For example:
+
+    GATEKEEPER_INTERFACES="eth0 eth1"
+
+Alternatively, the interfaces' PCI addresses can be specified:
+
+    GATEKEEPER_INTERFACES="0000:00:07.0 0000:00:08.0"
+
+In the same file, you can optionally specify
+[Environmental Abstraction Layer options](https://doc.dpdk.org/guides/linux_gsg/linux_eal_parameters.html)
+in the `DPDK_ARGS` variable and
+[Gatekeeper-specific options](https://github.com/AltraMayor/gatekeeper/wiki/Configuration#application-configuration)
+in `GATEKEEPER_ARGS`.
+
+#### How to run
+
+Run the commands below to start Gatekeeper and to ensure it is started
+automatically on reboots.
+
+    $ sudo systemctl start gatekeeper
+    $ sudo systemctl enable gatekeeper
+
+### Option 2: Build from Source
+
+#### Install Dependencies
 
 Install the following software dependencies:
 
@@ -35,18 +88,6 @@ system. The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
-
-Note that DPDK requires the use of hugepages; instructions for mounting
-hugepages are available in the link above. On many systems, the following
-hugepages setup is sufficient:
-
-    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
-
-### Option 1: Obtain Packages
-
-Debian packages for Gatekeeper aren't yet available, but will be soon.
-
-### Option 2: Build from Source
 
 #### Clone Repository
 
@@ -89,7 +130,7 @@ Once DPDK is compiled and the variables are set, `gatekeeper` can be compiled:
 
     $ make
 
-### Configure Network Adapters
+#### Configure Network Adapters
 
 Before `gatekeeper` can be used, the network adapters must be bound to DPDK.
 For this, you can use the script `dependencies/dpdk/usertools/dpdk-devbind.py`.
@@ -103,7 +144,7 @@ that this binding must take place after Gatekeeper is setup in the steps
 above so that the bound interface appears in the list of interfaces in
 `lua/if_map.lua`.
 
-## How to Run
+#### How to Run
 
 Once `gatekeeper` is compiled and the environment is configured correctly, run:
 
