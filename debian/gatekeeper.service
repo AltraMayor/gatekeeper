@@ -5,7 +5,15 @@ After=network.target
 [Service]
 EnvironmentFile=/etc/gatekeeper/envvars
 ExecStartPre=/bin/mkdir -p /var/run/gatekeeper
-ExecStartPre=/usr/share/gatekeeper/devbind.sh $GATEKEEPER_INTERFACES
+
+# We ignore dpdk-devbind errors on ExecStartPre to allow Gatekeeper
+# to be restarted, as dpdk-devbind will fail due to the interfaces
+# being already bound.
+#
+# Other errors are not a problem because if the interface fails to
+# be bound, Gatekeeper itself will fail to start anyway.
+ExecStartPre=-/usr/share/gatekeeper/devbind.sh $GATEKEEPER_INTERFACES
+
 ExecStart=/usr/sbin/gatekeeper $DPDK_ARGS -- $GATEKEEPER_ARGS
 Restart=on-abort
 
