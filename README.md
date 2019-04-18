@@ -77,7 +77,7 @@ automatically on reboots.
 Install the following software dependencies:
 
     $ sudo apt-get update
-    $ sudo apt-get -y -q install git clang doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
+    $ sudo apt-get -y -q install git clang devscripts doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
 `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
@@ -85,7 +85,8 @@ Both `libkmod2` and `libkmod-dev` are needed to compile and run `gatekeeper`,
 but only `libkmod2` is needed for simply running `gatekeeper`.
 `libnuma-dev` is needed to compile the latest DPDK and/or support the NUMA
 system. The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
-`libreadline-dev` packages are for BIRD.
+`libreadline-dev` packages are for BIRD. The `devscripts` package is used to
+build Gatekeeper Debian packages.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
@@ -94,7 +95,7 @@ To use DPDK, make sure you have all of the [environmental requirements](http://d
 Clone the Gatekeeper repository, including the submodules that
 contain Gatekeeper dependencies:
 
-    $ gatekeeper clone --recursive http://github.com/AltraMayor/gatekeeper.git
+    $ git clone --recursive http://github.com/AltraMayor/gatekeeper.git
 
 If you do not use the `--recursive` clone option, you need to obtain the
 submodules that contain the dependences from within the `gatekeeper`
@@ -104,6 +105,10 @@ directory:
     $ git submodule update
 
 #### Compile
+
+This section explains how to build Gatekeeper manually. If you want to build
+Debian packages, refer to the section
+[How to build packages](#how-to-build-packages).
 
 While in the `gatekeeper` directory, run the setup script:
 
@@ -158,3 +163,16 @@ represent [Gatekeeper-specific options](https://github.com/AltraMayor/gatekeeper
 The early configuration of the system, including device and memory
 configuration in DPDK, will be logged to stdout. Once Gatekeeper is booted,
 all information is output to the Gatekeeper log.
+
+#### How to build packages
+
+Gatekeeper Debian packages can be built with the commands below. They are meant
+to be run from the repository root and assume the git submodules have been
+pulled, and that the build dependencies have been installed, as instructed
+above. Gatekeeper and the submodules will be automatically compiled during the
+package build process.
+
+    $ tar --exclude-vcs -Jcvf ../gatekeeper_1.0.0.orig.tar.xz -C .. gatekeeper
+    $ debuild -uc -us
+
+The Gatekeeper package will be available in the parent directory.
