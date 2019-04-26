@@ -358,6 +358,18 @@ main(int argc, char **argv)
 	log_base_dir = args.log_base_dir;
 	log_file_mode = args.log_file_mode;
 
+	/*
+	 * ATTENTION: this is the only place at which the macro RTE_LOG()
+	 * should be used, everywhere else should use one of Gatekeeper's
+	 * log macros.
+	 *
+	 * The log level ALERT is used here to guarantee that
+	 * the message will be logged.
+	 * While the log level EMERG would raise this guarantee,
+	 * it is not used here to avoid broadcasting the message throughout
+	 * the system.
+	 */
+	RTE_LOG(ALERT, EAL, "See files in %s for further log\n", log_base_dir);
 	ret = gatekeeper_log_init();
 	if (ret < 0)
 		goto out;
