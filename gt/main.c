@@ -1534,8 +1534,25 @@ gt_conf_put(struct gt_config *gt_conf)
 	return 0;
 }
 
+static void *
+alloc_lua_mem_in_dpdk(void *ud, void *ptr,
+	__attribute__((unused))size_t osize, size_t nsize)
+{
+	if (nsize == 0) {
+		rte_free(ptr);
+		return NULL;
+	}
+
+	if (ptr == NULL) {
+		int socket = (intptr_t)ud;
+		return rte_malloc_socket(__func__, nsize, 0, socket);
+	}
+
+	return rte_realloc(ptr, nsize, 0);
+}
+
 static lua_State *
-alloc_and_setup_lua_state(struct gt_config *gt_conf)
+alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
 {
 	int ret;
 	char lua_entry_path[128];
@@ -1545,7 +1562,8 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf)
 		gt_conf->lua_base_directory, gt_conf->lua_policy_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
-	lua_state = luaL_newstate();
+	lua_state = lua_newstate(alloc_lua_mem_in_dpdk,
+		(void *)(intptr_t)rte_lcore_to_socket_id(lcore_id));
 	if (lua_state == NULL) {
 		GT_LOG(ERR, "Failed to create new Lua state at %s\n",
 			__func__);
@@ -1586,7 +1604,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		MS_PER_S * gt_conf->frag_max_flow_ttl_ms;
 	struct gt_instance *instance = &gt_conf->instances[block_idx];
 
-	instance->lua_state = alloc_and_setup_lua_state(gt_conf);
+	instance->lua_state = alloc_and_setup_lua_state(gt_conf, lcore_id);
 	if (instance->lua_state == NULL) {
 		GT_LOG(ERR, "Failed to create new Lua state at lcore %u\n",
 			lcore_id);
@@ -1921,10 +1939,12 @@ l_update_gt_lua_states(lua_State *l)
 		int ret;
 		struct gt_cmd_entry *entry;
 		struct gt_instance *instance = &gt_conf->instances[i];
-		lua_State *lua_state = alloc_and_setup_lua_state(gt_conf);
+		unsigned int lcore_id = gt_conf->lcores[i];
+		lua_State *lua_state = alloc_and_setup_lua_state(gt_conf,
+			lcore_id);
 		if (lua_state == NULL) {
 			luaL_error(l, "gt: failed to allocate new lua state to GT block %u at lcore %u\n",
-				i, gt_conf->lcores[i]);
+				i, lcore_id);
 
 			continue;
 		}
@@ -1934,7 +1954,7 @@ l_update_gt_lua_states(lua_State *l)
 			lua_close(lua_state);
 
 			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
-				i, gt_conf->lcores[i]);
+				i, lcore_id);
 
 			continue;
 		}
@@ -1947,7 +1967,7 @@ l_update_gt_lua_states(lua_State *l)
 			lua_close(lua_state);
 
 			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
-				i, gt_conf->lcores[i]);
+				i, lcore_id);
 		}
 	}
 
