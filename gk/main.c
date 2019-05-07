@@ -262,6 +262,14 @@ static inline void
 initialize_flow_entry(struct flow_entry *fe,
 	struct ip_flow *flow, struct gk_fib *grantor_fib)
 {
+	/*
+	 * The flow table is a critical data structure, so,
+	 * whenever the size of entries grow too much,
+	 * one must look for alternatives before increasing
+	 * the limit below.
+	 */
+	RTE_BUILD_BUG_ON(sizeof(*fe) > 128);
+
 	rte_memcpy(&fe->flow, flow, sizeof(*flow));
 
 	fe->state = GK_REQUEST;
