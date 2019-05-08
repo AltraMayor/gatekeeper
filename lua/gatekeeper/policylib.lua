@@ -9,11 +9,7 @@ local ffi = require("ffi")
 -- Structs
 ffi.cdef[[
 
-enum gk_flow_state {
-	GK_REQUEST,
-	GK_GRANTED,
-	GK_DECLINED
-};
+enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
 
 enum protocols {
 	ICMP = 1,

@@ -38,12 +38,6 @@ extern int gk_logtype;
 	rte_log_ratelimit(RTE_LOG_ ## level, gk_logtype, \
 		"GATEKEEPER GK: " __VA_ARGS__)
 
-/*
- * A flow entry can be in one of three states:
- * request, granted, or declined.
- */
-enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED };
-
 /* Structure for the GK basic measurements. */
 struct gk_measurement_metrics {
 	/* Total number of packets received. */
@@ -225,6 +219,88 @@ struct gk_config {
 
 	/* BPF programs available for policies to associate to flow entries. */
 	struct gk_bpf_flow_handler flow_handlers[GK_MAX_BPF_FLOW_HANDLERS];
+};
+
+/* A flow entry can be in one of the following states: */
+enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
+
+struct flow_entry {
+	/* IP flow information. */
+	struct ip_flow flow;
+
+	/* The state of the entry. */
+	enum gk_flow_state state;
+
+	/*
+	 * The fib entry that instructs where
+	 * to send the packets for this flow entry.
+	 */
+	struct gk_fib *grantor_fib;
+
+	union {
+		struct {
+			/* The time the last packet of the entry was seen. */
+			uint64_t last_packet_seen_at;
+			/*
+			 * The priority associated to
+			 * the last packet of the entry.
+			 */
+			uint8_t last_priority;
+			/*
+			 * The number of packets that the entry is allowed
+			 * to send with @last_priority without waiting
+			 * the amount of time necessary to be granted
+			 * @last_priority.
+			 */
+			uint8_t allowance;
+		} request;
+
+		struct {
+			/* When the granted capability expires. */
+			uint64_t cap_expire_at;
+			/* When @budget_byte is reset. */
+			uint64_t budget_renew_at;
+			/*
+			 * When @budget_byte is reset, reset it to
+			 * @tx_rate_kb_cycle * 1024 bytes.
+			 */
+			uint32_t tx_rate_kb_cycle;
+			/*
+			 * How many bytes @src can still send in current cycle.
+			 */
+			uint64_t budget_byte;
+			/*
+			 * When GK should send the next renewal to
+			 * the corresponding grantor.
+			 */
+			uint64_t send_next_renewal_at;
+			/*
+			 * How many cycles (unit) GK must wait before
+			 * sending the next capability renewal request.
+			 */
+			uint64_t renewal_step_cycle;
+		} granted;
+
+		struct {
+			/*
+			 * When the punishment (i.e. the declined capability)
+			 * expires.
+			 */
+			uint64_t expire_at;
+		} declined;
+
+		struct {
+			/* When this state is no longer valid. */
+			uint64_t expire_at;
+			/* Index of the BPF program associated to this state. */
+			uint8_t	 program_index;
+			/*
+			 * Memory to be passed to the BPF proram each time
+			 * it is executed.
+			 */
+			struct gk_bpf_cookie cookie;
+		} bpf;
+	} u;
 };
 
 /* Define the possible command operations for GK block. */

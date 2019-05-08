@@ -16,13 +16,158 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define GK_BPF_INTERNAL static
+#include "gatekeeper_flow_bpf.h"
+
 #include "gatekeeper_gk.h"
+#include "gatekeeper_main.h"
+
 #include "bpf.h"
 
 static const struct rte_bpf_xsym flow_handler_init_xsym[] = {
 };
 
+struct gk_bpf_pkt_frame {
+	uint64_t		password;
+	struct flow_entry	*fe;
+	struct rte_mbuf		*pkt;
+	struct gk_config	*gk_conf;
+	struct gk_bpf_pkt_ctx	ctx;
+};
+
+static const uint64_t pkt_password = 0xa2e329ba8b15af05;
+
+static struct gk_bpf_pkt_frame *
+pkt_ctx_to_frame(struct gk_bpf_pkt_ctx *ctx)
+{
+	struct gk_bpf_pkt_frame *frame;
+
+	if (unlikely(ctx == NULL))
+		return NULL;
+
+	frame = container_of(ctx, struct gk_bpf_pkt_frame, ctx);
+	if (unlikely(frame->password != pkt_password)) {
+		GK_LOG(WARNING, "%s(): password violation\n", __func__);
+		return NULL;
+	}
+
+	return frame;
+}
+
+static struct gk_bpf_cookie *
+pkt_ctx_to_cookie(struct gk_bpf_pkt_ctx *ctx)
+{
+	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
+	if (unlikely(frame == NULL))
+		return NULL;
+	return &frame->fe->u.bpf.cookie;
+}
+
+static struct rte_mbuf *
+pkt_ctx_to_pkt(struct gk_bpf_pkt_ctx *ctx)
+{
+	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
+	if (unlikely(frame == NULL))
+		return NULL;
+	return frame->pkt;
+}
+
+static int
+gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority)
+{
+	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
+	if (unlikely(frame == NULL))
+		return -EINVAL;
+
+	if (unlikely(priority < 0 || priority > PRIORITY_MAX))
+		return -EINVAL;
+
+	return encapsulate(frame->pkt, priority, &frame->gk_conf->net->back,
+		&frame->fe->grantor_fib->u.grantor.gt_addr);
+}
+
 static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
+	{
+		.name = "cycles_per_sec",
+		.type = RTE_BPF_XTYPE_VAR,
+		.var = {
+			.val = &cycles_per_sec,
+			.desc = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(cycles_per_sec),
+			},
+		},
+	},
+	{
+		.name = "cycles_per_ms",
+		.type = RTE_BPF_XTYPE_VAR,
+		.var = {
+			.val = &cycles_per_ms,
+			.desc = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(cycles_per_ms),
+			},
+		},
+	},
+	{
+		.name = "pkt_ctx_to_cookie",
+		.type = RTE_BPF_XTYPE_FUNC,
+		.func = {
+			.val = (void *)pkt_ctx_to_cookie,
+			.nb_args = 1,
+			.args = {
+				[0] = {
+					.type = RTE_BPF_ARG_PTR,
+					.size = sizeof(struct gk_bpf_pkt_ctx),
+				},
+			},
+			.ret = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(struct gk_bpf_cookie),
+			},
+		},
+	},
+	{
+		.name = "pkt_ctx_to_pkt",
+		.type = RTE_BPF_XTYPE_FUNC,
+		.func = {
+			.val = (void *)pkt_ctx_to_pkt,
+			.nb_args = 1,
+			.args = {
+				[0] = {
+					.type = RTE_BPF_ARG_PTR,
+					.size = sizeof(struct gk_bpf_pkt_ctx),
+				},
+			},
+			.ret = {
+				.type = RTE_BPF_ARG_PTR_MBUF,
+				.size = sizeof(struct rte_mbuf),
+				.buf_size = RTE_MBUF_DEFAULT_BUF_SIZE,
+			},
+		},
+	},
+	{
+		.name = "gk_bpf_encapsulate",
+		.type = RTE_BPF_XTYPE_FUNC,
+		.func = {
+			.val = (void *)gk_bpf_encapsulate,
+			.nb_args = 2,
+			.args = {
+				[0] = {
+					.type = RTE_BPF_ARG_PTR,
+					.size = sizeof(struct gk_bpf_pkt_ctx),
+				},
+				[1] = {
+					.type = RTE_BPF_ARG_RAW,
+					.size = sizeof(int),
+				},
+			},
+			.ret = {
+				.type = RTE_BPF_ARG_RAW,
+				.size = sizeof(int),
+			},
+		},
+	},
 };
 
 static int
@@ -81,6 +226,8 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	memset(&prm, 0, sizeof(prm));
 	prm.xsym = flow_handler_init_xsym;
 	prm.nb_xsym = RTE_DIM(flow_handler_init_xsym);
+	prm.prog_arg.type = RTE_BPF_ARG_PTR;
+	prm.prog_arg.size = sizeof(struct gk_bpf_pkt_ctx);
 	bpf_f_init = rte_bpf_elf_load(&prm, filename, "init");
 	if (bpf_f_init == NULL) {
 		GK_LOG(ERR,
@@ -115,4 +262,32 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 f_init:
 	rte_bpf_destroy(bpf_f_init);
 	return -1;
+}
+
+int
+gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
+	struct flow_entry *fe, struct rte_mbuf *pkt,
+	struct gk_bpf_pkt_ctx *pctx, uint64_t *p_bpf_ret)
+{
+	struct gk_bpf_pkt_frame frame = {
+		.password = pkt_password,
+		.fe = fe,
+		.pkt = pkt,
+		.gk_conf = gk_conf,
+		.ctx = *pctx,
+	};
+	const struct gk_bpf_flow_handler *handler =
+		&gk_conf->flow_handlers[program_index];
+
+	if (unlikely(handler->f_pkt == NULL)) {
+		GK_LOG(WARNING,
+			"The BPF program at index %u does not have function pkt\n",
+			program_index);
+		return -EINVAL;
+	}
+
+	*p_bpf_ret = likely(handler->f_pkt_jit != NULL)
+		? handler->f_pkt_jit(&frame.ctx)
+		: rte_bpf_exec(handler->f_pkt, &frame.ctx);
+	return 0;
 }

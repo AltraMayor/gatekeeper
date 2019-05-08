@@ -41,19 +41,13 @@
 #include "gatekeeper_l2.h"
 #include "gatekeeper_sol.h"
 #include "gatekeeper_lls.h"
+#include "gatekeeper_flow_bpf.h"
+
+#include "bpf.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
 #define	START_ALLOWANCE		 (8)
-
-/*
- * Priority used for DSCP field of encapsulated packets:
- *  0 for legacy packets; 1 for granted packets; 
- *  2 for capability renew; 3-63 for request packets.
- */
-#define PRIORITY_GRANTED	 (1)
-#define PRIORITY_RENEW_CAP	 (2)
-#define PRIORITY_MAX		 (63)
 
 int gk_logtype;
 
@@ -65,71 +59,6 @@ struct ipacket {
 	struct rte_mbuf *pkt;
 	/* Pointer to the l3 header. */
 	void *l3_hdr;
-};
-
-struct flow_entry {
-	/* IP flow information. */
-	struct ip_flow flow;
-
-	/* The state of the entry. */
-	enum gk_flow_state state;
-
-	/*
-	 * The fib entry that instructs where
-	 * to send the packets for this flow entry.
-	 */
-	struct gk_fib *grantor_fib;
-
-	union {
-		struct {
-			/* The time the last packet of the entry was seen. */
-			uint64_t last_packet_seen_at;
-			/* 
-			 * The priority associated to
-			 * the last packet of the entry.
-			 */
-			uint8_t last_priority;
-			/* 
-			 * The number of packets that the entry is allowed
-			 * to send with @last_priority without waiting
-			 * the amount of time necessary to be granted
-			 * @last_priority.
-			 */
-			uint8_t allowance;
-		} request;
-
-		struct {
-			/* When the granted capability expires. */
-			uint64_t cap_expire_at;
-			/* When @budget_byte is reset. */
-			uint64_t budget_renew_at;
-			/* 
-			 * When @budget_byte is reset, reset it to
-			 * @tx_rate_kb_cycle * 1024 bytes.
-			 */
-			uint32_t tx_rate_kb_cycle;
-			/* How many bytes @src can still send in current cycle. */
-			uint64_t budget_byte;
-			/*
-			 * When GK should send the next renewal to
-			 * the corresponding grantor.
-			 */
-			uint64_t send_next_renewal_at;
-			/*
-			 * How many cycles (unit) GK must wait before
-			 * sending the next capability renewal request.
-			 */
-			uint64_t renewal_step_cycle;
-		} granted;
-
-		struct {
-			/*
-			 * When the punishment (i.e. the declined capability)
-			 * expires.
-			 */
-			uint64_t expire_at;
-		} declined;
-	} u;
 };
 
 /* We should avoid calling integer_log_base_2() with zero. */
@@ -500,6 +429,78 @@ gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
 	return -1;
 }
 
+/*
+ * Returns:
+ *   * zero on success; the packet can be enqueued and forwarded
+ *   * a negative number on error or when the packet needs to be
+ *     otherwise dropped because it has exceeded a limit
+ *   * EINPROGRESS to indicate that the packet is now a request that
+ *     is being processed by another lcore, and should not
+ *     be forwarded or dropped on returning from this function.
+ */
+static int
+gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
+	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
+{
+	struct gk_bpf_pkt_ctx ctx;
+	uint64_t bpf_ret;
+	int program_index, rc;
+
+	ctx.now = rte_rdtsc();
+	ctx.expire_at = fe->u.bpf.expire_at;
+	if (unlikely(ctx.now >= ctx.expire_at))
+		goto expired;
+
+	program_index = fe->u.bpf.program_index;
+	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet->pkt, &ctx,
+		&bpf_ret);
+	if (unlikely(rc != 0)) {
+		GK_LOG(WARNING,
+			"The BPF program at index %u failed to run its function pkt\n",
+			program_index);
+		goto expired;
+	}
+
+	switch (bpf_ret) {
+	case GK_BPF_PKT_RET_FORWARD: {
+		struct ether_cache *eth_cache =
+			fe->grantor_fib->u.grantor.eth_cache;
+		RTE_VERIFY(eth_cache != NULL);
+		/*
+		 * If needed, encapsulate() already adjusted
+		 * packet header space.
+		 */
+		if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
+				gk_conf->net->back.l2_len_out))
+			return -1;
+
+		stats->pkts_num_granted++;
+		stats->pkts_size_granted += rte_pktmbuf_pkt_len(packet->pkt);
+		return 0;
+	}
+	case GK_BPF_PKT_RET_DECLINE:
+		stats->pkts_num_declined++;
+		stats->pkts_size_declined += rte_pktmbuf_pkt_len(packet->pkt);
+		return -1;
+	case GK_BPF_PKT_RET_ERROR:
+		GK_LOG(WARNING,
+			"The function pkt of the BPF program at index %u returned GK_BPF_PKT_RET_ERROR\n",
+			program_index);
+		return -1;
+	default:
+		GK_LOG(WARNING,
+			"The function pkt of the BPF program at index %u returned an invalid return: %" PRIu64 "\n",
+			program_index, bpf_ret);
+		return -1;
+	}
+
+	rte_panic("Unexpected condition at %s()", __func__);
+
+expired:
+	reinitialize_flow_entry(fe, ctx.now);
+	return gk_process_request(fe, packet, gk_conf->sol_conf, stats);
+}
+
 static int
 get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 {
@@ -534,6 +535,8 @@ is_flow_expired(struct flow_entry *fe,
 		return now >= fe->u.granted.cap_expire_at;
 	case GK_DECLINED:
 		return now >= fe->u.declined.expire_at;
+	case GK_BPF:
+		return now >= fe->u.bpf.expire_at;
 	default:
 		return true;
 	}
@@ -1563,6 +1566,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		case GK_DECLINED:
 			ret = gk_process_declined(fe, &packet,
 				gk_conf->sol_conf, stats);
+			break;
+
+		case GK_BPF:
+			ret = gk_process_bpf(fe, &packet, gk_conf, stats);
 			break;
 
 		default:
