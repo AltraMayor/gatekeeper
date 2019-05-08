@@ -41,9 +41,13 @@ Once the packages are downloaded, they can be installed with the commands below:
         gatekeeper-dpdk_18.11.0-0_amd64.deb \
         gatekeeper-dpdk-dev_18.11.0-0_amd64.deb \
         gatekeeper-dpdk-igb-uio-dkms_18.11.0-0_amd64.deb \
-        gatekeeper-dpdk-igb-uio-dkms_18.11.0-0_amd64.deb \
+        gatekeeper-dpdk-rte-kni-dkms_18.11.0-0_amd64.deb \
         gatekeeper-bird_2.0.4-0_amd64.deb \
         gatekeeper-1.0.0-0_amd64.deb
+
+The `gatekeeper-dpdk-dev` package is a dependency of the DKMS packages, which
+build their respective kernel modules during package installation and kernel
+upgrades.
 
 #### Configure Network Adapters
 
