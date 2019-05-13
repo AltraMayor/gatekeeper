@@ -24,7 +24,81 @@
 
 #include "bpf.h"
 
+struct gk_bpf_init_frame {
+	uint64_t		password;
+	struct gk_bpf_cookie	*cookie;
+	struct gk_bpf_init_ctx	ctx;
+};
+
+static const uint64_t init_password = 0xe0952bafb0a248f5;
+
+static struct gk_bpf_init_frame *
+init_ctx_to_frame(struct gk_bpf_init_ctx *ctx)
+{
+	struct gk_bpf_init_frame *frame;
+
+	if (unlikely(ctx == NULL))
+		return NULL;
+
+	frame = container_of(ctx, struct gk_bpf_init_frame, ctx);
+	if (unlikely(frame->password != init_password)) {
+		GK_LOG(WARNING, "%s(): password violation\n", __func__);
+		return NULL;
+	}
+
+	return frame;
+}
+
+static struct gk_bpf_cookie *
+init_ctx_to_cookie(struct gk_bpf_init_ctx *ctx)
+{
+	struct gk_bpf_init_frame *frame = init_ctx_to_frame(ctx);
+	if (unlikely(frame == NULL))
+		return NULL;
+	return frame->cookie;
+}
+
 static const struct rte_bpf_xsym flow_handler_init_xsym[] = {
+	{
+		.name = "cycles_per_sec",
+		.type = RTE_BPF_XTYPE_VAR,
+		.var = {
+			.val = &cycles_per_sec,
+			.desc = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(cycles_per_sec),
+			},
+		},
+	},
+	{
+		.name = "cycles_per_ms",
+		.type = RTE_BPF_XTYPE_VAR,
+		.var = {
+			.val = &cycles_per_ms,
+			.desc = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(cycles_per_ms),
+			},
+		},
+	},
+	{
+		.name = "init_ctx_to_cookie",
+		.type = RTE_BPF_XTYPE_FUNC,
+		.func = {
+			.val = (void *)init_ctx_to_cookie,
+			.nb_args = 1,
+			.args = {
+				[0] = {
+					.type = RTE_BPF_ARG_PTR,
+					.size = sizeof(struct gk_bpf_init_ctx),
+				},
+			},
+			.ret = {
+				.type = RTE_BPF_ARG_PTR,
+				.size = sizeof(struct gk_bpf_cookie),
+			},
+		},
+	},
 };
 
 struct gk_bpf_pkt_frame {
@@ -227,7 +301,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	prm.xsym = flow_handler_init_xsym;
 	prm.nb_xsym = RTE_DIM(flow_handler_init_xsym);
 	prm.prog_arg.type = RTE_BPF_ARG_PTR;
-	prm.prog_arg.size = sizeof(struct gk_bpf_pkt_ctx);
+	prm.prog_arg.size = sizeof(struct gk_bpf_init_ctx);
 	bpf_f_init = rte_bpf_elf_load(&prm, filename, "init");
 	if (bpf_f_init == NULL) {
 		GK_LOG(ERR,
@@ -238,6 +312,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 
 	prm.xsym = flow_handler_pkt_xsym;
 	prm.nb_xsym = RTE_DIM(flow_handler_pkt_xsym);
+	prm.prog_arg.size = sizeof(struct gk_bpf_pkt_ctx);
 	handler->f_pkt = rte_bpf_elf_load(&prm, filename, "pkt");
 	if (handler->f_pkt == NULL) {
 		GK_LOG(ERR,
@@ -262,6 +337,35 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 f_init:
 	rte_bpf_destroy(bpf_f_init);
 	return -1;
+}
+
+int
+gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
+	struct gk_bpf_cookie *cookie)
+{
+	const struct gk_bpf_flow_handler *handler =
+		&gk_conf->flow_handlers[program_index];
+	struct gk_bpf_init_frame frame;
+	uint64_t bpf_ret;
+
+	if (handler->f_init == NULL || handler->f_pkt == NULL) {
+		GK_LOG(ERR, "The GK BPF program at index %u is not available\n",
+			program_index);
+		return -1;
+	}
+
+	frame.password = init_password;
+	frame.cookie = cookie;
+	frame.ctx.now = rte_rdtsc();
+	bpf_ret = likely(handler->f_init_jit != NULL)
+		? handler->f_init_jit(&frame.ctx)
+		: rte_bpf_exec(handler->f_init, &frame.ctx);
+	if (bpf_ret != GK_BPF_INIT_RET_OK) {
+		GK_LOG(ERR, "The function init of the GK BPF program at index %u returned an error\n",
+			program_index);
+		return -1;
+	}
+	return 0;
 }
 
 int

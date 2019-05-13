@@ -46,6 +46,26 @@ struct gk_bpf_cookie {
 	uint64_t mem[8];
 };
 
+/* Possible returns of the function init of a GK BPF program. */
+enum gk_bpf_init_return {
+	/* The cookie was successfully initialized. */
+	GK_BPF_INIT_RET_OK,
+
+	/*
+	 * The initialization of a given cookie failed.
+	 *
+	 * This is not a regular return since failing to initialize a cookie
+	 * implies in not fulfilling a policy decision. Thus, this return
+	 * should only be returned under extreme conditions.
+	 */
+	GK_BPF_INIT_RET_ERROR
+};
+
+/* The context of a GK BPF program for function init. */
+struct gk_bpf_init_ctx {
+	uint64_t now;
+};
+
 /* Possible returns of the function pkt of a GK BPF program. */
 enum gk_bpf_pkt_return {
 	/*
@@ -83,6 +103,10 @@ struct gk_bpf_pkt_ctx {
 /* Symbols available to the BPF functions init() and pkt(). */
 GK_BPF_INTERNAL uint64_t cycles_per_sec;
 GK_BPF_INTERNAL uint64_t cycles_per_ms;
+
+/* Symbols available to the BPF function init(). */
+GK_BPF_INTERNAL struct gk_bpf_cookie *init_ctx_to_cookie(
+	struct gk_bpf_init_ctx *ctx);
 
 /* Symbols available to the BPF function pkt(). */
 GK_BPF_INTERNAL struct gk_bpf_cookie *pkt_ctx_to_cookie(

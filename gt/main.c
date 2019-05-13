@@ -813,26 +813,43 @@ print_unsent_policy(struct ggu_policy *policy,
 	int ret;
 	char err_msg[1024];
 
-	if (policy->state == GK_REQUEST) {
+	switch (policy->state) {
+	case GK_REQUEST:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu]",
-			policy->state);
-	} else if (policy->state == GK_GRANTED) {
+			"gt: GK_REQUEST is not a policy decision; there is a bug in the Lua policy\n");
+		break;
+	case GK_GRANTED:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_GRANTED (%hhu), tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
 			policy->state, policy->params.granted.tx_rate_kb_sec,
 			policy->params.granted.cap_expire_sec,
 			policy->params.granted.next_renewal_ms,
 			policy->params.granted.renewal_step_ms);
-	} else if (policy->state == GK_DECLINED) {
+		break;
+	case GK_DECLINED:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
-			policy->state,
-			policy->params.declined.expire_sec);
-	} else {
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_DECLINED (%hhu), expire_sec: %u]",
+			policy->state, policy->params.declined.expire_sec);
+		break;
+	case GK_BPF: {
+		uint64_t *c = policy->params.bpf.cookie.mem;
+
+		RTE_BUILD_BUG_ON(RTE_DIM(policy->params.bpf.cookie.mem) != 8);
+
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_BPF (%hhu), expire_sec: %u, program_index=%u, cookie="
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "]",
+			policy->state, policy->params.bpf.expire_sec,
+			policy->params.bpf.program_index,
+			c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
+		break;
+	}
+	default:
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy\n",
 			policy->state, __func__);
+		break;
 	}
 
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));

@@ -133,12 +133,25 @@ struct ggu_declined {
 	uint32_t expire_sec;
 } __attribute__ ((packed));
 
+struct gk_bpf_cookie {
+	uint64_t mem[8];
+};
+
+struct ggu_bpf {
+	uint32_t expire_sec;
+	uint8_t  program_index;
+	uint8_t  reserved;
+	uint16_t cookie_len;
+	struct gk_bpf_cookie cookie;
+} __attribute__ ((packed));
+
 struct ggu_policy {
 	uint8_t state;
 	struct ip_flow flow;
 	union {
 		struct ggu_granted granted;
 		struct ggu_declined declined;
+		struct ggu_bpf bpf;
 	} params;
 };
 

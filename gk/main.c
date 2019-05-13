@@ -878,6 +878,14 @@ add_ggu_policy(struct ggu_policy *policy,
 			policy->params.declined.expire_sec * cycles_per_sec;
 		break;
 
+	case GK_BPF:
+		fe->state = GK_BPF;
+		fe->u.bpf.expire_at = now +
+			policy->params.bpf.expire_sec * cycles_per_sec;
+		fe->u.bpf.program_index = policy->params.bpf.program_index;
+		fe->u.bpf.cookie = policy->params.bpf.cookie;
+		break;
+
 	default:
 		GK_LOG(ERR, "Unknown flow state %u\n", policy->state);
 		break;
