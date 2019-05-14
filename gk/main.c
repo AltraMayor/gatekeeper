@@ -412,12 +412,6 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	return EINPROGRESS;
 }
 
-static inline uint64_t
-cycle_from_second(uint64_t time)
-{
-	return (cycles_per_sec * time);
-}
-
 /*
  * Returns:
  *   * zero on success; the granted packet can be enqueued and forwarded
@@ -445,7 +439,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
-		fe->u.granted.budget_renew_at = now + cycle_from_second(1);
+		fe->u.granted.budget_renew_at = now + cycles_per_sec;
 		fe->u.granted.budget_byte = fe->u.granted.tx_rate_kb_cycle * 1024;
 	}
 
@@ -872,8 +866,7 @@ add_ggu_policy(struct ggu_policy *policy,
 		fe->u.granted.renewal_step_cycle =
 			policy->params.granted.renewal_step_ms *
 			cycles_per_ms;
-		fe->u.granted.budget_renew_at =
-			now + cycle_from_second(1);
+		fe->u.granted.budget_renew_at = now + cycles_per_sec;
 		fe->u.granted.budget_byte =
 			fe->u.granted.tx_rate_kb_cycle * 1024;
 		break;
