@@ -1477,7 +1477,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				eth_cache = fib->u.gateway.eth_cache;
 				RTE_VERIFY(eth_cache != NULL);
 
-				if (adjust_pkt_len(pkt, iface, 0) == NULL ||
+				if (adjust_pkt_len(pkt, back, 0) == NULL ||
 						pkt_copy_cached_eth_header(pkt,
 							eth_cache,
 							back->l2_len_out)) {
