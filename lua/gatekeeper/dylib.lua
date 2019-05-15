@@ -108,7 +108,7 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 	d_buf = dylib.ether_format_addr(fib_dump_entry.d_addr)
 	stale = fib_dump_entry.stale and "stale" or "fresh"
 	ip_addr_str = dylib.ip_format_addr(fib_dump_entry.nexthop_ip)
-	acc = acc .. ": [state: " .. stale .. ", nexthop ip: " ..
+	acc = acc .. " [state: " .. stale .. ", nexthop ip: " ..
 		ip_addr_str .. ", d_addr: " .. d_buf .. "]"
 
 	return acc .. "\n"
@@ -126,7 +126,7 @@ function print_neighbor_dump_entry(neighbor_dump_entry, acc)
 	local neigh_ip = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
 	local d_buf = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
 
-	return acc .. "Neighbor Ethernet cache entry:" .. ": [state: " .. stale ..
+	return acc .. "Neighbor Ethernet cache entry: [state: " .. stale ..
 		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
 		", action: " .. tostring(neighbor_dump_entry.action) .. "]\n"
 end
