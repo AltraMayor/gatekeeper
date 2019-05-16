@@ -75,7 +75,8 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		/* The destination address is the Grantor server IP address. */
 		outer_ip4hdr->dst_addr = gt_addr->ip.v4.s_addr;
 
-		outer_ip4hdr->total_length = rte_cpu_to_be_16(pkt->data_len);
+		outer_ip4hdr->total_length =
+			rte_cpu_to_be_16(pkt->data_len - iface->l2_len_out);
 
 		/*
 		 * The IP header checksum filed must be set to 0
