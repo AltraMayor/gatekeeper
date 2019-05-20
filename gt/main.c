@@ -1534,6 +1534,8 @@ gt_conf_put(struct gt_config *gt_conf)
 	return 0;
 }
 
+/* XXX #143 Search for another comment on this issue for an explanation. */
+#if 0
 static void *
 alloc_lua_mem_in_dpdk(void *ud, void *ptr,
 	__attribute__((unused))size_t osize, size_t nsize)
@@ -1550,9 +1552,11 @@ alloc_lua_mem_in_dpdk(void *ud, void *ptr,
 
 	return rte_realloc(ptr, nsize, 0);
 }
+#endif
 
 static lua_State *
-alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
+alloc_and_setup_lua_state(struct gt_config *gt_conf,
+	__attribute__((unused))unsigned int lcore_id)
 {
 	int ret;
 	char lua_entry_path[128];
@@ -1562,8 +1566,16 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
 		gt_conf->lua_base_directory, gt_conf->lua_policy_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
-	lua_state = lua_newstate(alloc_lua_mem_in_dpdk,
-		(void *)(intptr_t)rte_lcore_to_socket_id(lcore_id));
+	/*
+	 * XXX #143 LuaJIT does not currently support
+	 * lua_newstate() on 64-bit targets.
+	 *
+	 * Once lua_newstate() is available, the following call should
+	 * replace the call to luaL_newstate() below:
+	 * lua_state = lua_newstate(alloc_lua_mem_in_dpdk,
+	 *	(void *)(intptr_t)rte_lcore_to_socket_id(lcore_id));
+	 */
+	lua_state = luaL_newstate();
 	if (lua_state == NULL) {
 		GT_LOG(ERR, "Failed to create new Lua state at %s\n",
 			__func__);
