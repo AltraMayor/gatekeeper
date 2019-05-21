@@ -1370,6 +1370,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
 			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
+				stats->tot_pkts_num_distributed++;
+				stats->tot_pkts_size_distributed +=
+					rte_pktmbuf_pkt_len(pkt);
+
 				arp_bufs[num_arp++] = pkt;
 				continue;
 			}
@@ -1401,12 +1405,20 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 		 	/* No entry for the destination, drop the packet. */
 			if (fib == NULL) {
-				if (packet.flow.proto == ETHER_TYPE_IPv4)
+				if (packet.flow.proto == ETHER_TYPE_IPv4) {
+					stats->tot_pkts_num_distributed++;
+					stats->tot_pkts_size_distributed +=
+						rte_pktmbuf_pkt_len(pkt);
+
 					add_pkt_acl(acl4, pkt);
-				else if (likely(packet.flow.proto ==
-						ETHER_TYPE_IPv6))
+				} else if (likely(packet.flow.proto ==
+						ETHER_TYPE_IPv6)) {
+					stats->tot_pkts_num_distributed++;
+					stats->tot_pkts_size_distributed +=
+						rte_pktmbuf_pkt_len(pkt);
+
 					add_pkt_acl(acl6, pkt);
-				else {
+				} else {
 					print_flow_err_msg(&packet.flow,
 						"gk: failed to get the fib entry");
 					drop_packet_front(pkt, instance);
@@ -1875,7 +1887,7 @@ gk_proc(void *arg)
 				&instance->traffic_stats;
 
 			GK_LOG(NOTICE,
-				"The GK block basic measurements at lcore = %u: [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64"]\n",
+				"The GK block basic measurements at lcore = %u: [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed =  %"PRIu64"]\n",
 				lcore, stats->tot_pkts_num,
 				stats->tot_pkts_size,
 				stats->pkts_num_granted,
@@ -1885,7 +1897,9 @@ gk_proc(void *arg)
 				stats->pkts_num_declined,
 				stats->pkts_size_declined,
 				stats->tot_pkts_num_dropped,
-				stats->tot_pkts_size_dropped);
+				stats->tot_pkts_size_dropped,
+				stats->tot_pkts_num_distributed,
+				stats->tot_pkts_size_distributed);
 
 			memset(stats, 0, sizeof(*stats));
 
