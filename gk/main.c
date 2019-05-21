@@ -1642,9 +1642,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 		}
 
 		fib = look_up_fib(&gk_conf->lpm_tbl, &packet.flow);
-
-		 /* No entry for the destination, drop the packet. */
-		if (fib == NULL) {
+		if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 			if (packet.flow.proto == ETHER_TYPE_IPv4)
 				add_pkt_acl(acl4, pkt);
 			else if (likely(packet.flow.proto ==
@@ -1652,7 +1650,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 				add_pkt_acl(acl6, pkt);
 			else {
 				print_flow_err_msg(&packet.flow,
-					"gk: failed to get the fib entry");
+					"gk: failed to get the fib entry or it is not an IP packet");
 				drop_packet(pkt);
 			}
 			continue;
@@ -1728,6 +1726,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			tx_bufs[num_tx++] = pkt;
 			continue;
 		}
+
+		case GK_DROP:
+			drop_packet(pkt);
+			continue;
 
 		default:
 			/* All other actions should log a warning. */
