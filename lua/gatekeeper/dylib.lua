@@ -81,6 +81,28 @@ int gk_flush_flow_table(const char *src_prefix,
 
 c = ffi.C
 
+function fib_action_to_str(fib_action)
+	local res
+
+	if fib_action == c.GK_FWD_GRANTOR then
+		res = "FWD_GRANTOR (0)"
+	elseif fib_action == c.GK_FWD_GATEWAY_FRONT_NET then
+		res = "FWD_GATEWAY_FRONT_NET (1)"
+	elseif fib_action == c.GK_FWD_GATEWAY_BACK_NET then
+		res = "FWD_GATEWAY_BACK_NET (2)"
+	elseif fib_action == c.GK_FWD_NEIGHBOR_FRONT_NET then
+		res = "FWD_NEIGHBOR_FRONT_NET (3)"
+	elseif fib_action == c.GK_FWD_NEIGHBOR_BACK_NET then
+		res = "FWD_NEIGHBOR_BACK_NET (4)"
+	elseif fib_action == c.GK_DROP then
+		res = "DROP (5)"
+	else
+		res = "INVALID (" .. tostring(fib_action) .. ")"
+	end
+
+	return res
+end
+
 -- The following is an example function that can be used as
 -- the callback function of list_gk_fib4() and list_gk_fib6().
 
@@ -96,7 +118,7 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 	ip_addr_str = dylib.ip_format_addr(fib_dump_entry.addr)
 	acc = acc .. "FIB entry for IP prefix: " .. ip_addr_str ..
 		"/" .. fib_dump_entry.prefix_len .. " with action " ..
-		tostring(fib_dump_entry.action)
+		fib_action_to_str(fib_dump_entry.action)
 
 	if fib_dump_entry.action == c.GK_FWD_GRANTOR then
 		ip_addr_str = dylib.ip_format_addr(fib_dump_entry.grantor_ip)
@@ -128,7 +150,8 @@ function print_neighbor_dump_entry(neighbor_dump_entry, acc)
 
 	return acc .. "Neighbor Ethernet cache entry: [state: " .. stale ..
 		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
-		", action: " .. tostring(neighbor_dump_entry.action) .. "]\n"
+		", action: " ..
+		fib_action_to_str(neighbor_dump_entry.action) .. "]\n"
 end
 
 -- The following is an example function that can be used as
