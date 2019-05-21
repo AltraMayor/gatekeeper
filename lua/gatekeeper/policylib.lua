@@ -146,6 +146,22 @@ struct ggu_policy {
 	} params;
 };
 
+struct in_addr {
+	uint32_t s_addr;
+};
+
+struct in6_addr {
+	unsigned char s6_addr[16];
+};
+
+struct rte_lpm {
+	/* This struct has hidden fields. */
+};
+
+struct rte_lpm6 {
+	/* This struct has hidden fields. */
+};
+
 ]]
 
 c = ffi.C

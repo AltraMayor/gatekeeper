@@ -37,7 +37,7 @@ SRCS-y += config/static.c config/dynamic.c
 SRCS-y += cps/main.c cps/kni.c cps/elf.c
 SRCS-y += ggu/main.c
 SRCS-y += gk/main.c gk/fib.c
-SRCS-y += gt/main.c
+SRCS-y += gt/main.c gt/lua_lpm.c
 SRCS-y += lls/main.c lls/cache.c lls/arp.c lls/nd.c
 SRCS-y += sol/main.c
 

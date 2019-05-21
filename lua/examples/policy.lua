@@ -27,17 +27,6 @@ local declined = {
 	},
 }
 
---[[
-The following defines the simple policies without LPM for Grantor.
-
-General format of the simple policies should be:
-	IPv4 tables.
-	IPv6 tables.
-
-Here, I assume that each group has specific capability parameters,
-including speed limit, expiration time, actions - DENY or ACCEPT, etc.
---]]
-
 local IPV4 = policylib.c.IPV4
 
 local group1 = {
@@ -56,6 +45,15 @@ local groups = {
 	[254] = malformed,
 	[255] = default,
 }
+
+--[[
+The following defines the simple policies without LPM for Grantor.
+General format of the simple policies should be:
+	IPv4 tables.
+	IPv6 tables.
+Here, I assume that each group has specific capability parameters,
+including speed limit, expiration time, actions - DENY or ACCEPT, etc.
+--]]
 
 local simple_policies = {
 	[IPV4] = {
@@ -147,12 +145,79 @@ local function lookup_simple_policy(simple_policy, pkt_info)
 	return nil
 end
 
+-- The following defines the LPM policies for Grantor.
+
+-- This file only contains an example set of Bogons IPv4 lists
+-- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv4.txt
+local bogons_ipv4_file = "lua/examples/bogons-ipv4.txt"
+local lpm = lpmlib.new_lpm(1024, 256)
+
+-- This file only contains an example set of Bogons IPv6 lists
+-- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv6.txt
+local bogons_ipv6_file = "lua/examples/bogons-ipv6.txt"
+local lpm6 = lpmlib.new_lpm6(1024, 65536)
+
+for line in io.lines(bogons_ipv4_file) do
+	local ip_addr, prefix_len = lpmlib.str_to_prefix(line)
+	lpmlib.lpm_add(lpm, ip_addr, prefix_len, 253)
+end
+
+for line in io.lines(bogons_ipv6_file) do
+	local ip_addr, prefix_len = lpmlib.str_to_prefix6(line)
+	lpmlib.lpm6_add(lpm6, ip_addr, prefix_len, 253)
+end
+
+-- Function that looks up the lpm policy for the packet.
+local function lookup_lpm_policy(lpm_handler, pkt_info)
+
+	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
+		local ipv4_hdr = ffi.cast("struct ipv4_hdr *",
+			pkt_info.inner_l3_hdr)
+		local policy_id = lpmlib.lpm_lookup(lpm_handler,
+			ipv4_hdr.src_addr)
+		if policy_id < 0 then
+			return nil
+		end
+
+		return groups[policy_id]
+	end
+
+	if pkt_info.inner_ip_ver == policylib.c.IPV6 then
+		local ipv6_hdr = ffi.cast("struct ipv6_hdr *",
+			pkt_info.inner_l3_hdr)
+		local src_addr = ffi.cast("struct in6_addr *",
+			ipv6_hdr.src_addr)
+		local policy_id = lpmlib.lpm6_lookup(lpm_handler, src_addr)
+		if policy_id < 0 then
+			return nil
+		end
+
+		return groups[policy_id]
+	end
+
+	return nil
+end
+
 function lookup_policy(pkt_info, policy)
 
-	-- Lookup the simple policy.
-	local group = lookup_simple_policy(GLOBAL_POLICIES["simple_policy"],
-		pkt_info)
-	if group == nil then group = default end
+	local group
+
+	-- Lookup the lpm policy.
+	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
+		group = lookup_lpm_policy(lpm, pkt_info)
+	elseif pkt_info.inner_ip_ver == policylib.c.IPV6 then
+		group = lookup_lpm_policy(lpm6, pkt_info)
+	end
+
+	if group == nil then
+		-- Lookup the simple policy.
+		group = lookup_simple_policy(
+			GLOBAL_POLICIES["simple_policy"], pkt_info)
+	end
+
+	if group == nil then
+		group = default
+	end
 
 	policy.state = group["params"]["action"]
 
