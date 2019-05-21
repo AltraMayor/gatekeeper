@@ -65,6 +65,14 @@ struct gk_measurement_metrics {
 	uint64_t tot_pkts_num_dropped;
 	/* Total size in bytes of packets dropped. */
 	uint64_t tot_pkts_size_dropped;
+	/*
+	 * Total number of packets distributed to other blocks.
+	 * It includes ARP packets handled to the LLS block,
+	 * and packets handed off to the IPv4 and IPv6 ACLs.
+	 */
+	uint64_t tot_pkts_num_distributed;
+	/* Total size in bytes of packets distributed to other blocks. */
+	uint64_t tot_pkts_size_distributed;
 };
 
 /* Structures for each GK instance. */
