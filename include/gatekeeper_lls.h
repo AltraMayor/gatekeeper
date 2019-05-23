@@ -352,7 +352,6 @@ struct nd_opt_lladdr {
 	sizeof(struct nd_opt_lladdr))
 
 /* Flags for Neighbor Advertisements. */
-#define LLS_ND_NA_ROUTER    0x80000000
 #define LLS_ND_NA_SOLICITED 0x40000000
 #define LLS_ND_NA_OVERRIDE  0x20000000
 
