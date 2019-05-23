@@ -194,6 +194,7 @@ struct gt_config {
 /* Define the possible command operations for GT block. */
 enum gt_cmd_op {
 	GT_UPDATE_POLICY,
+	GT_UPDATE_POLICY_INCREMENTALLY,
 };
 
 /* Currently, the Dynamic config is the only writer of GT mailboxes. */
@@ -202,6 +203,11 @@ struct gt_cmd_entry {
 
 	union {
 		lua_State *lua_state; /* GT_UPDATE_POLICY */
+		/* GT_UPDATE_POLICY_INCREMENTALLY */
+		struct {
+			size_t len;
+			char *lua_bytecode;
+		} bc;
 	} u;
 };
 
@@ -210,6 +216,7 @@ int gt_conf_put(struct gt_config *gt_conf);
 int run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	const char *lua_base_directory, const char *lua_policy_file);
 int l_update_gt_lua_states(lua_State *l);
+int l_update_gt_lua_states_incrementally(lua_State *l);
 
 static inline void
 gt_conf_hold(struct gt_config *gt_conf)

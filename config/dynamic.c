@@ -295,6 +295,8 @@ cleanup_dy(struct dynamic_config *dy_conf)
 
 const struct luaL_reg dylib_lua_c_funcs [] = {
 	{"update_gt_lua_states", l_update_gt_lua_states},
+	{"internal_update_gt_lua_states_incrementally",
+		l_update_gt_lua_states_incrementally},
 	{"list_gk_fib4",         l_list_gk_fib4},
 	{"list_gk_fib6",         l_list_gk_fib6},
 	{"list_gk_neighbors4",   l_list_gk_neighbors4},
