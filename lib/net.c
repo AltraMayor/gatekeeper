@@ -735,6 +735,14 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		goto disable_rss;
 	}
 
+	if (dev_info->hash_key_size != sizeof(default_rss_key)) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not provide a valid hash key size %hhu (%lu)\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name, dev_info->hash_key_size,
+			sizeof(default_rss_key));
+		goto disable_rss;
+	}
+
 	/* Check IPv4 RSS hashes. */
 	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV4_RSS_HF) {
 		/* No IPv4 hashes are supported, so disable RSS. */
@@ -1366,6 +1374,54 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 }
 
 static int
+check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	uint8_t rss_hash_key[GATEKEEPER_RSS_KEY_LEN];
+	struct rte_eth_rss_conf rss_conf = {
+		.rss_key = rss_hash_key,
+		.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
+	};
+	int ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
+	switch (ret) {
+	case 0:
+		break;
+	case -ENODEV:
+		G_LOG(WARNING,
+			"net: failed to get RSS hash configuration at port %d on the %s interface - port identifier is invalid\n",
+			port_id, iface->name);
+		return ret;
+	case -EIO:
+		G_LOG(WARNING,
+			"net: failed to get RSS hash configuration at port %d on the %s interface - device is removed\n",
+			port_id, iface->name);
+		return ret;
+	case -ENOTSUP:
+		G_LOG(WARNING,
+			"net: failed to get RSS hash configuration at port %d on the %s interface - hardware doesn't support\n",
+			port_id, iface->name);
+		return ret;
+	default:
+		G_LOG(WARNING,
+			"net: failed to get RSS hash configuration at port %d on the %s interface - ret = %d\n",
+			port_id, iface->name, ret);
+		return ret;
+	}
+
+	if ((rss_conf.rss_key_len !=
+			sizeof(default_rss_key) ||
+			memcmp(rss_conf.rss_key,
+				default_rss_key,
+				rss_conf.rss_key_len) != 0)) {
+		G_LOG(WARNING,
+			"net: the RSS hash configuration obtained at port %d on the %s interface doesn't match the expected RSS configuration\n",
+			port_id, iface->name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
 start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 {
 	int ret;
@@ -1391,6 +1447,27 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 			&num_succ_ports, num_attempts_link_get);
 		if (ret < 0)
 			goto stop_partial;
+
+		/*
+		 * If we try to update/get the RSS hash configuration before
+		 * the start of the NICs, no meaningful operations will be
+		 * done even the return values indicate no errors.
+		 *
+		 * After checking the source code of DPDK library,
+		 * it turns out that RSS is disabled in the MRQC register
+		 * before we start the NICs.
+		 *
+		 * Only after the NICs start, we can check whether the RSS hash
+		 * is configured correctly or not.
+		 */
+		if (check_port_rss_key_update(iface, iface->ports[i])) {
+			G_LOG(ERR,
+				"net: port %hu (%s) on the %s interface does get the RSS hash key updated correctly\n",
+				iface->ports[i], iface->pci_addrs[i],
+				iface->name);
+			ret = -1;
+			goto stop_partial;
+		}
 	}
 
 	/* Bonding port(s). */
