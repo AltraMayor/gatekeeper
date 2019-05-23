@@ -894,10 +894,6 @@ fill_bgp6_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
 static int
 match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
-	/*
-	 * The TCP header offset in terms of the
-	 * beginning of the IPv4 header.
-	 */
 	const uint16_t BE_ETHER_TYPE_IPv4 = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
 	struct ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
