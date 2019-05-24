@@ -1346,6 +1346,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
+	bool ipv4_configured_front = ipv4_if_configured(&gk_conf->net->front);
+	bool ipv6_configured_front = ipv6_if_configured(&gk_conf->net->front);
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
@@ -1379,6 +1381,14 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			}
 
 			/* Drop non-IP and non-ARP packets. */
+			drop_packet_front(pkt, instance);
+			continue;
+		}
+
+		if (unlikely(packet.flow.proto == ETHER_TYPE_IPv4 &&
+				!ipv4_configured_front ||
+				packet.flow.proto == ETHER_TYPE_IPv6 &&
+				!ipv6_configured_front)) {
 			drop_packet_front(pkt, instance);
 			continue;
 		}
@@ -1627,6 +1637,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
+	bool ipv4_configured_back = ipv4_if_configured(&gk_conf->net->back);
+	bool ipv6_configured_back = ipv6_if_configured(&gk_conf->net->back);
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
@@ -1650,6 +1662,14 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 			/* Drop non-IP and non-ARP packets. */
 			drop_packet(pkt);
+			continue;
+		}
+
+		if (unlikely(packet.flow.proto == ETHER_TYPE_IPv4 &&
+				!ipv4_configured_back ||
+				packet.flow.proto == ETHER_TYPE_IPv6 &&
+				!ipv6_configured_back)) {
+			drop_packet_back(pkt, instance);
 			continue;
 		}
 
