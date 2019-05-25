@@ -526,14 +526,13 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 {
 	int ret;
 	char ip[128];
-	struct lls_config *lls_conf;
 	struct ether_cache *eth_cache = lookup_ether_cache(neigh, ip_dst);
 	if (eth_cache != NULL)
 		return eth_cache;
 
-	lls_conf = get_lls_conf();
 	if (inner_ip_ver == ETHER_TYPE_IPv4) {
-		if (!lls_conf->arp_cache.ip_in_subnet(iface, ip_dst)) {
+		if (!ip4_same_subnet(iface->ip4_addr.s_addr,
+				*(uint32_t *)ip_dst, iface->ip4_mask.s_addr)) {
 			if (inet_ntop(AF_INET, ip_dst,
 					ip, sizeof(ip)) == NULL) {
 				GT_LOG(ERR,
@@ -548,7 +547,8 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 			return NULL;
 		}
 	} else if (likely(inner_ip_ver == ETHER_TYPE_IPv6)) {
-		if (!lls_conf->nd_cache.ip_in_subnet(iface, ip_dst)) {
+		if (!ip6_same_subnet(&iface->ip6_addr, ip_dst,
+				&iface->ip6_mask)) {
 			if (inet_ntop(AF_INET6, ip_dst,
 					ip, sizeof(ip)) == NULL) {
 				GT_LOG(ERR,
