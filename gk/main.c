@@ -1385,10 +1385,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			continue;
 		}
 
-		if (unlikely(packet.flow.proto == ETHER_TYPE_IPv4 &&
-				!ipv4_configured_front ||
-				packet.flow.proto == ETHER_TYPE_IPv6 &&
-				!ipv6_configured_front)) {
+		if (unlikely((packet.flow.proto == ETHER_TYPE_IPv4 &&
+				!ipv4_configured_front) ||
+				(packet.flow.proto == ETHER_TYPE_IPv6 &&
+				!ipv6_configured_front))) {
 			drop_packet_front(pkt, instance);
 			continue;
 		}
@@ -1665,10 +1665,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			continue;
 		}
 
-		if (unlikely(packet.flow.proto == ETHER_TYPE_IPv4 &&
-				!ipv4_configured_back ||
-				packet.flow.proto == ETHER_TYPE_IPv6 &&
-				!ipv6_configured_back)) {
+		if (unlikely((packet.flow.proto == ETHER_TYPE_IPv4 &&
+				!ipv4_configured_back) ||
+				(packet.flow.proto == ETHER_TYPE_IPv6 &&
+				!ipv6_configured_back))) {
 			drop_packet_back(pkt, instance);
 			continue;
 		}
