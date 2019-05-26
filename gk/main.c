@@ -333,7 +333,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 				rte_pktmbuf_mtod(pkt, struct ether_hdr *);
 			rte_memcpy(eth_hdr,
 				&eth_cache->l2_hdr, l2_hdr_len);
-			pkt->outer_l2_len = l2_hdr_len;
+			pkt->l2_len = l2_hdr_len;
 		}
 	} while (read_seqretry(&eth_cache->lock, seq));
 
