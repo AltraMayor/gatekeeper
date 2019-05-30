@@ -76,7 +76,11 @@ write_nbytes(int conn_fd, const char *msg_buff, int nbytes)
 			break;
 	}
 
-	/* The connection with the client is closed. */
+	/*
+	 * The connection with the client is closed.
+	 * This is unexpected, since the client closed
+	 * the connection before getting a response.
+	 */
 	if (send_size == 0) {
 		DYC_LOG(WARNING, "Client disconnected\n");
 		return -1;
@@ -189,9 +193,13 @@ read_nbytes(int conn_fd, char *msg_buff, int nbytes)
 			break;
 	}
 
-	/* The connection with the client is closed. */
+	/*
+	 * The connection with the client is closed.
+	 * This is expected for clients that send one
+	 * message and then close the connection.
+	 */
 	if (recv_size == 0) {
-		DYC_LOG(WARNING, "Client disconnected\n");
+		DYC_LOG(DEBUG, "Client disconnected\n");
 		return -1;
 	}
 
