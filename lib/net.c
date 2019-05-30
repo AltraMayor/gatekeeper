@@ -839,6 +839,34 @@ check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
 }
 
 static int
+check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
+	const struct rte_eth_dev_info *dev_info,
+	struct rte_eth_conf *port_conf)
+{
+	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_IPV4_CKSUM) &&
+			!(dev_info->tx_offload_capa &
+			DEV_TX_OFFLOAD_IPV4_CKSUM)) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading IPv4 checksumming\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_IPV4_CKSUM;
+		return -1;
+	}
+
+	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_UDP_CKSUM) &&
+			!(dev_info->tx_offload_capa &
+			DEV_TX_OFFLOAD_UDP_CKSUM)) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading UDP checksumming\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_UDP_CKSUM;
+		return -1;
+	}
+
+	return 0;
+}
+
+static int
 check_port_offloads(struct gatekeeper_if *iface,
 	struct rte_eth_conf *port_conf)
 {
@@ -885,6 +913,19 @@ check_port_offloads(struct gatekeeper_if *iface,
 	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
 		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
 
+	/*
+	 * Set up checksumming.
+	 *
+	 * If IPv4 is supported, both Grantor and Gatekeeper
+	 * need to support IPv4 checksumming in hardware.
+	 *
+	 * Grantor needs to support UDP checksumming.
+	 */
+	if (ipv4_if_configured(iface))
+		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
+	if (!config.back_iface_enabled)
+		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_UDP_CKSUM;
+
 	for (i = 0; i < iface->num_ports; i++) {
 		struct rte_eth_dev_info dev_info;
 		uint16_t port_id = iface->ports[i];
@@ -899,6 +940,11 @@ check_port_offloads(struct gatekeeper_if *iface,
 
 		/* Check for MTU capability and offloads. */
 		ret = check_port_mtu(iface, i, &dev_info, port_conf);
+		if (ret < 0)
+			return ret;
+
+		/* Check for checksum capability and offloads. */
+		ret = check_port_cksum(iface, i, &dev_info, port_conf);
 		if (ret < 0)
 			return ret;
 	}

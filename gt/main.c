@@ -630,6 +630,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 				(pkt_info->outer_ecn == IPTOS_ECN_CE)) {
 			inner_ipv4_hdr->type_of_service |= IPTOS_ECN_CE;
 			inner_ipv4_hdr->hdr_checksum = 0;
+			m->l3_len = ipv4_hdr_len(inner_ipv4_hdr);
+			m->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
 		}
 
 		neigh = &instance->neigh;
@@ -779,8 +781,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
 			sizeof(notify_ipv6->dst_addr));
 
-		notify_pkt->ol_flags |= (PKT_TX_IPV6 |
-			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->ol_flags |= (PKT_TX_IPV6 | PKT_TX_UDP_CKSUM);
 		notify_pkt->l3_len = sizeof(struct ipv6_hdr);
 	}
 

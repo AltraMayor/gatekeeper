@@ -84,10 +84,9 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		 */
 		outer_ip4hdr->hdr_checksum = 0;
 
-		pkt->outer_l3_len = sizeof(struct ipv4_hdr);
+		pkt->l3_len = sizeof(struct ipv4_hdr);
 		/* Offload checksum computation for the outer IPv4 header. */
-		pkt->ol_flags |= (PKT_TX_IPV4 |
-			PKT_TX_IP_CKSUM | PKT_TX_OUTER_IPV4);
+		pkt->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
 	} else if (likely(gt_addr->proto == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *inner_ip6hdr;
 
@@ -115,8 +114,6 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
 			- sizeof(struct ipv6_hdr));
-
-		pkt->outer_l3_len = sizeof(struct ipv6_hdr);
 	} else 
 		return -1;
 
