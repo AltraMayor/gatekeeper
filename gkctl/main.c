@@ -182,7 +182,7 @@ read_all(int conn_fd, char *msg_buff, int nbytes)
 		return -1;
 	}
 
-	return 0;
+	return tot_size;
 }
 
 int
@@ -191,7 +191,7 @@ main(int argc, char *argv[])
 	int ret;
 	int sock_fd;
 	char send_buff[MSG_MAX_LEN + sizeof(uint16_t)];
-	char recv_buff[MSG_MAX_LEN];
+	char recv_buff[MSG_MAX_LEN + 1];
 	size_t len;
 	size_t total_file_len;
 	struct sockaddr_un serv_addr; 
@@ -226,13 +226,13 @@ main(int argc, char *argv[])
 	total_file_len = ret;
 	*(uint16_t *)send_buff = htons(ret);
 
-	if((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+	if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		perror("Error : Could not create socket\n");
 		ret = -1;
 		goto out;
 	}
 
-	if(connect(sock_fd, (struct sockaddr *)&serv_addr,
+	if (connect(sock_fd, (struct sockaddr *)&serv_addr,
 			sizeof(serv_addr)) < 0) {
 		perror("Error : Connect failed\n");
 		ret = -1;
@@ -247,18 +247,29 @@ main(int argc, char *argv[])
 	}
 
 	ret = read_all(sock_fd, recv_buff, sizeof(uint16_t));
-	if (ret != 0) {
+	if (ret != sizeof(uint16_t)) {
 		fprintf(stderr, "Failed to receive message length\n");
 		ret = -1;
 		goto close_sock;
 	}
 
 	len = ntohs(*(uint16_t *)recv_buff);
+	if (len == 0) {
+		fprintf(stderr, "Received a message with no body\n");
+		ret = -1;
+		goto close_sock;
+	}
+
 	ret = read_all(sock_fd, recv_buff, len);
-	if (ret != 0) {
+	if (ret != (int)len) {
 		fprintf(stderr, "Failed to receive message\n");
 		ret = -1;
+		goto close_sock;
 	}
+
+	if (recv_buff[ret - 1] != '\0')
+		recv_buff[ret] = '\0';
+	printf("%s\n", recv_buff);
 
 close_sock:
 	close(sock_fd);
