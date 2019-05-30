@@ -666,8 +666,14 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	 */
 	eth_cache = gt_neigh_get_ether_cache(neigh,
 		pkt_info->inner_ip_ver, ip_dst, &gt_conf->net->front);
-	if (eth_cache == NULL)
+	if (eth_cache == NULL) {
+		/*
+		 * Note: the first packet to each new destination
+		 * will always be dropped, since we don't have an
+		 * Ethernet cache entry for it.
+		 */
 		return -1;
+	}
 
 	if (pkt_copy_cached_eth_header(m, eth_cache,
 			gt_conf->net->front.l2_len_out))
