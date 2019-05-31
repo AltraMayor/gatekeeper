@@ -29,6 +29,7 @@ struct log_ratelimit_state {
 	uint64_t interval_cycles;
 	uint32_t burst;
 	uint32_t printed;
+	uint32_t suppressed;
 	uint64_t end;
 } __rte_cache_aligned;
 
@@ -38,6 +39,12 @@ static inline void
 log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
 	lrs->printed = 0;
+	if (lrs->suppressed > 0) {
+		rte_log(RTE_LOG_NOTICE, gatekeeper_logtype,
+			"GATEKEEPER: %u log entries were suppressed at lcore %u during the last ratelimit interval\n",
+			lrs->suppressed, rte_lcore_id());
+	}
+	lrs->suppressed = 0;
 	lrs->end = now + lrs->interval_cycles;
 }
 
@@ -51,6 +58,7 @@ log_ratelimit_state_init(unsigned lcore_id, uint32_t interval, uint32_t burst)
 	lrs = &log_ratelimit_states[lcore_id];
 	lrs->interval_cycles = interval * cycles_per_ms;
 	lrs->burst = burst;
+	lrs->suppressed = 0;
 	log_ratelimit_reset(lrs, rte_rdtsc());
 }
 
@@ -78,6 +86,8 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 		lrs->printed++;
 		return true;
 	}
+
+	lrs->suppressed++;
 
 	return false;
 }
