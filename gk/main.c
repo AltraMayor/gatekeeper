@@ -1366,6 +1366,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		 */
 		struct flow_entry *fe;
 		struct rte_mbuf *pkt = rx_bufs[i];
+		uint32_t ip_flow_hash_val;
 
 		stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
 
@@ -1393,6 +1394,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			continue;
 		}
 
+		ip_flow_hash_val = likely(front->rss) ? pkt->hash.rss :
+			rss_ip_flow_hf(&packet.flow, 0, 0);
+
 		/* 
 		 * Find the flow entry for the IP pair.
 		 *
@@ -1401,7 +1405,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		 * and go to the next packet.
 		 */
 		ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
-			&packet.flow, pkt->hash.rss);
+			&packet.flow, ip_flow_hash_val);
 		if (ret >= 0)
 			fe = &instance->ip_flow_entry_table[ret];
 		else {
@@ -1453,7 +1457,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				ret = gk_hash_add_flow_entry(
 					instance, &packet.flow,
 					gk_conf->request_timeout_cycles,
-					pkt->hash.rss, GK_REQUEST);
+					ip_flow_hash_val, GK_REQUEST);
 				if (ret == -ENOSPC) {
 					/*
 					 * There is no room for a new
