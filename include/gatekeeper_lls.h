@@ -48,6 +48,8 @@ enum lls_req_ty {
 	LLS_REQ_ARP,
 	/* Request to handle ND packets received from another block. */
 	LLS_REQ_ND,
+	/* Request to handle ICMP ping packets received from another block. */
+	LLS_REQ_PING,
 	/* Request to handle ICMPv6 ping packets received from another block. */
 	LLS_REQ_PING6,
 };
@@ -364,6 +366,14 @@ struct nd_opt_lladdr {
 	sizeof(struct nd_opt_lladdr))
 
 /*
+ * Minimum size of an IPv4 ping packet.
+ *
+ * Note that, according to RFC pages 13 and 14,
+ * both the ICMP Echo request header and Echo reply header require 8 bytes.
+ */
+#define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct ipv4_hdr) + 8)
+
+/*
  * Minimum size of an IPv6 ping packet.
  *
  * Note that, according to RFC 4443 section 4.1 and section 4.2,
@@ -374,6 +384,17 @@ struct nd_opt_lladdr {
 /* Flags for Neighbor Advertisements. */
 #define LLS_ND_NA_SOLICITED 0x40000000
 #define LLS_ND_NA_OVERRIDE  0x20000000
+
+/*
+ * Supported IPv4 ping packets via the type and code fields
+ * in struct icmp_hdr.
+ */
+#define ICMP_ECHO_REQUEST_TYPE (8)
+#define ICMP_ECHO_REQUEST_CODE (0)
+
+/* ICMP type and code fields for echo reply messages. */
+#define ICMP_ECHO_REPLY_TYPE (0)
+#define ICMP_ECHO_REPLY_CODE (0)
 
 /*
  * Supported IPv6 ping packets via the type and code fields
@@ -437,5 +458,7 @@ int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 
 int l_list_lls_arp(lua_State *l);
 int l_list_lls_nd(lua_State *l);
+
+unsigned short icmp_cksum(void *buf, unsigned int size);
 
 #endif /* _GATEKEEPER_LLS_H_ */

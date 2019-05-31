@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <rte_icmp.h>
+
 #include "gatekeeper_acl.h"
 #include "gatekeeper_lls.h"
 
@@ -185,6 +187,7 @@ enum {
 	DST_INPUT_IPV4,
 	/* Source/destination ports are grouped together. */
 	PORTS_INPUT_IPV4,
+	TYPE_INPUT_ICMP,
 	NUM_INPUTS_IPV4,
 };
 
@@ -226,6 +229,15 @@ struct rte_acl_field_def ipv4_defs[NUM_FIELDS_IPV4] = {
 		.field_index = DSTP_FIELD_IPV4,
 		.input_index = PORTS_INPUT_IPV4,
 		.offset = sizeof(struct ipv4_hdr) + sizeof(uint16_t),
+	},
+	{
+		/* Enforce grouping into four bytes. */
+		.type = RTE_ACL_FIELD_TYPE_BITMASK,
+		.size = sizeof(uint32_t),
+		.field_index = TYPE_FIELD_ICMP,
+		.input_index = TYPE_INPUT_ICMP,
+		.offset = sizeof(struct ipv4_hdr) +
+			offsetof(struct icmp_hdr, icmp_type),
 	},
 };
 

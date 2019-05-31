@@ -1100,26 +1100,6 @@ out:
 	return ret;
 }
 
-static inline unsigned short
-icmp_cksum(void *buf, unsigned int size)
-{
-	unsigned short *buffer = buf;
-	unsigned long cksum = 0;
-
-	while(size > 1) {
-		cksum += *buffer++;
-		size -= sizeof(*buffer);
-	}
-
-	if(size)
-		cksum += *(unsigned char*)buffer;
-
-	cksum = (cksum >> 16) + (cksum & 0xffff);
-	cksum += (cksum >> 16);
-
-	return (unsigned short)(~cksum);
-}
-
 static void
 xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
