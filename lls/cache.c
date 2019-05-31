@@ -21,6 +21,7 @@
 #include <rte_hash.h>
 
 #include <gatekeeper_lls.h>
+#include "gatekeeper_varip.h"
 #include "cache.h"
 #include "arp.h"
 #include "nd.h"
@@ -310,6 +311,78 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 	}
 }
 
+static int
+xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
+{
+	/*
+	 * The icmpv6 header offset in terms of the
+	 * beginning of the IPv6 header.
+	 */
+	int icmpv6_offset;
+	uint8_t nexthdr;
+	struct ether_addr eth_addr_tmp;
+	struct ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct ipv6_hdr *icmp_ipv6;
+	struct icmpv6_hdr *icmpv6_hdr;
+	size_t l2_len = pkt_in_l2_hdr_len(pkt);
+
+	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert)
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+
+	/* Set-up IPv6 header. */
+	icmp_ipv6 = (struct ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+
+	/*
+	 * The IP Hop Limit field must be 255 as required by
+	 * RFC 4861, sections 7.1.1 and 7.1.2.
+	 */
+	icmp_ipv6->hop_limits = 255;
+	/*
+	 * According to RFC 4443 section 4.2, the Destination Address of an
+	 * ICMPv6 Echo Reply message is copied from the Source Address field
+	 * of the invoking Echo Request packet.
+	 */
+	rte_memcpy(icmp_ipv6->dst_addr, icmp_ipv6->src_addr,
+		sizeof(icmp_ipv6->dst_addr));
+	/*
+	 * According to RFC 4443 section 4.2, in case an Echo Request message
+	 * was sent to an IPv6 multicast or anycast address,
+	 * the source address of the reply MUST be a unicast address
+	 * belonging to the interface on which the Echo Request message
+	 * was received.
+	 */
+	rte_memcpy(icmp_ipv6->src_addr, iface->ip6_addr.s6_addr,
+		sizeof(icmp_ipv6->src_addr));
+
+	/* Set-up ICMPv6 header. */
+	icmpv6_offset = ipv6_skip_exthdr(icmp_ipv6, pkt->data_len - l2_len,
+		&nexthdr);
+	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)
+		return -1;
+
+	icmpv6_hdr =
+		(struct icmpv6_hdr *)((uint8_t *)icmp_ipv6 + icmpv6_offset);
+
+	icmpv6_hdr->type = ICMPV6_ECHO_REPLY_TYPE;
+	icmpv6_hdr->code = ICMPV6_ECHO_REPLY_CODE;
+	icmpv6_hdr->cksum = 0; /* Calculated below. */
+
+	/*
+	 * According to RFC 4443 section 4.2, the other parts
+	 * (i.e., identifier, sequence number and data) of the Echo reply
+	 * message should be from the invoking Echo Request message.
+	 *
+	 * We keep these fields unmodified.
+	 */
+
+	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(icmp_ipv6, icmpv6_hdr);
+
+	return 0;
+}
+
 unsigned int
 lls_process_reqs(struct lls_config *lls_conf)
 {
@@ -360,6 +433,40 @@ lls_process_reqs(struct lls_config *lls_conf)
 			}
 			break;
 		}
+		case LLS_REQ_PING6: {
+			struct lls_ping6_req *ping6 = &reqs[i]->u.ping6;
+			uint16_t tx_queue;
+			struct token_bucket_ratelimit_state *rs;
+			int num_granted_pkts;
+			int i;
+			int num_reply = 0;
+
+			if (ping6->iface == &lls_conf->net->front) {
+				tx_queue = lls_conf->tx_queue_front;
+				rs = &lls_conf->front_icmp_rs;
+			} else {
+				tx_queue = lls_conf->tx_queue_back;
+				rs = &lls_conf->back_icmp_rs;
+			}
+
+			num_granted_pkts =
+				tb_ratelimit_allow_n(ping6->num_pkts, rs);
+
+			for (i = 0; i < ping6->num_pkts; i++) {
+				if (num_reply >= num_granted_pkts ||
+						xmit_icmpv6_reply(ping6->iface,
+						ping6->pkts[i]) != 0) {
+					rte_pktmbuf_free(ping6->pkts[i]);
+					continue;
+				}
+				ping6->pkts[num_reply++] = ping6->pkts[i];
+			}
+
+			send_pkts(ping6->iface->id, tx_queue,
+				num_reply, ping6->pkts);
+
+			break;
+		}
 		default:
 			LLS_LOG(ERR, "Unrecognized request type (%d)\n",
 				reqs[i]->ty);
@@ -404,6 +511,14 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 		req->u.nd = *nd_req;
 		rte_memcpy(req->u.nd.pkts, nd_req->pkts,
 			sizeof(nd_req->pkts[0]) * nd_req->num_pkts);
+		break;
+	}
+	case LLS_REQ_PING6: {
+		struct lls_ping6_req *ping6_req =
+			(struct lls_ping6_req *)req_arg;
+		req->u.ping6 = *ping6_req;
+		rte_memcpy(req->u.ping6.pkts, ping6_req->pkts,
+			sizeof(ping6_req->pkts[0]) * ping6_req->num_pkts);
 		break;
 	}
 	default:

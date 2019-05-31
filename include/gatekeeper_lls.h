@@ -48,6 +48,8 @@ enum lls_req_ty {
 	LLS_REQ_ARP,
 	/* Request to handle ND packets received from another block. */
 	LLS_REQ_ND,
+	/* Request to handle ICMPv6 ping packets received from another block. */
+	LLS_REQ_PING6,
 };
 
 /* Replies that come from the LLS block. */
@@ -205,6 +207,12 @@ struct lls_config {
 	/* Log ratelimit burst size for LLS block. */
 	uint32_t          log_ratelimit_burst;
 
+	/* The rate and burst size of the icmp messages. */
+	uint32_t          front_icmp_msgs_per_sec;
+	uint32_t          front_icmp_msgs_burst;
+	uint32_t          back_icmp_msgs_per_sec;
+	uint32_t          back_icmp_msgs_burst;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -231,6 +239,10 @@ struct lls_config {
 	uint16_t          tx_queue_front;
 	uint16_t          rx_queue_back;
 	uint16_t          tx_queue_back;
+
+	/* Data structures used to limit the rate of icmp messages. */
+	struct token_bucket_ratelimit_state front_icmp_rs;
+	struct token_bucket_ratelimit_state back_icmp_rs;
 };
 
 /*
@@ -351,9 +363,28 @@ struct nd_opt_lladdr {
 #define ND_NEIGH_PKT_LLADDR_MIN_LEN(l2_len) (ND_NEIGH_PKT_MIN_LEN(l2_len) + \
 	sizeof(struct nd_opt_lladdr))
 
+/*
+ * Minimum size of an IPv6 ping packet.
+ *
+ * Note that, according to RFC 4443 section 4.1 and section 4.2,
+ * both the ICMPv6 Echo request header and Echo reply header require 8 bytes.
+ */
+#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct ipv6_hdr) + 8)
+
 /* Flags for Neighbor Advertisements. */
 #define LLS_ND_NA_SOLICITED 0x40000000
 #define LLS_ND_NA_OVERRIDE  0x20000000
+
+/*
+ * Supported IPv6 ping packets via the type and code fields
+ * in struct icmpv6_hdr.
+ */
+#define ICMPV6_ECHO_REQUEST_TYPE (128)
+#define ICMPV6_ECHO_REQUEST_CODE (0)
+
+/* ICMPv6 type and code fields for echo reply messages. */
+#define ICMPV6_ECHO_REPLY_TYPE (129)
+#define ICMPV6_ECHO_REPLY_CODE (0)
 
 /* Supported IPv6 ND packets via the type field in struct icmpv6_hdr. */
 #define ND_ROUTER_SOLICITATION (133)

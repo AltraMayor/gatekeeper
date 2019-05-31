@@ -34,12 +34,12 @@ tb_ratelimit_state_init(struct token_bucket_ratelimit_state *tbrs,
 	tbrs->stamp = 0;
 }
 
-bool
-tb_ratelimit_allow(struct token_bucket_ratelimit_state *tbrs)
+uint32_t
+tb_ratelimit_allow_n(uint32_t n, struct token_bucket_ratelimit_state *tbrs)
 {
 	uint32_t credit, incr = 0;
 	uint64_t now = rte_rdtsc(), delta;
-	bool rc = false;
+	uint32_t rc = 0;
 
 	delta = RTE_MIN(now - tbrs->stamp, cycles_per_sec);
 
@@ -55,9 +55,9 @@ tb_ratelimit_allow(struct token_bucket_ratelimit_state *tbrs)
 			tbrs->stamp = now;
 	}
 	credit = RTE_MIN(tbrs->credit + incr, tbrs->burst);
-	if (credit) {
-		credit--;
-		rc = true;
+	if (credit > 0) {
+		rc = RTE_MIN(credit, n);
+		credit -= rc;
 	}
 	tbrs->credit = credit;
 

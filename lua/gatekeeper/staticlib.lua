@@ -242,6 +242,10 @@ struct lls_config {
 	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
+	uint32_t     front_icmp_msgs_per_sec;
+	uint32_t     front_icmp_msgs_burst;
+	uint32_t     back_icmp_msgs_per_sec;
+	uint32_t     back_icmp_msgs_burst;
 	/* This struct has hidden fields. */
 };
 

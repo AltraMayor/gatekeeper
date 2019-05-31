@@ -547,6 +547,16 @@ ip6_same_subnet(const struct in6_addr *addr1, const struct in6_addr *addr2,
 		!((paddr_p1[1] ^ paddr_p2[1]) & pmask_p[1]));
 }
 
+static inline int
+drop_packet(struct rte_mbuf *pkt)
+{
+	rte_pktmbuf_free(pkt);
+	return 0;
+}
+
+void send_pkts(uint8_t port, uint16_t tx_queue,
+	uint16_t num_pkts, struct rte_mbuf **bufs);
+
 /*
  * Postpone the execution of f(arg) until the Lua configuration finishes,
  * but before the network devices start.

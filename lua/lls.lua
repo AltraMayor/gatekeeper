@@ -16,6 +16,10 @@ return function (net_conf, numa_table)
 	local log_ratelimit_burst = 10
 	local front_max_pkt_burst = 32
 	local back_max_pkt_burst = 32
+	local front_icmp_msgs_per_sec = 1000
+	local front_icmp_msgs_burst = 50
+	local back_icmp_msgs_per_sec = 1000
+	local back_icmp_msgs_burst = 50
 
 	-- These variables are unlikely to need to be changed.
 	local max_num_cache_records = 1024
@@ -40,6 +44,10 @@ return function (net_conf, numa_table)
 	lls_conf.log_ratelimit_burst = log_ratelimit_burst
 	lls_conf.front_max_pkt_burst = front_max_pkt_burst
 	lls_conf.back_max_pkt_burst = back_max_pkt_burst
+	lls_conf.front_icmp_msgs_per_sec = front_icmp_msgs_per_sec
+	lls_conf.front_icmp_msgs_burst = front_icmp_msgs_burst
+	lls_conf.back_icmp_msgs_per_sec = back_icmp_msgs_per_sec
+	lls_conf.back_icmp_msgs_burst = back_icmp_msgs_burst
 
 	lls_conf.max_num_cache_records = max_num_cache_records
 	lls_conf.cache_scan_interval_sec = cache_scan_interval_sec
