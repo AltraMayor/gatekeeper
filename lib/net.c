@@ -1739,9 +1739,11 @@ gatekeeper_init_network(struct net_config *net_conf)
 		goto numa;
 	}
 
+	RTE_BUILD_BUG_ON(sizeof(default_rss_key) % 4 != 0);
+
 	/* Convert RSS key. */
-	rte_convert_rss_key((uint32_t *)&default_rss_key,
-		(uint32_t *)rss_key_be, RTE_DIM(default_rss_key));
+	rte_convert_rss_key((uint32_t *)default_rss_key,
+		(uint32_t *)rss_key_be, sizeof(default_rss_key));
 
 	/* Check port limits. */
 	num_ports = net_conf->front.num_ports +
