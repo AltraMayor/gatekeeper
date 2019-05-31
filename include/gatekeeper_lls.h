@@ -356,6 +356,8 @@ struct nd_opt_lladdr {
 #define LLS_ND_NA_OVERRIDE  0x20000000
 
 /* Supported IPv6 ND packets via the type field in struct icmpv6_hdr. */
+#define ND_ROUTER_SOLICITATION (133)
+#define ND_ROUTER_ADVERTISEMENT (134)
 #define ND_NEIGHBOR_SOLICITATION (135)
 #define ND_NEIGHBOR_ADVERTISEMENT (136)
 

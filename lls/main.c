@@ -285,6 +285,73 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	return 0;
 }
 
+static int
+drop_nd_router_sol_or_adv(struct rte_mbuf **pkts, unsigned int num_pkts,
+	__attribute__((unused)) struct gatekeeper_if *iface)
+{
+	unsigned int i;
+	for (i = 0; i < num_pkts; i++)
+		rte_pktmbuf_free(pkts[i]);
+	return 0;
+}
+
+/*
+ * Match the packet if it fails to be classifed by ACL rules.
+ * If it's a router solicitation or advertisement packet, then drop it.
+ *
+ * Return values: 0 for successful match, and -ENOENT for no matching.
+ */
+static int
+match_nd_router_sol_or_adv(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+{
+	/*
+	 * The ND header offset in terms of the
+	 * beginning of the IPv6 header.
+	 */
+	int nd_offset;
+	uint8_t nexthdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+	struct ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct ipv6_hdr *ip6hdr;
+	struct icmpv6_hdr *nd_hdr;
+	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
+	size_t l2_len = pkt_in_l2_hdr_len(pkt);
+
+	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
+		return -ENOENT;
+
+	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len))
+		return -ENOENT;
+
+	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
+			sizeof(iface->ip6_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
+			sizeof(iface->ll_ip6_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &iface->ip6_mc_addr,
+			sizeof(iface->ip6_mc_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr,
+			&iface->ll_ip6_mc_addr,
+			sizeof(iface->ll_ip6_mc_addr)) != 0))
+		return -ENOENT;
+
+	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
+		&nexthdr);
+	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
+		return -ENOENT;
+
+	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
+			nd_offset - sizeof(*ip6hdr)))
+		return -ENOENT;
+
+	nd_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + nd_offset);
+	if (nd_hdr->type != ND_ROUTER_SOLICITATION &&
+			nd_hdr->type != ND_ROUTER_ADVERTISEMENT)
+		return -ENOENT;
+
+	return 0;
+}
+
 static void
 rotate_log(__attribute__((unused)) struct rte_timer *timer,
 	__attribute__((unused)) void *arg)
@@ -593,7 +660,9 @@ fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
 	uint32_t *ptr32 = (uint32_t *)addr;
 	int i;
 
-	RTE_VERIFY(nd_type == ND_NEIGHBOR_SOLICITATION ||
+	RTE_VERIFY(nd_type == ND_ROUTER_SOLICITATION ||
+		nd_type == ND_ROUTER_ADVERTISEMENT ||
+		nd_type == ND_NEIGHBOR_SOLICITATION ||
 		nd_type == ND_NEIGHBOR_ADVERTISEMENT);
 
 	rule->data.category_mask = 0x1;
@@ -643,6 +712,43 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 		submit_nd, match_nd, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND IPv6 ACL on %s iface\n",
+			iface->name);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int
+register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
+{
+	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	int ret;
+
+	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
+
+	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
+		ND_ROUTER_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[1], &iface->ll_ip6_addr,
+		ND_ROUTER_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[2], &iface->ip6_mc_addr,
+		ND_ROUTER_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
+		ND_ROUTER_SOLICITATION);
+
+	fill_nd_rule(&ipv6_rules[4], &iface->ip6_addr,
+		ND_ROUTER_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[5], &iface->ll_ip6_addr,
+		ND_ROUTER_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[6], &iface->ip6_mc_addr,
+		ND_ROUTER_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
+		ND_ROUTER_ADVERTISEMENT);
+
+	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
+		 drop_nd_router_sol_or_adv, match_nd_router_sol_or_adv, iface);
+	if (ret < 0) {
+		LLS_LOG(ERR, "Could not register ND Router Solicitation or Advertisement IPv6 ACL on %s iface\n",
 			iface->name);
 		return ret;
 	}
@@ -789,10 +895,16 @@ lls_stage2(void *arg)
 		ret = register_nd_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
+		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->front);
+		if (ret < 0)
+			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
 		ret = register_nd_acl_rules(&net_conf->back);
+		if (ret < 0)
+			return ret;
+		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}
