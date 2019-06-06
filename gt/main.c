@@ -339,7 +339,7 @@ is_valid_dest_addr(struct gt_config *gt_conf,
 			memcmp(((struct ipv6_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr,
 			gt_conf->net->front.ip6_addr.s6_addr,
-			sizeof(gt_conf->net->front.ip6_addr) == 0));
+			sizeof(gt_conf->net->front.ip6_addr)) == 0);
 }
 
 static void
