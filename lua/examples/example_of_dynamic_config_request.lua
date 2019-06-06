@@ -146,4 +146,21 @@ if ret < 0 then
 	return "gk: failed to flush the flow table\n"
 end
 
+ret = dylib.c.gk_load_bpf_flow_handler(dyc.gk, 255, "bpf/granted.bpf", true)
+if ret < 0 then
+	-- The error below may be triggered for a number reasons,
+	-- the reasons below should be the most common ones:
+	--
+	-- 1. This example program runs more than once,
+	--	this is an expected error;
+	--
+	-- 2. Running Gatekeeper in a folder different from
+	--	the root of the repository requires to adjust the path passed
+	--	to dylib.c.gk_load_bpf_flow_handler();
+	--
+	-- 3. The BPF programs in folder ROOT_OF_REPOSITORY/bpf are
+	--	not compiled.
+	return "gk: failed to load a BPF program in runtime"
+end
+
 return "gk: successfully processed all the FIB entries\n" .. reply_msg

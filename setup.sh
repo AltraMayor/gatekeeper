@@ -77,7 +77,12 @@ gcc generate_if_map.c -o generate_if_map -Wall
 # Build client.
 cd gkctl
 gcc main.c -o gkctl -Wall -Wextra -pedantic
+cd ..
 
+# Build BPF programs.
+cd bpf
+make
+make copy
 cd ..
 
 sudo mkdir -p /var/run/gatekeeper/
