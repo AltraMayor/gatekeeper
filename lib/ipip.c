@@ -113,7 +113,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 			sizeof(outer_ip6hdr->dst_addr));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
-			- sizeof(struct ipv6_hdr));
+			- (sizeof(struct ipv6_hdr) + iface->l2_len_out));
 	} else 
 		return -1;
 
