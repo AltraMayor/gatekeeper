@@ -104,7 +104,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
 			IPv6_DEFAULT_VTC_FLOW | (priority << 22) |
 			(in_to_out_ecn(inner_ip6hdr->vtc_flow >> 20) << 20));
-		outer_ip6hdr->proto = IPPROTO_IPIP; 
+		outer_ip6hdr->proto = IPPROTO_IPV6;
 		outer_ip6hdr->hop_limits = iface->ipv6_default_hop_limits;
 
 		rte_memcpy(outer_ip6hdr->src_addr, iface->ip6_addr.s6_addr,
@@ -113,7 +113,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 			sizeof(outer_ip6hdr->dst_addr));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
-			- sizeof(struct ipv6_hdr));
+			- (sizeof(struct ipv6_hdr) + iface->l2_len_out));
 	} else 
 		return -1;
 
