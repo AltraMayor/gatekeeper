@@ -82,7 +82,6 @@ static int
 gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 {
 	uint8_t inner_ip_ver;
-	uint8_t encasulated_proto;
 	uint16_t parsed_len;
 	int outer_ipv6_hdr_len = 0;
 	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
@@ -103,24 +102,32 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		outer_ipv4_hdr = (struct ipv4_hdr *)info->outer_l3_hdr;
+
+		if (outer_ipv4_hdr->next_proto_id != IPPROTO_IPIP)
+			return -1;
+
 		parsed_len += ipv4_hdr_len(outer_ipv4_hdr);
 		info->priority = (outer_ipv4_hdr->type_of_service >> 2);
 		info->outer_ecn =
 			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
-		encasulated_proto = outer_ipv4_hdr->next_proto_id;
 		break;
-	case ETHER_TYPE_IPv6:
+	case ETHER_TYPE_IPv6: {
+		uint8_t encapsulated_proto;
+
 		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr))
 			return -1;
 
 		outer_ipv6_hdr = (struct ipv6_hdr *)info->outer_l3_hdr;
 		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
-			pkt->data_len - parsed_len, &encasulated_proto);
+			pkt->data_len - parsed_len, &encapsulated_proto);
                 if (outer_ipv6_hdr_len < 0) {
                         GT_LOG(ERR,
                                 "Failed to parse the packet's outer IPv6 extension headers\n");
 			return -1;
                 }
+
+		if (encapsulated_proto != IPPROTO_IPV6)
+			return -1;
 
 		parsed_len += outer_ipv6_hdr_len;
 		info->priority = (((outer_ipv6_hdr->vtc_flow >> 20)
@@ -128,12 +135,10 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		info->outer_ecn =
 			(outer_ipv6_hdr->vtc_flow >> 20) & IPTOS_ECN_MASK;
 		break;
+	}
 	default:
 		return -1;
 	}
-
-	if (encasulated_proto != IPPROTO_IPIP)
-		return -1;
 
 	if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr))
 		return -1;
