@@ -199,7 +199,7 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 }
 
 static int
-submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
+submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
 	struct lls_nd_req nd_req = {
@@ -224,12 +224,12 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's an ND packet, then submit it to the LLS block.
+ * If it's an ND Neighbor packet, then submit it to the LLS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_nd_neigh(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The ND header offset in terms of the
@@ -280,7 +280,7 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 }
 
 static int
-drop_nd_router_sol_or_adv(struct rte_mbuf **pkts, unsigned int num_pkts,
+drop_nd_router(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
 	unsigned int i;
@@ -296,7 +296,7 @@ drop_nd_router_sol_or_adv(struct rte_mbuf **pkts, unsigned int num_pkts,
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_nd_router_sol_or_adv(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The ND header offset in terms of the
@@ -677,7 +677,7 @@ fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
 }
 
 static int
-register_nd_acl_rules(struct gatekeeper_if *iface)
+register_nd_neigh_acl_rules(struct gatekeeper_if *iface)
 {
 	struct ipv6_acl_rule ipv6_rules[8];
 	int ret;
@@ -703,7 +703,7 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 		ND_NEIGHBOR_ADVERTISEMENT);
 
 	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		submit_nd, match_nd, iface);
+		submit_nd_neigh, match_nd_neigh, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND IPv6 ACL on %s iface\n",
 			iface->name);
@@ -714,7 +714,7 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 }
 
 static int
-register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
+register_nd_router_acl_rules(struct gatekeeper_if *iface)
 {
 	struct ipv6_acl_rule ipv6_rules[8];
 	int ret;
@@ -740,7 +740,7 @@ register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
 		ND_ROUTER_ADVERTISEMENT);
 
 	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		 drop_nd_router_sol_or_adv, match_nd_router_sol_or_adv, iface);
+		 drop_nd_router, match_nd_router, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND Router Solicitation or Advertisement IPv6 ACL on %s iface\n",
 			iface->name);
@@ -886,19 +886,19 @@ lls_stage2(void *arg)
 	/* Receive ND packets using IPv6 ACL filters. */
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = register_nd_acl_rules(&net_conf->front);
+		ret = register_nd_neigh_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
-		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->front);
+		ret = register_nd_router_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = register_nd_acl_rules(&net_conf->back);
+		ret = register_nd_neigh_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
-		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->back);
+		ret = register_nd_router_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}
