@@ -48,11 +48,13 @@
  * link partner does not have LACP configured).
  */
 
-/*
- * To capture both ND solicitations and advertisements being sent
- * to any of four different IPv6 addresses, we need eight rules.
- */
-#define NUM_ACL_ND_RULES (8)
+/* The IPv6 all nodes multicast address. */
+static const struct in6_addr ip6_allnodes_mc_addr = {
+	.s6_addr = {
+		0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+	}
+};
 
 int lls_logtype;
 
@@ -205,7 +207,7 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 }
 
 static int
-submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
+submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
 	struct lls_nd_req nd_req = {
@@ -230,12 +232,12 @@ submit_nd(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's an ND packet, then submit it to the LLS block.
+ * If it's an ND Neighbor packet, then submit it to the LLS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_nd_neigh(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The ND header offset in terms of the
@@ -286,7 +288,7 @@ match_nd(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 }
 
 static int
-drop_nd_router_sol_or_adv(struct rte_mbuf **pkts, unsigned int num_pkts,
+drop_nd_router(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
 	unsigned int i;
@@ -302,7 +304,7 @@ drop_nd_router_sol_or_adv(struct rte_mbuf **pkts, unsigned int num_pkts,
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_nd_router_sol_or_adv(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The ND header offset in terms of the
@@ -324,7 +326,9 @@ match_nd_router_sol_or_adv(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len))
 		return -ENOENT;
 
-	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
+	if ((memcmp(ip6hdr->dst_addr, &ip6_allnodes_mc_addr,
+			sizeof(ip6_allnodes_mc_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0) &&
 			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
 			sizeof(iface->ll_ip6_addr)) != 0) &&
@@ -655,9 +659,10 @@ lls_proc(void *arg)
 }
 
 static void
-fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
+fill_nd_rule(struct ipv6_acl_rule *rule, const struct in6_addr *addr,
+	int nd_type)
 {
-	uint32_t *ptr32 = (uint32_t *)addr;
+	const uint32_t *ptr32 = (const uint32_t *)addr;
 	int i;
 
 	RTE_VERIFY(nd_type == ND_ROUTER_SOLICITATION ||
@@ -683,9 +688,9 @@ fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
 }
 
 static int
-register_nd_acl_rules(struct gatekeeper_if *iface)
+register_nd_neigh_acl_rules(struct gatekeeper_if *iface)
 {
-	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	struct ipv6_acl_rule ipv6_rules[8];
 	int ret;
 
 	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
@@ -708,8 +713,8 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
 		ND_NEIGHBOR_ADVERTISEMENT);
 
-	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
-		submit_nd, match_nd, iface);
+	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
+		submit_nd_neigh, match_nd_neigh, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND IPv6 ACL on %s iface\n",
 			iface->name);
@@ -720,9 +725,9 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 }
 
 static int
-register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
+register_nd_router_acl_rules(struct gatekeeper_if *iface)
 {
-	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	struct ipv6_acl_rule ipv6_rules[10];
 	int ret;
 
 	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
@@ -735,18 +740,22 @@ register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
 		ND_ROUTER_SOLICITATION);
 	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
 		ND_ROUTER_SOLICITATION);
+	fill_nd_rule(&ipv6_rules[4], &ip6_allnodes_mc_addr,
+		ND_ROUTER_SOLICITATION);
 
-	fill_nd_rule(&ipv6_rules[4], &iface->ip6_addr,
+	fill_nd_rule(&ipv6_rules[5], &iface->ip6_addr,
 		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[5], &iface->ll_ip6_addr,
+	fill_nd_rule(&ipv6_rules[6], &iface->ll_ip6_addr,
 		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[6], &iface->ip6_mc_addr,
+	fill_nd_rule(&ipv6_rules[7], &iface->ip6_mc_addr,
 		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
+	fill_nd_rule(&ipv6_rules[8], &iface->ll_ip6_mc_addr,
+		ND_ROUTER_ADVERTISEMENT);
+	fill_nd_rule(&ipv6_rules[9], &ip6_allnodes_mc_addr,
 		ND_ROUTER_ADVERTISEMENT);
 
-	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
-		 drop_nd_router_sol_or_adv, match_nd_router_sol_or_adv, iface);
+	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
+		 drop_nd_router, match_nd_router, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND Router Solicitation or Advertisement IPv6 ACL on %s iface\n",
 			iface->name);
@@ -892,19 +901,19 @@ lls_stage2(void *arg)
 	/* Receive ND packets using IPv6 ACL filters. */
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = register_nd_acl_rules(&net_conf->front);
+		ret = register_nd_neigh_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
-		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->front);
+		ret = register_nd_router_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = register_nd_acl_rules(&net_conf->back);
+		ret = register_nd_neigh_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
-		ret = register_nd_router_sol_or_adv_acl_rules(&net_conf->back);
+		ret = register_nd_router_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}
