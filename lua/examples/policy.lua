@@ -220,20 +220,18 @@ function lookup_policy(pkt_info, policy)
 		group = default
 	end
 
-	policy.state = group["params"]["action"]
-
-	if policy.state == policylib.c.GK_DECLINED then
-		policy.params.declined.expire_sec =
-			group["params"]["expire_sec"]
+	local state = group["params"]["action"]
+	if state == policylib.c.GK_DECLINED then
+		return policylib.decision_declined(policy,
+			group["params"]["expire_sec"])
+	elseif state == policylib.c.GK_GRANTED then
+		return policylib.decision_granted(policy,
+			group["params"]["tx_rate_kb_sec"],
+			group["params"]["cap_expire_sec"],
+			group["params"]["next_renewal_ms"],
+			group["params"]["renewal_step_ms"])
 	else
-		policy.params.granted.tx_rate_kb_sec =
-			group["params"]["tx_rate_kb_sec"]
-		policy.params.granted.cap_expire_sec =
-			group["params"]["cap_expire_sec"]
-		policy.params.granted.next_renewal_ms =
-			group["params"]["next_renewal_ms"]
-		policy.params.granted.renewal_step_ms =
-			group["params"]["renewal_step_ms"]
+		error("Unknown state: " .. state)
 	end
 end
 
@@ -247,6 +245,5 @@ is essentially a policy decision stated in the configuration files
 to be applied to these cases. For example, decline the flow for 10 minutes.
 --]]
 function lookup_frag_punish_policy(policy)
-	policy.state = policylib.c.GK_DECLINED
-	policy.params.declined.expire_sec = 600
+	return policylib.decision_declined(policy, 600)
 end
