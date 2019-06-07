@@ -48,12 +48,6 @@
  * link partner does not have LACP configured).
  */
 
-/*
- * To capture both ND solicitations and advertisements being sent
- * to any of four different IPv6 addresses, we need eight rules.
- */
-#define NUM_ACL_ND_RULES (8)
-
 int lls_logtype;
 
 static struct lls_config lls_conf = {
@@ -685,7 +679,7 @@ fill_nd_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr, int nd_type)
 static int
 register_nd_acl_rules(struct gatekeeper_if *iface)
 {
-	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	struct ipv6_acl_rule ipv6_rules[8];
 	int ret;
 
 	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
@@ -708,7 +702,7 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
 		ND_NEIGHBOR_ADVERTISEMENT);
 
-	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
+	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
 		submit_nd, match_nd, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND IPv6 ACL on %s iface\n",
@@ -722,7 +716,7 @@ register_nd_acl_rules(struct gatekeeper_if *iface)
 static int
 register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
 {
-	struct ipv6_acl_rule ipv6_rules[NUM_ACL_ND_RULES];
+	struct ipv6_acl_rule ipv6_rules[8];
 	int ret;
 
 	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
@@ -745,7 +739,7 @@ register_nd_router_sol_or_adv_acl_rules(struct gatekeeper_if *iface)
 	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
 		ND_ROUTER_ADVERTISEMENT);
 
-	ret = register_ipv6_acl(ipv6_rules, NUM_ACL_ND_RULES,
+	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
 		 drop_nd_router_sol_or_adv, match_nd_router_sol_or_adv, iface);
 	if (ret < 0) {
 		LLS_LOG(ERR, "Could not register ND Router Solicitation or Advertisement IPv6 ACL on %s iface\n",
