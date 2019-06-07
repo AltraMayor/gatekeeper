@@ -730,7 +730,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 			((uint8_t *)notify_eth + l2_len);
 		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
 		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
-	} else if (ethertype == ETHER_TYPE_IPv6) {
+	} else if (likely(ethertype == ETHER_TYPE_IPv6)) {
 		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
 			l2_len + sizeof(struct ipv6_hdr) +
 			sizeof(struct udp_hdr) +
@@ -777,7 +777,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
 			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
 		notify_pkt->l3_len = sizeof(struct ipv4_hdr);
-	} else if (ethertype == ETHER_TYPE_IPv6) {
+	} else if (likely(ethertype == ETHER_TYPE_IPv6)) {
 		struct ipv6_hdr *ipv6_hdr =
 			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
 		/* Fill up the outer IPv6 header. */
