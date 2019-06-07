@@ -1082,6 +1082,24 @@ fill_notify_pkt(struct ggu_policy *policy,
 	struct ggu_decision *ggu_decision;
 	size_t params_offset;
 
+	if (unlikely(policy->flow.proto != ETHER_TYPE_IPv4
+		&& policy->flow.proto != ETHER_TYPE_IPv6)) {
+		GT_LOG(ERR, "Policy decision with unknown protocol %u\n",
+			policy->flow.proto);
+		return;
+	}
+
+	switch (policy->state) {
+	case GK_GRANTED:
+	case GK_DECLINED:
+		break;
+	default:
+		/* The state GK_REQUEST is unexpected here. */
+		print_unsent_policy(policy, NULL);
+		return;
+	}
+
+	/* Get a GGU packet. */
 	ggu_pkt = find_notify_pkt(gt_conf, pkt_info, instance);
 	if (ggu_pkt == NULL) {
 		ggu_pkt = add_notify_pkt(gt_conf, instance, pkt_info);
