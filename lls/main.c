@@ -210,19 +210,22 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	}
 }
 
+#define ND_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
+        sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts
+
 static int
 submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_nd_req nd_req = {
-		.num_pkts = num_pkts,
-		.iface = iface,
-	};
+	struct lls_nd_req *nd_req;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
-	rte_memcpy(nd_req.pkts, pkts, sizeof(*nd_req.pkts) * num_pkts);
+	nd_req = alloca(ND_REQ_SIZE(num_pkts));
+	nd_req->num_pkts = num_pkts;
+	nd_req->iface = iface;
+	rte_memcpy(nd_req->pkts, pkts, sizeof(*nd_req->pkts) * num_pkts);
 
 	ret = lls_req(LLS_REQ_ND, &nd_req);
 	if (unlikely(ret < 0)) {
@@ -832,9 +835,7 @@ lls_stage1(void *arg)
 	struct lls_config *lls_conf = arg;
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
 		RTE_MAX(ARP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-		offsetof(struct lls_request, end_of_header) +
-		sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) *
-		lls_conf->mailbox_max_pkt_sub));
+		ND_REQ_SIZE(lls_conf->mailbox_max_pkt_sub)));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
 		return ret;
