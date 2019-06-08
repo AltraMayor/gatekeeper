@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <alloca.h>
 #include <stdbool.h>
 
 #include <rte_cycles.h>
@@ -184,19 +185,22 @@ put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 	return -1;
 }
 
+#define ARP_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts
+
 void
 submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_arp_req arp_req = {
-		.num_pkts = num_pkts,
-		.iface = iface,
-	};
+	struct lls_arp_req *arp_req;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
-	rte_memcpy(arp_req.pkts, pkts, sizeof(*arp_req.pkts) * num_pkts);
+	arp_req = alloca(ARP_REQ_SIZE(num_pkts));
+	arp_req->num_pkts = num_pkts;
+	arp_req->iface = iface;
+	rte_memcpy(arp_req->pkts, pkts, sizeof(*arp_req->pkts) * num_pkts);
 
 	ret = lls_req(LLS_REQ_ARP, &arp_req);
 	if (unlikely(ret < 0)) {
@@ -827,12 +831,10 @@ lls_stage1(void *arg)
 {
 	struct lls_config *lls_conf = arg;
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
-		RTE_MAX(offsetof(struct lls_request, end_of_header) +
-			sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) *
-			lls_conf->mailbox_max_pkt_sub,
-			offsetof(struct lls_request, end_of_header) +
-			sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) *
-			lls_conf->mailbox_max_pkt_sub));
+		RTE_MAX(ARP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
+		offsetof(struct lls_request, end_of_header) +
+		sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) *
+		lls_conf->mailbox_max_pkt_sub));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
 		return ret;
