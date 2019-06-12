@@ -35,6 +35,13 @@ struct token_bucket_ratelimit_state {
 
 void tb_ratelimit_state_init(struct token_bucket_ratelimit_state *tbrs,
 	uint32_t rate, uint32_t burst);
-bool tb_ratelimit_allow(struct token_bucket_ratelimit_state *tbrs);
+uint32_t tb_ratelimit_allow_n(uint32_t n,
+	struct token_bucket_ratelimit_state *tbrs);
+
+static inline bool
+tb_ratelimit_allow(struct token_bucket_ratelimit_state *tbrs)
+{
+	return tb_ratelimit_allow_n(1, tbrs);
+}
 
 #endif /* _GATEKEEPER_RATELIMIT_H_ */

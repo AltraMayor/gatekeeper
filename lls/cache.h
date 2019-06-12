@@ -69,6 +69,30 @@ struct lls_nd_req {
 	struct rte_mbuf      *pkts[0];
 };
 
+/* Information needed to submit ICMP ping packets to the LLS block. */
+struct lls_ping_req {
+	/* Number of packets stored in @pkts. */
+	int                  num_pkts;
+
+	/* Interface that received @pkt. */
+	struct gatekeeper_if *iface;
+
+	/* ICMP ping packets. */
+	struct rte_mbuf      *pkts[0];
+};
+
+/* Information needed to submit ICMPv6 ping packets to the LLS block. */
+struct lls_ping6_req {
+	/* Number of packets stored in @pkts. */
+	int                  num_pkts;
+
+	/* Interface that received @pkt. */
+	struct gatekeeper_if *iface;
+
+	/* ICMPv6 ping packets. */
+	struct rte_mbuf      *pkts[0];
+};
+
 /* A modification to an LLS map. */
 struct lls_mod_req {
 	/* Cache that holds (or will hold) this map. */
@@ -102,13 +126,17 @@ struct lls_request {
 
 	union {
 		/* If @ty is LLS_REQ_HOLD, use @hold. */
-		struct lls_hold_req hold;
+		struct lls_hold_req  hold;
 		/* If @ty is LLS_REQ_PUT, use @put. */
-		struct lls_put_req  put;
+		struct lls_put_req   put;
 		/* If @ty is LLS_REQ_ARP, use @arp. */
-		struct lls_arp_req  arp;
+		struct lls_arp_req   arp;
 		/* If @ty is LLS_REQ_ND, use @nd. */
-		struct lls_nd_req   nd;
+		struct lls_nd_req    nd;
+		/* If @ty is LLS_REQ_PING, use @ping. */
+		struct lls_ping_req ping;
+		/* If @ty is LLS_REQ_PING6, use @ping6. */
+		struct lls_ping6_req ping6;
 	} u;
 };
 

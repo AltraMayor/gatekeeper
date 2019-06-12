@@ -1934,3 +1934,22 @@ ipv6_configured(struct net_config *net_conf)
 	}
 	return ipv6_if_configured(&net_conf->front);
 }
+
+void
+send_pkts(uint8_t port, uint16_t tx_queue,
+	uint16_t num_pkts, struct rte_mbuf **bufs)
+{
+	uint16_t i, num_tx_succ;
+
+	if (num_pkts == 0)
+		return;
+
+	/* Send burst of TX packets, to second port of pair. */
+	num_tx_succ = rte_eth_tx_burst(port, tx_queue, bufs, num_pkts);
+
+	/* XXX #71 Do something better here! For now, free any unsent packets. */
+	if (unlikely(num_tx_succ < num_pkts)) {
+		for (i = num_tx_succ; i < num_pkts; i++)
+			drop_packet(bufs[i]);
+	}
+}
