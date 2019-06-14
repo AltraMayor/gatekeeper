@@ -1,96 +1,53 @@
 local policylib = require("gatekeeper/policylib")
 local ffi = require("ffi")
 
-GLOBAL_POLICIES = {}
+local function dcs_default(policy)
+	return policylib.decision_granted(policy,
+		1024,	-- tx_rate_kb_sec
+		300,	-- cap_expire_sec
+		240000,	-- next_renewal_ms
+		3000)	-- renewal_step_ms
+end
 
-local default = {
-	["params"] = {
-		["tx_rate_kb_sec"] = 10,
-		["cap_expire_sec"] = 10,
-		["next_renewal_ms"] = 10,
-		["renewal_step_ms"] = 10,
-		["action"] = policylib.c.GK_GRANTED,
-	},
-}
+local function dcs_malformed(policy)
+	return policylib.decision_declined(policy, 10)
+end
 
-local malformed = {
-	["params"] = {
-		["expire_sec"] = 10,
-		["action"] = policylib.c.GK_DECLINED,
-	},
-}
+local function dcs_declined(policy)
+	return policylib.decision_declined(policy, 60)
+end
 
-local declined = {
-	["params"] = {
-		["expire_sec"] = 60,
-		["action"] = policylib.c.GK_DECLINED,
-	},
-}
-
-local IPV4 = policylib.c.IPV4
-
-local group1 = {
-	["params"] = {
-		["tx_rate_kb_sec"] = 20,
-		["cap_expire_sec"] = 20,
-		["next_renewal_ms"] = 20,
-		["renewal_step_ms"] = 20,
-		["action"] = policylib.c.GK_GRANTED,
-	},
-}
+local function dcs_friendly(policy)
+	return policylib.decision_granted(policy,
+		2048,	-- tx_rate_kb_sec
+		600,	-- cap_expire_sec
+		540000,	-- next_renewal_ms
+		3000)	-- renewal_step_ms
+end
 
 local groups = {
-	[1] = group1,
-	[253] = declined,
-	[254] = malformed,
-	[255] = default,
+	[1] = dcs_friendly,
+	[253] = dcs_declined,
+	[254] = dcs_malformed,
+	[255] = dcs_default,
 }
 
---[[
-The following defines the simple policies without LPM for Grantor.
-General format of the simple policies should be:
-	IPv4 tables.
-	IPv6 tables.
-Here, I assume that each group has specific capability parameters,
-including speed limit, expiration time, actions - DENY or ACCEPT, etc.
---]]
-
-local simple_policies = {
-	[IPV4] = {
-		{
-			{
-				["dest_port"] = 80,
-				["policy_id"] = groups[1],
-			},
-		},
+-- The following defines simple policies without a LPM table.
+local simple_policy = {
+	[policylib.c.IPV4] = {
+		-- Loosely assume that TCP and UDP ports are equivalents
+		-- to simplify this example.
+		[80] = dcs_friendly,
 	},
 }
 
-GLOBAL_POLICIES["simple_policy"] = simple_policies
-
 -- Function that looks up the simple policy for the packet.
-local function lookup_simple_policy(simple_policy, pkt_info)
+local function lookup_simple_policy(pkt_info)
 
-	local dest_port
-
-	if pkt_info.l4_proto == policylib.c.TCP then
-		if pkt_info.upper_len < ffi.sizeof("struct rte_tcp_hdr") then
-			return malformed
-		end
-
-		local tcphdr = ffi.cast("struct rte_tcp_hdr *", pkt_info.l4_hdr)
-		dest_port = tcphdr.dst_port
-	elseif pkt_info.l4_proto == policylib.c.UDP then
-		if pkt_info.upper_len < ffi.sizeof("struct rte_udp_hdr") then
-			return malformed
-		end
-
-		local udphdr = ffi.cast("struct rte_udp_hdr *", pkt_info.l4_hdr)
-		dest_port = udphdr.dst_port
-	elseif pkt_info.inner_ip_ver == policylib.c.IPV4 and
+	if pkt_info.inner_ip_ver == policylib.c.IPV4 and
 			pkt_info.l4_proto == policylib.c.ICMP then
 		if pkt_info.upper_len < ffi.sizeof("struct rte_icmp_hdr") then
-			return malformed
+			return dcs_malformed
 		end
 
 		local ipv4_hdr = ffi.cast("struct rte_ipv4_hdr *",
@@ -105,14 +62,16 @@ local function lookup_simple_policy(simple_policy, pkt_info)
 				policylib.c.ICMP_ECHO_REQUEST_TYPE and
 				icmp_code ==
 				policylib.c.ICMP_ECHO_REQUEST_CODE then
-			return declined
+			return dcs_declined
 		end
 
-		return default
-	elseif pkt_info.inner_ip_ver == policylib.c.IPV6 and
+		return dcs_default
+	end
+
+	if pkt_info.inner_ip_ver == policylib.c.IPV6 and
 			pkt_info.l4_proto == policylib.c.ICMPV6 then
 		if pkt_info.upper_len < ffi.sizeof("struct icmpv6_hdr") then
-			return malformed
+			return dcs_malformed
 		end
 
 		local ipv6_hdr = ffi.cast("struct rte_ipv6_hdr *",
@@ -127,26 +86,39 @@ local function lookup_simple_policy(simple_policy, pkt_info)
 				policylib.c.ICMPV6_ECHO_REQUEST_TYPE and
 				icmpv6_code ==
 				policylib.c.ICMPV6_ECHO_REQUEST_CODE then
-			return declined
+			return dcs_declined
 		end
 
-		return default
-	else
+		return dcs_default
+	end
+
+	local l3_policy = simple_policy[pkt_info.inner_ip_ver]
+	if l3_policy == nil then
 		return nil
 	end
 
-	for i, v in ipairs(simple_policy[pkt_info.inner_ip_ver]) do
-		for j, g in ipairs(v) do
-			if g["dest_port"] == dest_port then
-				return g["policy_id"]
-			end
+	if pkt_info.l4_proto == policylib.c.TCP then
+		if pkt_info.upper_len < ffi.sizeof("struct rte_tcp_hdr") then
+			return dcs_malformed
 		end
+
+		local tcphdr = ffi.cast("struct rte_tcp_hdr *", pkt_info.l4_hdr)
+		return l3_policy[tcphdr.dst_port]
+	end
+
+	if pkt_info.l4_proto == policylib.c.UDP then
+		if pkt_info.upper_len < ffi.sizeof("struct rte_udp_hdr") then
+			return dcs_malformed
+		end
+
+		local udphdr = ffi.cast("struct rte_udp_hdr *", pkt_info.l4_hdr)
+		return l3_policy[udphdr.dst_port]
 	end
 
 	return nil
 end
 
--- The following defines the LPM policies for Grantor.
+-- The following defines the LPM policies.
 
 -- This file only contains an example set of Bogons IPv4 lists
 -- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv4.txt
@@ -168,14 +140,12 @@ for line in io.lines(bogons_ipv6_file) do
 	lpmlib.lpm6_add(lpm6, ip_addr, prefix_len, 253)
 end
 
--- Function that looks up the lpm policy for the packet.
-local function lookup_lpm_policy(lpm_handler, pkt_info)
+local function lookup_lpm_policy(pkt_info)
 
 	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
 		local ipv4_hdr = ffi.cast("struct rte_ipv4_hdr *",
 			pkt_info.inner_l3_hdr)
-		local policy_id = lpmlib.lpm_lookup(lpm_handler,
-			ipv4_hdr.src_addr)
+		local policy_id = lpmlib.lpm_lookup(lpm, ipv4_hdr.src_addr)
 		if policy_id < 0 then
 			return nil
 		end
@@ -188,7 +158,7 @@ local function lookup_lpm_policy(lpm_handler, pkt_info)
 			pkt_info.inner_l3_hdr)
 		local src_addr = ffi.cast("struct in6_addr *",
 			ipv6_hdr.src_addr)
-		local policy_id = lpmlib.lpm6_lookup(lpm_handler, src_addr)
+		local policy_id = lpmlib.lpm6_lookup(lpm6, src_addr)
 		if policy_id < 0 then
 			return nil
 		end
@@ -203,36 +173,17 @@ function lookup_policy(pkt_info, policy)
 
 	local group
 
-	-- Lookup the lpm policy.
-	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
-		group = lookup_lpm_policy(lpm, pkt_info)
-	elseif pkt_info.inner_ip_ver == policylib.c.IPV6 then
-		group = lookup_lpm_policy(lpm6, pkt_info)
+	group = lookup_lpm_policy(pkt_info)
+
+	if group == nil then
+		group = lookup_simple_policy(pkt_info)
 	end
 
 	if group == nil then
-		-- Lookup the simple policy.
-		group = lookup_simple_policy(
-			GLOBAL_POLICIES["simple_policy"], pkt_info)
+		group = dcs_default
 	end
 
-	if group == nil then
-		group = default
-	end
-
-	local state = group["params"]["action"]
-	if state == policylib.c.GK_DECLINED then
-		return policylib.decision_declined(policy,
-			group["params"]["expire_sec"])
-	elseif state == policylib.c.GK_GRANTED then
-		return policylib.decision_granted(policy,
-			group["params"]["tx_rate_kb_sec"],
-			group["params"]["cap_expire_sec"],
-			group["params"]["next_renewal_ms"],
-			group["params"]["renewal_step_ms"])
-	else
-		error("Unknown state: " .. state)
-	end
+	return group(policy)
 end
 
 --[[
