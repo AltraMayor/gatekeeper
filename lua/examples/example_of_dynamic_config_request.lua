@@ -6,7 +6,12 @@ local reply_msg = ""
 local dyc = staticlib.c.get_dy_conf()
 
 if dyc.gt ~= nil then
+	local function example()
+		print("Hello Gatekeeper!")
+	end
+
 	dylib.update_gt_lua_states(dyc.gt)
+	dylib.update_gt_lua_states_incrementally(dyc.gt, example)
 	return "gt: successfully updated the lua states\n"
 end
 

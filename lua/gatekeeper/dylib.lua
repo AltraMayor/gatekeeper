@@ -171,3 +171,8 @@ function print_lls_dump_entry(lls_dump_entry, acc)
 		", ip: " .. ip .. ", mac: " .. ha ..
 		", port: " .. port_id .. "]\n"
 end
+
+function update_gt_lua_states_incrementally(gt_conf, lua_code)
+	dylib.internal_update_gt_lua_states_incrementally(gt_conf,
+		string.dump(lua_code))
+end

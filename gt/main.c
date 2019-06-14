@@ -1288,6 +1288,24 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 			rte_lcore_id());
 		break;
 
+	case GT_UPDATE_POLICY_INCREMENTALLY:
+		/* Load the compiled Lua bytecode, and run it. */
+		if ((luaL_loadbuffer(instance->lua_state,
+				entry->u.bc.lua_bytecode, entry->u.bc.len,
+				"incremental_update_of_gt_lua_state") != 0) ||
+				(lua_pcall(instance->lua_state, 0, 0, 0) != 0)) {
+			GT_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
+				rte_lcore_id(),
+				luaL_checkstring(instance->lua_state, -1));
+		} else {
+			GT_LOG(NOTICE,
+				"Successfully updated the lua state incrementally at lcore %u\n",
+				rte_lcore_id());
+		}
+
+		rte_free(entry->u.bc.lua_bytecode);
+		break;
+
 	default:
 		GT_LOG(ERR, "Unknown command operation %u\n", entry->op);
 		break;
@@ -2011,6 +2029,74 @@ l_update_gt_lua_states(lua_State *l)
 			lua_close(lua_state);
 
 			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
+				i, lcore_id);
+		}
+	}
+
+	return 0;
+}
+
+int
+l_update_gt_lua_states_incrementally(lua_State *l)
+{
+	int i;
+	uint32_t ctypeid;
+	struct gt_config *gt_conf;
+	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GT_CONFIG_PTR);
+	size_t len;
+	const char *lua_bytecode;
+
+	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gt_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+
+	gt_conf = *(struct gt_config **)cdata;
+
+	/* Second argument must be a Lua bytecode. */
+	lua_bytecode = lua_tolstring(l, 2, &len);
+	if (lua_bytecode == NULL || len == 0)
+		luaL_error(l, "gt: invalid lua bytecode\n");
+
+	if (lua_gettop(l) != 2)
+		luaL_error(l, "Expected two arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	for (i = 0; i < gt_conf->num_lcores; i++) {
+		int ret;
+		struct gt_instance *instance = &gt_conf->instances[i];
+		unsigned int lcore_id = gt_conf->lcores[i];
+		struct gt_cmd_entry *entry;
+		char *lua_bytecode_buff = rte_malloc_socket("lua_bytecode",
+			len, 0, rte_lcore_to_socket_id(lcore_id));
+		if (lua_bytecode_buff == NULL) {
+			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %u at lcore %u due to failure of allocating memory\n",
+				i, lcore_id);
+			continue;
+		}
+
+		entry = mb_alloc_entry(&instance->mb);
+		if (entry == NULL) {
+			rte_free(lua_bytecode_buff);
+
+			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %u at lcore %u\n",
+				i, lcore_id);
+			continue;
+		}
+
+		entry->op = GT_UPDATE_POLICY_INCREMENTALLY;
+		entry->u.bc.len = len;
+		entry->u.bc.lua_bytecode = lua_bytecode_buff;
+		rte_memcpy(lua_bytecode_buff, lua_bytecode, len);
+
+		ret = mb_send_entry(&instance->mb, entry);
+		if (ret != 0) {
+			rte_free(lua_bytecode_buff);
+
+			luaL_error(l, "gt: failed to send new lua update chunk to GT block %u at lcore %u\n",
 				i, lcore_id);
 		}
 	}
