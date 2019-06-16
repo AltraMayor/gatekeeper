@@ -186,8 +186,8 @@ put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 	return -1;
 }
 
-#define ARP_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts
+#define ARP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 void
 submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -203,7 +203,7 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	arp_req->iface = iface;
 	rte_memcpy(arp_req->pkts, pkts, sizeof(*arp_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_ARP, &arp_req);
+	ret = lls_req(LLS_REQ_ARP, arp_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -211,8 +211,8 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	}
 }
 
-#define ND_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
-        sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts
+#define ND_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+        sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
 submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -228,7 +228,7 @@ submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
 	nd_req->iface = iface;
 	rte_memcpy(nd_req->pkts, pkts, sizeof(*nd_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_ND, &nd_req);
+	ret = lls_req(LLS_REQ_ND, nd_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -364,8 +364,8 @@ match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	return 0;
 }
 
-#define PING_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_ping_req) + sizeof(struct rte_mbuf *) * num_pkts
+#define PING_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_ping_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
 submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -381,7 +381,7 @@ submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
 	ping_req->iface = iface;
 	rte_memcpy(ping_req->pkts, pkts, sizeof(*ping_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_PING, &ping_req);
+	ret = lls_req(LLS_REQ_PING, ping_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -432,8 +432,8 @@ match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	return 0;
 }
 
-#define PING6_REQ_SIZE(num_pkts) offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_ping6_req) + sizeof(struct rte_mbuf *) * num_pkts
+#define PING6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_ping6_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
 submit_ping6(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -449,7 +449,7 @@ submit_ping6(struct rte_mbuf **pkts, unsigned int num_pkts,
 	ping6_req->iface = iface;
 	rte_memcpy(ping6_req->pkts, pkts, sizeof(*ping6_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_PING6, &ping6_req);
+	ret = lls_req(LLS_REQ_PING6, ping6_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
