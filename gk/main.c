@@ -1390,8 +1390,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				&gk_conf->lpm_tbl, &packet.flow);
 			struct ether_cache *eth_cache;
 
-		 	/* No entry for the destination, drop the packet. */
-			if (fib == NULL) {
+			if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
 				if (packet.flow.proto == ETHER_TYPE_IPv4) {
 					stats->tot_pkts_num_distributed++;
 					stats->tot_pkts_size_distributed +=
