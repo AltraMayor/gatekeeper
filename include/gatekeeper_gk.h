@@ -57,11 +57,19 @@ struct gk_measurement_metrics {
 	uint64_t pkts_num_request;
 	/* Size in bytes of packets forwarded through the request channel. */
 	uint64_t pkts_size_request;
-	/* Number of packets dropped because it has been rejected. */
+	/*
+	 * Number of packets dropped because it has been rejected due to
+	 * a policy decision. While all packets of flows in declined state are
+	 * counted here, packets of flows in granted state may be counted here
+	 * too when these packets exceed the allocated bandwidth.
+	 */
 	uint64_t pkts_num_declined;
 	/* Size in bytes of packets dropped because it has been rejected. */
 	uint64_t pkts_size_declined;
-	/* Total number of packets dropped. */
+	/*
+	 * Total number of packets dropped.
+	 * Declined packets are counted here as well.
+	 */
 	uint64_t tot_pkts_num_dropped;
 	/* Total size in bytes of packets dropped. */
 	uint64_t tot_pkts_size_dropped;

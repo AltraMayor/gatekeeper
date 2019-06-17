@@ -439,8 +439,11 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	}
 
 	pkt_len = rte_pktmbuf_pkt_len(pkt);
-	if (pkt_len > fe->u.granted.budget_byte)
+	if (pkt_len > fe->u.granted.budget_byte) {
+		stats->pkts_num_declined++;
+		stats->pkts_size_declined += pkt_len;
 		return -1;
+	}
 
 	fe->u.granted.budget_byte -= pkt_len;
 	renew_cap = now >= fe->u.granted.send_next_renewal_at;
@@ -468,8 +471,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 		return -1;
 
 	stats->pkts_num_granted++;
-	stats->pkts_size_granted += rte_pktmbuf_pkt_len(packet->pkt);
-
+	stats->pkts_size_granted += pkt_len;
 	return 0;
 }
 
