@@ -107,9 +107,9 @@ struct flow_entry {
 			 * When @budget_byte is reset, reset it to
 			 * @tx_rate_kb_cycle * 1024 bytes.
 			 */
-			int tx_rate_kb_cycle;
+			uint32_t tx_rate_kb_cycle;
 			/* How many bytes @src can still send in current cycle. */
-			int budget_byte;
+			uint64_t budget_byte;
 			/*
 			 * When GK should send the next renewal to
 			 * the corresponding grantor.
@@ -433,7 +433,8 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 
 	if (now >= fe->u.granted.budget_renew_at) {
 		fe->u.granted.budget_renew_at = now + cycles_per_sec;
-		fe->u.granted.budget_byte = fe->u.granted.tx_rate_kb_cycle * 1024;
+		fe->u.granted.budget_byte =
+			(uint64_t)fe->u.granted.tx_rate_kb_cycle * 1024;
 	}
 
 	if (pkt->data_len > fe->u.granted.budget_byte)
@@ -861,7 +862,7 @@ add_ggu_policy(struct ggu_policy *policy,
 			cycles_per_ms;
 		fe->u.granted.budget_renew_at = now + cycles_per_sec;
 		fe->u.granted.budget_byte =
-			fe->u.granted.tx_rate_kb_cycle * 1024;
+			(uint64_t)fe->u.granted.tx_rate_kb_cycle * 1024;
 		break;
 
 	case GK_DECLINED:
