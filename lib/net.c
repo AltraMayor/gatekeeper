@@ -725,7 +725,25 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	const struct rte_eth_dev_info *dev_info,
 	struct rte_eth_conf *port_conf)
 {
+	uint8_t rss_hash_key[GATEKEEPER_RSS_KEY_LEN];
+	struct rte_eth_rss_conf rss_conf = {
+		.rss_key = rss_hash_key,
+		.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
+	};
 	uint64_t rss_off = dev_info->flow_type_rss_offloads;
+	int ret = rte_eth_dev_rss_hash_conf_get(
+		iface->ports[port_idx], &rss_conf);
+	if (ret == -ENOTSUP) {
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support to get RSS configuration, disable RSS\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name);
+		goto disable_rss;
+	} else if (ret != 0) {
+		G_LOG(WARNING, "net: failed to get RSS hash configuration at port %hu (%s) on the %s interface - ret = %d\n",
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			iface->name, ret);
+		return ret;
+	}
 
 	/* This port doesn't support RSS, so disable RSS. */
 	if (rss_off == 0) {
@@ -1381,7 +1399,12 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 		.rss_key = rss_hash_key,
 		.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
 	};
-	int ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
+	int ret;
+
+	if (!iface->rss)
+		return 0;
+
+	ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
 	switch (ret) {
 	case 0:
 		break;
