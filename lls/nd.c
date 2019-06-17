@@ -126,13 +126,13 @@ ipv6_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
  */
 void
 xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
-	const struct ether_addr *ha, uint16_t tx_queue)
+	const struct rte_ether_addr *ha, uint16_t tx_queue)
 {
 	struct lls_config *lls_conf = get_lls_conf();
 	const uint8_t *ipv6_addr = addr->ip.v6.s6_addr;
 
-	struct ether_hdr *eth_hdr;
-	struct ipv6_hdr *ipv6_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
 	struct nd_opt_lladdr *nd_opt;
@@ -153,8 +153,8 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	created_pkt->pkt_len = created_pkt->data_len;
 
 	/* Set-up Ethernet header. */
-	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
-	ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
 	if (ha == NULL) {
 		/*
 		 * Need to use IPv6 multicast Ethernet address.
@@ -164,19 +164,19 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 		 * this is equivalent to 0xFF followed by the
 		 * last three bytes of @ipv6_addr.
 		 */
-		struct ether_addr eth_mc_daddr = { {
+		struct rte_ether_addr eth_mc_daddr = { {
 			0x33, 0x33, 0xFF,
 			ipv6_addr[13], ipv6_addr[14], ipv6_addr[15],
 		} };
-		ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
 	} else
-		ether_addr_copy(ha, &eth_hdr->d_addr);
+		rte_ether_addr_copy(ha, &eth_hdr->d_addr);
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
-		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, RTE_ETHER_TYPE_IPV6);
 	else
-		eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+		eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 
 	/* Set-up IPv6 header. */
 	ipv6_hdr = pkt_out_skip_l2(iface, eth_hdr);
@@ -214,7 +214,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
 	nd_opt->type = ND_OPT_SOURCE_LL_ADDR;
 	nd_opt->len = 1;
-	ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
+	rte_ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
 
 	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
@@ -284,7 +284,7 @@ parse_nd_opts(struct nd_opts *ndopts, uint8_t *opt, uint16_t opt_len)
  */
 static int
 process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
-	struct ether_hdr *eth_hdr, struct ipv6_hdr *ipv6_hdr,
+	struct rte_ether_hdr *eth_hdr, struct rte_ipv6_hdr *ipv6_hdr,
 	struct icmpv6_hdr *icmpv6_hdr, uint16_t pkt_len, size_t l2_len,
 	uint16_t icmpv6_len, struct gatekeeper_if *iface, uint16_t tx_queue)
 {
@@ -292,7 +292,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	struct nd_opt_lladdr *nd_opt;
 	struct nd_opts ndopts;
 	int src_unspec = ipv6_addr_unspecified(ipv6_hdr->src_addr);
-	struct ether_addr *src_eth_addr = NULL;
+	struct rte_ether_addr *src_eth_addr = NULL;
 	size_t min_len;
 	int ret;
 
@@ -342,7 +342,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 	if (ndopts.opt_array[ND_OPT_SOURCE_LL_ADDR] != NULL) {
 		struct lls_mod_req mod_req = {
 			.cache = &lls_conf->nd_cache,
-			.addr.proto = ETHER_TYPE_IPv6,
+			.addr.proto = RTE_ETHER_TYPE_IPV6,
 			.port_id = iface->id,
 			.ts = time(NULL),
 		};
@@ -363,7 +363,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		/* Update resolution of source of Solicitation. */
 		rte_memcpy(mod_req.addr.ip.v6.s6_addr, ipv6_hdr->src_addr,
 			sizeof(mod_req.addr.ip.v6.s6_addr));
-		ether_addr_copy(&nd_opt->ha, &mod_req.ha);
+		rte_ether_addr_copy(&nd_opt->ha, &mod_req.ha);
 		lls_process_mod(lls_conf, &mod_req);
 
 		/* Save source address to use in advertisement. */
@@ -373,7 +373,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 * If source link layer address is not in the options,
 		 * get the source resolution, if we have it.
 		 */
-		struct ipaddr addr = { .proto = ETHER_TYPE_IPv6 };
+		struct ipaddr addr = { .proto = RTE_ETHER_TYPE_IPV6 };
 		rte_memcpy(addr.ip.v6.s6_addr, ipv6_hdr->src_addr,
 			sizeof(addr.ip.v6.s6_addr));
 		struct lls_map *map = lls_cache_get(&lls_conf->nd_cache,
@@ -416,8 +416,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 */
 
 		/* Set-up Ethernet header. */
-		ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
-		ether_addr_copy(src_eth_addr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+		rte_ether_addr_copy(src_eth_addr, &eth_hdr->d_addr);
 
 		/* Set-up IPv6 header. */
 		nd_msg->flags = 0;
@@ -460,7 +460,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
 		nd_opt->type = ND_OPT_TARGET_LL_ADDR;
 		nd_opt->len = 1;
-		ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
+		rte_ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
 
 		icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
@@ -487,7 +487,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 */
 
 		uint8_t ip6_mc_daddr[16] = IPV6_SN_MC_ADDR(ipv6_hdr->src_addr);
-		struct ether_addr eth_mc_daddr = { {
+		struct rte_ether_addr eth_mc_daddr = { {
 			            0x33,             0x33,
 			ip6_mc_daddr[12], ip6_mc_daddr[13],
 			ip6_mc_daddr[14], ip6_mc_daddr[15],
@@ -502,8 +502,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		if (src_unspec)
 			return -1;
 
-		ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
-		ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
 
 		/* Set-up IPv6 header. */
 		ipv6_hdr->payload_len =
@@ -524,7 +524,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
 		nd_opt->type = ND_OPT_SOURCE_LL_ADDR;
 		nd_opt->len = 1;
-		ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
+		rte_ether_addr_copy(&iface->eth_addr, &nd_opt->ha);
 
 		icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
@@ -555,7 +555,7 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
  */
 static int
 process_nd_neigh_advertisement(struct lls_config *lls_conf,
-	struct ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
+	struct rte_ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 	uint16_t icmpv6_len, struct gatekeeper_if *iface)
 {
 	struct nd_neigh_msg *nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
@@ -593,7 +593,7 @@ process_nd_neigh_advertisement(struct lls_config *lls_conf,
 	if (ndopts.opt_array[ND_OPT_TARGET_LL_ADDR] != NULL) {
 		struct lls_mod_req mod_req = {
 			.cache = &lls_conf->nd_cache,
-			.addr.proto = ETHER_TYPE_IPv6,
+			.addr.proto = RTE_ETHER_TYPE_IPV6,
 			.port_id = iface->id,
 			.ts = time(NULL),
 		};
@@ -604,7 +604,7 @@ process_nd_neigh_advertisement(struct lls_config *lls_conf,
 
 		rte_memcpy(mod_req.addr.ip.v6.s6_addr, nd_msg->target,
 			sizeof(mod_req.addr.ip.v6.s6_addr));
-		ether_addr_copy(&nd_opt->ha, &mod_req.ha);
+		rte_ether_addr_copy(&nd_opt->ha, &mod_req.ha);
 		lls_process_mod(lls_conf, &mod_req);
 	}
 
@@ -618,7 +618,7 @@ process_nd_neigh_advertisement(struct lls_config *lls_conf,
  * Solicitations and Advertisements.
  */
 static int
-nd_pkt_valid(struct ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
+nd_pkt_valid(struct rte_ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 	uint16_t icmpv6_len)
 {
 	return ipv6_hdr->hop_limits == 255 &&
@@ -638,8 +638,9 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	int icmpv6_offset;
 	uint8_t nexthdr;
 
-	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(buf, struct ether_hdr *);
-	struct ipv6_hdr *ipv6_hdr;
+	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(buf,
+		struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
 
 	uint16_t tx_queue = iface == &lls_conf->net->front
@@ -657,7 +658,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return -1;
 	}
 
-	ipv6_hdr = rte_pktmbuf_mtod_offset(buf, struct ipv6_hdr *, l2_len);
+	ipv6_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv6_hdr *, l2_len);
 	icmpv6_offset = ipv6_skip_exthdr(ipv6_hdr, buf->data_len -
 		l2_len, &nexthdr);
 	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)

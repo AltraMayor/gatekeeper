@@ -41,7 +41,7 @@ l_str_to_prefix(lua_State *l)
 			lua_gettop(l));
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
-	if (ret < 0 || ip_addr.proto != ETHER_TYPE_IPv4)
+	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV4)
 		luaL_error(l, "gk: failed to parse an IPv4 prefix");
 
 	lua_pushinteger(l, ip_addr.ip.v4.s_addr);
@@ -68,7 +68,7 @@ l_str_to_prefix6(lua_State *l)
 			lua_gettop(l));
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
-	if (ret < 0 || ip_addr.proto != ETHER_TYPE_IPv6)
+	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV6)
 		luaL_error(l, "gk: failed to parse an IPv6 prefix");
 
 	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,

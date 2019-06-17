@@ -47,15 +47,15 @@ in_to_out_l2_diff(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
  * then also takes into account how many bytes are necessary for the L2 header.
  * If @bytes_to_add is negative, bytes are removed from the packet.
  */
-struct ether_hdr *
+struct rte_ether_hdr *
 adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
 	int bytes_to_add)
 {
-	struct ether_hdr *eth_hdr;
+	struct rte_ether_hdr *eth_hdr;
 
 	bytes_to_add += in_to_out_l2_diff(iface, pkt);
 	if (bytes_to_add > 0) {
-		eth_hdr = (struct ether_hdr *)rte_pktmbuf_prepend(pkt,
+		eth_hdr = (struct rte_ether_hdr *)rte_pktmbuf_prepend(pkt,
 			bytes_to_add);
 		if (eth_hdr == NULL) {
 			G_LOG(ERR,
@@ -67,14 +67,14 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
 		 * @bytes_to_add is negative, so its magnitude is
 		 * the number of bytes we need to *remove*.
 		 */
-		eth_hdr = (struct ether_hdr *)rte_pktmbuf_adj(pkt,
+		eth_hdr = (struct rte_ether_hdr *)rte_pktmbuf_adj(pkt,
 			-bytes_to_add);
 		if (eth_hdr == NULL) {
 			G_LOG(ERR, "l2: could not remove headroom space\n");
 			return NULL;
 		}
 	} else
-		eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+		eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 
 	return eth_hdr;
 }
@@ -84,11 +84,11 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
  * the interface on which it was received.
  */
 int
-verify_l2_hdr(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	uint32_t l2_type, const char *proto_name)
 {
 	if (iface->vlan_insert) {
-		struct vlan_hdr *vlan_hdr;
+		struct rte_vlan_hdr *vlan_hdr;
 
 		/*
 		 * Drop packets that don't have room for VLAN, since
@@ -105,7 +105,7 @@ verify_l2_hdr(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
 		 * Only warn if the VLAN tag is incorrect, but correct
 		 * the VLAN tag in case we reuse this packet.
 		 */
-		vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
+		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
 		if (unlikely(vlan_hdr->vlan_tci != iface->vlan_tag_be)) {
 			G_LOG(WARNING,
 				"l2: %s interface received an %s packet with an incorrect VLAN tag (0x%02x but should be 0x%02x)\n",

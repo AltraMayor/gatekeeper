@@ -68,7 +68,7 @@ enum lls_reply_ty {
 /* Map that is returned to blocks that request resolution. */
 struct lls_map {
 	/* Ethernet address of this map. */
-	struct ether_addr ha;
+	struct rte_ether_addr ha;
 
 	/* Port on which this map exists. */
 	uint16_t          port_id;
@@ -132,13 +132,13 @@ struct lls_record {
 /* For dumping LLS entries using the Dynamic Config. */
 struct lls_dump_entry {
 	/* Whether this entry is stale. */
-	bool              stale;
+	bool                  stale;
 	/* The port on which this entry resides. */
-	uint16_t          port_id;
+	uint16_t              port_id;
 	/* The IP address of the entry. */
-	struct ipaddr     addr;
+	struct ipaddr         addr;
 	/* The MAC address of the entry. */
-	struct ether_addr ha;
+	struct rte_ether_addr ha;
 };
 
 struct lls_cache {
@@ -175,7 +175,7 @@ struct lls_cache {
 	 */
 	void (*xmit_req)(struct gatekeeper_if *iface,
 		const struct ipaddr *addr,
-		const struct ether_addr *ha, uint16_t tx_queue);
+		const struct rte_ether_addr *ha, uint16_t tx_queue);
 };
 
 struct lls_config {
@@ -289,11 +289,11 @@ int put_arp(struct in_addr *ip_be, unsigned int lcore_id);
  * address OR zero.
  */
 static inline int
-is_garp_pkt(const struct arp_hdr *arp_hdr)
+is_garp_pkt(const struct rte_arp_hdr *arp_hdr)
 {
 	return (arp_hdr->arp_data.arp_sip == arp_hdr->arp_data.arp_tip) &&
-		(is_zero_ether_addr(&arp_hdr->arp_data.arp_tha) ||
-		is_same_ether_addr(&arp_hdr->arp_data.arp_tha,
+		(rte_is_zero_ether_addr(&arp_hdr->arp_data.arp_tha) ||
+		rte_is_same_ether_addr(&arp_hdr->arp_data.arp_tha,
 			&arp_hdr->arp_data.arp_sha));
 }
 
@@ -348,17 +348,17 @@ struct nd_opt_hdr {
 /* Used for both ND_OPT_SOURCE_LL_ADDR and ND_OPT_TARGET_LL_ADDR. */
 struct nd_opt_lladdr {
 	/* Type of the option. */
-	uint8_t           type;
+	uint8_t               type;
 	/* Length of option (including @type and @len) in units of 64 bits. */
-	uint8_t           len;
+	uint8_t               len;
 	/* Hardware address corresponding to @type. */
-	struct ether_addr ha;
+	struct rte_ether_addr ha;
 } __attribute__((__packed__));
 
 #define ND_NEIGH_HDR_MIN_LEN (sizeof(struct nd_neigh_msg))
 
 #define ND_NEIGH_PKT_MIN_LEN(l2_len) (l2_len + \
-	sizeof(struct ipv6_hdr) + sizeof(struct icmpv6_hdr) + \
+	sizeof(struct rte_ipv6_hdr) + sizeof(struct icmpv6_hdr) + \
 	ND_NEIGH_HDR_MIN_LEN)
 
 /* Minimum size of a Neighbor Discovery packet with a link-layer option. */
@@ -371,7 +371,7 @@ struct nd_opt_lladdr {
  * Note that, according to RFC pages 13 and 14,
  * both the ICMP Echo request header and Echo reply header require 8 bytes.
  */
-#define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct ipv4_hdr) + 8)
+#define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv4_hdr) + 8)
 
 /*
  * Minimum size of an IPv6 ping packet.
@@ -379,7 +379,7 @@ struct nd_opt_lladdr {
  * Note that, according to RFC 4443 section 4.1 and section 4.2,
  * both the ICMPv6 Echo request header and Echo reply header require 8 bytes.
  */
-#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct ipv6_hdr) + 8)
+#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv6_hdr) + 8)
 
 /* Flags for Neighbor Advertisements. */
 #define LLS_ND_NA_SOLICITED 0x40000000

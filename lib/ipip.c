@@ -45,22 +45,23 @@ int
 encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 	struct gatekeeper_if *iface, struct ipaddr *gt_addr)
 {
-	struct ether_hdr *eth_hdr;
-	struct ipv4_hdr *outer_ip4hdr;
-	struct ipv6_hdr *outer_ip6hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_ipv4_hdr *outer_ip4hdr;
+	struct rte_ipv6_hdr *outer_ip6hdr;
 
-	if (gt_addr->proto == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *inner_ip4hdr;
+	if (gt_addr->proto == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *inner_ip4hdr;
 
 		/* Allocate space for outer IPv4 header and L2 header. */
-		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv4_hdr));
+		eth_hdr = adjust_pkt_len(pkt,
+			iface, sizeof(struct rte_ipv4_hdr));
 		if (eth_hdr == NULL) {
 			G_LOG(ERR, "ipip: could not adjust IPv4 packet length\n");
 			return -1;
 		}
 
 		outer_ip4hdr = pkt_out_skip_l2(iface, eth_hdr);
-		inner_ip4hdr = (struct ipv4_hdr *)&outer_ip4hdr[1];
+		inner_ip4hdr = (struct rte_ipv4_hdr *)&outer_ip4hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip4hdr->version_ihl = IP_VHL_DEF;
@@ -84,21 +85,22 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		 */
 		outer_ip4hdr->hdr_checksum = 0;
 
-		pkt->l3_len = sizeof(struct ipv4_hdr);
+		pkt->l3_len = sizeof(struct rte_ipv4_hdr);
 		/* Offload checksum computation for the outer IPv4 header. */
 		pkt->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
-	} else if (likely(gt_addr->proto == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *inner_ip6hdr;
+	} else if (likely(gt_addr->proto == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *inner_ip6hdr;
 
 		/* Allocate space for new IPv6 header and L2 header. */
-		eth_hdr = adjust_pkt_len(pkt, iface, sizeof(struct ipv6_hdr));
+		eth_hdr = adjust_pkt_len(pkt,
+			iface, sizeof(struct rte_ipv6_hdr));
 		if (eth_hdr == NULL) {
 			G_LOG(ERR, "ipip: could not adjust IPv6 packet length\n");
 			return -1;
 		}
 
 		outer_ip6hdr = pkt_out_skip_l2(iface, eth_hdr);
-		inner_ip6hdr = (struct ipv6_hdr *)&outer_ip6hdr[1];
+		inner_ip6hdr = (struct rte_ipv6_hdr *)&outer_ip6hdr[1];
 
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
@@ -113,7 +115,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 			sizeof(outer_ip6hdr->dst_addr));
 
 		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
-			- (sizeof(struct ipv6_hdr) + iface->l2_len_out));
+			- (sizeof(struct rte_ipv6_hdr) + iface->l2_len_out));
 	} else 
 		return -1;
 

@@ -96,25 +96,25 @@ struct lls_ping6_req {
 /* A modification to an LLS map. */
 struct lls_mod_req {
 	/* Cache that holds (or will hold) this map. */
-	struct lls_cache  *cache;
+	struct lls_cache      *cache;
 
 	/* IP address for this modification. */
-	struct ipaddr     addr;
+	struct ipaddr         addr;
 
 	/*
 	 * Ethernet address of modification, possibly
 	 * not different from existing address in record.
 	 */
-	struct ether_addr ha;
+	struct rte_ether_addr ha;
 
 	/*
 	 * Port of modification, possibly not
 	 * different from existing port ID in record.
 	 */
-	uint16_t          port_id;
+	uint16_t              port_id;
 
 	/* Timestamp of this modification. */
-	time_t            ts;
+	time_t                ts;
 };
 
 /* Request submitted to the LLS block. */

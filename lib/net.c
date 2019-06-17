@@ -513,12 +513,12 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 		if (inet_pton(AF_INET, ip_addr, &res->ip.v4) != 1)
 			return -1;
 
-		res->proto = ETHER_TYPE_IPv4;
+		res->proto = RTE_ETHER_TYPE_IPV4;
 	} else if (likely(ip_type == AF_INET6)) {
 		if (inet_pton(AF_INET6, ip_addr, &res->ip.v6) != 1)
 			return -1;
 
-		res->proto = ETHER_TYPE_IPv6;
+		res->proto = RTE_ETHER_TYPE_IPV6;
 	} else
 		return -1;
 
@@ -528,13 +528,13 @@ convert_str_to_ip(const char *ip_addr, struct ipaddr *res)
 int
 convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n)
 {
-	if (ip_addr->proto == ETHER_TYPE_IPv4) {
+	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		if (inet_ntop(AF_INET, &ip_addr->ip.v4, res, n) == NULL) {
 			G_LOG(ERR, "net: %s: failed to convert a number to an IPv4 address (%s)\n",
 				__func__, strerror(errno));
 			return -1;
 		}
-	} else if (likely(ip_addr->proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		if (inet_ntop(AF_INET6, &ip_addr->ip.v6, res, n) == NULL) {
 			G_LOG(ERR, "net: %s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
@@ -662,10 +662,10 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		}
 	}
 
-	iface->l2_len_out = sizeof(struct ether_hdr);
+	iface->l2_len_out = sizeof(struct rte_ether_hdr);
 	if (iface->vlan_insert) {
 		iface->vlan_tag_be = rte_cpu_to_be_16(vlan_tag);
-		iface->l2_len_out += sizeof(struct vlan_hdr);
+		iface->l2_len_out += sizeof(struct rte_vlan_hdr);
 	}
 
 	return 0;
@@ -916,7 +916,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 * if any ports don't support it, it will be removed.
 	 */
 	port_conf->rxmode.max_rx_pkt_len = iface->mtu;
-	if (iface->mtu > ETHER_MTU)
+	if (iface->mtu > RTE_ETHER_MTU)
 		port_conf->rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
 		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
@@ -1335,7 +1335,7 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 	 * address for our global address.
 	 */
 	uint8_t ip6_mc_addr[16] = IPV6_SN_MC_ADDR(iface->ip6_addr.s6_addr);
-	struct ether_addr eth_mc_addr = {
+	struct rte_ether_addr eth_mc_addr = {
 		.addr_bytes = {
 			           0x33,            0x33,
 			ip6_mc_addr[12], ip6_mc_addr[13],
@@ -1344,7 +1344,7 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 	};
 	rte_memcpy(iface->ip6_mc_addr.s6_addr, ip6_mc_addr,
 		sizeof(iface->ip6_mc_addr.s6_addr));
-	ether_addr_copy(&eth_mc_addr, &iface->eth_mc_addr);
+	rte_ether_addr_copy(&eth_mc_addr, &iface->eth_mc_addr);
 
 	/*
 	 * Generate a link-local address, and then use it to
@@ -1355,18 +1355,18 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 	{
 		uint8_t ll_ip6_mc_addr[16] =
 			IPV6_SN_MC_ADDR(iface->ll_ip6_addr.s6_addr);
-		struct ether_addr ll_eth_mc_addr = {
+		struct rte_ether_addr ll_eth_mc_addr = {
 			.addr_bytes = {
 				              0x33,               0x33,
 				ll_ip6_mc_addr[12], ll_ip6_mc_addr[13],
 				ll_ip6_mc_addr[14], ll_ip6_mc_addr[15],
 			},
 		};
-		struct ether_addr mc_addrs[2] =
+		struct rte_ether_addr mc_addrs[2] =
 			{ eth_mc_addr, ll_eth_mc_addr };
 		rte_memcpy(iface->ll_ip6_mc_addr.s6_addr, ll_ip6_mc_addr,
 			sizeof(iface->ll_ip6_mc_addr.s6_addr));
-		ether_addr_copy(&ll_eth_mc_addr, &iface->ll_eth_mc_addr);
+		rte_ether_addr_copy(&ll_eth_mc_addr, &iface->ll_eth_mc_addr);
 
 		/* Add to list of accepted MAC addresses. */
 		rte_eth_dev_set_mc_addr_list(iface->id, mc_addrs, 2);

@@ -41,10 +41,10 @@ struct ipv6_opt_hdr {
 } __attribute__((packed));
 
 int
-ipv6_skip_exthdr(const struct ipv6_hdr *ip6hdr,
+ipv6_skip_exthdr(const struct rte_ipv6_hdr *ip6hdr,
 	int remaining_len, uint8_t *nexthdrp)
 {
-	int start = sizeof(struct ipv6_hdr);
+	int start = sizeof(struct rte_ipv6_hdr);
 	uint8_t nexthdr = ip6hdr->proto;
 
 	while (ipv6_ext_hdr(nexthdr)) {

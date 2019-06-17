@@ -27,6 +27,7 @@
 #include <rte_eth_bond.h>
 #include <rte_ethdev.h>
 #include <rte_timer.h>
+#include <rte_ether.h>
 
 #include "gatekeeper_flow.h"
 
@@ -194,7 +195,7 @@ struct gatekeeper_if {
 	uint16_t        vlan_tag_be;
 
 	/* Ethernet address of this interface. */
-	struct ether_addr eth_addr;
+	struct rte_ether_addr eth_addr;
 
 	/* DPDK port IDs corresponding to each address in @pci_addrs. */
 	uint16_t        *ports;
@@ -280,8 +281,8 @@ struct gatekeeper_if {
 	 * Two such addresses are automatically generated: they cover
 	 * the global and link-local solicited-node multicast addresses.
 	 */
-	struct ether_addr eth_mc_addr;
-	struct ether_addr ll_eth_mc_addr;
+	struct rte_ether_addr eth_mc_addr;
+	struct rte_ether_addr ll_eth_mc_addr;
 
 	/* Timer to transmit from LLS block to fulfill LACP TX requirement. */
 	struct rte_timer  lacp_timer;

@@ -84,10 +84,10 @@ rss_ip_flow_hf(const void *data,
 {
 	const struct ip_flow *flow = (const struct ip_flow *)data;
 
-	if (flow->proto == ETHER_TYPE_IPv4)
+	if (flow->proto == RTE_ETHER_TYPE_IPV4)
 		return gk_softrss_be((const uint32_t *)&flow->f,
 				(sizeof(flow->f.v4)/sizeof(uint32_t)), rss_key_be);
-	else if (flow->proto == ETHER_TYPE_IPv6)
+	else if (flow->proto == RTE_ETHER_TYPE_IPV6)
 		return gk_softrss_be((const uint32_t *)&flow->f,
 				(sizeof(flow->f.v6)/sizeof(uint32_t)), rss_key_be);
 	else
@@ -105,9 +105,9 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 	const struct ip_flow *f2 = (const struct ip_flow *)key2;
 
 	if (f1->proto != f2->proto)
-		return f1->proto == ETHER_TYPE_IPv4 ? -1 : 1;
+		return f1->proto == RTE_ETHER_TYPE_IPV4 ? -1 : 1;
 
-	if (f1->proto == ETHER_TYPE_IPv4)
+	if (f1->proto == RTE_ETHER_TYPE_IPV4)
 		return memcmp(&f1->f.v4, &f2->f.v4, sizeof(f1->f.v4));
 	else
 		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
@@ -119,7 +119,7 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 	char src[128];
 	char dst[128];
 
-	if (flow->proto == ETHER_TYPE_IPv4) {
+	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
 		if (inet_ntop(AF_INET, &flow->f.v4.src,
 				src, sizeof(src)) == NULL) {
 			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv4 address (%s)\n",
@@ -133,7 +133,7 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 				__func__, strerror(errno));
 			return;
 		}
-	} else if (likely(flow->proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
 		if (inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
 				src, sizeof(src)) == NULL) {
 			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv6 address (%s)\n",

@@ -22,6 +22,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <rte_ip.h>
+
 /*
  * All functional blocks that parse packets beyond the IP header
  * must be aware that variable IP headers are possible, and should
@@ -29,13 +31,13 @@
  */
 
 static inline uint8_t
-ipv4_hdr_len(struct ipv4_hdr *ip4hdr)
+ipv4_hdr_len(struct rte_ipv4_hdr *ip4hdr)
 {
 	return ((ip4hdr->version_ihl & 0xf) << 2);
 }
 
 static inline uint8_t *
-ipv4_skip_exthdr(struct ipv4_hdr *ip4hdr)
+ipv4_skip_exthdr(struct rte_ipv4_hdr *ip4hdr)
 {
 	return ((uint8_t *)ip4hdr + ipv4_hdr_len(ip4hdr));
 }
@@ -60,7 +62,7 @@ ipv4_skip_exthdr(struct ipv4_hdr *ip4hdr)
  *        - ESP is unparsable for now and considered like
  *	    normal payload protocol.
  */
-int ipv6_skip_exthdr(const struct ipv6_hdr *ip6hdr,
+int ipv6_skip_exthdr(const struct rte_ipv6_hdr *ip6hdr,
 	int remaining_len, uint8_t *nexthdrp);
 
 #endif /* _GATEKEEPER_VARIP_H_ */

@@ -74,28 +74,29 @@ local function lookup_simple_policy(simple_policy, pkt_info)
 	local dest_port
 
 	if pkt_info.l4_proto == policylib.c.TCP then
-		if pkt_info.upper_len < ffi.sizeof("struct tcp_hdr") then
+		if pkt_info.upper_len < ffi.sizeof("struct rte_tcp_hdr") then
 			return malformed
 		end
 
-		local tcphdr = ffi.cast("struct tcp_hdr *", pkt_info.l4_hdr)
+		local tcphdr = ffi.cast("struct rte_tcp_hdr *", pkt_info.l4_hdr)
 		dest_port = tcphdr.dst_port
 	elseif pkt_info.l4_proto == policylib.c.UDP then
-		if pkt_info.upper_len < ffi.sizeof("struct udp_hdr") then
+		if pkt_info.upper_len < ffi.sizeof("struct rte_udp_hdr") then
 			return malformed
 		end
 
-		local udphdr = ffi.cast("struct udp_hdr *", pkt_info.l4_hdr)
+		local udphdr = ffi.cast("struct rte_udp_hdr *", pkt_info.l4_hdr)
 		dest_port = udphdr.dst_port
 	elseif pkt_info.inner_ip_ver == policylib.c.IPV4 and
 			pkt_info.l4_proto == policylib.c.ICMP then
-		if pkt_info.upper_len < ffi.sizeof("struct icmp_hdr") then
+		if pkt_info.upper_len < ffi.sizeof("struct rte_icmp_hdr") then
 			return malformed
 		end
 
-		local ipv4_hdr = ffi.cast("struct ipv4_hdr *",
+		local ipv4_hdr = ffi.cast("struct rte_ipv4_hdr *",
 			pkt_info.inner_l3_hdr)
-		local icmp_hdr = ffi.cast("struct icmp_hdr *", pkt_info.l4_hdr)
+		local icmp_hdr = ffi.cast("struct rte_icmp_hdr *",
+			pkt_info.l4_hdr)
 		local icmp_type = icmp_hdr.icmp_type
 		local icmp_code = icmp_hdr.icmp_code
 
@@ -114,7 +115,7 @@ local function lookup_simple_policy(simple_policy, pkt_info)
 			return malformed
 		end
 
-		local ipv6_hdr = ffi.cast("struct ipv6_hdr *",
+		local ipv6_hdr = ffi.cast("struct rte_ipv6_hdr *",
 			pkt_info.inner_l3_hdr)
 		local icmpv6_hdr = ffi.cast("struct icmpv6_hdr *",
 			pkt_info.l4_hdr)
@@ -171,7 +172,7 @@ end
 local function lookup_lpm_policy(lpm_handler, pkt_info)
 
 	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
-		local ipv4_hdr = ffi.cast("struct ipv4_hdr *",
+		local ipv4_hdr = ffi.cast("struct rte_ipv4_hdr *",
 			pkt_info.inner_l3_hdr)
 		local policy_id = lpmlib.lpm_lookup(lpm_handler,
 			ipv4_hdr.src_addr)
@@ -183,7 +184,7 @@ local function lookup_lpm_policy(lpm_handler, pkt_info)
 	end
 
 	if pkt_info.inner_ip_ver == policylib.c.IPV6 then
-		local ipv6_hdr = ffi.cast("struct ipv6_hdr *",
+		local ipv6_hdr = ffi.cast("struct rte_ipv6_hdr *",
 			pkt_info.inner_l3_hdr)
 		local src_addr = ffi.cast("struct in6_addr *",
 			ipv6_hdr.src_addr)

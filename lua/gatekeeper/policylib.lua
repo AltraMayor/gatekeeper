@@ -40,7 +40,7 @@ enum icmpv6_codes {
 	ICMPV6_ECHO_REQUEST_CODE = 0,
 };
 
-struct ipv4_hdr {
+struct rte_ipv4_hdr {
 	uint8_t  version_ihl;
 	uint8_t  type_of_service;
 	uint16_t total_length;
@@ -53,7 +53,7 @@ struct ipv4_hdr {
 	uint32_t dst_addr;
 } __attribute__((__packed__));
 
-struct ipv6_hdr {
+struct rte_ipv6_hdr {
 	uint32_t vtc_flow;
 	uint16_t payload_len;
 	uint8_t  proto; 
@@ -62,7 +62,7 @@ struct ipv6_hdr {
 	uint8_t  dst_addr[16];
 } __attribute__((__packed__));
 
-struct tcp_hdr {
+struct rte_tcp_hdr {
 	uint16_t src_port;
 	uint16_t dst_port;
 	uint32_t sent_seq;
@@ -74,14 +74,14 @@ struct tcp_hdr {
 	uint16_t tcp_urp;
 } __attribute__((__packed__));
 
-struct udp_hdr {
+struct rte_udp_hdr {
 	uint16_t src_port;
 	uint16_t dst_port;
 	uint16_t dgram_len;
 	uint16_t dgram_cksum;
 } __attribute__((__packed__));
 
-struct icmp_hdr {
+struct rte_icmp_hdr {
 	uint8_t  icmp_type;
 	uint8_t  icmp_code;
 	uint16_t icmp_cksum;

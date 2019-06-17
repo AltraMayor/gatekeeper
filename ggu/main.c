@@ -123,7 +123,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				return;
 			}
 			policy.state = GK_DECLINED;
-			policy.flow.proto = ETHER_TYPE_IPv4;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV4;
 			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
 				sizeof(policy.flow.f.v4));
 			params_offset = sizeof(policy.flow.f.v4);
@@ -138,7 +138,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				return;
 			}
 			policy.state = GK_DECLINED;
-			policy.flow.proto = ETHER_TYPE_IPv6;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV6;
 			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
 				sizeof(policy.flow.f.v6));
 			params_offset = sizeof(policy.flow.f.v6);
@@ -153,7 +153,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				return;
 			}
 			policy.state = GK_GRANTED;
-			policy.flow.proto = ETHER_TYPE_IPv4;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV4;
 			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
 				sizeof(policy.flow.f.v4));
 			params_offset = sizeof(policy.flow.f.v4);
@@ -168,7 +168,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				return;
 			}
 			policy.state = GK_GRANTED;
-			policy.flow.proto = ETHER_TYPE_IPv6;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV6;
 			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
 				sizeof(policy.flow.f.v6));
 			params_offset = sizeof(policy.flow.f.v6);
@@ -230,9 +230,9 @@ static void
 process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 {
 	uint16_t ether_type;
-	struct ether_hdr *eth_hdr;
+	struct rte_ether_hdr *eth_hdr;
 	void *l3_hdr;
-	struct udp_hdr *udphdr;
+	struct rte_udp_hdr *udphdr;
 	uint16_t pkt_udp_checksum, cal_udp_checksum;
 	struct ggu_common_hdr *gguhdr;
 	struct ggu_decision *ggu_decision;
@@ -244,17 +244,18 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	size_t l2_len;
 	int l3_len;
 
-	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr, &l3_hdr));
 	l2_len = pkt_in_l2_hdr_len(pkt);
 	minimum_size = l2_len;
 
 	switch (ether_type) {
-	case ETHER_TYPE_IPv4: {
-		struct ipv4_hdr *ip4hdr;
+	case RTE_ETHER_TYPE_IPV4: {
+		struct rte_ipv4_hdr *ip4hdr;
 
-		minimum_size += sizeof(struct ipv4_hdr) +
-			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+		minimum_size += sizeof(struct rte_ipv4_hdr) +
+			sizeof(struct rte_udp_hdr) +
+			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
 			GGU_LOG(NOTICE,
 				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
@@ -295,15 +296,16 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 * The ntuple filter/ACL supports IPv4 variable headers.
 		 * The following code parses IPv4 variable headers.
 		 */
-		udphdr = (struct udp_hdr *)ipv4_skip_exthdr(ip4hdr);
+		udphdr = (struct rte_udp_hdr *)ipv4_skip_exthdr(ip4hdr);
 		break;
 	}
-	case ETHER_TYPE_IPv6: {
-		struct ipv6_hdr *ip6hdr;
+	case RTE_ETHER_TYPE_IPV6: {
+		struct rte_ipv6_hdr *ip6hdr;
 		uint8_t nexthdr;
 
-		minimum_size += sizeof(struct ipv6_hdr) +
-			sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+		minimum_size += sizeof(struct rte_ipv6_hdr) +
+			sizeof(struct rte_udp_hdr) +
+			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
 			GGU_LOG(NOTICE,
 				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
@@ -359,7 +361,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
-		udphdr = (struct udp_hdr *)((uint8_t *)ip6hdr + l3_len);
+		udphdr = (struct rte_udp_hdr *)((uint8_t *)ip6hdr + l3_len);
 		break;
 	}
 
@@ -392,7 +394,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	pkt_udp_checksum = udphdr->dgram_cksum;
 	udphdr->dgram_cksum = 0;
 
-	if (ether_type == ETHER_TYPE_IPv4) {
+	if (ether_type == RTE_ETHER_TYPE_IPV4) {
 		cal_udp_checksum = rte_ipv4_udptcp_cksum(l3_hdr, udphdr);
 		if (pkt_udp_checksum != cal_udp_checksum) {
 			GGU_LOG(ERR, "The IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",

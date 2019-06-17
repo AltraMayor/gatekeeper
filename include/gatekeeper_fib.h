@@ -107,9 +107,9 @@ struct ether_cache {
 	/* The whole link-layer header. */
 	struct {
 		/* Ethernet header (required). */
-		struct ether_hdr eth_hdr;
+		struct rte_ether_hdr eth_hdr;
 		/* VLAN header (optional). */
-		struct vlan_hdr  vlan_hdr;
+		struct rte_vlan_hdr  vlan_hdr;
 	} __attribute__((packed)) l2_hdr;
 };
 
@@ -230,7 +230,7 @@ struct gk_fib_dump_entry {
 	struct ipaddr nexthop_ip;
 
 	/* The the MAC address of nexthop_ip. */
-	struct ether_addr d_addr;
+	struct rte_ether_addr d_addr;
 
 	/* The fib action. */
 	enum gk_fib_action action;
@@ -247,7 +247,7 @@ struct gk_neighbor_dump_entry {
 	struct ipaddr neigh_ip;
 
 	/* The the MAC address of neigh_ip. */
-	struct ether_addr d_addr;
+	struct rte_ether_addr d_addr;
 };
 
 struct gk_config;

@@ -30,7 +30,7 @@ int ipv6_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr);
 
 /* Transmit an ND request packet. */
 void xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
-	const struct ether_addr *ha, uint16_t tx_queue);
+	const struct rte_ether_addr *ha, uint16_t tx_queue);
 
 /*
  * Process an ND neighbor packet that arrived on @iface.
