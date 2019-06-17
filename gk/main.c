@@ -425,6 +425,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	struct rte_mbuf *pkt = packet->pkt;
 	struct gk_fib *fib = fe->grantor_fib;
 	struct ether_cache *eth_cache;
+	uint32_t pkt_len;
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
@@ -437,10 +438,11 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 			(uint64_t)fe->u.granted.tx_rate_kb_cycle * 1024;
 	}
 
-	if (pkt->data_len > fe->u.granted.budget_byte)
+	pkt_len = rte_pktmbuf_pkt_len(pkt);
+	if (pkt_len > fe->u.granted.budget_byte)
 		return -1;
 
-	fe->u.granted.budget_byte -= pkt->data_len;
+	fe->u.granted.budget_byte -= pkt_len;
 	renew_cap = now >= fe->u.granted.send_next_renewal_at;
 	if (renew_cap) {
 		fe->u.granted.send_next_renewal_at = now +
