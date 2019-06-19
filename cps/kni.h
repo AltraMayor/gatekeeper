@@ -48,9 +48,9 @@ int init_kni(const char *kni_kmod_path, unsigned int num_kni);
 void rm_kni(void);
 
 void kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr);
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr);
 void kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr,
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
 	uint16_t pkt_len);
 
 #endif /* _GATEKEEPER_CPS_KNI_H_ */

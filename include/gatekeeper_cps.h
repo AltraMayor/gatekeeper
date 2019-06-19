@@ -139,15 +139,15 @@ struct cps_bgp_req {
  */
 
 struct cps_arp_req {
-	uint32_t             ip;
-	struct ether_addr    ha;
-	struct gatekeeper_if *iface;
+	uint32_t              ip;
+	struct rte_ether_addr ha;
+	struct gatekeeper_if  *iface;
 };
 
 struct cps_nd_req {
-	uint8_t              ip[16];
-	struct ether_addr    ha;
-	struct gatekeeper_if *iface;
+	uint8_t               ip[16];
+	struct rte_ether_addr ha;
+	struct gatekeeper_if  *iface;
 };
 
 /* Requests that can be made to the CPS block. */

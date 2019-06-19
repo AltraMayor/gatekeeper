@@ -30,7 +30,7 @@ int ipv4_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr);
 
 /* Transmit an ARP request packet. */
 void xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
-	const struct ether_addr *ha, uint16_t tx_queue);
+	const struct rte_ether_addr *ha, uint16_t tx_queue);
 
 /*
  * Process an ARP packet that arrived on @iface.
@@ -39,7 +39,7 @@ void xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
  * -1 if it does not need to be transmitted (and needs to be freed).
  */
 int process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
-	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr,
-	struct arp_hdr *arp_hdr);
+	uint16_t tx_queue, struct rte_mbuf *buf, struct rte_ether_hdr *eth_hdr,
+	struct rte_arp_hdr *arp_hdr);
 
 #endif /* _GATEKEEPER_LLS_ARP_H_ */

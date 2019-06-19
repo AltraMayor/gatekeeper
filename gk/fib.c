@@ -97,7 +97,7 @@ gk_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
+	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -136,7 +136,8 @@ get_new_ether_cache_locked(struct neighbor_hash_table *neigh,
 		eth_cache->l2_hdr.eth_hdr.ether_type =
 			rte_cpu_to_be_16(addr->proto);
 	}
-	ether_addr_copy(&iface->eth_addr, &eth_cache->l2_hdr.eth_hdr.s_addr);
+	rte_ether_addr_copy(&iface->eth_addr,
+		&eth_cache->l2_hdr.eth_hdr.s_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
 	return eth_cache;
@@ -157,10 +158,10 @@ neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
 	if (eth_cache == NULL)
 		return NULL;
 
-	if (addr->proto == ETHER_TYPE_IPv4) {
+	if (addr->proto == RTE_ETHER_TYPE_IPV4) {
 		ret = hold_arp(gk_arp_and_nd_req_cb,
 			eth_cache, &addr->ip.v4, lcore_id);
-	} else if (likely(addr->proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		ret = hold_nd(gk_arp_and_nd_req_cb,
 			eth_cache, &addr->ip.v6, lcore_id);
 	} else {
@@ -186,7 +187,7 @@ neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
 		"Failed to add a cache entry to the neighbor hash table at %s\n",
 		__func__);
 
-	if (addr->proto == ETHER_TYPE_IPv4)
+	if (addr->proto == RTE_ETHER_TYPE_IPV4)
 		put_arp(&addr->ip.v4, lcore_id);
 	else
 		put_nd(&addr->ip.v6, lcore_id);
@@ -270,8 +271,8 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 		return -1;
 	}
 
-	RTE_VERIFY((ip_type == AF_INET && res->proto == ETHER_TYPE_IPv4) ||
-		(ip_type == AF_INET6 && res->proto == ETHER_TYPE_IPv6));
+	RTE_VERIFY((ip_type == AF_INET && res->proto == RTE_ETHER_TYPE_IPV4) ||
+		(ip_type == AF_INET6 && res->proto == RTE_ETHER_TYPE_IPV6));
 
 	return prefix_len;
 }
@@ -309,12 +310,12 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf)
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	/* Find an empty FIB entry. */
-	if (ip_proto == ETHER_TYPE_IPv4) {
+	if (ip_proto == RTE_ETHER_TYPE_IPV4) {
 		return __get_empty_fib_id(ltbl->fib_tbl,
 			gk_conf->max_num_ipv4_fib_entries, gk_conf);
 	}
 
-	if (likely(ip_proto == ETHER_TYPE_IPv6)) {
+	if (likely(ip_proto == RTE_ETHER_TYPE_IPV6)) {
 		return __get_empty_fib_id(ltbl->fib_tbl6,
 			gk_conf->max_num_ipv6_fib_entries, gk_conf);
 	}
@@ -330,12 +331,12 @@ static inline int
 lpm_add_route(struct ipaddr *ip_addr,
 	int prefix_len, int fib_id, struct gk_lpm *ltbl)
 {
-	if (ip_addr->proto == ETHER_TYPE_IPv4) {
+	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		return gk_lpm_add_ipv4_route(
 			ip_addr->ip.v4.s_addr, prefix_len, fib_id, ltbl);
 	}
 
-	if (likely(ip_addr->proto == ETHER_TYPE_IPv6)) {
+	if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		return gk_lpm_add_ipv6_route(
 			ip_addr->ip.v6.s6_addr, prefix_len, fib_id, ltbl);
 	}
@@ -350,12 +351,12 @@ lpm_add_route(struct ipaddr *ip_addr,
 static inline int
 lpm_del_route(struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
 {
-	if (ip_addr->proto == ETHER_TYPE_IPv4) {
+	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		return rte_lpm_delete(ltbl->lpm,
 			ntohl(ip_addr->ip.v4.s_addr), prefix_len);
 	}
 
-	if (likely(ip_addr->proto == ETHER_TYPE_IPv6)) {
+	if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		return rte_lpm6_delete(ltbl->lpm6,
 			ip_addr->ip.v6.s6_addr, prefix_len);
 	}
@@ -389,7 +390,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 {
 	int  i, ret;
 	char ht_name[64];
-	int key_len = ip_ver == ETHER_TYPE_IPv4 ?
+	int key_len = ip_ver == RTE_ETHER_TYPE_IPV4 ?
 		sizeof(struct in_addr) : sizeof(struct in6_addr);
 
 	struct rte_hash_parameters neigh_hash_params = {
@@ -473,14 +474,14 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv4 network prefix. */
 	if (ipv4_if_configured(iface)) {
-		fib_id = get_empty_fib_id(ETHER_TYPE_IPv4, gk_conf);
+		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV4, gk_conf);
 		if (fib_id < 0)
 			goto out;
 
 		neigh_fib_ipv4 = &ltbl->fib_tbl[fib_id];
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2),
-			ETHER_TYPE_IPv4, (1 << (32 - iface->ip4_addr_plen)),
+			RTE_ETHER_TYPE_IPV4, (1 << (32 - iface->ip4_addr_plen)),
 			&neigh_fib_ipv4->u.neigh, custom_ipv4_hash_func);
 		if (ret < 0)
 			goto init_fib_ipv4;
@@ -503,14 +504,14 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv6 network prefix. */
 	if (ipv6_if_configured(iface)) {
-		fib_id = get_empty_fib_id(ETHER_TYPE_IPv6, gk_conf);
+		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV6, gk_conf);
 		if (fib_id < 0)
 			goto free_fib_ipv4;
 
 		neigh_fib_ipv6 = &ltbl->fib_tbl6[fib_id];
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2 + 1),
-			ETHER_TYPE_IPv6, gk_conf->max_num_ipv6_neighbors,
+			RTE_ETHER_TYPE_IPV6, gk_conf->max_num_ipv6_neighbors,
 			&neigh_fib_ipv6->u.neigh6, DEFAULT_HASH_FUNC);
 		if (ret < 0)
 			goto init_fib_ipv6;
@@ -822,7 +823,7 @@ remove_prefix_from_lpm_locked(
 	struct gk_fib *ip_prefix_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
-	if (ip_prefix->addr.proto == ETHER_TYPE_IPv4) {
+	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
 		uint32_t fib_id;
 
 		ip_prefix_present = rte_lpm_is_rule_present(
@@ -841,7 +842,7 @@ remove_prefix_from_lpm_locked(
 		}
 
 		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
-	} else if (likely(ip_prefix->addr.proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		uint32_t fib_id;
 
 		ip_prefix_present = rte_lpm6_is_rule_present(
@@ -901,7 +902,7 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 		return NULL;
 	}
 
-	if (gw_addr->proto == ETHER_TYPE_IPv4 &&
+	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4 &&
 			ipv4_if_configured(iface)) {
 		fib_id = lpm_lookup_ipv4(ltbl->lpm, gw_addr->ip.v4.s_addr);
 		/*
@@ -912,7 +913,7 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 			return NULL;
 
 		neigh_fib = &ltbl->fib_tbl[fib_id];
-	} else if (likely(gw_addr->proto == ETHER_TYPE_IPv6)
+	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)
 			&& ipv6_if_configured(iface)) {
 		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &gw_addr->ip.v6);
 		/*
@@ -985,7 +986,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 			return -1;
 	}
 
-	if (addr.proto == ETHER_TYPE_IPv4) {
+	if (addr.proto == RTE_ETHER_TYPE_IPV4) {
 		ret = put_arp((struct in_addr *)
 			&addr.ip.v4, gk_conf->lcores[0]);
 		if (ret < 0)
@@ -1001,7 +1002,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 		return ret;
 	}
 
-	if (likely(addr.proto == ETHER_TYPE_IPv6)) {
+	if (likely(addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		ret = put_nd((struct in6_addr *)
 			&addr.ip.v6, gk_conf->lcores[0]);
 		if (ret < 0)
@@ -1172,7 +1173,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	if (fib_id < 0)
 		goto put_ether_cache;
 
-	if (ip_prefix->addr.proto == ETHER_TYPE_IPv4)
+	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		gw_fib = &ltbl->fib_tbl[fib_id];
 	else
 		gw_fib = &ltbl->fib_tbl6[fib_id];
@@ -1239,7 +1240,7 @@ init_grantor_fib_locked(
 	if (fib_id < 0)
 		goto put_ether_cache;
 
-	if (ip_prefix->addr.proto == ETHER_TYPE_IPv4)
+	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		gt_fib = &ltbl->fib_tbl[fib_id];
 	else
 		gt_fib = &ltbl->fib_tbl6[fib_id];
@@ -1278,9 +1279,9 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 	if (fib_id < 0)
 		return NULL;
 
-	if (ip_prefix->addr.proto == ETHER_TYPE_IPv4)
+	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
-	else if (likely(ip_prefix->addr.proto == ETHER_TYPE_IPv6))
+	else if (likely(ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV6))
 		ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
 	else
 		rte_panic("Unexpected condition at gk: unknown IP type %hu at %s",
@@ -1366,13 +1367,13 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 static int
 check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 {
-	if (gw_addr->proto == ETHER_TYPE_IPv4) {
+	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		uint32_t ip4_mask =
 			rte_cpu_to_be_32(~0ULL << (32 - prefix->len));
 		if ((prefix->addr.ip.v4.s_addr ^
 				gw_addr->ip.v4.s_addr) & ip4_mask)
 			return 0;
-	} else if (likely(gw_addr->proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		uint64_t ip6_mask;
 		uint64_t *pf = (uint64_t *)prefix->addr.ip.v6.s6_addr;
 		uint64_t *gw = (uint64_t *)gw_addr->ip.v6.s6_addr;
@@ -1421,7 +1422,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 
 	if (action == GK_DROP || action == GK_FWD_GRANTOR) {
 		/* Ensure that all prefixes longer than @prefix are safe. */
-		if (prefix->addr.proto == ETHER_TYPE_IPv4) {
+		if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
 			struct rte_lpm_iterator_state state;
 			const struct rte_lpm_rule *re;
 			int ret = rte_lpm_iterator_state_init(ltbl->lpm,
@@ -1448,7 +1449,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 				}
 				ret = rte_lpm_rule_iterate(&state, &re);
 			}
-		} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
+		} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 			struct rte_lpm6_iterator_state state;
 			struct rte_lpm6_rule re;
 			int ret = rte_lpm6_iterator_state_init(ltbl->lpm6,
@@ -1486,7 +1487,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 	}
 
 	/* Ensure that the new prefix does not create a security hole. */
-	if (prefix->addr.proto == ETHER_TYPE_IPv4) {
+	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
 		uint32_t prefix_ip4 = ntohl(prefix->addr.ip.v4.s_addr);
 
 		for (i = 0; i < prefix->len; i++) {
@@ -1505,7 +1506,7 @@ check_prefix_locked(struct ip_prefix *prefix,
 				return -1;
 			}
 		}
-	} else if (likely(prefix->addr.proto == ETHER_TYPE_IPv6)) {
+	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		for (i = 0; i < prefix->len; i++) {
 			uint32_t fib_id;
 			ip_prefix_present = rte_lpm6_is_rule_present(
@@ -1740,7 +1741,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		}
 
 		memset(&dentry, 0, sizeof(dentry));
-		dentry.addr.proto = ETHER_TYPE_IPv4;
+		dentry.addr.proto = RTE_ETHER_TYPE_IPV4;
 		dentry.addr.ip.v4.s_addr = htonl(re4->ip);
 		dentry.prefix_len = state.depth;
 		fillup_gk_fib_dump_entry(&dentry, fib);
@@ -1792,7 +1793,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		}
 
 		memset(&dentry, 0, sizeof(dentry));
-		dentry.addr.proto = ETHER_TYPE_IPv6;
+		dentry.addr.proto = RTE_ETHER_TYPE_IPV6;
 		rte_memcpy(&dentry.addr.ip.v6, re6.ip,
 			sizeof(dentry.addr.ip.v6));
 		dentry.prefix_len = re6.depth;
@@ -2045,13 +2046,13 @@ l_list_gk_neighbors6(lua_State *l)
 	return 1;
 }
 
-#define CTYPE_STRUCT_ETHER_ADDR_REF "struct ether_addr &"
+#define CTYPE_STRUCT_ETHER_ADDR_REF "struct rte_ether_addr &"
 
 int
 l_ether_format_addr(lua_State *l)
 {
-	struct ether_addr *d_addr;
-	char d_buf[ETHER_ADDR_FMT_SIZE];
+	struct rte_ether_addr *d_addr;
+	char d_buf[RTE_ETHER_ADDR_FMT_SIZE];
 	uint32_t ctypeid;
 	uint32_t correct_ctypeid_ether_addr = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_ETHER_ADDR_REF);
@@ -2063,9 +2064,9 @@ l_ether_format_addr(lua_State *l)
 		luaL_error(l, "Expected `%s' as first argument",
 			CTYPE_STRUCT_ETHER_ADDR_REF);
 
-	d_addr = *(struct ether_addr **)cdata;
+	d_addr = *(struct rte_ether_addr **)cdata;
 
-	ether_format_addr(d_buf, sizeof(d_buf), d_addr);
+	rte_ether_format_addr(d_buf, sizeof(d_buf), d_addr);
 
 	lua_pushstring(l, d_buf);
 

@@ -29,7 +29,7 @@
 
 static void
 lls_send_request(struct lls_config *lls_conf, struct lls_cache *cache,
-	const struct ipaddr *addr, const struct ether_addr *ha)
+	const struct ipaddr *addr, const struct rte_ether_addr *ha)
 {
 	struct gatekeeper_if *front = &lls_conf->net->front;
 	struct gatekeeper_if *back = &lls_conf->net->back;
@@ -268,7 +268,7 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 
 		/* Fill-in new record. */
 		record = &cache->records[ret];
-		ether_addr_copy(&mod_req->ha, &record->map.ha);
+		rte_ether_addr_copy(&mod_req->ha, &record->map.ha);
 		record->map.port_id = mod_req->port_id;
 		record->map.stale = false;
 		record->map.addr = mod_req->addr;
@@ -291,8 +291,8 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 	RTE_VERIFY(ret >= 0);
 	record = &cache->records[ret];
 
-	if (!is_same_ether_addr(&mod_req->ha, &record->map.ha)) {
-		ether_addr_copy(&mod_req->ha, &record->map.ha);
+	if (!rte_is_same_ether_addr(&mod_req->ha, &record->map.ha)) {
+		rte_ether_addr_copy(&mod_req->ha, &record->map.ha);
 		changed_ha = true;
 	}
 	if (record->map.port_id != mod_req->port_id) {
@@ -335,17 +335,20 @@ icmp_cksum(void *buf, unsigned int size)
 static int
 xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 {
-	struct ether_addr eth_addr_tmp;
-	struct ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	struct rte_ether_addr eth_addr_tmp;
+	struct rte_ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt,
+		struct rte_ether_hdr *);
 	uint32_t ip_addr_tmp;
-	struct ipv4_hdr *icmp_ipv4;
-	struct icmp_hdr *icmph;
+	struct rte_ipv4_hdr *icmp_ipv4;
+	struct rte_icmp_hdr *icmph;
 
-	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
-	if (iface->vlan_insert)
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv4);
+	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+			RTE_ETHER_TYPE_IPV4);
+	}
 
 	/*
 	 * Set-up IPv4 header.
@@ -354,7 +357,7 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 * message, the source and destination addresses are simply reversed,
 	 * the type code changed to 0, and the checksum recomputed.
 	 */
-	icmp_ipv4 = (struct ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv4 = (struct rte_ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
 	icmp_ipv4->time_to_live = IP_DEFTTL;
 	ip_addr_tmp = icmp_ipv4->src_addr;
 	icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
@@ -384,7 +387,7 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 *
 	 * So, we keep these fields unmodified.
 	 */
-	icmph = (struct icmp_hdr *)ipv4_skip_exthdr(icmp_ipv4);
+	icmph = (struct rte_icmp_hdr *)ipv4_skip_exthdr(icmp_ipv4);
 	icmph->icmp_type = ICMP_ECHO_REPLY_TYPE;
 	icmph->icmp_code = ICMP_ECHO_REPLY_CODE;
 	icmph->icmp_cksum = 0;
@@ -402,20 +405,23 @@ xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 */
 	int icmpv6_offset;
 	uint8_t nexthdr;
-	struct ether_addr eth_addr_tmp;
-	struct ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv6_hdr *icmp_ipv6;
+	struct rte_ether_addr eth_addr_tmp;
+	struct rte_ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt,
+		struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *icmp_ipv6;
 	struct icmpv6_hdr *icmpv6_hdr;
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
-	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
-	if (iface->vlan_insert)
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+			RTE_ETHER_TYPE_IPV6);
+	}
 
 	/* Set-up IPv6 header. */
-	icmp_ipv6 = (struct ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv6 = (struct rte_ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
 
 	/*
 	 * The IP Hop Limit field must be 255 as required by
@@ -491,12 +497,12 @@ lls_process_reqs(struct lls_config *lls_conf)
 			int i;
 			for (i = 0; i < arp->num_pkts; i++) {
 				struct rte_mbuf *pkt = arp->pkts[i];
-				struct ether_hdr *eth_hdr =
+				struct rte_ether_hdr *eth_hdr =
 					rte_pktmbuf_mtod(pkt,
-						struct ether_hdr *);
-				struct arp_hdr *arp_hdr =
+						struct rte_ether_hdr *);
+				struct rte_arp_hdr *arp_hdr =
 					rte_pktmbuf_mtod_offset(pkt,
-						struct arp_hdr *,
+						struct rte_arp_hdr *,
 						pkt_in_l2_hdr_len(pkt));
 				if (process_arp(lls_conf, arp->iface,
 						tx_queue, pkt,

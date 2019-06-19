@@ -461,7 +461,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 
 	if (update->family == AF_INET) {
-		proto = ETHER_TYPE_IPv4;
+		proto = RTE_ETHER_TYPE_IPV4;
 
 		if (update->rt_type != RTN_BLACKHOLE) {
 			ret = lpm_lookup_ipv4(ltbl->lpm,
@@ -479,7 +479,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			ip_buf, update->prefix_len);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 	} else if (likely(update->family == AF_INET6)) {
-		proto = ETHER_TYPE_IPv6;
+		proto = RTE_ETHER_TYPE_IPV6;
 
 		if (update->rt_type != RTN_BLACKHOLE) {
 			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.v6);
@@ -569,7 +569,7 @@ del_route(struct route_update *update, const struct cps_config *cps_conf)
 			ip_buf, update->prefix_len);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 
-		prefix_info.addr.proto = ETHER_TYPE_IPv4;
+		prefix_info.addr.proto = RTE_ETHER_TYPE_IPV4;
 		rte_memcpy(&prefix_info.addr.ip.v4, &update->ip.v4,
 			sizeof(prefix_info.addr.ip.v4));
 	} else if (likely(update->family == AF_INET6)) {
@@ -581,7 +581,7 @@ del_route(struct route_update *update, const struct cps_config *cps_conf)
 			ip_buf, update->prefix_len);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ipp_buf));
 
-		prefix_info.addr.proto = ETHER_TYPE_IPv6;
+		prefix_info.addr.proto = RTE_ETHER_TYPE_IPV6;
 		rte_memcpy(&prefix_info.addr.ip.v6, &update->ip.v6,
 			sizeof(prefix_info.addr.ip.v6));
 	} else {
@@ -2020,9 +2020,9 @@ cps_arp_cb(const struct lls_map *map, void *arg,
 
 void
 kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr)
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr)
 {
-	struct arp_hdr *arp_hdr;
+	struct rte_arp_hdr *arp_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
 	struct arp_request *arp_req;
 	struct arp_request *entry;
@@ -2039,12 +2039,12 @@ kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 		goto out;
 	}
 
-	arp_hdr = rte_pktmbuf_mtod_offset(buf, struct arp_hdr *,
+	arp_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_arp_hdr *,
 		sizeof(*eth_hdr));
 
 	/* If it's a Gratuitous ARP or reply, then no action is needed. */
-	if (unlikely(rte_be_to_cpu_16(arp_hdr->arp_op) != ARP_OP_REQUEST ||
-			is_garp_pkt(arp_hdr)))
+	if (unlikely(rte_be_to_cpu_16(arp_hdr->arp_opcode) !=
+			RTE_ARP_OP_REQUEST || is_garp_pkt(arp_hdr)))
 		goto out;
 
 	list_for_each_entry(entry, &cps_conf->arp_requests, list) {
@@ -2118,7 +2118,8 @@ cps_nd_cb(const struct lls_map *map, void *arg,
 
 void
 kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct ether_hdr *eth_hdr, uint16_t pkt_len)
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
+	uint16_t pkt_len)
 {
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
@@ -2138,7 +2139,7 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	}
 
 	icmpv6_hdr = rte_pktmbuf_mtod_offset(buf, struct icmpv6_hdr *,
-		sizeof(*eth_hdr) + sizeof(struct ipv6_hdr));
+		sizeof(*eth_hdr) + sizeof(struct rte_ipv6_hdr));
 	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) {
 		CPS_LOG(NOTICE, "ND Advertisement packet received from KNI attached to %s iface\n",
 			iface->name);

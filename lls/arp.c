@@ -43,11 +43,11 @@ ipv4_in_subnet(struct gatekeeper_if *iface, const struct ipaddr *addr)
 
 void
 xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
-	const struct ether_addr *ha, uint16_t tx_queue)
+	const struct rte_ether_addr *ha, uint16_t tx_queue)
 {
 	struct rte_mbuf *created_pkt;
-	struct ether_hdr *eth_hdr;
-	struct arp_hdr *arp_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_arp_hdr *arp_hdr;
 	size_t pkt_size;
 	struct lls_config *lls_conf = get_lls_conf();
 	int ret;
@@ -60,34 +60,34 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 		return;
 	}
 
-	pkt_size = iface->l2_len_out + sizeof(struct arp_hdr);
+	pkt_size = iface->l2_len_out + sizeof(struct rte_arp_hdr);
 	created_pkt->data_len = pkt_size;
 	created_pkt->pkt_len = pkt_size;
 
 	/* Set-up Ethernet header. */
-	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
-	ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
 	if (ha == NULL)
-		memset(&eth_hdr->d_addr, 0xFF, ETHER_ADDR_LEN);
+		memset(&eth_hdr->d_addr, 0xFF, RTE_ETHER_ADDR_LEN);
 	else
-		ether_addr_copy(ha, &eth_hdr->d_addr);
+		rte_ether_addr_copy(ha, &eth_hdr->d_addr);
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
-		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, ETHER_TYPE_ARP);
+		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, RTE_ETHER_TYPE_ARP);
 	else
-		eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
+		eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP);
 
 	/* Set-up ARP header. */
 	arp_hdr = pkt_out_skip_l2(iface, eth_hdr);
-	arp_hdr->arp_hrd = rte_cpu_to_be_16(ARP_HRD_ETHER);
-	arp_hdr->arp_pro = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
-	arp_hdr->arp_hln = ETHER_ADDR_LEN;
-	arp_hdr->arp_pln = sizeof(struct in_addr);
-	arp_hdr->arp_op = rte_cpu_to_be_16(ARP_OP_REQUEST);
-	ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_sha);
+	arp_hdr->arp_hardware = rte_cpu_to_be_16(RTE_ARP_HRD_ETHER);
+	arp_hdr->arp_protocol = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+	arp_hdr->arp_hlen = RTE_ETHER_ADDR_LEN;
+	arp_hdr->arp_plen = sizeof(struct in_addr);
+	arp_hdr->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REQUEST);
+	rte_ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_sha);
 	arp_hdr->arp_data.arp_sip = iface->ip4_addr.s_addr;
-	memset(&arp_hdr->arp_data.arp_tha, 0, ETHER_ADDR_LEN);
+	memset(&arp_hdr->arp_data.arp_tha, 0, RTE_ETHER_ADDR_LEN);
 	arp_hdr->arp_data.arp_tip = addr->ip.v4.s_addr;
 
 	ret = rte_eth_tx_burst(iface->id, tx_queue, &created_pkt, 1);
@@ -99,11 +99,11 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 int
 process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
-	uint16_t tx_queue, struct rte_mbuf *buf, struct ether_hdr *eth_hdr,
-	struct arp_hdr *arp_hdr)
+	uint16_t tx_queue, struct rte_mbuf *buf, struct rte_ether_hdr *eth_hdr,
+	struct rte_arp_hdr *arp_hdr)
 {
 	struct ipaddr addr = {
-		.proto = ETHER_TYPE_IPv4,
+		.proto = RTE_ETHER_TYPE_IPV4,
 		.ip.v4.s_addr = arp_hdr->arp_data.arp_sip,
 	};
 	struct lls_mod_req mod_req;
@@ -123,10 +123,12 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	if (ret < 0)
 		return ret;
 
-	if (unlikely(arp_hdr->arp_hrd != rte_cpu_to_be_16(ARP_HRD_ETHER) ||
-		     arp_hdr->arp_pro != rte_cpu_to_be_16(ETHER_TYPE_IPv4) ||
-		     arp_hdr->arp_hln != ETHER_ADDR_LEN ||
-		     arp_hdr->arp_pln != sizeof(struct in_addr)))
+	if (unlikely(arp_hdr->arp_hardware != rte_cpu_to_be_16(
+			RTE_ARP_HRD_ETHER) ||
+			arp_hdr->arp_protocol != rte_cpu_to_be_16(
+			RTE_ETHER_TYPE_IPV4) ||
+			arp_hdr->arp_hlen != RTE_ETHER_ADDR_LEN ||
+			arp_hdr->arp_plen != sizeof(struct in_addr)))
 		return -1;
 
 	/* If sip is not in the same subnet as our IP address, drop. */
@@ -136,7 +138,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	/* Update cache with source resolution, regardless of operation. */
 	mod_req.cache = &lls_conf->arp_cache;
 	mod_req.addr = addr;
-	ether_addr_copy(&arp_hdr->arp_data.arp_sha, &mod_req.ha);
+	rte_ether_addr_copy(&arp_hdr->arp_data.arp_sha, &mod_req.ha);
 	mod_req.port_id = iface->id;
 	mod_req.ts = time(NULL);
 	RTE_VERIFY(mod_req.ts >= 0);
@@ -150,8 +152,8 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			(iface->ip4_addr.s_addr != arp_hdr->arp_data.arp_tip))
 		return -1;
 
-	switch (rte_be_to_cpu_16(arp_hdr->arp_op)) {
-	case ARP_OP_REQUEST: {
+	switch (rte_be_to_cpu_16(arp_hdr->arp_opcode)) {
+	case RTE_ARP_OP_REQUEST: {
 		uint16_t num_tx;
 
 		/*
@@ -162,15 +164,15 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 */
 
 		/* Set-up Ethernet header. */
-		ether_addr_copy(&eth_hdr->s_addr, &eth_hdr->d_addr);
-		ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+		rte_ether_addr_copy(&eth_hdr->s_addr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
 
 		/* Set-up ARP header. */
-		arp_hdr->arp_op = rte_cpu_to_be_16(ARP_OP_REPLY);
-		ether_addr_copy(&arp_hdr->arp_data.arp_sha,
+		arp_hdr->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);
+		rte_ether_addr_copy(&arp_hdr->arp_data.arp_sha,
 			&arp_hdr->arp_data.arp_tha);
 		arp_hdr->arp_data.arp_tip = arp_hdr->arp_data.arp_sip;
-		ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_sha);
+		rte_ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_sha);
 		arp_hdr->arp_data.arp_sip = iface->ip4_addr.s_addr;
 
 		/* Need to transmit reply. */
@@ -181,7 +183,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		}
 		return 0;
 	}
-	case ARP_OP_REPLY:
+	case RTE_ARP_OP_REPLY:
 		/*
 		 * No further action required. Could check to make sure
 		 * arp_hdr->arp_data.arp_tha is equal to arp->ether_addr,
@@ -190,7 +192,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return -1;
 	default:
 		LLS_LOG(NOTICE, "%s received an ARP packet with an unknown operation (%hu)\n",
-			__func__, rte_be_to_cpu_16(arp_hdr->arp_op));
+			__func__, rte_be_to_cpu_16(arp_hdr->arp_opcode));
 		return -1;
 	}
 }

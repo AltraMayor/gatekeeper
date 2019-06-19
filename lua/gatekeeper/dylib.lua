@@ -21,7 +21,7 @@ enum gk_fib_action {
 	GK_FIB_MAX,
 };
 
-struct ether_addr {
+struct rte_ether_addr {
 	uint8_t addr_bytes[ETHER_ADDR_LEN];
 } __attribute__((__packed__));
 
@@ -47,7 +47,7 @@ struct gk_fib_dump_entry {
 	struct ipaddr grantor_ip;
 	bool          stale;
 	struct ipaddr nexthop_ip;
-	struct ether_addr d_addr;
+	struct rte_ether_addr d_addr;
 	enum gk_fib_action action;
 };
 
@@ -55,14 +55,14 @@ struct gk_neighbor_dump_entry {
 	bool          stale;
 	enum gk_fib_action action;
 	struct ipaddr neigh_ip;
-	struct ether_addr d_addr;
+	struct rte_ether_addr d_addr;
 };
 
 struct lls_dump_entry {
-	bool              stale;
-	uint16_t          port_id;
-	struct ipaddr     addr;
-	struct ether_addr ha;
+	bool                  stale;
+	uint16_t              port_id;
+	struct ipaddr         addr;
+	struct rte_ether_addr ha;
 };
 
 ]]

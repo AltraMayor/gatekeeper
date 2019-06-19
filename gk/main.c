@@ -173,14 +173,14 @@ look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
 {
 	int fib_id;
 
-	if (flow->proto == ETHER_TYPE_IPv4) {
+	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
 		fib_id = lpm_lookup_ipv4(ltbl->lpm, flow->f.v4.dst.s_addr);
 		if (fib_id < 0)
 			return NULL;
 		return &ltbl->fib_tbl[fib_id];
 	}
 
-	if (likely(flow->proto == ETHER_TYPE_IPv6)) {
+	if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
 		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &flow->f.v6.dst);
 		if (fib_id < 0)
 			return NULL;
@@ -198,17 +198,17 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 {
 	int ret = 0;
 	uint16_t ether_type;
-	struct ether_hdr *eth_hdr;
-	struct ipv4_hdr *ip4_hdr;
-	struct ipv6_hdr *ip6_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_ipv4_hdr *ip4_hdr;
+	struct rte_ipv6_hdr *ip6_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
 
-	eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
 		&packet->l3_hdr));
 
 	switch (ether_type) {
-	case ETHER_TYPE_IPv4:
+	case RTE_ETHER_TYPE_IPV4:
 		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip4_hdr)) {
 			packet->flow.proto = 0;
 			GK_LOG(NOTICE,
@@ -219,12 +219,12 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 		}
 
 		ip4_hdr = packet->l3_hdr;
-		packet->flow.proto = ETHER_TYPE_IPv4;
+		packet->flow.proto = RTE_ETHER_TYPE_IPV4;
 		packet->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
 		packet->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
 		break;
 
-	case ETHER_TYPE_IPv6:
+	case RTE_ETHER_TYPE_IPV6:
 		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip6_hdr)) {
 			packet->flow.proto = 0;
 			GK_LOG(NOTICE,
@@ -235,15 +235,15 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 		}
 
 		ip6_hdr = packet->l3_hdr;
-		packet->flow.proto = ETHER_TYPE_IPv6;
+		packet->flow.proto = RTE_ETHER_TYPE_IPV6;
 		rte_memcpy(packet->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
 			sizeof(packet->flow.f.v6.src.s6_addr));
 		rte_memcpy(packet->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(packet->flow.f.v6.dst.s6_addr));
 		break;
 
-	case ETHER_TYPE_ARP:
-		packet->flow.proto = ETHER_TYPE_ARP;
+	case RTE_ETHER_TYPE_ARP:
+		packet->flow.proto = RTE_ETHER_TYPE_ARP;
 		ret = -1;
 		break;
 
@@ -898,22 +898,22 @@ flush_flow_table(struct ip_prefix *src,
 
 	RTE_VERIFY(src->addr.proto == dst->addr.proto);
 
-	if (src->addr.proto == ETHER_TYPE_IPv4) {
+	if (src->addr.proto == RTE_ETHER_TYPE_IPV4) {
 		ip4_prefix_mask(src->len, &ip4_src_mask);
 		ip4_prefix_mask(dst->len, &ip4_dst_mask);
 
 		memset(&ip6_src_mask, 0, sizeof(ip6_src_mask));
 		memset(&ip6_dst_mask, 0, sizeof(ip6_dst_mask));
 
-		proto = ETHER_TYPE_IPv4;
-	} else if (likely(src->addr.proto == ETHER_TYPE_IPv6)) {
+		proto = RTE_ETHER_TYPE_IPV4;
+	} else if (likely(src->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		memset(&ip4_src_mask, 0, sizeof(ip4_src_mask));
 		memset(&ip4_dst_mask, 0, sizeof(ip4_dst_mask));
 
 		ip6_prefix_mask(src->len, &ip6_src_mask);
 		ip6_prefix_mask(dst->len, &ip6_dst_mask);
 
-		proto = ETHER_TYPE_IPv6;
+		proto = RTE_ETHER_TYPE_IPV6;
 	} else
 		rte_panic("Unexpected protocol: %i\n", src->addr.proto);
 
@@ -927,7 +927,7 @@ flush_flow_table(struct ip_prefix *src,
 		if (proto != fe->flow.proto)
 			goto next;
 
-		if (proto == ETHER_TYPE_IPv4) {
+		if (proto == RTE_ETHER_TYPE_IPV4) {
 			if (src->len != 0) {
 				matched = ip4_same_subnet(
 					src->addr.ip.v4.s_addr,
@@ -1110,13 +1110,13 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 	struct gk_instance *instance, packet_drop_cb_func cb_f)
 {
-	struct ether_addr eth_addr_tmp;
-	struct ether_hdr *icmp_eth;
-	struct ipv4_hdr *icmp_ipv4;
-	struct icmp_hdr *icmph;
+	struct rte_ether_addr eth_addr_tmp;
+	struct rte_ether_hdr *icmp_eth;
+	struct rte_ipv4_hdr *icmp_ipv4;
+	struct rte_icmp_hdr *icmph;
 	struct rte_mbuf *pkt = packet->pkt;
-	int icmp_pkt_len = iface->l2_len_out + sizeof(struct ipv4_hdr) +
-		sizeof(struct icmp_hdr);
+	int icmp_pkt_len = iface->l2_len_out + sizeof(struct rte_ipv4_hdr) +
+		sizeof(struct rte_icmp_hdr);
 	if (pkt->data_len >= icmp_pkt_len) {
 		int ret = rte_pktmbuf_trim(pkt, pkt->data_len - icmp_pkt_len);
 		if (ret < 0) {
@@ -1127,9 +1127,9 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 			return;
 		}
 
-		icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+		icmp_eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	} else {
-		icmp_eth = (struct ether_hdr *)rte_pktmbuf_append(pkt,
+		icmp_eth = (struct rte_ether_hdr *)rte_pktmbuf_append(pkt,
 			icmp_pkt_len - pkt->data_len);
 		if (icmp_eth == NULL) {
 			GK_LOG(ERR,
@@ -1140,13 +1140,15 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 		}
 	}
 
-	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
-	if (iface->vlan_insert)
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv4);
+	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+			RTE_ETHER_TYPE_IPV4);
+	}
 
-	icmp_ipv4 = (struct ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv4 = (struct rte_ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
 	icmp_ipv4->version_ihl = IP_VHL_DEF;
 	icmp_ipv4->type_of_service = 0;
 	icmp_ipv4->packet_id = 0;
@@ -1163,10 +1165,10 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	 */
 	icmp_ipv4->hdr_checksum = 0;
 	pkt->l2_len = iface->l2_len_out;
-	pkt->l3_len = sizeof(struct ipv4_hdr);
+	pkt->l3_len = sizeof(struct rte_ipv4_hdr);
 	pkt->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
 
-	icmph = (struct icmp_hdr *)&icmp_ipv4[1];
+	icmph = (struct rte_icmp_hdr *)&icmp_ipv4[1];
 	icmph->icmp_type = ICMP_TIME_EXCEEDED;
 	icmph->icmp_code = ICMP_EXC_TTL;
 	icmph->icmp_cksum = 0;
@@ -1183,12 +1185,12 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 	struct gk_instance *instance, packet_drop_cb_func cb_f)
 {
-	struct ether_addr eth_addr_tmp;
-	struct ether_hdr *icmp_eth;
-	struct ipv6_hdr *icmp_ipv6;
+	struct rte_ether_addr eth_addr_tmp;
+	struct rte_ether_hdr *icmp_eth;
+	struct rte_ipv6_hdr *icmp_ipv6;
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct rte_mbuf *pkt = packet->pkt;
-	int icmpv6_pkt_len = iface->l2_len_out + sizeof(struct ipv6_hdr) +
+	int icmpv6_pkt_len = iface->l2_len_out + sizeof(struct rte_ipv6_hdr) +
 		sizeof(struct icmpv6_hdr);
 	if (pkt->data_len >= icmpv6_pkt_len) {
 		int ret = rte_pktmbuf_trim(pkt,
@@ -1201,9 +1203,9 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 			return;
 		}
 
-		icmp_eth = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
+		icmp_eth = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	} else {
-		icmp_eth = (struct ether_hdr *)rte_pktmbuf_append(pkt,
+		icmp_eth = (struct rte_ether_hdr *)rte_pktmbuf_append(pkt,
 			icmpv6_pkt_len - pkt->data_len);
 		if (icmp_eth == NULL) {
 			GK_LOG(ERR,
@@ -1214,14 +1216,16 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 		}
 	}
 
-	ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
-	if (iface->vlan_insert)
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be, ETHER_TYPE_IPv6);
+	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	if (iface->vlan_insert) {
+		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+			RTE_ETHER_TYPE_IPV6);
+	}
 
 	/* Set-up IPv6 header. */
-	icmp_ipv6 = (struct ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmp_ipv6 = (struct rte_ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
 	icmp_ipv6->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
 	icmp_ipv6->payload_len = rte_cpu_to_be_16(sizeof(*icmpv6_hdr));
 	icmp_ipv6->proto = IPPROTO_ICMPV6;
@@ -1265,8 +1269,8 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	struct token_bucket_ratelimit_state *rs, struct gk_instance *instance,
 	packet_drop_cb_func cb_f)
 {
-	if (packet->flow.proto == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ipv4_hdr = packet->l3_hdr;
+	if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ipv4_hdr = packet->l3_hdr;
 		if (ipv4_hdr->time_to_live <= 1) {
 			if (tb_ratelimit_allow(rs)) {
 				xmit_icmp(iface, packet, num_pkts,
@@ -1278,8 +1282,8 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 
 		--(ipv4_hdr->time_to_live);
 		++(ipv4_hdr->hdr_checksum);
-	} else if (likely(packet->flow.proto == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ipv6_hdr = packet->l3_hdr;
+	} else if (likely(packet->flow.proto == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ipv6_hdr = packet->l3_hdr;
 		if (ipv6_hdr->hop_limits <= 1) {
 			if (tb_ratelimit_allow(rs)) {
 				xmit_icmpv6(iface, packet, num_pkts,
@@ -1350,7 +1354,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
-			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
+			if (likely(packet.flow.proto == RTE_ETHER_TYPE_ARP)) {
 				stats->tot_pkts_num_distributed++;
 				stats->tot_pkts_size_distributed +=
 					rte_pktmbuf_pkt_len(pkt);
@@ -1364,9 +1368,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			continue;
 		}
 
-		if (unlikely((packet.flow.proto == ETHER_TYPE_IPv4 &&
+		if (unlikely((packet.flow.proto == RTE_ETHER_TYPE_IPV4 &&
 				!ipv4_configured_front) ||
-				(packet.flow.proto == ETHER_TYPE_IPv6 &&
+				(packet.flow.proto == RTE_ETHER_TYPE_IPV6 &&
 				!ipv6_configured_front))) {
 			drop_packet_front(pkt, instance);
 			continue;
@@ -1396,14 +1400,14 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			struct ether_cache *eth_cache;
 
 			if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-				if (packet.flow.proto == ETHER_TYPE_IPv4) {
+				if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
 					stats->tot_pkts_num_distributed++;
 					stats->tot_pkts_size_distributed +=
 						rte_pktmbuf_pkt_len(pkt);
 
 					add_pkt_acl(acl4, pkt);
 				} else if (likely(packet.flow.proto ==
-						ETHER_TYPE_IPv6)) {
+						RTE_ETHER_TYPE_IPV6)) {
 					stats->tot_pkts_num_distributed++;
 					stats->tot_pkts_size_distributed +=
 						rte_pktmbuf_pkt_len(pkt);
@@ -1506,7 +1510,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				 * its packets to the neighbor in
 				 * the back network, forward accordingly.
 				 */
-				if (packet.flow.proto == ETHER_TYPE_IPv4) {
+				if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
 					eth_cache = lookup_ether_cache(
 						&fib->u.neigh,
 						&packet.flow.f.v4.dst);
@@ -1592,8 +1596,10 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
 
-	process_pkts_acl(&gk_conf->net->front, lcore, acl4, ETHER_TYPE_IPv4);
-	process_pkts_acl(&gk_conf->net->front, lcore, acl6, ETHER_TYPE_IPv6);
+	process_pkts_acl(&gk_conf->net->front,
+		lcore, acl4, RTE_ETHER_TYPE_IPV4);
+	process_pkts_acl(&gk_conf->net->front,
+		lcore, acl6, RTE_ETHER_TYPE_IPV6);
 }
 
 /* Process the packets on the back interface. */
@@ -1636,7 +1642,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
-			if (likely(packet.flow.proto == ETHER_TYPE_ARP)) {
+			if (likely(packet.flow.proto == RTE_ETHER_TYPE_ARP)) {
 				arp_bufs[num_arp++] = pkt;
 				continue;
 			}
@@ -1646,9 +1652,9 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			continue;
 		}
 
-		if (unlikely((packet.flow.proto == ETHER_TYPE_IPv4 &&
+		if (unlikely((packet.flow.proto == RTE_ETHER_TYPE_IPV4 &&
 				!ipv4_configured_back) ||
-				(packet.flow.proto == ETHER_TYPE_IPv6 &&
+				(packet.flow.proto == RTE_ETHER_TYPE_IPV6 &&
 				!ipv6_configured_back))) {
 			drop_packet_back(pkt, instance);
 			continue;
@@ -1656,10 +1662,10 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 		fib = look_up_fib(&gk_conf->lpm_tbl, &packet.flow);
 		if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-			if (packet.flow.proto == ETHER_TYPE_IPv4)
+			if (packet.flow.proto == RTE_ETHER_TYPE_IPV4)
 				add_pkt_acl(acl4, pkt);
 			else if (likely(packet.flow.proto ==
-					ETHER_TYPE_IPv6))
+					RTE_ETHER_TYPE_IPV6))
 				add_pkt_acl(acl6, pkt);
 			else {
 				print_flow_err_msg(&packet.flow,
@@ -1710,7 +1716,7 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			 * its packets to the neighbor in
 			 * the front network, forward accordingly.
 			 */
-			if (packet.flow.proto == ETHER_TYPE_IPv4) {
+			if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
 				eth_cache = lookup_ether_cache(
 					&fib->u.neigh,
 					&packet.flow.f.v4.dst);
@@ -1767,8 +1773,8 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
-	process_pkts_acl(&gk_conf->net->back, lcore, acl4, ETHER_TYPE_IPv4);
-	process_pkts_acl(&gk_conf->net->back, lcore, acl6, ETHER_TYPE_IPv6);
+	process_pkts_acl(&gk_conf->net->back, lcore, acl4, RTE_ETHER_TYPE_IPV4);
+	process_pkts_acl(&gk_conf->net->back, lcore, acl6, RTE_ETHER_TYPE_IPV6);
 }
 
 static void

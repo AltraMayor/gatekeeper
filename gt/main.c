@@ -84,11 +84,12 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	uint8_t inner_ip_ver;
 	uint16_t parsed_len;
 	int outer_ipv6_hdr_len = 0;
-	struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv4_hdr *outer_ipv4_hdr = NULL;
-	struct ipv6_hdr *outer_ipv6_hdr = NULL;
-	struct ipv4_hdr *inner_ipv4_hdr = NULL;
-	struct ipv6_hdr *inner_ipv6_hdr = NULL;
+	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(pkt,
+		struct rte_ether_hdr *);
+	struct rte_ipv4_hdr *outer_ipv4_hdr = NULL;
+	struct rte_ipv6_hdr *outer_ipv6_hdr = NULL;
+	struct rte_ipv4_hdr *inner_ipv4_hdr = NULL;
+	struct rte_ipv6_hdr *inner_ipv6_hdr = NULL;
 
 	info->frag = false;
 	info->l2_hdr = eth_hdr;
@@ -97,11 +98,11 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	parsed_len = pkt_in_l2_hdr_len(pkt);
 
 	switch (info->outer_ethertype) {
-	case ETHER_TYPE_IPv4:
-		if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr))
+	case RTE_ETHER_TYPE_IPV4:
+		if (pkt->data_len < parsed_len + sizeof(struct rte_ipv4_hdr))
 			return -1;
 
-		outer_ipv4_hdr = (struct ipv4_hdr *)info->outer_l3_hdr;
+		outer_ipv4_hdr = (struct rte_ipv4_hdr *)info->outer_l3_hdr;
 
 		if (outer_ipv4_hdr->next_proto_id != IPPROTO_IPIP)
 			return -1;
@@ -111,13 +112,13 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		info->outer_ecn =
 			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
 		break;
-	case ETHER_TYPE_IPv6: {
+	case RTE_ETHER_TYPE_IPV6: {
 		uint8_t encapsulated_proto;
 
-		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr))
+		if (pkt->data_len < parsed_len + sizeof(struct rte_ipv6_hdr))
 			return -1;
 
-		outer_ipv6_hdr = (struct ipv6_hdr *)info->outer_l3_hdr;
+		outer_ipv6_hdr = (struct rte_ipv6_hdr *)info->outer_l3_hdr;
 		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
 			pkt->data_len - parsed_len, &encapsulated_proto);
                 if (outer_ipv6_hdr_len < 0) {
@@ -140,22 +141,22 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		return -1;
 	}
 
-	if (pkt->data_len < parsed_len + sizeof(struct ipv4_hdr))
+	if (pkt->data_len < parsed_len + sizeof(struct rte_ipv4_hdr))
 		return -1;
 
 	if (outer_ipv4_hdr != NULL) {
 		inner_ipv4_hdr =
-			(struct ipv4_hdr *)ipv4_skip_exthdr(outer_ipv4_hdr);
+			(struct rte_ipv4_hdr *)ipv4_skip_exthdr(outer_ipv4_hdr);
 	} else {
-		inner_ipv4_hdr = (struct ipv4_hdr *)((uint8_t *)outer_ipv6_hdr
-			+ outer_ipv6_hdr_len);
+		inner_ipv4_hdr = (struct rte_ipv4_hdr *)(
+			(uint8_t *)outer_ipv6_hdr + outer_ipv6_hdr_len);
 	}
 
  	inner_ip_ver = (inner_ipv4_hdr->version_ihl & 0xF0) >> 4;
 	info->inner_l3_hdr = inner_ipv4_hdr;
 
 	if (inner_ip_ver == 4) {
-		info->inner_ip_ver = ETHER_TYPE_IPv4;
+		info->inner_ip_ver = RTE_ETHER_TYPE_IPV4;
 		info->l4_proto = inner_ipv4_hdr->next_proto_id;
 		info->l4_hdr = ipv4_skip_exthdr(inner_ipv4_hdr);
 
@@ -170,10 +171,10 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 	} else if (likely(inner_ip_ver == 6)) {
 		int inner_ipv6_len;
 
-		if (pkt->data_len < parsed_len + sizeof(struct ipv6_hdr))
+		if (pkt->data_len < parsed_len + sizeof(struct rte_ipv6_hdr))
 			return -1;
 
-		inner_ipv6_hdr = (struct ipv6_hdr *)info->inner_l3_hdr;
+		inner_ipv6_hdr = (struct rte_ipv6_hdr *)info->inner_l3_hdr;
 		inner_ipv6_len = ipv6_skip_exthdr(inner_ipv6_hdr,
 			pkt->data_len - parsed_len, &info->l4_proto);
                 if (inner_ipv6_len < 0) {
@@ -182,7 +183,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
                 }
 
-		info->inner_ip_ver = ETHER_TYPE_IPv6;
+		info->inner_ip_ver = RTE_ETHER_TYPE_IPV6;
 		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + inner_ipv6_len;
 		info->frag_hdr =
 			rte_ipv6_frag_get_ipv6_fragment_header(inner_ipv6_hdr);
@@ -210,14 +211,14 @@ gt_reassemble_incoming_pkt(struct rte_mbuf *pkt,
 	pkt->l2_len = info->l2_outer_l3_len;
 	pkt->l3_len = info->inner_l3_len;
 
-	if (info->inner_ip_ver == ETHER_TYPE_IPv4) {
+	if (info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		/* Process this IPv4 fragment. */
 		return rte_ipv4_frag_reassemble_packet(
 			instance->frag_tbl, death_row,
 			pkt, tms, info->inner_l3_hdr);
 	}
 
-	if (likely(info->inner_ip_ver == ETHER_TYPE_IPv6)) {
+	if (likely(info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		/* Process this IPv6 fragment. */
 		return rte_ipv6_frag_reassemble_packet(
 			instance->frag_tbl, death_row,
@@ -245,13 +246,13 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
 
 	policy->flow.proto = pkt_info->inner_ip_ver;
-	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
+	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
 
 		policy->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
 		policy->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
-	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
+	} else if (likely(pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
 
 		rte_memcpy(policy->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
 			sizeof(policy->flow.f.v6.src.s6_addr));
@@ -292,13 +293,13 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
 
 	policy->flow.proto = pkt_info->inner_ip_ver;
-	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
+	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ip4_hdr = pkt_info->inner_l3_hdr;
 
 		policy->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
 		policy->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
-	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
+	} else if (likely(pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ip6_hdr = pkt_info->inner_l3_hdr;
 
 		rte_memcpy(policy->flow.f.v6.src.s6_addr, ip6_hdr->src_addr,
 			sizeof(policy->flow.f.v6.src.s6_addr));
@@ -330,13 +331,13 @@ static inline bool
 is_valid_dest_addr(struct gt_config *gt_conf,
 	struct gt_packet_headers *pkt_info)
 {
-	return (pkt_info->outer_ethertype == ETHER_TYPE_IPv4 &&
-			((struct ipv4_hdr *)
+	return (pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV4 &&
+			((struct rte_ipv4_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr
 			== gt_conf->net->front.ip4_addr.s_addr)
 			||
-			(pkt_info->outer_ethertype == ETHER_TYPE_IPv6 &&
-			memcmp(((struct ipv6_hdr *)
+			(pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV6 &&
+			memcmp(((struct rte_ipv6_hdr *)
 			pkt_info->outer_l3_hdr)->dst_addr,
 			gt_conf->net->front.ip6_addr.s6_addr,
 			sizeof(gt_conf->net->front.ip6_addr)) == 0);
@@ -348,8 +349,8 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 	char src[128];
 	char dst[128];
 
-	if (pkt_info->outer_ethertype == ETHER_TYPE_IPv4) {
-		if (inet_ntop(AF_INET, &((struct ipv4_hdr *)
+	if (pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV4) {
+		if (inet_ntop(AF_INET, &((struct rte_ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
 				src, sizeof(src)) == NULL) {
 			GT_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
@@ -357,7 +358,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 			return;
 		}
 
-		if (inet_ntop(AF_INET, &((struct ipv4_hdr *)
+		if (inet_ntop(AF_INET, &((struct rte_ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
 				dst, sizeof(dst)) == NULL) {
 			GT_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
@@ -365,7 +366,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 			return;
 		}
 	} else {
-		if (inet_ntop(AF_INET6, &((struct ipv6_hdr *)
+		if (inet_ntop(AF_INET6, &((struct rte_ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
 				src, sizeof(src)) == NULL) {
 			GT_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
@@ -373,7 +374,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 			return;
 		}
 
-		if (inet_ntop(AF_INET6, &((struct ipv6_hdr *)
+		if (inet_ntop(AF_INET6, &((struct rte_ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
 				dst, sizeof(dst)) == NULL) {
 			GT_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
@@ -403,7 +404,7 @@ gt_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
+	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -424,7 +425,7 @@ gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
 	eth_cache->stale = true;
 	eth_cache->ip_addr.proto = inner_ip_ver;
 
-	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		rte_memcpy(&eth_cache->ip_addr.ip.v4,
 			ip_dst, sizeof(eth_cache->ip_addr.ip.v4));
 	} else {
@@ -440,10 +441,11 @@ gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
 			rte_cpu_to_be_16(inner_ip_ver);
 	}
 
-	ether_addr_copy(&iface->eth_addr, &eth_cache->l2_hdr.eth_hdr.s_addr);
+	rte_ether_addr_copy(&iface->eth_addr,
+		&eth_cache->l2_hdr.eth_hdr.s_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
-	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		ret = hold_arp(gt_arp_and_nd_req_cb,
 			eth_cache, ip_dst, lcore_id);
 	} else {
@@ -480,7 +482,7 @@ drop_cache_entry_randomly(struct neighbor_hash_table *neigh, uint16_t ip_ver)
 	if (eth_cache == NULL)
 		return -1;
 
-	if (ip_ver == ETHER_TYPE_IPv4) {
+	if (ip_ver == RTE_ETHER_TYPE_IPV4) {
 		ret = put_arp(&eth_cache->ip_addr.ip.v4, rte_lcore_id());
 		if (ret < 0)
 			return ret;
@@ -495,7 +497,7 @@ drop_cache_entry_randomly(struct neighbor_hash_table *neigh, uint16_t ip_ver)
 		return ret;
 	}
 
-	if (likely(ip_ver == ETHER_TYPE_IPv6)) {
+	if (likely(ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		ret = put_nd(&eth_cache->ip_addr.ip.v6, rte_lcore_id());
 		if (ret < 0)
 			return ret;
@@ -535,7 +537,7 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 	if (eth_cache != NULL)
 		return eth_cache;
 
-	if (inner_ip_ver == ETHER_TYPE_IPv4) {
+	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		if (!ip4_same_subnet(iface->ip4_addr.s_addr,
 				*(uint32_t *)ip_dst, iface->ip4_mask.s_addr)) {
 			if (inet_ntop(AF_INET, ip_dst,
@@ -551,7 +553,7 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 				__func__, ip);
 			return NULL;
 		}
-	} else if (likely(inner_ip_ver == ETHER_TYPE_IPv6)) {
+	} else if (likely(inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		if (!ip6_same_subnet(&iface->ip6_addr, ip_dst,
 				&iface->ip6_mask)) {
 			if (inet_ntop(AF_INET6, ip_dst,
@@ -598,7 +600,7 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 		"Failed to add a cache entry to the neighbor hash table at %s\n",
 		__func__);
 
-	if (inner_ip_ver == ETHER_TYPE_IPv4)
+	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4)
 		put_arp(ip_dst, rte_lcore_id());
 	else
 		put_nd(ip_dst, rte_lcore_id());
@@ -620,7 +622,7 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	void *ip_dst;
 	int bytes_to_add;
 
-	if (pkt_info->inner_ip_ver == ETHER_TYPE_IPv4) {
+	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		/*
 		 * The Full-functionality Option for setting ECN bits in
 		 * IP-in-IP packets. RFC 3168, section 9.1.1.
@@ -629,7 +631,7 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		 * header's ECN codepoint is not CE, set it and clear the
 		 * checksum so that hardware can recompute it.
 		 */
-		struct ipv4_hdr *inner_ipv4_hdr = pkt_info->inner_l3_hdr;
+		struct rte_ipv4_hdr *inner_ipv4_hdr = pkt_info->inner_l3_hdr;
 		if (((inner_ipv4_hdr->type_of_service & IPTOS_ECN_MASK) !=
 				IPTOS_ECN_CE) &&
 				(pkt_info->outer_ecn == IPTOS_ECN_CE)) {
@@ -641,13 +643,13 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 
 		neigh = &instance->neigh;
 		ip_dst = &inner_ipv4_hdr->dst_addr;
-	} else if (likely(pkt_info->inner_ip_ver == ETHER_TYPE_IPv6)) {
+	} else if (likely(pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		/*
 		 * Since there's no checksum in the IPv6 header, skip the
 		 * extra comparisons and set the ECN bits if needed
 		 * (even if it's redundant).
 		 */
-		struct ipv6_hdr *inner_ipv6_hdr = pkt_info->inner_l3_hdr;
+		struct rte_ipv6_hdr *inner_ipv6_hdr = pkt_info->inner_l3_hdr;
 		if (pkt_info->outer_ecn == IPTOS_ECN_CE)
 			inner_ipv6_hdr->vtc_flow |= IPTOS_ECN_CE << 20;
 
@@ -656,9 +658,9 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	} else
 		return -1;
 
-	bytes_to_add = pkt_info->outer_ethertype == ETHER_TYPE_IPv4
-		? -sizeof(struct ipv4_hdr)
-		: -sizeof(struct ipv6_hdr);
+	bytes_to_add = pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV4
+		? -sizeof(struct rte_ipv4_hdr)
+		: -sizeof(struct rte_ipv6_hdr);
 
 	if (adjust_pkt_len(m, &gt_conf->net->front,
 			bytes_to_add) == NULL) {
@@ -688,12 +690,13 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 }
 
 static void
-fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	struct gt_packet_headers *pkt_info)
 {
-	struct ether_hdr *raw_eth = (struct ether_hdr *)pkt_info->l2_hdr;
-	ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
-	ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
+	struct rte_ether_hdr *raw_eth =
+		(struct rte_ether_hdr *)pkt_info->l2_hdr;
+	rte_ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
+	rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
 	if (iface->vlan_insert) {
 		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be,
 			pkt_info->outer_ethertype);
@@ -714,30 +717,30 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 	struct gt_packet_headers *pkt_info, struct gt_config *gt_conf)
 {
 	uint16_t ethertype = pkt_info->outer_ethertype;
-	struct ether_hdr *notify_eth;
-	struct ipv4_hdr *notify_ipv4 = NULL;
-	struct ipv6_hdr *notify_ipv6 = NULL;
-	struct udp_hdr *notify_udp;
+	struct rte_ether_hdr *notify_eth;
+	struct rte_ipv4_hdr *notify_ipv4 = NULL;
+	struct rte_ipv6_hdr *notify_ipv6 = NULL;
+	struct rte_udp_hdr *notify_udp;
 	struct ggu_common_hdr *notify_ggu;
 	size_t l2_len = gt_conf->net->front.l2_len_out;
 
-	if (ethertype == ETHER_TYPE_IPv4) {
-		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
-			l2_len + sizeof(struct ipv4_hdr) +
-			sizeof(struct udp_hdr) +
+	if (ethertype == RTE_ETHER_TYPE_IPV4) {
+		notify_eth = (struct rte_ether_hdr *)rte_pktmbuf_append(
+			notify_pkt, l2_len + sizeof(struct rte_ipv4_hdr) +
+			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr));
-		notify_ipv4 = (struct ipv4_hdr *)
+		notify_ipv4 = (struct rte_ipv4_hdr *)
 			((uint8_t *)notify_eth + l2_len);
-		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
+		notify_udp = (struct rte_udp_hdr *)&notify_ipv4[1];
 		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
-	} else if (likely(ethertype == ETHER_TYPE_IPv6)) {
-		notify_eth = (struct ether_hdr *)rte_pktmbuf_append(notify_pkt,
-			l2_len + sizeof(struct ipv6_hdr) +
-			sizeof(struct udp_hdr) +
+	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
+		notify_eth = (struct rte_ether_hdr *)rte_pktmbuf_append(
+			notify_pkt, l2_len + sizeof(struct rte_ipv6_hdr) +
+			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr));
-		notify_ipv6 = (struct ipv6_hdr *)
+		notify_ipv6 = (struct rte_ipv6_hdr *)
 			((uint8_t *)notify_eth + l2_len);
-		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
+		notify_udp = (struct rte_udp_hdr *)&notify_ipv6[1];
 		notify_ggu = (struct ggu_common_hdr *)&notify_udp[1];
 	} else
 		rte_panic("Unexpected condition: gt fills up a notify packet with unknown ethernet type %hu\n",
@@ -751,9 +754,9 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 	notify_pkt->l2_len = l2_len;
 
 	/* Fill up the IP header. */
-	if (ethertype == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ipv4_hdr =
-			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+	if (ethertype == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ipv4_hdr =
+			(struct rte_ipv4_hdr *)pkt_info->outer_l3_hdr;
 		/* Fill up the IPv4 header. */
 		notify_ipv4->version_ihl = IP_VHL_DEF;
 		notify_ipv4->packet_id = 0;
@@ -776,10 +779,10 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 
 		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
 			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
-		notify_pkt->l3_len = sizeof(struct ipv4_hdr);
-	} else if (likely(ethertype == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ipv6_hdr =
-			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+		notify_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
+	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ipv6_hdr =
+			(struct rte_ipv6_hdr *)pkt_info->outer_l3_hdr;
 		/* Fill up the outer IPv6 header. */
 		notify_ipv6->vtc_flow =
 			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
@@ -793,14 +796,14 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 			sizeof(notify_ipv6->dst_addr));
 
 		notify_pkt->ol_flags |= (PKT_TX_IPV6 | PKT_TX_UDP_CKSUM);
-		notify_pkt->l3_len = sizeof(struct ipv6_hdr);
+		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
 	}
 
 	/* Fill up the UDP header. */
 	notify_udp->src_port = gt_conf->ggu_src_port;
 	notify_udp->dst_port = gt_conf->ggu_dst_port;
 
-	notify_pkt->l4_len = sizeof(struct udp_hdr);
+	notify_pkt->l4_len = sizeof(struct rte_udp_hdr);
 }
 
 static void
@@ -841,7 +844,7 @@ static void
 print_unsent_policies(struct ggu_notify_pkt *ggu_pkt)
 {
 	unsigned int offset = ggu_pkt->buf->l2_len + ggu_pkt->buf->l3_len +
-		sizeof(struct udp_hdr) + sizeof(struct ggu_common_hdr);
+		sizeof(struct rte_udp_hdr) + sizeof(struct ggu_common_hdr);
 	struct ggu_decision *ggu_decision = rte_pktmbuf_mtod_offset(
 		ggu_pkt->buf, struct ggu_decision *, offset);
 	unsigned int decision_list_len = ggu_pkt->buf->data_len - offset;
@@ -871,15 +874,16 @@ find_notify_pkt(struct gt_config *gt_conf, struct gt_packet_headers *pkt_info,
 		if (pkt_info->outer_ethertype != ggu_pkt->ipaddr.proto)
 			continue;
 
-		if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
-			struct ipv4_hdr *ipv4_hdr =
-				(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+		if (ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV4) {
+			struct rte_ipv4_hdr *ipv4_hdr =
+				(struct rte_ipv4_hdr *)pkt_info->outer_l3_hdr;
 			if (ggu_pkt->ipaddr.ip.v4.s_addr ==
 					ipv4_hdr->src_addr)
 				return ggu_pkt;
-		} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
-			struct ipv6_hdr *ipv6_hdr =
-				(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+		} else if (likely(ggu_pkt->ipaddr.proto ==
+				RTE_ETHER_TYPE_IPV6)) {
+			struct rte_ipv6_hdr *ipv6_hdr =
+				(struct rte_ipv6_hdr *)pkt_info->outer_l3_hdr;
 			if (ipv6_addrs_equal(ipv6_hdr->src_addr,
 					ggu_pkt->ipaddr.ip.v6.s6_addr))
 				return ggu_pkt;
@@ -895,31 +899,31 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt)
 	 * Complete the packet fields that can only be done
 	 * when the packet is ready to be transmitted.
 	 */
-	struct udp_hdr *notify_udp;
+	struct rte_udp_hdr *notify_udp;
 
-	if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *notify_ipv4 =
+	if (ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *notify_ipv4 =
 			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
-				struct ipv4_hdr *,
+				struct rte_ipv4_hdr *,
 				ggu_pkt->buf->l2_len);
 		notify_ipv4->total_length = rte_cpu_to_be_16(
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len);
 
 		/* Offload the UDP checksum. */
-		notify_udp = (struct udp_hdr *)&notify_ipv4[1];
+		notify_udp = (struct rte_udp_hdr *)&notify_ipv4[1];
 		notify_udp->dgram_cksum =
 			rte_ipv4_phdr_cksum(notify_ipv4,
 				ggu_pkt->buf->ol_flags);
-	} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *notify_ipv6 =
+	} else if (likely(ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *notify_ipv6 =
 			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
-				struct ipv6_hdr *, ggu_pkt->buf->l2_len);
+				struct rte_ipv6_hdr *, ggu_pkt->buf->l2_len);
 		notify_ipv6->payload_len = rte_cpu_to_be_16(
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len -
-			sizeof(struct ipv6_hdr));
+			sizeof(struct rte_ipv6_hdr));
 
 		/* Offload the UDP checksum. */
-		notify_udp = (struct udp_hdr *)&notify_ipv6[1];
+		notify_udp = (struct rte_udp_hdr *)&notify_ipv6[1];
 		notify_udp->dgram_cksum =
 			rte_ipv6_phdr_cksum(notify_ipv6,
 				ggu_pkt->buf->ol_flags);
@@ -1030,13 +1034,13 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 	RTE_VERIFY(ggu_pkt != NULL);
 
 	ggu_pkt->ipaddr.proto = pkt_info->outer_ethertype;
-	if (ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv4) {
-		struct ipv4_hdr *ipv4_hdr =
-			(struct ipv4_hdr *)pkt_info->outer_l3_hdr;
+	if (ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ipv4_hdr =
+			(struct rte_ipv4_hdr *)pkt_info->outer_l3_hdr;
 		ggu_pkt->ipaddr.ip.v4.s_addr = ipv4_hdr->src_addr;
-	} else if (likely(ggu_pkt->ipaddr.proto == ETHER_TYPE_IPv6)) {
-		struct ipv6_hdr *ipv6_hdr =
-			(struct ipv6_hdr *)pkt_info->outer_l3_hdr;
+	} else if (likely(ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ipv6_hdr =
+			(struct rte_ipv6_hdr *)pkt_info->outer_l3_hdr;
 		rte_memcpy(ggu_pkt->ipaddr.ip.v6.s6_addr, ipv6_hdr->src_addr,
 			sizeof(ggu_pkt->ipaddr.ip.v6.s6_addr));
 	} else {
@@ -1082,8 +1086,8 @@ fill_notify_pkt(struct ggu_policy *policy,
 	struct ggu_decision *ggu_decision;
 	size_t params_offset;
 
-	if (unlikely(policy->flow.proto != ETHER_TYPE_IPv4
-		&& policy->flow.proto != ETHER_TYPE_IPv6)) {
+	if (unlikely(policy->flow.proto != RTE_ETHER_TYPE_IPV4
+		&& policy->flow.proto != RTE_ETHER_TYPE_IPV6)) {
 		GT_LOG(ERR, "Policy decision with unknown protocol %u\n",
 			policy->flow.proto);
 		return;
@@ -1111,7 +1115,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 
 	/* Fill up the policy decision. */
 
-	if (policy->flow.proto == ETHER_TYPE_IPv4
+	if (policy->flow.proto == RTE_ETHER_TYPE_IPV4
 			&& policy->state == GK_DECLINED) {
 		ggu_decision = (struct ggu_decision *)
 			rte_pktmbuf_append(ggu_pkt->buf,
@@ -1122,7 +1126,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
 		params_offset = sizeof(policy->flow.f.v4);
-	} else if (policy->flow.proto == ETHER_TYPE_IPv6
+	} else if (policy->flow.proto == RTE_ETHER_TYPE_IPV6
 			&& policy->state == GK_DECLINED) {
 		ggu_decision = (struct ggu_decision *)
 			rte_pktmbuf_append(ggu_pkt->buf,
@@ -1133,7 +1137,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
 		params_offset = sizeof(policy->flow.f.v6);
-	} else if (policy->flow.proto == ETHER_TYPE_IPv4
+	} else if (policy->flow.proto == RTE_ETHER_TYPE_IPV4
 			&& policy->state == GK_GRANTED) {
 		ggu_decision = (struct ggu_decision *)
 			rte_pktmbuf_append(ggu_pkt->buf,
@@ -1144,7 +1148,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
 			sizeof(policy->flow.f.v4));
 		params_offset = sizeof(policy->flow.f.v4);
-	} else if (policy->flow.proto == ETHER_TYPE_IPv6
+	} else if (policy->flow.proto == RTE_ETHER_TYPE_IPV6
 			&& policy->state == GK_GRANTED) {
 		ggu_decision = (struct ggu_decision *)
 			rte_pktmbuf_append(ggu_pkt->buf,
@@ -1260,13 +1264,13 @@ gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
 	struct rte_mbuf *pkt, uint16_t outer_ethertype)
 {
 	switch (outer_ethertype) {
-	case ETHER_TYPE_IPv4:
+	case RTE_ETHER_TYPE_IPV4:
 		add_pkt_acl(acl4, pkt);
 		return;
-	case ETHER_TYPE_IPv6:
+	case RTE_ETHER_TYPE_IPV6:
 		add_pkt_acl(acl6, pkt);
 		return;
-	case ETHER_TYPE_ARP:
+	case RTE_ETHER_TYPE_ARP:
 		arp_bufs[(*num_arp)++] = pkt;
 		return;
 	}
@@ -1495,9 +1499,9 @@ gt_proc(void *arg)
 			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
 
 		process_pkts_acl(&gt_conf->net->front, lcore, acl4,
-			ETHER_TYPE_IPv4);
+			RTE_ETHER_TYPE_IPV4);
 		process_pkts_acl(&gt_conf->net->front, lcore, acl6,
-			ETHER_TYPE_IPv6);
+			RTE_ETHER_TYPE_IPV6);
 
 		process_cmds_from_mailbox(instance, gt_conf);
 
@@ -1677,7 +1681,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	if (ipv4_if_configured(&gt_conf->net->front)) {
 		ret = setup_neighbor_tbl(
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
-			lcore_id * RTE_MAX_LCORE + 0, ETHER_TYPE_IPv4,
+			lcore_id * RTE_MAX_LCORE + 0, RTE_ETHER_TYPE_IPV4,
 			(1 << (32 - gt_conf->net->front.ip4_addr_plen)),
 			&instance->neigh, custom_ipv4_hash_func);
 		if (ret < 0)
@@ -1687,7 +1691,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	if (ipv6_if_configured(&gt_conf->net->front)) {
 		ret = setup_neighbor_tbl(
 			rte_lcore_to_socket_id(gt_conf->lcores[0]),
-			lcore_id * RTE_MAX_LCORE + 1, ETHER_TYPE_IPv6,
+			lcore_id * RTE_MAX_LCORE + 1, RTE_ETHER_TYPE_IPV6,
 			gt_conf->max_num_ipv6_neighbors, &instance->neigh6,
 			DEFAULT_HASH_FUNC);
 		if (ret < 0)

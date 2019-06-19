@@ -81,8 +81,8 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 {
 	struct gatekeeper_if *iface = arp->iface;
 	struct rte_mbuf *created_pkt;
-	struct ether_hdr *eth_hdr;
-	struct arp_hdr *arp_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_arp_hdr *arp_hdr;
 	size_t pkt_size;
 	struct rte_kni *kni;
 	struct rte_mempool *mp;
@@ -97,7 +97,7 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 		return;
 	}
 
-	pkt_size = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
+	pkt_size = sizeof(struct rte_ether_hdr) + sizeof(struct rte_arp_hdr);
 	created_pkt->data_len = pkt_size;
 	created_pkt->pkt_len = pkt_size;
 
@@ -106,22 +106,22 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	 * same as that of the Gatekeeper interface, so we use that in
 	 * the Ethernet and ARP headers.
 	 */
-	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
-	ether_addr_copy(&arp->ha, &eth_hdr->s_addr);
-	ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
+	rte_ether_addr_copy(&arp->ha, &eth_hdr->s_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP);
 
 	/* Set-up ARP header. */
-	arp_hdr = (struct arp_hdr *)&eth_hdr[1];
-	arp_hdr->arp_hrd = rte_cpu_to_be_16(ARP_HRD_ETHER);
-	arp_hdr->arp_pro = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
-	arp_hdr->arp_hln = ETHER_ADDR_LEN;
-	arp_hdr->arp_pln = sizeof(struct in_addr);
-	arp_hdr->arp_op = rte_cpu_to_be_16(ARP_OP_REPLY);
-	ether_addr_copy(&arp->ha, &arp_hdr->arp_data.arp_sha);
+	arp_hdr = (struct rte_arp_hdr *)&eth_hdr[1];
+	arp_hdr->arp_hardware = rte_cpu_to_be_16(RTE_ARP_HRD_ETHER);
+	arp_hdr->arp_protocol = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+	arp_hdr->arp_hlen = RTE_ETHER_ADDR_LEN;
+	arp_hdr->arp_plen = sizeof(struct in_addr);
+	arp_hdr->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);
+	rte_ether_addr_copy(&arp->ha, &arp_hdr->arp_data.arp_sha);
 	rte_memcpy(&arp_hdr->arp_data.arp_sip, &arp->ip,
 		sizeof(arp_hdr->arp_data.arp_sip));
-	ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_tha);
+	rte_ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_tha);
 	arp_hdr->arp_data.arp_tip = iface->ip4_addr.s_addr;
 
 	if (iface == &cps_conf->net->front)
@@ -143,8 +143,8 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 {
 	struct gatekeeper_if *iface = nd->iface;
 	struct rte_mbuf *created_pkt;
-	struct ether_hdr *eth_hdr;
-	struct ipv6_hdr *ipv6_hdr;
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
 	struct nd_opt_lladdr *nd_opt;
@@ -171,13 +171,13 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	 * same as that of the Gatekeeper interface, so we use that in
 	 * the Ethernet header.
 	 */
-	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
-	ether_addr_copy(&nd->ha, &eth_hdr->s_addr);
-	ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
-	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
+	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
+	rte_ether_addr_copy(&nd->ha, &eth_hdr->s_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 
 	/* Set-up IPv6 header. */
-	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ipv6_hdr = (struct rte_ipv6_hdr *)&eth_hdr[1];
 	ipv6_hdr->vtc_flow = rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
 	ipv6_hdr->payload_len = rte_cpu_to_be_16(created_pkt->data_len -
 		(sizeof(*eth_hdr) + sizeof(*ipv6_hdr)));
@@ -205,7 +205,7 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	nd_opt = (struct nd_opt_lladdr *)&nd_msg[1];
 	nd_opt->type = ND_OPT_TARGET_LL_ADDR;
 	nd_opt->len = 1;
-	ether_addr_copy(&nd->ha, &nd_opt->ha);
+	rte_ether_addr_copy(&nd->ha, &nd_opt->ha);
 
 	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
@@ -321,14 +321,14 @@ process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 	/* Remove any VLAN headers before passing to the KNI. */
 	num_kni = 0;
 	for (i = 0; i < num_rx; i++) {
-		struct ether_hdr *eth_hdr =
-			rte_pktmbuf_mtod(rx_bufs[i], struct ether_hdr *);
-		struct vlan_hdr *vlan_hdr;
+		struct rte_ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(rx_bufs[i], struct rte_ether_hdr *);
+		struct rte_vlan_hdr *vlan_hdr;
 
 		RTE_VERIFY(num_kni <= i);
 
 		if (unlikely(eth_hdr->ether_type !=
-				rte_cpu_to_be_16(ETHER_TYPE_VLAN))) {
+				rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
 			CPS_LOG(WARNING,
 				"%s iface is configured for VLAN but received a non-VLAN packet\n",
 				iface->name);
@@ -336,14 +336,14 @@ process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 		}
 
 		/* Copy Ethernet header over VLAN header. */
-		vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
+		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
 		eth_hdr->ether_type = vlan_hdr->eth_proto;
-		memmove((uint8_t *)eth_hdr + sizeof(struct vlan_hdr), eth_hdr,
-			sizeof(*eth_hdr));
+		memmove((uint8_t *)eth_hdr + sizeof(struct rte_vlan_hdr),
+			eth_hdr, sizeof(*eth_hdr));
 
 		/* Remove the unneeded bytes from the front of the buffer. */
 		if (unlikely(rte_pktmbuf_adj(rx_bufs[i],
-				sizeof(struct vlan_hdr)) == NULL)) {
+				sizeof(struct rte_vlan_hdr)) == NULL)) {
 			CPS_LOG(ERR, "Can't remove VLAN header\n");
 			rte_pktmbuf_free(rx_bufs[i]);
 			continue;
@@ -362,17 +362,17 @@ kni_tx:
 }
 
 static int
-pkt_is_nd(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+pkt_is_nd(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	uint16_t pkt_len)
 {
-	struct ipv6_hdr *ipv6_hdr;
+	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
 
 	if (pkt_len < (sizeof(*eth_hdr) + sizeof(*ipv6_hdr) +
 			sizeof(*icmpv6_hdr)))
 		return false;
 
-	ipv6_hdr = (struct ipv6_hdr *)&eth_hdr[1];
+	ipv6_hdr = (struct rte_ipv6_hdr *)&eth_hdr[1];
 	if (ipv6_hdr->proto != IPPROTO_ICMPV6)
 		return false;
 
@@ -410,14 +410,14 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 
 	for (i = 0; i < num_rx; i++) {
 		/* Packets sent by the KNI do not have VLAN headers. */
-		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
-			struct ether_hdr *);
+		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
+			struct rte_ether_hdr *);
 		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
-		case ETHER_TYPE_ARP:
+		case RTE_ETHER_TYPE_ARP:
 			/* Intercept ARP packet and handle it. */
 			kni_process_arp(cps_conf, iface, bufs[i], eth_hdr);
 			break;
-		case ETHER_TYPE_IPv6: {
+		case RTE_ETHER_TYPE_IPV6: {
 			uint16_t pkt_len = rte_pktmbuf_data_len(bufs[i]);
 			if (pkt_is_nd(iface, eth_hdr, pkt_len)) {
 				/* Intercept ND packet and handle it. */
@@ -432,15 +432,15 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			 * Forward all other packets to the interface,
 			 * adding a VLAN header if necessary.
 			 */
-			struct ether_hdr *new_eth_hdr;
+			struct rte_ether_hdr *new_eth_hdr;
 
 			if (!iface->vlan_insert)
 				goto to_eth;
 
 			/* Need to make room for a VLAN header. */
-			new_eth_hdr = (struct ether_hdr *)
+			new_eth_hdr = (struct rte_ether_hdr *)
 				rte_pktmbuf_prepend(bufs[i],
-					sizeof(struct vlan_hdr));
+					sizeof(struct rte_vlan_hdr));
 			if (unlikely(new_eth_hdr == NULL)) {
 				CPS_LOG(ERR, "Can't add a VLAN header\n");
 				rte_pktmbuf_free(bufs[i]);
@@ -894,15 +894,16 @@ fill_bgp6_rule(struct ipv6_acl_rule *rule, struct gatekeeper_if *iface,
 static int
 match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
-	const uint16_t BE_ETHER_TYPE_IPv4 = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv4_hdr *ip4hdr;
-	struct tcp_hdr *tcp_hdr;
+	const uint16_t BE_ETHER_TYPE_IPv4 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv4_hdr *ip4hdr;
+	struct rte_tcp_hdr *tcp_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 	uint16_t minimum_size = l2_len +
-		sizeof(struct ipv4_hdr) + sizeof(struct tcp_hdr);
+		sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
 	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
 
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv4))
@@ -922,7 +923,7 @@ match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (pkt->data_len < minimum_size)
 		return -ENOENT;
 
-	tcp_hdr = (struct tcp_hdr *)ipv4_skip_exthdr(ip4hdr);
+	tcp_hdr = (struct rte_tcp_hdr *)ipv4_skip_exthdr(ip4hdr);
 	if (tcp_hdr->src_port != cps_bgp_port &&
 			tcp_hdr->dst_port != cps_bgp_port)
 		return -ENOENT;
@@ -945,15 +946,16 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	 */
 	int tcp_offset;
 	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv6_hdr *ip6hdr;
-	struct tcp_hdr *tcp_hdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *ip6hdr;
+	struct rte_tcp_hdr *tcp_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 	uint16_t minimum_size = l2_len +
-		sizeof(struct ipv6_hdr) + sizeof(struct tcp_hdr);
+		sizeof(struct rte_ipv6_hdr) + sizeof(struct rte_tcp_hdr);
 	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
 
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
@@ -974,7 +976,7 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (pkt->data_len < minimum_size)
 		return -ENOENT;
 
-	tcp_hdr = (struct tcp_hdr *)((uint8_t *)ip6hdr + tcp_offset);
+	tcp_hdr = (struct rte_tcp_hdr *)((uint8_t *)ip6hdr + tcp_offset);
 	if (tcp_hdr->src_port != cps_bgp_port &&
 			tcp_hdr->dst_port != cps_bgp_port)
 		return -ENOENT;

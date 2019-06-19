@@ -62,8 +62,8 @@ static inline size_t
 pkt_in_l2_hdr_len(struct rte_mbuf *pkt)
 {
 	return pkt->l2_type != RTE_PTYPE_L2_ETHER_VLAN
-		? sizeof(struct ether_hdr)
-		: sizeof(struct ether_hdr) + sizeof(struct vlan_hdr);
+		? sizeof(struct rte_ether_hdr)
+		: sizeof(struct rte_ether_hdr) + sizeof(struct rte_vlan_hdr);
 }
 
 /*
@@ -71,7 +71,7 @@ pkt_in_l2_hdr_len(struct rte_mbuf *pkt)
  * headers if present. A pointer to the next header is returned.
  */
 static inline void *
-pkt_out_skip_l2(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr)
+pkt_out_skip_l2(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr)
 {
 	return ((uint8_t *)eth_hdr) + iface->l2_len_out;
 }
@@ -82,16 +82,19 @@ pkt_out_skip_l2(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr)
  * (in network order).
  */
 static inline uint16_t
-pkt_in_skip_l2(struct rte_mbuf *pkt, struct ether_hdr *eth_hdr, void **next_hdr)
+pkt_in_skip_l2(struct rte_mbuf *pkt,
+	struct rte_ether_hdr *eth_hdr, void **next_hdr)
 {
 	RTE_VERIFY(next_hdr != NULL);
 
-	if (likely(eth_hdr->ether_type != rte_cpu_to_be_16(ETHER_TYPE_VLAN))) {
+	if (likely(eth_hdr->ether_type !=
+			rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
 		*next_hdr = &eth_hdr[1];
 		pkt->l2_type = RTE_PTYPE_UNKNOWN;
 		return eth_hdr->ether_type;
 	} else {
-		struct vlan_hdr *vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
+		struct rte_vlan_hdr *vlan_hdr =
+			(struct rte_vlan_hdr *)&eth_hdr[1];
 		*next_hdr = &vlan_hdr[1];
 		pkt->l2_type = RTE_PTYPE_L2_ETHER_VLAN;
 		return vlan_hdr->eth_proto;
@@ -104,19 +107,19 @@ pkt_in_skip_l2(struct rte_mbuf *pkt, struct ether_hdr *eth_hdr, void **next_hdr)
  * using the given VLAN tag.
  */
 static inline void
-fill_vlan_hdr(struct ether_hdr *eth_hdr, uint16_t vlan_tag_be,
+fill_vlan_hdr(struct rte_ether_hdr *eth_hdr, uint16_t vlan_tag_be,
 	uint16_t eth_proto)
 {
-	struct vlan_hdr *vlan_hdr = (struct vlan_hdr *)&eth_hdr[1];
-	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_VLAN);
+	struct rte_vlan_hdr *vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
+	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
 	vlan_hdr->vlan_tci = vlan_tag_be;
 	vlan_hdr->eth_proto = rte_cpu_to_be_16(eth_proto);
 }
 
-struct ether_hdr *adjust_pkt_len(struct rte_mbuf *pkt,
+struct rte_ether_hdr *adjust_pkt_len(struct rte_mbuf *pkt,
 	struct gatekeeper_if *iface, int bytes_to_add);
 
-int verify_l2_hdr(struct gatekeeper_if *iface, struct ether_hdr *eth_hdr,
+int verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	uint32_t l2_type, const char *proto_name);
 
 #endif /* _GATEKEEPER_L2_H_ */

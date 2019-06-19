@@ -78,10 +78,10 @@ process_pkts_acl(struct gatekeeper_if *iface, unsigned int lcore,
 		return 0;
 
 	switch (proto) {
-	case ETHER_TYPE_IPv4:
+	case RTE_ETHER_TYPE_IPV4:
 		return process_acl(iface, lcore, acl, &iface->ipv4_acls,
 			ipv4_acl_enabled(iface), "IPv4");
-	case ETHER_TYPE_IPv6:
+	case RTE_ETHER_TYPE_IPV6:
 		return process_acl(iface, lcore, acl, &iface->ipv6_acls,
 			ipv6_acl_enabled(iface), "IPv6");
 	default:

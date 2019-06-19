@@ -105,7 +105,7 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 		struct lls_hold_req hold_req = {
 			.cache = &lls_conf.arp_cache,
 			.addr = {
-				.proto = ETHER_TYPE_IPv4,
+				.proto = RTE_ETHER_TYPE_IPV4,
 				.ip.v4 = *ipv4,
 			},
 			.hold = {
@@ -129,7 +129,7 @@ put_arp(struct in_addr *ipv4, unsigned int lcore_id)
 		struct lls_put_req put_req = {
 			.cache = &lls_conf.arp_cache,
 			.addr = {
-				.proto = ETHER_TYPE_IPv4,
+				.proto = RTE_ETHER_TYPE_IPV4,
 				.ip.v4 = *ipv4,
 			},
 			.lcore_id = lcore_id,
@@ -149,7 +149,7 @@ hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ipv6, unsigned int lcore_id)
 		struct lls_hold_req hold_req = {
 			.cache = &lls_conf.nd_cache,
 			.addr = {
-				.proto = ETHER_TYPE_IPv6,
+				.proto = RTE_ETHER_TYPE_IPV6,
 				.ip.v6 = *ipv6,
 			},
 			.hold = {
@@ -173,7 +173,7 @@ put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 		struct lls_put_req put_req = {
 			.cache = &lls_conf.nd_cache,
 			.addr = {
-				.proto = ETHER_TYPE_IPv6,
+				.proto = RTE_ETHER_TYPE_IPV6,
 				.ip.v6 = *ipv6,
 			},
 			.lcore_id = lcore_id,
@@ -253,10 +253,11 @@ match_nd_neigh(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	 */
 	int nd_offset;
 	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv6_hdr *ip6hdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *ip6hdr;
 	struct icmpv6_hdr *nd_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
@@ -320,10 +321,11 @@ match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	 */
 	int nd_offset;
 	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv6_hdr *ip6hdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *ip6hdr;
 	struct icmpv6_hdr *nd_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
@@ -400,11 +402,12 @@ submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
 static int
 match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
-	const uint16_t BE_ETHER_TYPE_IPv4 = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv4_hdr *ip4hdr;
-	struct icmp_hdr *icmphdr;
+	const uint16_t BE_ETHER_TYPE_IPv4 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv4_hdr *ip4hdr;
+	struct rte_icmp_hdr *icmphdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
@@ -424,7 +427,7 @@ match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr)))
 		return -ENOENT;
 
-	icmphdr = (struct icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
+	icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
 	if (icmphdr->icmp_type != ICMP_ECHO_REQUEST_TYPE ||
 			icmphdr->icmp_code != ICMP_ECHO_REQUEST_CODE)
 		return -ENOENT;
@@ -474,10 +477,11 @@ match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	 */
 	int icmpv6_offset;
 	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 = rte_cpu_to_be_16(ETHER_TYPE_IPv6);
-	struct ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-	struct ipv6_hdr *ip6hdr;
+	const uint16_t BE_ETHER_TYPE_IPv6 =
+		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	struct rte_ipv6_hdr *ip6hdr;
 	struct icmpv6_hdr *icmp6_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
@@ -565,7 +569,7 @@ fillup_lls_dump_entry(struct lls_dump_entry *dentry, struct lls_map *map)
 	dentry->stale = map->stale;
 	dentry->port_id = map->port_id;
 	dentry->addr = map->addr;
-	ether_addr_copy(&map->ha, &dentry->ha);
+	rte_ether_addr_copy(&map->ha, &dentry->ha);
 }
 
 #define CTYPE_STRUCT_LLS_DUMP_ENTRY_PTR "struct lls_dump_entry *"
@@ -678,8 +682,8 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	uint16_t i;
 
 	for (i = 0; i < num_rx; i++) {
-		struct ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
-			struct ether_hdr *);
+		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
+			struct rte_ether_hdr *);
 		void *next_hdr;
 		uint16_t ether_type;
 
@@ -696,12 +700,12 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 * accepts the assigned MAC address, broadcast address,
 		 * and any MAC added (for example, for IPv6 Ethernet multicast).
 		 */
-		if (unlikely(!is_broadcast_ether_addr(&eth_hdr->d_addr) &&
-			!is_same_ether_addr(&eth_hdr->d_addr,
+		if (unlikely(!rte_is_broadcast_ether_addr(&eth_hdr->d_addr) &&
+			!rte_is_same_ether_addr(&eth_hdr->d_addr,
 				&iface->eth_mc_addr) &&
-			!is_same_ether_addr(&eth_hdr->d_addr,
+			!rte_is_same_ether_addr(&eth_hdr->d_addr,
 				&iface->ll_eth_mc_addr) &&
-			!is_same_ether_addr(&eth_hdr->d_addr,
+			!rte_is_same_ether_addr(&eth_hdr->d_addr,
 				&iface->eth_addr)))
 			goto free_buf;
 
@@ -709,7 +713,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			&next_hdr));
 
 		switch (ether_type) {
-		case ETHER_TYPE_ARP:
+		case RTE_ETHER_TYPE_ARP:
 			if (process_arp(lls_conf, iface, tx_queue,
 					bufs[i], eth_hdr, next_hdr) == -1)
 				goto free_buf;
@@ -1124,7 +1128,7 @@ lls_stage2(void *arg)
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
 		if (hw_filter_eth_available(&net_conf->front)) {
 			ret = ethertype_filter_add(&net_conf->front,
-				ETHER_TYPE_ARP, lls_conf->rx_queue_front);
+				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
 			if (ret < 0)
 				return ret;
 		} else if (lls_conf->rx_queue_front != 0) {
@@ -1153,7 +1157,7 @@ lls_stage2(void *arg)
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
 		if (hw_filter_eth_available(&net_conf->back)) {
 			ret = ethertype_filter_add(&net_conf->back,
-				ETHER_TYPE_ARP, lls_conf->rx_queue_back);
+				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
 			if (ret < 0)
 				return ret;
 		} else if (lls_conf->rx_queue_back != 0) {
