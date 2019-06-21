@@ -20,6 +20,7 @@
 #define _GATEKEEPER_GK_H_
 
 #include <rte_atomic.h>
+#include <rte_bpf.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_net.h"
@@ -104,6 +105,19 @@ struct gk_instance {
 	struct token_bucket_ratelimit_state front_icmp_rs;
 	struct token_bucket_ratelimit_state back_icmp_rs;
 } __rte_cache_aligned;
+
+#define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)
+
+typedef uint64_t (*rte_bpf_jitted_func_t)(void *);
+
+struct gk_bpf_flow_handler {
+	/* Required program to initialize cookies. */
+	struct rte_bpf *f_init;
+	rte_bpf_jitted_func_t f_init_jit;
+	/* Required program to decide the fate of a packet. */
+	struct rte_bpf *f_pkt;
+	rte_bpf_jitted_func_t f_pkt_jit;
+};
 
 /* Configuration for the GK functional block. */
 struct gk_config {
@@ -208,6 +222,9 @@ struct gk_config {
 
 	/* The RSS configuration for the back interface. */
 	struct gatekeeper_rss_config rss_conf_back;
+
+	/* BPF programs available for policies to associate to flow entries. */
+	struct gk_bpf_flow_handler flow_handlers[GK_MAX_BPF_FLOW_HANDLERS];
 };
 
 /* Define the possible command operations for GK block. */

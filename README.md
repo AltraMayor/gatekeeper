@@ -81,14 +81,21 @@ automatically on reboots.
 Install the following software dependencies:
 
     $ sudo apt-get update
-    $ sudo apt-get -y -q install git clang devscripts doxygen hugepages build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev autoconf flex bison libncurses5-dev libreadline-dev
+    $ sudo apt-get -y -q install git clang devscripts doxygen hugepages \
+	build-essential linux-headers-`uname -r` libmnl0 libmnl-dev \
+	libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
+	autoconf flex bison libncurses5-dev libreadline-dev
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
 `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
 Both `libkmod2` and `libkmod-dev` are needed to compile and run `gatekeeper`,
 but only `libkmod2` is needed for simply running `gatekeeper`.
-`libnuma-dev` is needed to compile the latest DPDK and/or support the NUMA
-system. The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
+`libnuma-dev` is needed to compile the latest DPDK and to support NUMA systems.
+The package `libelf-dev` is needed to compile DPDK with support to reading
+BPF programs from ELF files, but only `libelf1` is needed to run it.
+The package `libc6-dev-i386` is needed to compile the BPF programs in
+the folder `bpf/`.
+The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD. The `devscripts` package is used to
 build Gatekeeper Debian packages.
 

@@ -344,6 +344,8 @@ int gatekeeper_init_network(struct net_config *net_conf);
 struct gk_config *alloc_gk_conf(void);
 void set_gk_request_timeout(unsigned int request_timeout_sec,
 	struct gk_config *gk_conf);
+int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
+	const char *filename, int jit);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);
 
