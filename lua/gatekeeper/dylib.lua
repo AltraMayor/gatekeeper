@@ -76,6 +76,8 @@ int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
 int gk_flush_flow_table(const char *src_prefix,
 	const char *dst_prefix, struct gk_config *gk_conf);
+int gk_log_flow_state(const char *src_addr,
+	const char *dst_addr, struct gk_config *gk_conf);
 
 int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	const char *filename, int jit);
