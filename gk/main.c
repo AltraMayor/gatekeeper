@@ -2214,14 +2214,20 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	 * Calculate the RSS hash value for the
 	 * pair <Src, Dst> in the decision.
 	 */
-	uint32_t rss_hash_val = rss_ip_flow_hf(flow, 0, 0);
+	uint32_t rss_hash_val;
 	uint32_t idx;
 	uint32_t shift;
 	uint16_t queue_id;
 	int block_idx;
 
+	if (unlikely(!gk_conf->net->front.rss)) {
+		block_idx = 0;
+		goto done;
+	}
+
 	RTE_VERIFY(gk_conf->rss_conf_front.reta_size > 0);
-	rss_hash_val = rss_hash_val % gk_conf->rss_conf_front.reta_size;
+	rss_hash_val = rss_ip_flow_hf(flow, 0, 0) %
+		gk_conf->rss_conf_front.reta_size;
 
 	/*
 	 * Identify which GK block is responsible for the
@@ -2234,7 +2240,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 
 	if (block_idx == -1)
 		GK_LOG(ERR, "Wrong RSS configuration for GK blocks\n");
-
+done:
 	return &gk_conf->instances[block_idx].mb;
 }
 
