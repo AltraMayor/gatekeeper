@@ -638,20 +638,23 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	int icmpv6_offset;
 	uint8_t nexthdr;
 
-	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(buf,
-		struct rte_ether_hdr *);
+	struct rte_ether_hdr *eth_hdr;
 	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
 
 	uint16_t tx_queue = iface == &lls_conf->net->front
 		? lls_conf->tx_queue_front
 		: lls_conf->tx_queue_back;
-	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
+	uint16_t pkt_len;
 	size_t l2_len;
 	uint16_t icmpv6_len;
 
+	if (unlikely(!ipv6_if_configured(iface)))
+		return -1;
+
 	/* pkt_in_skip_l2() was already called by GK or GT. */
 	l2_len = pkt_in_l2_hdr_len(buf);
+	pkt_len = rte_pktmbuf_data_len(buf);
 	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(l2_len)) {
 		LLS_LOG(NOTICE, "ND packet received is %"PRIx16" bytes but should be at least %lu bytes in %s\n",
 			pkt_len, ND_NEIGH_PKT_MIN_LEN(l2_len), __func__);
@@ -679,6 +682,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	if (unlikely(!nd_pkt_valid(ipv6_hdr, icmpv6_hdr, icmpv6_len)))
 		return -1;
 
+	eth_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
 	switch (icmpv6_hdr->type) {
 	case ND_NEIGHBOR_SOLICITATION:
 		return process_nd_neigh_solicitation(lls_conf, buf, eth_hdr,
