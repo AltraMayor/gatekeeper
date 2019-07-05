@@ -107,11 +107,16 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		.ip.v4.s_addr = arp_hdr->arp_data.arp_sip,
 	};
 	struct lls_mod_req mod_req;
-	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
-	/* pkt_in_skip_l2() already called by LLS. */
-	size_t l2_len = pkt_in_l2_hdr_len(buf);
+	uint16_t pkt_len;
+	size_t l2_len;
 	int ret;
 
+	if (unlikely(!ipv4_if_configured(iface)))
+		return -1;
+
+	/* pkt_in_skip_l2() already called by LLS. */
+	l2_len = pkt_in_l2_hdr_len(buf);
+	pkt_len = rte_pktmbuf_data_len(buf);
 	if (pkt_len < l2_len + sizeof(*arp_hdr)) {
 		LLS_LOG(ERR, "%s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
 			iface->name, pkt_len,
