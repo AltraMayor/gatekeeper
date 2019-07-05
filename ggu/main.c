@@ -82,13 +82,30 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 		entry->u.ggu.params.declined = policy->params.declined;
 		break;
 
+	case GK_BPF:
+		if (gk_init_bpf_cookie(ggu_conf->gk,
+				policy->params.bpf.program_index,
+				&policy->params.bpf.cookie) < 0)
+			goto error;
+		/*
+		 * After calling gk_init_bpf_cookie(),
+		 * the whole cookie may be used.
+		 */
+		policy->params.bpf.cookie_len =
+			sizeof(policy->params.bpf.cookie);
+		entry->u.ggu.params.bpf = policy->params.bpf;
+		break;
+
 	default:
 		GGU_LOG(ERR, "Impossible policy state %hhu\n", policy->state);
-		mb_free_entry(mb, entry);
-		return;
+		goto error;
 	}
 
 	mb_send_entry(mb, entry);
+	return;
+
+error:
+	mb_free_entry(mb, entry);
 }
 
 void
@@ -173,6 +190,36 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				sizeof(policy.flow.f.v6));
 			params_offset = sizeof(policy.flow.f.v6);
 			break;
+		case GGU_DEC_IPV4_BPF:
+			decision_len += sizeof(policy.flow.f.v4) +
+				sizeof(struct ggu_bpf_wire);
+			if (decision_list_len < decision_len) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed IPv4 BPF decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_BPF;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV4;
+			rte_memcpy(&policy.flow.f.v4, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v4));
+			params_offset = sizeof(policy.flow.f.v4);
+			break;
+		case GGU_DEC_IPV6_BPF:
+			decision_len += sizeof(policy.flow.f.v6) +
+				sizeof(struct ggu_bpf_wire);
+			if (decision_list_len < decision_len) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed IPv6 BPF decision\n",
+					block, __func__);
+				return;
+			}
+			policy.state = GK_BPF;
+			policy.flow.proto = RTE_ETHER_TYPE_IPV6;
+			rte_memcpy(&policy.flow.f.v6, ggu_decision->ip_flow,
+				sizeof(policy.flow.f.v6));
+			params_offset = sizeof(policy.flow.f.v6);
+			break;
 		default:
 			GGU_LOG(WARNING,
 				"%s: %s: unexpected decision type: %hu\n",
@@ -185,8 +232,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		case GGU_DEC_IPV4_GRANTED:
 			/* FALLTHROUGH */
 		case GGU_DEC_IPV6_GRANTED: {
-			struct ggu_granted *granted_be =
-				(struct ggu_granted *)
+			struct ggu_granted *granted_be = (struct ggu_granted *)
 				(ggu_decision->ip_flow + params_offset);
 			policy.params.granted.tx_rate_kb_sec =
 				rte_be_to_cpu_32(granted_be->tx_rate_kb_sec);
@@ -198,6 +244,7 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				rte_be_to_cpu_32(granted_be->renewal_step_ms);
 			break;
 		}
+
 		case GGU_DEC_IPV4_DECLINED:
 			/* FALLTHROUGH */
 		case GGU_DEC_IPV6_DECLINED: {
@@ -208,6 +255,52 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				rte_be_to_cpu_32(declined_be->expire_sec);
 			break;
 		}
+
+		case GGU_DEC_IPV4_BPF:
+			/* FALLTHROUGH */
+		case GGU_DEC_IPV6_BPF: {
+			struct ggu_bpf_wire *bpf_wire_be =
+				(struct ggu_bpf_wire *)
+				(ggu_decision->ip_flow + params_offset);
+			unsigned int cookie_len;
+			if (bpf_wire_be->reserved != 0) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed BPF decision, reserved=%u\n",
+					block, __func__, bpf_wire_be->reserved);
+				return;
+			}
+			cookie_len = 4 * bpf_wire_be->cookie_len_4by;
+			if (cookie_len > sizeof(struct gk_bpf_cookie)) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed BPF decision, cookie_len=%u\n",
+					block, __func__, cookie_len);
+				return;
+			}
+			decision_len += cookie_len;
+			if (decision_list_len < decision_len) {
+				GGU_LOG(WARNING,
+					"%s: %s: malformed BPF decision (too short)\n",
+					block, __func__);
+				return;
+			}
+			policy.params.bpf.expire_sec =
+				rte_be_to_cpu_32(bpf_wire_be->expire_sec);
+			policy.params.bpf.program_index =
+				bpf_wire_be->program_index;
+			policy.params.bpf.reserved = 0;
+			policy.params.bpf.cookie_len = cookie_len;
+			/*
+			 * Byte order is responsibility of the init function
+			 * of the GK BPF program.
+			 */
+			rte_memcpy(&policy.params.bpf.cookie,
+				bpf_wire_be->cookie, cookie_len);
+			memset(((uint8_t *)&policy.params.bpf.cookie) +
+				cookie_len, 0,
+				sizeof(policy.params.bpf.cookie) - cookie_len);
+			break;
+		}
+
 		default:
 			rte_panic("ggu: found an unknown decision type after previously verifying it: %hhu\n",
 				decision_type);

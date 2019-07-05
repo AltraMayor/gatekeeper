@@ -6,6 +6,11 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	-- These parameters should likely be initially changed.
 	local log_level = staticlib.c.RTE_LOG_DEBUG
+	local bpf_base_directory = "./lua/bpf"
+	local bpf_programs = {
+		[0] = "granted.bpf",
+		[1] = "declined.bpf",
+	}
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local mailbox_max_entries_exp = 7
@@ -36,7 +41,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local back_icmp_msgs_burst = 50
 
 	-- These variables are unlikely to need to be changed.
-	-- None
+	local bpf_enable_jit = true
 
 	--
 	-- End configuration of GK block.
@@ -99,6 +104,16 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	lls_conf.mailbox_max_pkt_sub =
 		math.max(lls_conf.mailbox_max_pkt_sub,
 		gk_conf.front_max_pkt_burst, gk_conf.back_max_pkt_burst)
+
+	-- Load BPF programs.
+	for program_index, program_name in pairs(bpf_programs) do
+		local filename = bpf_base_directory .. "/" .. program_name
+		local ret = staticlib.c.gk_load_bpf_flow_handler(gk_conf,
+			program_index, filename, bpf_enable_jit)
+		if ret < 0 then
+			error("Failed to load BPF program: " .. filename)
+		end
+	end
 
 	local ret = staticlib.c.run_gk(net_conf, gk_conf, sol_conf)
 	if ret < 0 then

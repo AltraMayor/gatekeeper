@@ -9,11 +9,7 @@ local ffi = require("ffi")
 -- Structs
 ffi.cdef[[
 
-enum gk_flow_state {
-	GK_REQUEST,
-	GK_GRANTED,
-	GK_DECLINED
-};
+enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
 
 enum protocols {
 	ICMP = 1,
@@ -137,13 +133,32 @@ struct ggu_declined {
 	uint32_t expire_sec;
 } __attribute__ ((packed));
 
+struct gk_bpf_cookie {
+	uint64_t mem[8];
+};
+
+struct ggu_bpf {
+	uint32_t expire_sec;
+	uint8_t  program_index;
+	uint8_t  reserved;
+	uint16_t cookie_len;
+	struct gk_bpf_cookie cookie;
+} __attribute__ ((packed));
+
 struct ggu_policy {
 	uint8_t state;
 	struct ip_flow flow;
 	union {
 		struct ggu_granted granted;
 		struct ggu_declined declined;
+		struct ggu_bpf bpf;
 	} params;
+};
+
+struct granted_params {
+	uint32_t tx_rate_kb_sec;
+	uint32_t next_renewal_ms;
+	uint32_t renewal_step_ms;
 };
 
 struct in_addr {
@@ -165,3 +180,45 @@ struct rte_lpm6 {
 ]]
 
 c = ffi.C
+
+function decision_granted_nobpf(policy, tx_rate_kb_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms)
+	policy.state = c.GK_GRANTED
+	policy.params.granted.tx_rate_kb_sec = tx_rate_kb_sec
+	policy.params.granted.cap_expire_sec = cap_expire_sec
+	policy.params.granted.next_renewal_ms = next_renewal_ms
+	policy.params.granted.renewal_step_ms = renewal_step_ms
+	return true
+end
+
+function decision_declined_nobpf(policy, expire_sec)
+	policy.state = c.GK_DECLINED
+	policy.params.declined.expire_sec = expire_sec
+	return false
+end
+
+function decision_granted(policy, tx_rate_kb_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms)
+	policy.state = c.GK_BPF
+	policy.params.bpf.expire_sec = cap_expire_sec
+	policy.params.bpf.program_index = 0
+	policy.params.bpf.reserved = 0
+	policy.params.bpf.cookie_len = ffi.sizeof("struct granted_params")
+
+	local params = ffi.cast("struct granted_params *",
+		policy.params.bpf.cookie)
+	params.tx_rate_kb_sec = tx_rate_kb_sec
+	params.next_renewal_ms = next_renewal_ms
+	params.renewal_step_ms = renewal_step_ms
+
+	return true
+end
+
+function decision_declined(policy, expire_sec)
+	policy.state = c.GK_BPF
+	policy.params.bpf.expire_sec = expire_sec
+	policy.params.bpf.program_index = 1
+	policy.params.bpf.reserved = 0
+	policy.params.bpf.cookie_len = 0
+	return false
+end

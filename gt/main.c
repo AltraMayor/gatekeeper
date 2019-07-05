@@ -244,6 +244,7 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 		instance->lua_state, CTYPE_STRUCT_GT_PACKET_HEADERS_PTR);
 	uint32_t correct_ctypeid_ggu_policy = luaL_get_ctypeid(
 		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
+	int ret;
 
 	policy->flow.proto = pkt_info->inner_ip_ver;
 	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
@@ -274,14 +275,16 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 		correct_ctypeid_ggu_policy, sizeof(struct ggu_policy *));
 	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
-	if (lua_pcall(instance->lua_state, 2, 0, 0) != 0) {
+	if (lua_pcall(instance->lua_state, 2, 1, 0) != 0) {
 		GT_LOG(ERR,
 			"Error running function `lookup_policy': %s, at lcore %u\n",
 			lua_tostring(instance->lua_state, -1), rte_lcore_id());
 		return -1;
 	}
 
-	return 0;
+	ret = lua_toboolean(instance->lua_state, -1);
+	lua_settop(instance->lua_state, 0);
+	return ret;
 }
 
 static int
@@ -813,26 +816,43 @@ print_unsent_policy(struct ggu_policy *policy,
 	int ret;
 	char err_msg[1024];
 
-	if (policy->state == GK_REQUEST) {
+	switch (policy->state) {
+	case GK_REQUEST:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu]",
-			policy->state);
-	} else if (policy->state == GK_GRANTED) {
+			"gt: GK_REQUEST is not a policy decision; there is a bug in the Lua policy\n");
+		break;
+	case GK_GRANTED:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_GRANTED (%hhu), tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
 			policy->state, policy->params.granted.tx_rate_kb_sec,
 			policy->params.granted.cap_expire_sec,
 			policy->params.granted.next_renewal_ms,
 			policy->params.granted.renewal_step_ms);
-	} else if (policy->state == GK_DECLINED) {
+		break;
+	case GK_DECLINED:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: %hhu, expire_sec: %u]",
-			policy->state,
-			policy->params.declined.expire_sec);
-	} else {
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_DECLINED (%hhu), expire_sec: %u]",
+			policy->state, policy->params.declined.expire_sec);
+		break;
+	case GK_BPF: {
+		uint64_t *c = policy->params.bpf.cookie.mem;
+
+		RTE_BUILD_BUG_ON(RTE_DIM(policy->params.bpf.cookie.mem) != 8);
+
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_BPF (%hhu), expire_sec: %u, program_index=%u, cookie="
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "]",
+			policy->state, policy->params.bpf.expire_sec,
+			policy->params.bpf.program_index,
+			c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
+		break;
+	}
+	default:
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: unknown policy decision with state %hhu at %s, there is a bug in the Lua policy\n",
 			policy->state, __func__);
+		break;
 	}
 
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
@@ -1064,6 +1084,29 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 }
 
 /*
+ * Return how many 4 bytes are used in @cookie.
+ * All bytes after that are zeros.
+ */
+static unsigned int
+find_cookie_len_4by(struct gk_bpf_cookie *cookie, unsigned int cookie_len)
+{
+	uint32_t *p = (uint32_t *)cookie;
+	unsigned int n;
+	int i;
+
+	RTE_VERIFY(cookie_len <= sizeof(*cookie));
+
+	n = cookie_len / 4;
+	if (unlikely(cookie_len % 4 != 0))
+	       n++;
+
+	for (i = n - 1; i >= 0; i--)
+		if (p[i] != 0)
+			return i + 1;
+	return 0;
+}
+
+/*
  * To estimate the maximum size of an on-the-wire policy decision,
  * sum the size of the decision prefix (type and length fields) with
  * the size of the in-memory GGU policy struct. This is a slight
@@ -1085,6 +1128,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 	struct ggu_notify_pkt *ggu_pkt;
 	struct ggu_decision *ggu_decision;
 	size_t params_offset;
+	int cookie_len_4by = 0;
 
 	if (unlikely(policy->flow.proto != RTE_ETHER_TYPE_IPV4
 		&& policy->flow.proto != RTE_ETHER_TYPE_IPV6)) {
@@ -1096,6 +1140,15 @@ fill_notify_pkt(struct ggu_policy *policy,
 	switch (policy->state) {
 	case GK_GRANTED:
 	case GK_DECLINED:
+		break;
+	case GK_BPF:
+		if (unlikely(policy->params.bpf.cookie_len >
+				sizeof(policy->params.bpf.cookie))) {
+			GT_LOG(ERR, "Policy BPF decision with cookie length too long: %u\n",
+				policy->params.bpf.cookie_len);
+			print_unsent_policy(policy, NULL);
+			return;
+		}
 		break;
 	default:
 		/* The state GK_REQUEST is unexpected here. */
@@ -1159,6 +1212,34 @@ fill_notify_pkt(struct ggu_policy *policy,
 		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
 			sizeof(policy->flow.f.v6));
 		params_offset = sizeof(policy->flow.f.v6);
+	} else if (policy->flow.proto == RTE_ETHER_TYPE_IPV4
+			&& policy->state == GK_BPF) {
+		cookie_len_4by = find_cookie_len_4by(&policy->params.bpf.cookie,
+			policy->params.bpf.cookie_len);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v4) +
+				sizeof(struct ggu_bpf_wire) +
+				cookie_len_4by * 4);
+		ggu_decision->type = GGU_DEC_IPV4_BPF;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v4,
+			sizeof(policy->flow.f.v4));
+		params_offset = sizeof(policy->flow.f.v4);
+	} else if (likely(policy->flow.proto == RTE_ETHER_TYPE_IPV6
+			&& policy->state == GK_BPF)) {
+		cookie_len_4by = find_cookie_len_4by(&policy->params.bpf.cookie,
+			policy->params.bpf.cookie_len);
+		ggu_decision = (struct ggu_decision *)
+			rte_pktmbuf_append(ggu_pkt->buf,
+				sizeof(*ggu_decision) +
+				sizeof(policy->flow.f.v6) +
+				sizeof(struct ggu_bpf_wire) +
+				cookie_len_4by * 4);
+		ggu_decision->type = GGU_DEC_IPV6_BPF;
+		rte_memcpy(ggu_decision->ip_flow, &policy->flow.f.v6,
+			sizeof(policy->flow.f.v6));
+		params_offset = sizeof(policy->flow.f.v6);
 	} else
 		rte_panic("Unexpected condition: gt fills up a notify packet with unexpected policy state %u\n",
 			policy->state);
@@ -1182,6 +1263,23 @@ fill_notify_pkt(struct ggu_policy *policy,
 			(ggu_decision->ip_flow + params_offset);
 		declined_be->expire_sec = rte_cpu_to_be_32(
 			policy->params.declined.expire_sec);
+		break;
+	}
+	case GK_BPF: {
+		struct ggu_bpf_wire *bpf_wire_be = (struct ggu_bpf_wire *)
+			(ggu_decision->ip_flow + params_offset);
+		bpf_wire_be->expire_sec = rte_cpu_to_be_32(
+			policy->params.bpf.expire_sec);
+		bpf_wire_be->program_index = policy->params.bpf.program_index;
+		bpf_wire_be->reserved = 0;
+		bpf_wire_be->cookie_len_4by = cookie_len_4by;
+		/*
+		 * It's reposibility of the BPF program to put
+		 * the cookie in network order (if needed) since Gatekeeper
+		 * does not know how the cookie is used.
+		 */
+		rte_memcpy(bpf_wire_be->cookie, &policy->params.bpf.cookie,
+			cookie_len_4by * 4);
 		break;
 	}
 	default:
@@ -1471,7 +1569,7 @@ gt_proc(void *arg)
 			 */
 			fill_notify_pkt(&policy, &pkt_info, instance, gt_conf);
 
-			if (policy.state == GK_GRANTED) {
+			if (ret != 0) {
 				ret = decap_and_fill_eth(m, gt_conf,
 					&pkt_info, instance);
 				if (ret < 0)

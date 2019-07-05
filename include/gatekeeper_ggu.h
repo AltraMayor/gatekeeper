@@ -22,6 +22,7 @@
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_flow.h"
+#include "gatekeeper_flow_bpf.h"
 
 #define GGU_PD_VER (1)
 
@@ -77,6 +78,10 @@ enum {
 	GGU_DEC_IPV4_GRANTED,
 	/* Grant an IPv6 flow. */
 	GGU_DEC_IPV6_GRANTED,
+	/* An IPv4 GK BPF flow. */
+	GGU_DEC_IPV4_BPF,
+	/* An IPv6 GK BPF flow. */
+	GGU_DEC_IPV6_BPF,
 	__MAX_GGU_DEC
 };
 
@@ -169,6 +174,61 @@ struct ggu_declined {
 	uint32_t expire_sec;
 } __attribute__ ((packed));
 
+/*
+ * Parameters for declaring a BPF flow in the GGU protocol.
+ *
+ * struct ggu_bpf_wire enables GT blocks to send only
+ * the beginnings of cookies to save space in the GGU message.
+ * The beginnings of cookies are expected to be the initialized part of
+ * the cookie; the non-initialized part is zeroed.
+ *
+ * See struct ggu_bpf for an equivalent struct with full-length cookie.
+ */
+struct ggu_bpf_wire {
+	/*
+	 * How much time (unit: second) a GK block waits
+	 * before it expires the BPF state.
+	 */
+	uint32_t expire_sec;
+	/* Index of the BPF program associated to this state. */
+	uint8_t  program_index;
+	/* Reserved for alignment. */
+	uint16_t reserved;
+	/*
+	 * Lenght of the cookie in 4 bytes. That is, the length of the cookie
+	 * is @cookie_len_4by * 4. This preserves the 32-bit alignment.
+	 */
+	uint8_t  cookie_len_4by;
+	/* Initialized part of the cookie. */
+	uint8_t  cookie[0];
+} __attribute__ ((packed));
+
+/* Parameters for declaring a BPF flow. */
+struct ggu_bpf {
+	/*
+	 * How much time (unit: second) a GK block waits
+	 * before it expires the BPF state.
+	 */
+	uint32_t expire_sec;
+	/* Index of the BPF program associated to this state. */
+	uint8_t  program_index;
+	/* Reserved for alignment. */
+	uint8_t  reserved;
+	/*
+	 * Number of used bytes in the cookie starting at
+	 * the beginning of the cookie.
+	 * These bytes are the initialization parameters
+	 * of the corresponding BPF state.
+	 * The remaining bytes are expected to be zero.
+	 */
+	uint16_t cookie_len;
+	/*
+	 * Initialized memory to be passed to
+	 * the BPF proram each time it is executed.
+	 */
+	struct gk_bpf_cookie cookie;
+} __attribute__ ((packed));
+
 struct ggu_policy {
 	uint8_t state;
 	struct ip_flow flow;
@@ -183,6 +243,8 @@ struct ggu_policy {
 		struct ggu_granted granted;
 		/* Decision is to decline the flow. */
 		struct ggu_declined declined;
+		/* Decision is to run a BPF program on the flow. */
+		struct ggu_bpf bpf;
 	} params;
 };
 
