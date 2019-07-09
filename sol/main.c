@@ -182,11 +182,11 @@ credits_update(struct req_queue *req_queue)
 		return;
 
 #if __WORDSIZE == 64
-	avail_bytes = ldiv(avail_cycles * req_queue->cycles_per_byte_a,
-		req_queue->cycles_per_byte_b);
+	avail_bytes = ldiv(avail_cycles * req_queue->cycles_per_byte_b,
+		req_queue->cycles_per_byte_a);
 #elif __WORDSIZE == 32
-	avail_bytes = lldiv(avail_cycles * req_queue->cycles_per_byte_a,
-		req_queue->cycles_per_byte_b);
+	avail_bytes = lldiv(avail_cycles * req_queue->cycles_per_byte_b,
+		req_queue->cycles_per_byte_a);
 #else
 	#error "unexpected value for __WORDSIZE macro"
 #endif
