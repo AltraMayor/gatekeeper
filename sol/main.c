@@ -199,7 +199,9 @@ credits_update(struct req_queue *req_queue)
 	 * If there are spare cycles (that were not converted to credits
 	 * because of rounding), keep them for the next iteration.
 	 */
-	req_queue->time_cpu_cycles = curr_cycles - avail_bytes.rem;
+	req_queue->time_cpu_cycles = curr_cycles -
+		avail_bytes.rem / req_queue->cycles_per_byte_b;
+
 }
 
 static inline int
