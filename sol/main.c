@@ -27,7 +27,7 @@
 int sol_logtype;
 
 #define SOL_LOG(level, ...) \
-	rte_log(RTE_LOG_ ## level, sol_logtype, "GATEKEEPER SOL: " __VA_ARGS__)
+	rte_log_ratelimit(RTE_LOG_ ## level, sol_logtype, "GATEKEEPER SOL: " __VA_ARGS__)
 
 /*
  * Gatekeeper request priority queue implementation.
