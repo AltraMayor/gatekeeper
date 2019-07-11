@@ -136,6 +136,16 @@ reply_msg = reply_msg .. dylib.list_lls_arp(llsc,
 reply_msg = reply_msg .. dylib.list_lls_nd(llsc,
 	dylib.print_lls_dump_entry, acc_start)
 
+ret = dylib.c.gk_log_flow_state("198.51.100.0", "192.0.2.0", dyc.gk)
+if ret < 0 then
+	return "gk: failed to log the flow state\n"
+end
+
+ret = dylib.c.gk_log_flow_state("2001:db8:3::", "2001:db8:5::", dyc.gk)
+if ret < 0 then
+	return "gk: failed to log the flow state\n"
+end
+
 ret = dylib.c.gk_flush_flow_table("198.51.100.0/24", "192.0.2.0/24", dyc.gk)
 if ret < 0 then
 	return "gk: failed to flush the flow table\n"

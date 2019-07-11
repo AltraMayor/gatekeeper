@@ -308,6 +308,7 @@ enum gk_cmd_op {
 	GGU_POLICY_ADD,
 	GK_SYNCH_WITH_LPM,
 	GK_FLUSH_FLOW_TABLE,
+	GK_LOG_FLOW_STATE,
 	GK_CMD_OP_MAX,
 };
 
@@ -325,9 +326,14 @@ struct gk_cmd_entry {
 	enum gk_cmd_op  op;
 
 	union {
+		/* GGU policy to be added with GGU_POLICY_ADD op. */
 		struct ggu_policy ggu;
+		/* FIB entry to synchronize with GK_SYNCH_WITH_LPM op. */
 		struct gk_fib *fib;
+		/* Flow table flush request with GK_FLUSH_FLOW_TABLE op. */
 		struct gk_flush_request flush;
+		/* Flow state logging request with GK_LOG_FLOW_STATE op. */
+		struct ip_flow flow;
 	} u;
 };
 
@@ -342,6 +348,8 @@ struct mailbox *get_responsible_gk_mailbox(
 
 int gk_flush_flow_table(const char *src_prefix,
 	const char *dst_prefix, struct gk_config *gk_conf);
+int gk_log_flow_state(const char *src_addr,
+	const char *dst_addr, struct gk_config *gk_conf);
 
 int pkt_copy_cached_eth_header(struct rte_mbuf *pkt,
 	struct ether_cache *eth_cache, size_t l2_len_out);

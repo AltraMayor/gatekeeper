@@ -986,6 +986,108 @@ next:
 }
 
 static void
+print_flow_state(struct flow_entry *fe)
+{
+	int ret;
+	char ip[MAX_INET_ADDRSTRLEN];
+	char state_msg[1024];
+
+	if (unlikely(fe->grantor_fib == NULL)) {
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: flow entry points to an NULL FIB entry in the flow table at %s with lcore %u, there is a bug in the GK block\n",
+			__func__, rte_lcore_id());
+		goto out;
+	} else if (unlikely(fe->grantor_fib->action !=
+			GK_FWD_GRANTOR)) {
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u, there is a bug in the GK block\n",
+			fe->grantor_fib->action, __func__, rte_lcore_id());
+		goto out;
+	}
+
+	ret = convert_ip_to_str(&fe->grantor_fib->u.grantor.gt_addr,
+		ip, sizeof(ip));
+	if (ret < 0) {
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u - failed to convert the Grantor IP address to string",
+			fe->grantor_fib->action, __func__, rte_lcore_id());
+		goto out;
+	}
+
+	switch (fe->state) {
+	case GK_REQUEST:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: log the flow state [state: GK_REQUEST (%hhu), last_packet_seen_at: %"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->u.request.last_packet_seen_at,
+			fe->u.request.last_priority, fe->u.request.allowance,
+			ip, __func__, rte_lcore_id());
+		break;
+	case GK_GRANTED:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: log the flow state [state: GK_GRANTED (%hhu), cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kb_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->u.granted.cap_expire_at,
+			fe->u.granted.budget_renew_at,
+			fe->u.granted.tx_rate_kb_cycle,
+			fe->u.granted.budget_byte,
+			fe->u.granted.send_next_renewal_at,
+			fe->u.granted.renewal_step_cycle,
+			ip, __func__, rte_lcore_id());
+		break;
+	case GK_DECLINED:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: log the flow state [state: GK_DECLINED (%hhu), expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->u.declined.expire_at,
+			ip, __func__, rte_lcore_id());
+		break;
+	case GK_BPF: {
+		uint64_t *c = fe->u.bpf.cookie.mem;
+
+		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
+
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: log the flow state [state: GK_BPF (%hhu), expire_at: %"PRIx64", program_index=%u, cookie="
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64
+			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->u.bpf.expire_at,
+			fe->u.bpf.program_index,
+			c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7],
+			ip, __func__, rte_lcore_id());
+		break;
+	}
+	default:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"gk: unknown flow with state %hhu in the flow table at %s with lcore %u, there is a bug in the GK block\n",
+			fe->state, __func__, rte_lcore_id());
+		break;
+	}
+
+out:
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(state_msg));
+	print_flow_err_msg(&fe->flow, state_msg);
+}
+
+static void
+log_flow_state(struct ip_flow *flow, struct gk_instance *instance)
+{
+	struct flow_entry *fe;
+	int ret = rte_hash_lookup(instance->ip_flow_hash_table, flow);
+	if (ret < 0) {
+		char err_msg[1024];
+
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gk: failed to log flow state at %s with lcore %u - flow doesn't exist\n",
+			__func__, rte_lcore_id());
+
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+		print_flow_err_msg(flow, err_msg);
+		return;
+	}
+
+	fe = &instance->ip_flow_entry_table[ret];
+	print_flow_state(fe);
+}
+
+static void
 gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 {
 	switch (fib->action) {
@@ -1057,6 +1159,10 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 	case GK_FLUSH_FLOW_TABLE:
 		flush_flow_table(&entry->u.flush.src,
 			&entry->u.flush.dst, instance);
+		break;
+
+	case GK_LOG_FLOW_STATE:
+		log_flow_state(&entry->u.flow, instance);
 		break;
 
 	default:
@@ -2319,6 +2425,91 @@ gk_flush_flow_table(const char *src_prefix,
 
 		mb_send_entry(&gk_conf->instances[i].mb, entry);
 	}
+
+	return 0;
+}
+
+int
+gk_log_flow_state(const char *src_addr,
+	const char *dst_addr, struct gk_config *gk_conf)
+{
+	int ret;
+	struct ipaddr src;
+	struct ipaddr dst;
+	struct ip_flow flow;
+	struct mailbox *mb;
+	struct gk_cmd_entry *entry;
+
+	if (src_addr == NULL) {
+		GK_LOG(ERR, "gk: failed to log flow state - source address is NULL\n");
+		return -1;
+	}
+	if (dst_addr == NULL) {
+		GK_LOG(ERR, "gk: failed to log flow state - destination address is NULL\n");
+		return -1;
+	}
+	if (gk_conf == NULL) {
+		GK_LOG(ERR, "gk: failed to log flow state - gk_conf is NULL\n");
+		return -1;
+	}
+
+	ret = convert_str_to_ip(src_addr, &src);
+	if (ret < 0) {
+		GK_LOG(ERR, "gk: failed to log flow state - source address (%s) is invalid\n",
+			src_addr);
+		return -1;
+	}
+
+	ret = convert_str_to_ip(dst_addr, &dst);
+	if (ret < 0) {
+		GK_LOG(ERR, "gk: failed to log flow state - destination address (%s) is invalid\n",
+			dst_addr);
+		return -1;
+	}
+
+	if (unlikely(src.proto != dst.proto)) {
+		GK_LOG(ERR, "gk: failed to log flow state - source (%s) and destination (%s) addresses don't have the same IP type\n",
+			src_addr, dst_addr);
+		return -1;
+	}
+
+	if (unlikely(src.proto != RTE_ETHER_TYPE_IPV4 && src.proto !=
+			RTE_ETHER_TYPE_IPV6)) {
+		GK_LOG(ERR, "gk: failed to log flow state - source (%s) and destination (%s) addresses don't have valid IP type %hu\n",
+			src_addr, dst_addr, src.proto);
+		return -1;
+	}
+
+	memset(&flow, 0, sizeof(flow));
+
+	flow.proto = src.proto;
+	if (flow.proto == RTE_ETHER_TYPE_IPV4) {
+		flow.f.v4.src = src.ip.v4;
+		flow.f.v4.dst = dst.ip.v4;
+	} else {
+		flow.f.v6.src = src.ip.v6;
+		flow.f.v6.dst = dst.ip.v6;
+	}
+
+	mb = get_responsible_gk_mailbox(&flow, gk_conf);
+	if (mb == NULL) {
+		GK_LOG(ERR, "gk: failed to get responsible GK mailbox to log flow state that matches src_addr=%s and dst_addr=%s\n",
+			src_addr, dst_addr);
+		return -1;
+	}
+
+	entry = mb_alloc_entry(mb);
+	if (entry == NULL) {
+		GK_LOG(WARNING,
+			"gk: failed to allocate an entry for the mailbox of the GK block to log flow state that matches src_addr=%s and dst_addr=%s\n",
+			src_addr, dst_addr);
+		return -1;
+	}
+
+	entry->op = GK_LOG_FLOW_STATE;
+	entry->u.flow = flow;
+
+	mb_send_entry(mb, entry);
 
 	return 0;
 }
