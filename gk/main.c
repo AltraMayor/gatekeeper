@@ -51,16 +51,6 @@
 
 int gk_logtype;
 
-/* Store information about a packet. */
-struct ipacket {
-	/* Flow identifier for this packet. */
-	struct ip_flow  flow;
-	/* Pointer to the packet itself. */
-	struct rte_mbuf *pkt;
-	/* Pointer to the l3 header. */
-	void *l3_hdr;
-};
-
 /* We should avoid calling integer_log_base_2() with zero. */
 static inline uint8_t
 integer_log_base_2(uint64_t delta_time)
@@ -452,7 +442,7 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 		goto expired;
 
 	program_index = fe->u.bpf.program_index;
-	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet->pkt, &ctx,
+	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, &ctx,
 		&bpf_ret);
 	if (unlikely(rc != 0)) {
 		GK_LOG(WARNING,

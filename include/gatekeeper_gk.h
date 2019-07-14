@@ -38,6 +38,16 @@ extern int gk_logtype;
 	rte_log_ratelimit(RTE_LOG_ ## level, gk_logtype, \
 		"GATEKEEPER GK: " __VA_ARGS__)
 
+/* Store information about a packet. */
+struct ipacket {
+	/* Flow identifier for this packet. */
+	struct ip_flow  flow;
+	/* Pointer to the packet itself. */
+	struct rte_mbuf *pkt;
+	/* Pointer to the l3 header. */
+	void *l3_hdr;
+};
+
 /* Structure for the GK basic measurements. */
 struct gk_measurement_metrics {
 	/* Total number of packets received. */
