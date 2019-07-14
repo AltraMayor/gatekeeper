@@ -105,7 +105,8 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		/* Fill up the outer IP header. */
 		outer_ip6hdr->vtc_flow = rte_cpu_to_be_32(
 			IPv6_DEFAULT_VTC_FLOW | (priority << 22) |
-			(in_to_out_ecn(inner_ip6hdr->vtc_flow >> 20) << 20));
+			(in_to_out_ecn(rte_be_to_cpu_32(
+				inner_ip6hdr->vtc_flow) >> 20) << 20));
 		outer_ip6hdr->proto = IPPROTO_IPV6;
 		outer_ip6hdr->hop_limits = iface->ipv6_default_hop_limits;
 
