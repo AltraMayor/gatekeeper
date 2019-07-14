@@ -1453,6 +1453,7 @@ gt_proc(void *arg)
 	 */
 	struct rte_ip_frag_death_row death_row;
 	uint16_t gt_max_pkt_burst;
+	bool reassembling_enabled = gt_conf->reassembling_enabled;
 
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
@@ -1506,10 +1507,11 @@ gt_proc(void *arg)
 			}
 
 			/*
-			 * If it is a fragmented packet,
+			 * If packet reassembling at Grantor servers
+			 * is enabled, and it is a fragmented packet,
 			 * then try to reassemble.
 			 */
-			if (pkt_info.frag) {
+			if (reassembling_enabled && pkt_info.frag) {
 				m = gt_reassemble_incoming_pkt(
 					m, cur_tsc, &pkt_info,
 					&death_row, instance);
@@ -1603,7 +1605,8 @@ gt_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gt_conf);
 
-		if (cur_tsc - last_tsc >= frag_scan_timeout_cycles) {
+		if (reassembling_enabled && cur_tsc - last_tsc >=
+				frag_scan_timeout_cycles) {
 			RTE_VERIFY(death_row.cnt == 0);
 			rte_frag_table_del_expired_entries(instance->frag_tbl,
 				&death_row, cur_tsc);
@@ -1815,16 +1818,19 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		goto cleanup;
 	}
 
-	/* Setup the fragmentation table. */
-	instance->frag_tbl = rte_ip_frag_table_create(gt_conf->frag_bucket_num,
-		gt_conf->frag_bucket_entries, gt_conf->frag_max_entries,
-		frag_cycles, rte_lcore_to_socket_id(lcore_id));
-	if (instance->frag_tbl == NULL) {
-		GT_LOG(ERR,
-			"Failed to create fragmentation table at lcore %u\n",
-			lcore_id);
-		ret = -1;
-		goto cleanup;
+	if (gt_conf->reassembling_enabled) {
+		/* Setup the fragmentation table. */
+		instance->frag_tbl = rte_ip_frag_table_create(
+			gt_conf->frag_bucket_num,
+			gt_conf->frag_bucket_entries, gt_conf->frag_max_entries,
+			frag_cycles, rte_lcore_to_socket_id(lcore_id));
+		if (instance->frag_tbl == NULL) {
+			GT_LOG(ERR,
+				"Failed to create fragmentation table at lcore %u\n",
+				lcore_id);
+			ret = -1;
+			goto cleanup;
+		}
 	}
 
 	instance->acl4 = alloc_acl_search(gt_conf->max_pkt_burst);

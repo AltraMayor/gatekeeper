@@ -44,6 +44,10 @@ local simple_policy = {
 -- Function that looks up the simple policy for the packet.
 local function lookup_simple_policy(pkt_info)
 
+	if pkt_info.frag then
+		return dcs_malformed
+	end
+
 	if pkt_info.inner_ip_ver == policylib.c.IPV4 and
 			pkt_info.l4_proto == policylib.c.ICMP then
 		if pkt_info.upper_len < ffi.sizeof("struct rte_icmp_hdr") then

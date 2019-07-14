@@ -44,13 +44,15 @@ struct gt_packet_headers {
 	void     *inner_l3_hdr;
 	void     *l4_hdr;
 
+	/* Field indicating whether the associated packet is fragmented. */
+	bool     frag;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
 
 	/* Fields for parsing fragmented packets. */
-	bool     frag;
 	uint32_t l2_outer_l3_len;
 	uint32_t inner_l3_len;
 	struct ipv6_extension_fragment *frag_hdr;
@@ -164,6 +166,12 @@ struct gt_config {
 	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for GT block. */
 	uint32_t           log_ratelimit_burst;
+
+	/*
+	 * An option to disable packet reassembling
+	 * at Grantor servers.
+	 */
+	bool               reassembling_enabled;
 
 	/*
 	 * The fields below are for internal use.

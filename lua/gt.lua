@@ -29,6 +29,8 @@ return function (net_conf, lls_conf, numa_table)
 	local batch_interval = 2
 	local max_ggu_notify_pkts = 8
 
+	local reassembling_enabled = false
+
 	-- These variables are unlikely to need to be changed.
 	local ggu_src_port = 0xA0A0
 	local ggu_dst_port = 0xB0B0
@@ -49,6 +51,8 @@ return function (net_conf, lls_conf, numa_table)
 	gt_conf.mailbox_burst_size = mailbox_burst_size
 	gt_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	gt_conf.log_ratelimit_burst = log_ratelimit_burst
+
+	gt_conf.reassembling_enabled = reassembling_enabled
 
 	gt_conf.max_num_ipv6_neighbors = max_num_ipv6_neighbors
 
