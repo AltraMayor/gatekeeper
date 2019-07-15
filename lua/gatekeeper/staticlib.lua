@@ -268,6 +268,7 @@ struct gt_config {
 	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
+	bool         reassembling_enabled;
 	/* This struct has hidden fields. */
 };
 

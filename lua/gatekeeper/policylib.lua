@@ -103,6 +103,7 @@ struct gt_packet_headers {
 	void *outer_l3_hdr;
 	void *inner_l3_hdr;
 	void *l4_hdr;
+	bool frag;
 	/* This struct has hidden fields. */
 };
 
