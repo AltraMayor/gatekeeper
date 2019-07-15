@@ -37,9 +37,10 @@
  *  0 for legacy packets; 1 for granted packets;
  *  2 for capability renew; 3-63 for request packets.
  */
-#define PRIORITY_GRANTED	 (1)
-#define PRIORITY_RENEW_CAP	 (2)
-#define PRIORITY_MAX		 (63)
+#define PRIORITY_GRANTED	(1)
+#define PRIORITY_RENEW_CAP	(2)
+#define PRIORITY_REQ_MIN	(3)
+#define PRIORITY_MAX		(63)
 
 /* Memory reserved for a GK BPF program in between runs. */
 struct gk_bpf_cookie {

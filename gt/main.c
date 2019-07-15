@@ -1540,7 +1540,7 @@ gt_proc(void *arg)
 				continue;
 			}
 
-			if (pkt_info.priority <= 1) {
+			if (pkt_info.priority <= PRIORITY_GRANTED) {
 				ret = decap_and_fill_eth(m, gt_conf,
 					&pkt_info, instance);
 				if (ret < 0)

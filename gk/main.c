@@ -305,7 +305,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	 * DSCP 0 for legacy packets; 1 for granted packets; 
 	 * 2 for capability renew; 3-63 for requests.
 	 */
-	priority += 3;
+	priority += PRIORITY_REQ_MIN;
 	if (unlikely(priority > PRIORITY_MAX))
 		priority = PRIORITY_MAX;
 
