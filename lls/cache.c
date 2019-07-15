@@ -358,6 +358,14 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 * the type code changed to 0, and the checksum recomputed.
 	 */
 	icmp_ipv4 = (struct rte_ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+
+	if (rte_ipv4_frag_pkt_is_fragmented(icmp_ipv4)) {
+		LLS_LOG(WARNING,
+			"Received fragmented ping packets destined to this server at %s\n",
+			__func__);
+		return -1;
+	}
+
 	icmp_ipv4->time_to_live = IP_DEFTTL;
 	ip_addr_tmp = icmp_ipv4->src_addr;
 	icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
@@ -422,6 +430,13 @@ xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 
 	/* Set-up IPv6 header. */
 	icmp_ipv6 = (struct rte_ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+
+	if (rte_ipv6_frag_get_ipv6_fragment_header(icmp_ipv6) != NULL) {
+		LLS_LOG(WARNING,
+			"Received fragmented ping6 packets destined to this server at %s\n",
+			__func__);
+		return -1;
+	}
 
 	/*
 	 * The IP Hop Limit field must be 255 as required by

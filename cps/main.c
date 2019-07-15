@@ -918,6 +918,13 @@ match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (ip4hdr->next_proto_id != IPPROTO_TCP)
 		return -ENOENT;
 
+	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
+		CPS_LOG(WARNING,
+			"Received IPv4 fragmented packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
+
 	minimum_size = l2_len + ipv4_hdr_len(ip4hdr) +
 		sizeof(*tcp_hdr);
 	if (pkt->data_len < minimum_size)
@@ -967,6 +974,13 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
 			sizeof(iface->ip6_addr)) != 0))
 		return -ENOENT;
+
+	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
+		CPS_LOG(WARNING,
+			"Received IPv6 fragmented packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
 
 	tcp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len, &nexthdr);
 	if (tcp_offset < 0 || nexthdr != IPPROTO_TCP)

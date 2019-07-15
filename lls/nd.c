@@ -662,6 +662,14 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	}
 
 	ipv6_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv6_hdr *, l2_len);
+
+	if (rte_ipv6_frag_get_ipv6_fragment_header(ipv6_hdr) != NULL) {
+		LLS_LOG(WARNING,
+			"Received fragmented ND packets destined to this server at %s\n",
+			__func__);
+		return -1;
+	}
+
 	icmpv6_offset = ipv6_skip_exthdr(ipv6_hdr, buf->data_len -
 		l2_len, &nexthdr);
 	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)

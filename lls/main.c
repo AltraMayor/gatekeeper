@@ -279,6 +279,13 @@ match_nd_neigh(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			sizeof(iface->ll_ip6_mc_addr)) != 0))
 		return -ENOENT;
 
+	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
+		LLS_LOG(WARNING,
+			"Received fragmented ND packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
+
 	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 		&nexthdr);
 	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
@@ -348,6 +355,13 @@ match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			&iface->ll_ip6_mc_addr,
 			sizeof(iface->ll_ip6_mc_addr)) != 0))
 		return -ENOENT;
+
+	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
+		LLS_LOG(WARNING,
+			"Received fragmented ND packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
 
 	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 		&nexthdr);
@@ -427,6 +441,13 @@ match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr)))
 		return -ENOENT;
 
+	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
+		LLS_LOG(WARNING,
+			"Received fragmented ping packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
+
 	icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
 	if (icmphdr->icmp_type != ICMP_ECHO_REQUEST_TYPE ||
 			icmphdr->icmp_code != ICMP_ECHO_REQUEST_CODE)
@@ -502,6 +523,13 @@ match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			&iface->ll_ip6_mc_addr,
 			sizeof(iface->ll_ip6_mc_addr)) != 0))
 		return -ENOENT;
+
+	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
+		LLS_LOG(WARNING,
+			"Received fragmented ping6 packets destined to this server at %s\n",
+			__func__);
+		return -ENOENT;
+	}
 
 	icmpv6_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 		&nexthdr);

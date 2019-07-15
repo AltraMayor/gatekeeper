@@ -371,6 +371,13 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			goto free_packet;
 		}
 
+		if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
+			GGU_LOG(WARNING,
+				"Received IPv4 fragmented packets destined to the Gatekeeper server at %s\n",
+				__func__);
+			goto free_packet;
+		}
+
 		l3_len = ipv4_hdr_len(ip4hdr);
 
 		/*
@@ -425,6 +432,13 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			GGU_LOG(NOTICE,
 				"Received an IPv6 packet destined to other host\n");
 			return;
+		}
+
+		if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
+			GGU_LOG(WARNING,
+				"Received IPv6 fragmented packets destined to the Gatekeeper server at %s\n",
+				__func__);
+			goto free_packet;
 		}
 
 		l3_len = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
