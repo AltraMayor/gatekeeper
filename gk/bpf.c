@@ -21,6 +21,7 @@
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
+#include "gatekeeper_l2.h"
 
 #include "bpf.h"
 
@@ -104,7 +105,7 @@ static const struct rte_bpf_xsym flow_handler_init_xsym[] = {
 struct gk_bpf_pkt_frame {
 	uint64_t		password;
 	struct flow_entry	*fe;
-	struct rte_mbuf		*pkt;
+	struct ipacket          *packet;
 	struct gk_config	*gk_conf;
 	struct gk_bpf_pkt_ctx	ctx;
 };
@@ -143,11 +144,55 @@ pkt_ctx_to_pkt(struct gk_bpf_pkt_ctx *ctx)
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
 	if (unlikely(frame == NULL))
 		return NULL;
-	return frame->pkt;
+	return frame->packet->pkt;
 }
 
 static int
-gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority)
+update_pkt_priority(struct ipacket *packet, int priority,
+	struct gatekeeper_if *iface)
+{
+	uint32_t mask;
+	struct rte_ether_hdr *eth_hdr = adjust_pkt_len(packet->pkt, iface, 0);
+	if (eth_hdr == NULL) {
+		G_LOG(ERR, "gk: could not adjust the packet length at %s\n",
+			__func__);
+		return -1;
+	}
+
+	RTE_VERIFY(pkt_out_skip_l2(iface, eth_hdr) == packet->l3_hdr);
+
+	if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+		struct rte_ipv4_hdr *ip4hdr = packet->l3_hdr;
+		uint16_t old_val = ntohs(*(uint16_t *)ip4hdr);
+		uint16_t new_val;
+
+		mask = (1 << 2) - 1;
+
+		ip4hdr->type_of_service = (priority << 2) |
+			(ip4hdr->type_of_service & mask);
+
+		new_val = ntohs(*(uint16_t *)ip4hdr);
+
+		/* According to RFC1624 [Eqn. 4]. */
+		ip4hdr->hdr_checksum = htons(ntohs(ip4hdr->hdr_checksum) -
+			~old_val - new_val);
+	} else if (likely(packet->flow.proto == RTE_ETHER_TYPE_IPV6)) {
+		struct rte_ipv6_hdr *ip6hdr = packet->l3_hdr;
+
+		mask = (((1 << 4) - 1) << 28) + (1 << 22) - 1;
+
+		ip6hdr->vtc_flow = rte_cpu_to_be_32(
+			(priority << 22) |
+			(rte_be_to_cpu_32(ip6hdr->vtc_flow) & mask));
+	} else
+		return -1;
+
+	return 0;
+}
+
+static int
+gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority,
+	int direct_if_possible)
 {
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
 	if (unlikely(frame == NULL))
@@ -156,7 +201,13 @@ gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority)
 	if (unlikely(priority < 0 || priority > PRIORITY_MAX))
 		return -EINVAL;
 
-	return encapsulate(frame->pkt, priority, &frame->gk_conf->net->back,
+	if (direct_if_possible != 0 && priority == PRIORITY_GRANTED) {
+		return update_pkt_priority(frame->packet, priority,
+			&frame->gk_conf->net->back);
+	}
+
+	return encapsulate(frame->packet->pkt, priority,
+		&frame->gk_conf->net->back,
 		&frame->fe->grantor_fib->u.grantor.gt_addr);
 }
 
@@ -225,13 +276,17 @@ static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
 		.type = RTE_BPF_XTYPE_FUNC,
 		.func = {
 			.val = (void *)gk_bpf_encapsulate,
-			.nb_args = 2,
+			.nb_args = 3,
 			.args = {
 				[0] = {
 					.type = RTE_BPF_ARG_PTR,
 					.size = sizeof(struct gk_bpf_pkt_ctx),
 				},
 				[1] = {
+					.type = RTE_BPF_ARG_RAW,
+					.size = sizeof(int),
+				},
+				[2] = {
 					.type = RTE_BPF_ARG_RAW,
 					.size = sizeof(int),
 				},
@@ -370,13 +425,13 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 
 int
 gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
-	struct flow_entry *fe, struct rte_mbuf *pkt,
+	struct flow_entry *fe, struct ipacket *packet,
 	struct gk_bpf_pkt_ctx *pctx, uint64_t *p_bpf_ret)
 {
 	struct gk_bpf_pkt_frame frame = {
 		.password = pkt_password,
 		.fe = fe,
-		.pkt = pkt,
+		.packet = packet,
 		.gk_conf = gk_conf,
 		.ctx = *pctx,
 	};
