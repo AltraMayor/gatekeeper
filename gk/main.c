@@ -434,17 +434,15 @@ static int
 gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
 {
-	struct gk_bpf_pkt_ctx ctx;
 	uint64_t bpf_ret;
 	int program_index, rc;
+	uint64_t now = rte_rdtsc();
 
-	ctx.now = rte_rdtsc();
-	ctx.expire_at = fe->u.bpf.expire_at;
-	if (unlikely(ctx.now >= ctx.expire_at))
+	if (unlikely(now >= fe->u.bpf.expire_at))
 		goto expired;
 
 	program_index = fe->u.bpf.program_index;
-	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, &ctx,
+	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, now,
 		&bpf_ret);
 	if (unlikely(rc != 0)) {
 		GK_LOG(WARNING,
@@ -489,7 +487,7 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 	rte_panic("Unexpected condition at %s()", __func__);
 
 expired:
-	reinitialize_flow_entry(fe, ctx.now);
+	reinitialize_flow_entry(fe, now);
 	return gk_process_request(fe, packet, gk_conf->sol_conf, stats);
 }
 

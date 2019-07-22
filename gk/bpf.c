@@ -425,15 +425,18 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 
 int
 gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
-	struct flow_entry *fe, struct ipacket *packet,
-	struct gk_bpf_pkt_ctx *pctx, uint64_t *p_bpf_ret)
+	struct flow_entry *fe, struct ipacket *packet, uint64_t now,
+	uint64_t *p_bpf_ret)
 {
 	struct gk_bpf_pkt_frame frame = {
 		.password = pkt_password,
 		.fe = fe,
 		.packet = packet,
 		.gk_conf = gk_conf,
-		.ctx = *pctx,
+		.ctx = {
+			.now = now,
+			.expire_at = fe->u.bpf.expire_at,
+		},
 	};
 	const struct gk_bpf_flow_handler *handler =
 		&gk_conf->flow_handlers[program_index];
