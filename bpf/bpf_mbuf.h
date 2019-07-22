@@ -13,7 +13,11 @@
 
 #include <stdint.h>
 #include <rte_common.h>
-#include <rte_memory.h>
+
+/* Definitions copied from <rte_memory.h>. */
+typedef uint64_t phys_addr_t; /**< Physical address. */
+#define RTE_CACHE_LINE_MIN_SIZE 64
+#define __rte_cache_min_aligned __rte_aligned(RTE_CACHE_LINE_MIN_SIZE)
 
 #ifdef __cplusplus
 extern "C" {
