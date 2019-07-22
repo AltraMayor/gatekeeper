@@ -162,6 +162,14 @@ struct granted_params {
 	uint32_t renewal_step_ms;
 } __attribute__ ((packed));
 
+struct grantedv2_params {
+	uint32_t tx1_rate_kib_sec;
+	uint32_t tx2_rate_kib_sec;
+	uint32_t next_renewal_ms;
+	uint32_t renewal_step_ms;
+	bool direct_if_possible;
+} __attribute__ ((packed));
+
 struct in_addr {
 	uint32_t s_addr;
 };
@@ -187,6 +195,10 @@ uint32_t gt_be_to_cpu_32(uint32_t x);
 
 c = ffi.C
 
+BPF_INDEX_GRANTED = 0
+BPF_INDEX_DECLINED = 1
+BPF_INDEX_GRANTEDV2 = 2
+
 function decision_granted_nobpf(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
 	policy.state = c.GK_GRANTED
@@ -207,7 +219,7 @@ function decision_granted(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
 	policy.state = c.GK_BPF
 	policy.params.bpf.expire_sec = cap_expire_sec
-	policy.params.bpf.program_index = 0
+	policy.params.bpf.program_index = BPF_INDEX_GRANTED
 	policy.params.bpf.reserved = 0
 	policy.params.bpf.cookie_len = ffi.sizeof("struct granted_params")
 
@@ -223,8 +235,38 @@ end
 function decision_declined(policy, expire_sec)
 	policy.state = c.GK_BPF
 	policy.params.bpf.expire_sec = expire_sec
-	policy.params.bpf.program_index = 1
+	policy.params.bpf.program_index = BPF_INDEX_DECLINED
 	policy.params.bpf.reserved = 0
 	policy.params.bpf.cookie_len = 0
 	return false
+end
+
+function decision_grantedv2_will_full_params(program_index, policy,
+	tx1_rate_kib_sec, tx2_rate_kib_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms, direct_if_possible)
+	policy.state = c.GK_BPF
+	policy.params.bpf.expire_sec = cap_expire_sec
+	policy.params.bpf.program_index = program_index
+	policy.params.bpf.reserved = 0
+	policy.params.bpf.cookie_len = ffi.sizeof("struct grantedv2_params")
+
+	local params = ffi.cast("struct grantedv2_params *",
+		policy.params.bpf.cookie)
+	params.tx1_rate_kib_sec = tx1_rate_kib_sec
+	params.tx2_rate_kib_sec = tx2_rate_kib_sec
+	params.next_renewal_ms = next_renewal_ms
+	params.renewal_step_ms = renewal_step_ms
+	params.direct_if_possible = direct_if_possible
+
+	return true
+end
+
+-- The prototype of this function is compatible with decision_granted() to
+-- help testing it. Policies may prefer to call
+-- decision_grantedv2_will_full_params() instead.
+function decision_grantedv2(policy, tx_rate_kib_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms)
+	return decision_grantedv2_will_full_params(BPF_INDEX_GRANTEDV2,
+		policy, tx_rate_kib_sec, tx_rate_kib_sec * 0.05, -- 5%
+		cap_expire_sec, next_renewal_ms, renewal_step_ms, false)
 end

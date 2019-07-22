@@ -10,6 +10,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local bpf_programs = {
 		[0] = "granted.bpf",
 		[1] = "declined.bpf",
+		[2] = "grantedv2.bpf",
 	}
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
