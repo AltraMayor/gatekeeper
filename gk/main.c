@@ -117,6 +117,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 {
 	int ret = 0;
 	uint16_t ether_type;
+	size_t ether_len;
 	struct rte_ether_hdr *eth_hdr;
 	struct rte_ipv4_hdr *ip4_hdr;
 	struct rte_ipv6_hdr *ip6_hdr;
@@ -125,10 +126,11 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
 		&packet->l3_hdr));
+	ether_len = pkt_in_l2_hdr_len(pkt);
 
 	switch (ether_type) {
 	case RTE_ETHER_TYPE_IPV4:
-		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip4_hdr)) {
+		if (pkt_len < ether_len + sizeof(*ip4_hdr)) {
 			packet->flow.proto = 0;
 			GK_LOG(NOTICE,
 				"Packet is too short to be IPv4 (%" PRIu16 ")\n",
@@ -144,7 +146,7 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 		break;
 
 	case RTE_ETHER_TYPE_IPV6:
-		if (pkt_len < sizeof(*eth_hdr) + sizeof(*ip6_hdr)) {
+		if (pkt_len < ether_len + sizeof(*ip6_hdr)) {
 			packet->flow.proto = 0;
 			GK_LOG(NOTICE,
 				"Packet is too short to be IPv6 (%" PRIu16 ")\n",

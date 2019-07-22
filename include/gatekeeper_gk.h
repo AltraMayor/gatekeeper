@@ -44,7 +44,13 @@ struct ipacket {
 	struct ip_flow  flow;
 	/* Pointer to the packet itself. */
 	struct rte_mbuf *pkt;
-	/* Pointer to the l3 header. */
+	/*
+	 * Pointer to the l3 header.
+	 *
+	 * NOTICE
+	 *    extract_packet_info() only guarantees
+	 *    the length of the L3 header without extensions.
+	 */
 	void *l3_hdr;
 };
 
