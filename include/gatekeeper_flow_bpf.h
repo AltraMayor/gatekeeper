@@ -25,6 +25,7 @@
 #define _GATEKEEPER_FLOW_BPF_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /*
  * Helper macro to place BPF programs, maps, and licenses in
@@ -91,6 +92,9 @@ enum gk_bpf_pkt_return {
 struct gk_bpf_pkt_ctx {
 	uint64_t now;
 	uint64_t expire_at;
+	uint16_t l3_proto;
+	uint8_t  l4_proto;
+	bool     fragmented;
 };
 
 /*
