@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS += -O2 -U __GNUC__ -target bpf -I../include \
+CFLAGS += -O2 -target bpf -I../include \
 	  -I$(RTE_SDK)/$(RTE_TARGET)/include \
 	  -Wno-int-to-void-pointer-cast
 
