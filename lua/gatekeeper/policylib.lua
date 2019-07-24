@@ -198,6 +198,7 @@ c = ffi.C
 BPF_INDEX_GRANTED = 0
 BPF_INDEX_DECLINED = 1
 BPF_INDEX_GRANTEDV2 = 2
+BPF_INDEX_WEB = 3
 
 function decision_granted_nobpf(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
@@ -267,6 +268,16 @@ end
 function decision_grantedv2(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
 	return decision_grantedv2_will_full_params(BPF_INDEX_GRANTEDV2,
+		policy, tx_rate_kib_sec, tx_rate_kib_sec * 0.05, -- 5%
+		cap_expire_sec, next_renewal_ms, renewal_step_ms, false)
+end
+
+-- The prototype of this function is compatible with decision_granted() to
+-- help testing it. Policies may prefer to call
+-- decision_grantedv2_will_full_params() instead.
+function decision_web(policy, tx_rate_kib_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms)
+	return decision_grantedv2_will_full_params(BPF_INDEX_WEB,
 		policy, tx_rate_kib_sec, tx_rate_kib_sec * 0.05, -- 5%
 		cap_expire_sec, next_renewal_ms, renewal_step_ms, false)
 end
