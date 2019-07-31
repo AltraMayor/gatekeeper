@@ -31,8 +31,8 @@
 #include "bpf_mbuf.h"
 
 struct granted_params {
-	/* Rate limit: kilobyte/second. */
-	uint32_t tx_rate_kb_sec;
+	/* Rate limit: kibibyte/second. */
+	uint32_t tx_rate_kib_sec;
 	/*
 	 * The first value of send_next_renewal_at at
 	 * flow entry comes from next_renewal_ms.
@@ -51,9 +51,9 @@ struct granted_state {
 	uint64_t budget_renew_at;
 	/*
 	 * When @budget_byte is reset, reset it to
-	 * @tx_rate_kb_cycle * 1024 bytes.
+	 * @tx_rate_kib_cycle * 1024 bytes.
 	 */
-	uint32_t tx_rate_kb_cycle;
+	uint32_t tx_rate_kib_cycle;
 	/* How many bytes @src can still send in current cycle. */
 	uint64_t budget_byte;
 	/*
@@ -79,8 +79,8 @@ granted_init(struct gk_bpf_init_ctx *ctx)
 	RTE_BUILD_BUG_ON(sizeof(*state) > sizeof(*cookie));
 
 	state->budget_renew_at = ctx->now + cycles_per_sec;
-	state->tx_rate_kb_cycle = params.tx_rate_kb_sec;
-	state->budget_byte = (uint64_t)params.tx_rate_kb_sec * 1024;
+	state->tx_rate_kib_cycle = params.tx_rate_kib_sec;
+	state->budget_byte = (uint64_t)params.tx_rate_kib_sec * 1024;
 	state->send_next_renewal_at = ctx->now +
 		params.next_renewal_ms * cycles_per_ms;
 	state->renewal_step_cycle = params.renewal_step_ms * cycles_per_ms;
@@ -98,7 +98,7 @@ granted_pkt(struct gk_bpf_pkt_ctx *ctx)
 
 	if (ctx->now >= state->budget_renew_at) {
 		state->budget_renew_at = ctx->now + cycles_per_sec;
-		state->budget_byte = (uint64_t)state->tx_rate_kb_cycle * 1024;
+		state->budget_byte = (uint64_t)state->tx_rate_kib_cycle * 1024;
 	}
 
 	pkt_len = pkt_ctx_to_pkt(ctx)->pkt_len;

@@ -234,8 +234,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		case GGU_DEC_IPV6_GRANTED: {
 			struct ggu_granted *granted_be = (struct ggu_granted *)
 				(ggu_decision->ip_flow + params_offset);
-			policy.params.granted.tx_rate_kb_sec =
-				rte_be_to_cpu_32(granted_be->tx_rate_kb_sec);
+			policy.params.granted.tx_rate_kib_sec =
+				rte_be_to_cpu_32(granted_be->tx_rate_kib_sec);
 			policy.params.granted.cap_expire_sec =
 				rte_be_to_cpu_32(granted_be->cap_expire_sec);
 			policy.params.granted.next_renewal_ms =
