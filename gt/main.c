@@ -842,11 +842,14 @@ print_unsent_policy(struct ggu_policy *policy,
 
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_BPF (%hhu), expire_sec: %u, program_index=%u, cookie="
-			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64
-			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "]",
+			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
+			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 "]",
 			policy->state, policy->params.bpf.expire_sec,
 			policy->params.bpf.program_index,
-			c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
+			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
+			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
+			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
+			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]));
 		break;
 	}
 	default:

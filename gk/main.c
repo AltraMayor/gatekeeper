@@ -1035,12 +1035,15 @@ print_flow_state(struct flow_entry *fe)
 		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
 
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_BPF (%hhu), expire_at: %"PRIx64", program_index=%u, cookie="
-			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64
-			"%16" PRIx64 "%16" PRIx64 "%16" PRIx64 "%16" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
+			"gk: log the flow state [state: GK_BPF (%hhu), expire_at: 0x%"PRIx64", program_index=%u, cookie="
+			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
+			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
 			fe->state, fe->u.bpf.expire_at,
 			fe->u.bpf.program_index,
-			c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7],
+			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
+			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
+			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
+			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]),
 			ip, __func__, rte_lcore_id());
 		break;
 	}
