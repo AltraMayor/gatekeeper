@@ -102,8 +102,8 @@ struct gk_bpf_pkt_ctx {
 #endif
 
 /* Symbols available to the BPF functions init() and pkt(). */
-GK_BPF_INTERNAL uint64_t cycles_per_sec;
-GK_BPF_INTERNAL uint64_t cycles_per_ms;
+extern uint64_t cycles_per_sec;
+extern uint64_t cycles_per_ms;
 
 /* Symbols available to the BPF function init(). */
 GK_BPF_INTERNAL struct gk_bpf_cookie *init_ctx_to_cookie(
