@@ -145,8 +145,8 @@ struct ggu_common_hdr {
 
 /* Parameters for declaring a flow granted. */
 struct ggu_granted {
-	/* Rate limit: kilobyte/second. */
-	uint32_t tx_rate_kb_sec;
+	/* Rate limit: kibibyte/second. */
+	uint32_t tx_rate_kib_sec;
 	/*
 	 * How much time (unit: second) a GK block waits
 	 * before it expires the capability.

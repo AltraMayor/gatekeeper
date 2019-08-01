@@ -823,8 +823,8 @@ print_unsent_policy(struct ggu_policy *policy,
 		break;
 	case GK_GRANTED:
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_GRANTED (%hhu), tx_rate_kb_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
-			policy->state, policy->params.granted.tx_rate_kb_sec,
+			"gt: failed to send out the notification to Gatekeeper with policy decision [state: GK_GRANTED (%hhu), tx_rate_kib_sec: %u, cap_expire_sec: %u, next_renewal_ms: %u, renewal_step_ms: %u]",
+			policy->state, policy->params.granted.tx_rate_kib_sec,
 			policy->params.granted.cap_expire_sec,
 			policy->params.granted.next_renewal_ms,
 			policy->params.granted.renewal_step_ms);
@@ -1248,8 +1248,8 @@ fill_notify_pkt(struct ggu_policy *policy,
 	case GK_GRANTED: {
 		struct ggu_granted *granted_be = (struct ggu_granted *)
 			(ggu_decision->ip_flow + params_offset);
-		granted_be->tx_rate_kb_sec = rte_cpu_to_be_32(
-			policy->params.granted.tx_rate_kb_sec);
+		granted_be->tx_rate_kib_sec = rte_cpu_to_be_32(
+			policy->params.granted.tx_rate_kib_sec);
 		granted_be->cap_expire_sec = rte_cpu_to_be_32(
 			policy->params.granted.cap_expire_sec);
 		granted_be->next_renewal_ms = rte_cpu_to_be_32(

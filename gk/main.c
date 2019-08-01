@@ -356,7 +356,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	if (now >= fe->u.granted.budget_renew_at) {
 		fe->u.granted.budget_renew_at = now + cycles_per_sec;
 		fe->u.granted.budget_byte =
-			(uint64_t)fe->u.granted.tx_rate_kb_cycle * 1024;
+			(uint64_t)fe->u.granted.tx_rate_kib_cycle * 1024;
 	}
 
 	pkt_len = rte_pktmbuf_pkt_len(pkt);
@@ -851,8 +851,8 @@ add_ggu_policy(struct ggu_policy *policy,
 		fe->u.granted.cap_expire_at = now +
 			policy->params.granted.cap_expire_sec *
 			cycles_per_sec;
-		fe->u.granted.tx_rate_kb_cycle =
-			policy->params.granted.tx_rate_kb_sec;
+		fe->u.granted.tx_rate_kib_cycle =
+			policy->params.granted.tx_rate_kib_sec;
 		fe->u.granted.send_next_renewal_at = now +
 			policy->params.granted.next_renewal_ms *
 			cycles_per_ms;
@@ -861,7 +861,7 @@ add_ggu_policy(struct ggu_policy *policy,
 			cycles_per_ms;
 		fe->u.granted.budget_renew_at = now + cycles_per_sec;
 		fe->u.granted.budget_byte =
-			(uint64_t)fe->u.granted.tx_rate_kb_cycle * 1024;
+			(uint64_t)fe->u.granted.tx_rate_kib_cycle * 1024;
 		break;
 
 	case GK_DECLINED:
@@ -1016,10 +1016,10 @@ print_flow_state(struct flow_entry *fe)
 		break;
 	case GK_GRANTED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_GRANTED (%hhu), cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kb_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			"gk: log the flow state [state: GK_GRANTED (%hhu), cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
 			fe->state, fe->u.granted.cap_expire_at,
 			fe->u.granted.budget_renew_at,
-			fe->u.granted.tx_rate_kb_cycle,
+			fe->u.granted.tx_rate_kib_cycle,
 			fe->u.granted.budget_byte,
 			fe->u.granted.send_next_renewal_at,
 			fe->u.granted.renewal_step_cycle,
@@ -1658,6 +1658,23 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			}
 		}
 
+		/*
+		 * Some notes regarding flow rates and units:
+		 *
+		 * Flows in the GK_REQUEST state are bandwidth limited
+		 * to an overall rate relative to the link. Therefore,
+		 * the Ethernet frame overhead is counted toward the
+		 * credits used by requests. The request channel rate
+		 * is measured in megabits (base 10) per second to
+		 * match the units used by hardware specifications.
+		 *
+		 * Granted flows (in state GK_GRANTED or sometimes
+		 * GK_BPF) are allocated budgets that are intended
+		 * to reflect the max throughput of the flow, and
+		 * therefore do not include the Ethernet frame overhead.
+		 * The budgets of granted flows are measured in
+		 * kibibytes (base 2).
+		 */
 		switch (fe->state) {
 		case GK_REQUEST:
 			ret = gk_process_request(fe, &packet,

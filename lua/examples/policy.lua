@@ -3,7 +3,7 @@ local ffi = require("ffi")
 
 local function dcs_default(policy)
 	return policylib.decision_granted(policy,
-		1024,	-- tx_rate_kb_sec
+		1024,	-- tx_rate_kib_sec
 		300,	-- cap_expire_sec
 		240000,	-- next_renewal_ms
 		3000)	-- renewal_step_ms
@@ -19,7 +19,7 @@ end
 
 local function dcs_friendly(policy)
 	return policylib.decision_granted(policy,
-		2048,	-- tx_rate_kb_sec
+		2048,	-- tx_rate_kib_sec
 		600,	-- cap_expire_sec
 		540000,	-- next_renewal_ms
 		3000)	-- renewal_step_ms

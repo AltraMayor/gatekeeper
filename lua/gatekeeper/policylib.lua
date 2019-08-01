@@ -124,7 +124,7 @@ struct ip_flow {
 };
 
 struct ggu_granted {
-	uint32_t tx_rate_kb_sec;
+	uint32_t tx_rate_kib_sec;
 	uint32_t cap_expire_sec;
 	uint32_t next_renewal_ms;
 	uint32_t renewal_step_ms;
@@ -157,7 +157,7 @@ struct ggu_policy {
 };
 
 struct granted_params {
-	uint32_t tx_rate_kb_sec;
+	uint32_t tx_rate_kib_sec;
 	uint32_t next_renewal_ms;
 	uint32_t renewal_step_ms;
 };
@@ -190,10 +190,10 @@ uint32_t rte_be_to_cpu_32 (rte_be32_t x);
 
 c = ffi.C
 
-function decision_granted_nobpf(policy, tx_rate_kb_sec, cap_expire_sec,
+function decision_granted_nobpf(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
 	policy.state = c.GK_GRANTED
-	policy.params.granted.tx_rate_kb_sec = tx_rate_kb_sec
+	policy.params.granted.tx_rate_kib_sec = tx_rate_kib_sec
 	policy.params.granted.cap_expire_sec = cap_expire_sec
 	policy.params.granted.next_renewal_ms = next_renewal_ms
 	policy.params.granted.renewal_step_ms = renewal_step_ms
@@ -206,7 +206,7 @@ function decision_declined_nobpf(policy, expire_sec)
 	return false
 end
 
-function decision_granted(policy, tx_rate_kb_sec, cap_expire_sec,
+function decision_granted(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
 	policy.state = c.GK_BPF
 	policy.params.bpf.expire_sec = cap_expire_sec
@@ -216,7 +216,7 @@ function decision_granted(policy, tx_rate_kb_sec, cap_expire_sec,
 
 	local params = ffi.cast("struct granted_params *",
 		policy.params.bpf.cookie)
-	params.tx_rate_kb_sec = tx_rate_kb_sec
+	params.tx_rate_kib_sec = tx_rate_kib_sec
 	params.next_renewal_ms = next_renewal_ms
 	params.renewal_step_ms = renewal_step_ms
 

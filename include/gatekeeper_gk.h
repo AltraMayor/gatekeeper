@@ -278,9 +278,9 @@ struct flow_entry {
 			uint64_t budget_renew_at;
 			/*
 			 * When @budget_byte is reset, reset it to
-			 * @tx_rate_kb_cycle * 1024 bytes.
+			 * @tx_rate_kib_cycle * 1024 bytes.
 			 */
-			uint32_t tx_rate_kb_cycle;
+			uint32_t tx_rate_kib_cycle;
 			/*
 			 * How many bytes @src can still send in current cycle.
 			 */
