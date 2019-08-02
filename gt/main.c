@@ -30,6 +30,7 @@
 #include <rte_random.h>
 #include <rte_cycles.h>
 #include <rte_common.h>
+#include <rte_byteorder.h>
 
 #include "gatekeeper_fib.h"
 #include "gatekeeper_lls.h"
@@ -2210,4 +2211,53 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 	}
 
 	return 0;
+}
+
+/*
+ * The prototype is needed, otherwise there will be a compilation error:
+ * no previous prototype for 'gt_cpu_to_be_16' [-Werror=missing-prototypes]
+ */
+uint16_t gt_cpu_to_be_16(uint16_t x);
+uint32_t gt_cpu_to_be_32(uint32_t x);
+uint16_t gt_be_to_cpu_16(uint16_t x);
+uint32_t gt_be_to_cpu_32(uint32_t x);
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_cpu_to_be_16()
+ */
+uint16_t
+gt_cpu_to_be_16(uint16_t x)
+{
+	return rte_cpu_to_be_16(x);
+}
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_cpu_to_be_32()
+ */
+uint32_t
+gt_cpu_to_be_32(uint32_t x)
+{
+	return rte_cpu_to_be_32(x);
+}
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_be_to_cpu_16()
+ */
+uint16_t
+gt_be_to_cpu_16(uint16_t x)
+{
+	return rte_be_to_cpu_16(x);
+}
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_be_to_cpu_32()
+ */
+uint32_t
+gt_be_to_cpu_32(uint32_t x)
+{
+	return rte_be_to_cpu_32(x);
 }

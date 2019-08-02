@@ -37,7 +37,7 @@ local simple_policy = {
 	[policylib.c.IPV4] = {
 		-- Loosely assume that TCP and UDP ports are equivalents
 		-- to simplify this example.
-		[policylib.c.rte_cpu_to_be_16(80)] = dcs_friendly,
+		[policylib.c.gt_cpu_to_be_16(80)] = dcs_friendly,
 	},
 }
 

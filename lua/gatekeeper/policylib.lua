@@ -178,13 +178,10 @@ struct rte_lpm6 {
 	/* This struct has hidden fields. */
 };
 
-typedef uint16_t rte_be16_t;
-typedef uint32_t rte_be32_t;
-
-rte_be16_t rte_cpu_to_be_16 (uint16_t x);
-rte_be32_t rte_cpu_to_be_32 (uint32_t x);
-uint16_t rte_be_to_cpu_16 (rte_be16_t x);
-uint32_t rte_be_to_cpu_32 (rte_be32_t x);
+uint16_t gt_cpu_to_be_16(uint16_t x);
+uint32_t gt_cpu_to_be_32(uint32_t x);
+uint16_t gt_be_to_cpu_16(uint16_t x);
+uint32_t gt_be_to_cpu_32(uint32_t x);
 
 ]]
 
