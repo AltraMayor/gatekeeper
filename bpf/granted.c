@@ -44,7 +44,7 @@ struct granted_params {
 	 * request.
 	 */
 	uint32_t renewal_step_ms;
-};
+} __attribute__ ((packed));
 
 struct granted_state {
 	/* When @budget_byte is reset. */

@@ -160,7 +160,7 @@ struct granted_params {
 	uint32_t tx_rate_kib_sec;
 	uint32_t next_renewal_ms;
 	uint32_t renewal_step_ms;
-};
+} __attribute__ ((packed));
 
 struct in_addr {
 	uint32_t s_addr;
