@@ -110,6 +110,7 @@ struct gk_bpf_pkt_frame {
 	struct flow_entry	*fe;
 	struct ipacket          *packet;
 	struct gk_config	*gk_conf;
+	bool			ready_to_tx;
 	struct gk_bpf_pkt_ctx	ctx;
 };
 
@@ -197,21 +198,25 @@ static int
 gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 	int direct_if_possible)
 {
+	int ret;
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
 	if (unlikely(frame == NULL))
 		return -EINVAL;
 
+	if (unlikely(frame->ready_to_tx))
+		return -EINVAL;
 	if (unlikely(priority < 0 || priority > PRIORITY_MAX))
 		return -EINVAL;
 
-	if (direct_if_possible != 0 && priority == PRIORITY_GRANTED) {
-		return update_pkt_priority(frame->packet, priority,
-			&frame->gk_conf->net->back);
-	}
+	ret = (direct_if_possible != 0 && priority == PRIORITY_GRANTED)
+		? update_pkt_priority(frame->packet, priority,
+			&frame->gk_conf->net->back)
+		: encapsulate(frame->packet->pkt, priority,
+			&frame->gk_conf->net->back,
+			&frame->fe->grantor_fib->u.grantor.gt_addr);
 
-	return encapsulate(frame->packet->pkt, priority,
-		&frame->gk_conf->net->back,
-		&frame->fe->grantor_fib->u.grantor.gt_addr);
+	frame->ready_to_tx = ret == 0;
+	return ret;
 }
 
 static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
@@ -490,6 +495,7 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 		.fe = fe,
 		.packet = packet,
 		.gk_conf = gk_conf,
+		.ready_to_tx = false,
 		.ctx = {
 			.now = now,
 			.expire_at = fe->u.bpf.expire_at,
@@ -511,5 +517,14 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 	*p_bpf_ret = likely(handler->f_pkt_jit != NULL)
 		? handler->f_pkt_jit(&frame.ctx)
 		: rte_bpf_exec(handler->f_pkt, &frame.ctx);
+
+	if (unlikely(*p_bpf_ret == GK_BPF_PKT_RET_FORWARD &&
+			!frame.ready_to_tx)) {
+		GK_LOG(ERR,
+			"The BPF program at index %u has a bug: it returned GK_BPF_PKT_RET_FORWARD without successfully calling gk_bpf_prep_for_tx()\n",
+			program_index);
+		return -EIO;
+	}
+
 	return 0;
 }
