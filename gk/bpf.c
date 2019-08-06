@@ -194,7 +194,7 @@ update_pkt_priority(struct ipacket *packet, int priority,
 }
 
 static int
-gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority,
+gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 	int direct_if_possible)
 {
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
@@ -275,10 +275,10 @@ static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
 		},
 	},
 	{
-		.name = "gk_bpf_encapsulate",
+		.name = "gk_bpf_prep_for_tx",
 		.type = RTE_BPF_XTYPE_FUNC,
 		.func = {
-			.val = (void *)gk_bpf_encapsulate,
+			.val = (void *)gk_bpf_prep_for_tx,
 			.nb_args = 3,
 			.args = {
 				[0] = {

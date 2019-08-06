@@ -117,7 +117,7 @@ GK_BPF_INTERNAL struct gk_bpf_cookie *init_ctx_to_cookie(
 GK_BPF_INTERNAL struct gk_bpf_cookie *pkt_ctx_to_cookie(
 	struct gk_bpf_pkt_ctx *ctx);
 GK_BPF_INTERNAL struct rte_mbuf *pkt_ctx_to_pkt(struct gk_bpf_pkt_ctx *ctx);
-GK_BPF_INTERNAL int gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx,
+GK_BPF_INTERNAL int gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx,
 	int priority, int direct_if_possible);
 
 #endif /* _GATEKEEPER_FLOW_BPF_H_ */
