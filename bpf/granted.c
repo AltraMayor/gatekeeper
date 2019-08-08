@@ -44,7 +44,7 @@ struct granted_params {
 	 * request.
 	 */
 	uint32_t renewal_step_ms;
-};
+} __attribute__ ((packed));
 
 struct granted_state {
 	/* When @budget_byte is reset. */
@@ -112,7 +112,7 @@ granted_pkt(struct gk_bpf_pkt_ctx *ctx)
 		priority = PRIORITY_RENEW_CAP;
 	}
 
-	if (gk_bpf_encapsulate(ctx, priority, false) < 0)
+	if (gk_bpf_prep_for_tx(ctx, priority, false) < 0)
 		return GK_BPF_PKT_RET_ERROR;
 
 	return GK_BPF_PKT_RET_FORWARD;

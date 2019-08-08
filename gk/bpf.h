@@ -31,7 +31,7 @@ int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	const char *filename, int jit);
 
 int gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
-	struct flow_entry *fe, struct ipacket *packet,
-	struct gk_bpf_pkt_ctx *pctx, uint64_t *p_bpf_ret);
+	struct flow_entry *fe, struct ipacket *packet, uint64_t now,
+	uint64_t *p_bpf_ret);
 
 #endif /* _GATEKEEPER_GK_BPF_H_ */

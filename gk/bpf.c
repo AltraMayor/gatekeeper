@@ -16,12 +16,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <rte_ip_frag.h>
+
 #define GK_BPF_INTERNAL static
 #include "gatekeeper_flow_bpf.h"
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
 #include "gatekeeper_l2.h"
+#include "gatekeeper_varip.h"
 
 #include "bpf.h"
 
@@ -107,6 +110,7 @@ struct gk_bpf_pkt_frame {
 	struct flow_entry	*fe;
 	struct ipacket          *packet;
 	struct gk_config	*gk_conf;
+	bool			ready_to_tx;
 	struct gk_bpf_pkt_ctx	ctx;
 };
 
@@ -191,24 +195,28 @@ update_pkt_priority(struct ipacket *packet, int priority,
 }
 
 static int
-gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx, int priority,
+gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 	int direct_if_possible)
 {
+	int ret;
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
 	if (unlikely(frame == NULL))
 		return -EINVAL;
 
+	if (unlikely(frame->ready_to_tx))
+		return -EINVAL;
 	if (unlikely(priority < 0 || priority > PRIORITY_MAX))
 		return -EINVAL;
 
-	if (direct_if_possible != 0 && priority == PRIORITY_GRANTED) {
-		return update_pkt_priority(frame->packet, priority,
-			&frame->gk_conf->net->back);
-	}
+	ret = (direct_if_possible != 0 && priority == PRIORITY_GRANTED)
+		? update_pkt_priority(frame->packet, priority,
+			&frame->gk_conf->net->back)
+		: encapsulate(frame->packet->pkt, priority,
+			&frame->gk_conf->net->back,
+			&frame->fe->grantor_fib->u.grantor.gt_addr);
 
-	return encapsulate(frame->packet->pkt, priority,
-		&frame->gk_conf->net->back,
-		&frame->fe->grantor_fib->u.grantor.gt_addr);
+	frame->ready_to_tx = ret == 0;
+	return ret;
 }
 
 static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
@@ -272,10 +280,10 @@ static const struct rte_bpf_xsym flow_handler_pkt_xsym[] = {
 		},
 	},
 	{
-		.name = "gk_bpf_encapsulate",
+		.name = "gk_bpf_prep_for_tx",
 		.type = RTE_BPF_XTYPE_FUNC,
 		.func = {
-			.val = (void *)gk_bpf_encapsulate,
+			.val = (void *)gk_bpf_prep_for_tx,
 			.nb_args = 3,
 			.args = {
 				[0] = {
@@ -423,17 +431,75 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 	return 0;
 }
 
+static int
+parse_packet_further(struct ipacket *packet, struct gk_bpf_pkt_ctx *ctx)
+{
+	struct rte_mbuf *pkt = packet->pkt;
+	uint16_t parsed_len = pkt_in_l2_hdr_len(pkt);
+
+	pkt->l2_len = parsed_len;
+	ctx->l3_proto = packet->flow.proto;
+
+	/*
+	 * extract_packet_info() guarantees that the L2 header and
+	 * the L3 headers without extensions are in the packet.
+	 */
+
+	switch (packet->flow.proto) {
+	case RTE_ETHER_TYPE_IPV4: {
+		struct rte_ipv4_hdr *ipv4_hdr = rte_pktmbuf_mtod_offset(pkt,
+			struct rte_ipv4_hdr *, parsed_len);
+		pkt->l3_len = ipv4_hdr_len(ipv4_hdr);
+		parsed_len += pkt->l3_len;
+		ctx->fragmented = rte_ipv4_frag_pkt_is_fragmented(ipv4_hdr);
+		ctx->l4_proto = ipv4_hdr->next_proto_id;
+		break;
+	}
+
+	case RTE_ETHER_TYPE_IPV6: {
+		struct rte_ipv6_hdr *ipv6_hdr = rte_pktmbuf_mtod_offset(pkt,
+			struct rte_ipv6_hdr *, parsed_len);
+		int l3_len = ipv6_skip_exthdr(ipv6_hdr,
+			pkt->data_len - parsed_len, &ctx->l4_proto);
+		if (l3_len < 0) {
+			GK_LOG(NOTICE, "%s: Failed to parse IPv6 extension headers\n",
+				__func__);
+			return -1;
+		}
+		pkt->l3_len = l3_len;
+		parsed_len += l3_len;
+		ctx->fragmented = rte_ipv6_frag_get_ipv6_fragment_header(
+			ipv6_hdr) != NULL;
+		break;
+	}
+
+	default:
+		GK_LOG(ERR, "%s: Unknown L3 header %hu\n",
+			__func__, packet->flow.proto);
+		return -1;
+	}
+
+	pkt->l4_len = RTE_MIN(pkt->data_len - parsed_len,
+		/* Maximum value that @pkt->l4_len can hold. */
+		((1 << RTE_MBUF_L4_LEN_BITS) - 1));
+	return 0;
+}
+
 int
 gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
-	struct flow_entry *fe, struct ipacket *packet,
-	struct gk_bpf_pkt_ctx *pctx, uint64_t *p_bpf_ret)
+	struct flow_entry *fe, struct ipacket *packet, uint64_t now,
+	uint64_t *p_bpf_ret)
 {
 	struct gk_bpf_pkt_frame frame = {
 		.password = pkt_password,
 		.fe = fe,
 		.packet = packet,
 		.gk_conf = gk_conf,
-		.ctx = *pctx,
+		.ready_to_tx = false,
+		.ctx = {
+			.now = now,
+			.expire_at = fe->u.bpf.expire_at,
+		},
 	};
 	const struct gk_bpf_flow_handler *handler =
 		&gk_conf->flow_handlers[program_index];
@@ -445,8 +511,20 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 		return -EINVAL;
 	}
 
+	if (unlikely(parse_packet_further(packet, &frame.ctx) < 0))
+		return -EINVAL;
+
 	*p_bpf_ret = likely(handler->f_pkt_jit != NULL)
 		? handler->f_pkt_jit(&frame.ctx)
 		: rte_bpf_exec(handler->f_pkt, &frame.ctx);
+
+	if (unlikely(*p_bpf_ret == GK_BPF_PKT_RET_FORWARD &&
+			!frame.ready_to_tx)) {
+		GK_LOG(ERR,
+			"The BPF program at index %u has a bug: it returned GK_BPF_PKT_RET_FORWARD without successfully calling gk_bpf_prep_for_tx()\n",
+			program_index);
+		return -EIO;
+	}
+
 	return 0;
 }

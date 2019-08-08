@@ -25,6 +25,7 @@
 #define _GATEKEEPER_FLOW_BPF_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /*
  * Helper macro to place BPF programs, maps, and licenses in
@@ -91,6 +92,9 @@ enum gk_bpf_pkt_return {
 struct gk_bpf_pkt_ctx {
 	uint64_t now;
 	uint64_t expire_at;
+	uint16_t l3_proto;
+	uint8_t  l4_proto;
+	bool     fragmented;
 };
 
 /*
@@ -113,7 +117,7 @@ GK_BPF_INTERNAL struct gk_bpf_cookie *init_ctx_to_cookie(
 GK_BPF_INTERNAL struct gk_bpf_cookie *pkt_ctx_to_cookie(
 	struct gk_bpf_pkt_ctx *ctx);
 GK_BPF_INTERNAL struct rte_mbuf *pkt_ctx_to_pkt(struct gk_bpf_pkt_ctx *ctx);
-GK_BPF_INTERNAL int gk_bpf_encapsulate(struct gk_bpf_pkt_ctx *ctx,
+GK_BPF_INTERNAL int gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx,
 	int priority, int direct_if_possible);
 
 #endif /* _GATEKEEPER_FLOW_BPF_H_ */
