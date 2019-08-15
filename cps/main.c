@@ -676,6 +676,7 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	strcpy(conf.name, kni_name);
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
 	conf.mtu = iface->mtu;
+	rte_eth_macaddr_get(iface->id, (struct rte_ether_addr *)conf.mac_addr);
 
 	/* If the interface is bonded, take PCI info from the primary slave. */
 	if (iface->num_ports > 1 || iface->bonding_mode == BONDING_MODE_8023AD)
@@ -788,6 +789,12 @@ cps_stage1(void *arg)
 			"Failed to configure KNI link on the front iface\n");
 		goto error;
 	}
+	ret = rte_kni_update_link(cps_conf->front_kni, true);
+	if (ret < 0) {
+		CPS_LOG(ERR,
+			"Failed to set KNI link up on the front iface\n");
+		goto error;
+	}
 
 	cps_conf->front_kni_index = if_nametoindex(name);
 	if (cps_conf->front_kni_index == 0) {
@@ -814,6 +821,12 @@ cps_stage1(void *arg)
 		if (ret < 0) {
 			CPS_LOG(ERR,
 				"Failed to configure KNI link on the back iface\n");
+			goto error;
+		}
+		ret = rte_kni_update_link(cps_conf->back_kni, true);
+		if (ret < 0) {
+			CPS_LOG(ERR,
+				"Failed to set KNI link up on the back iface\n");
 			goto error;
 		}
 
