@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#ifndef _GRANTEDV2_H_
+#define _GRANTEDV2_H_
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -170,3 +173,5 @@ grantedv2_pkt_end(struct gk_bpf_pkt_ctx *ctx, struct grantedv2_state *state)
 
 	return GK_BPF_PKT_RET_FORWARD;
 }
+
+#endif /* _GRANTEDV2_H_ */
