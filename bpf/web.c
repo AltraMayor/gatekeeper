@@ -26,16 +26,11 @@
  */
 
 #include <net/ethernet.h>
-#include <netinet/ip_icmp.h>
-#include <netinet/icmp6.h>
 #include <netinet/tcp.h>
 
 #include "grantedv2.h"
-
-#ifdef ntohs
-#undef ntohs
-#endif
-#define ntohs(x) __builtin_bswap16(x)
+#include "libicmp.h"
+#include "libinet.h"
 
 SEC("init") uint64_t
 web_init(struct gk_bpf_init_ctx *ctx)
@@ -60,63 +55,21 @@ web_pkt(struct gk_bpf_pkt_ctx *ctx)
 
 	/* Allowed L4 protocols. */
 	switch (ctx->l4_proto) {
-	case IPPROTO_ICMP: {
-		struct icmphdr *icmp_hdr;
-
-		if (ctx->l3_proto != ETHERTYPE_IP) {
-			/* ICMP must be on top of IPv4. */
-			return GK_BPF_PKT_RET_DECLINE;
-		}
-		if (ctx->fragmented)
-			return GK_BPF_PKT_RET_DECLINE;
-		if (pkt->l4_len < sizeof(*icmp_hdr)) {
-			/* Malformed ICMP header. */
-			return GK_BPF_PKT_RET_DECLINE;
-		}
-		icmp_hdr = rte_pktmbuf_mtod_offset(pkt,
-			struct icmphdr *, pkt->l2_len + pkt->l3_len);
-		switch (icmp_hdr->type) {
-		case ICMP_ECHOREPLY:
-		case ICMP_DEST_UNREACH:
-		case ICMP_SOURCE_QUENCH:
-		case ICMP_ECHO:
-		case ICMP_TIME_EXCEEDED:
-			break;
-		default:
-			return GK_BPF_PKT_RET_DECLINE;
-		}
+	case IPPROTO_ICMP:
+		ret = check_icmp(ctx, pkt);
+		if (ret != GK_BPF_PKT_RET_FORWARD)
+			return ret;
 		goto secondary_budget;
-	}
-	case IPPROTO_ICMPV6: {
-		struct icmp6_hdr *icmp6_hdr;
 
-		if (ctx->l3_proto != ETHERTYPE_IPV6) {
-			/* ICMPv6 must be on top of IPv6. */
-			return GK_BPF_PKT_RET_DECLINE;
-		}
-		if (ctx->fragmented)
-			return GK_BPF_PKT_RET_DECLINE;
-		if (pkt->l4_len < sizeof(*icmp6_hdr)) {
-			/* Malformed ICMPv6 header. */
-			return GK_BPF_PKT_RET_DECLINE;
-		}
-		icmp6_hdr = rte_pktmbuf_mtod_offset(pkt,
-			struct icmp6_hdr *, pkt->l2_len + pkt->l3_len);
-		switch (icmp6_hdr->icmp6_type) {
-		case ICMP6_DST_UNREACH:
-		case ICMP6_PACKET_TOO_BIG:
-		case ICMP6_TIME_EXCEEDED:
-		case ICMP6_PARAM_PROB:
-		case ICMP6_ECHO_REQUEST:
-		case ICMP6_ECHO_REPLY:
-			break;
-		default:
-			return GK_BPF_PKT_RET_DECLINE;
-		}
+	case IPPROTO_ICMPV6:
+		ret = check_icmp6(ctx, pkt);
+		if (ret != GK_BPF_PKT_RET_FORWARD)
+			return ret;
 		goto secondary_budget;
-	}
+
 	case IPPROTO_TCP:
 		break;
+
 	default:
 		return GK_BPF_PKT_RET_DECLINE;
 	}
