@@ -21,8 +21,8 @@
  * that runs the services HTTP, HTTPS, SSH, and FTP.
  *
  * This BPF program builds upon the BPF program grantedv2, so
- * there are primary and secondary limits. The secondary limit is only used
- * for fragmented packets.
+ * there are primary and secondary limits. The secondary limit is applied to
+ * ICMPv4, ICMPv6, fragmented, and SYN packets.
  */
 
 #include <net/ethernet.h>
