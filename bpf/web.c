@@ -108,9 +108,13 @@ web_pkt(struct gk_bpf_pkt_ctx *ctx)
 	case 80:	/* HTTP */
 	case 443:	/* HTTPS */
 	case 22:	/* SSH */
-		if (tcp_hdr->syn && tcp_hdr->ack) {
-			/* Amplification attack. */
-			return GK_BPF_PKT_RET_DECLINE;
+		if (tcp_hdr->syn) {
+		       if (tcp_hdr->ack) {
+				/* Amplification attack. */
+				return GK_BPF_PKT_RET_DECLINE;
+			}
+			/* Contain SYN floods. */
+			goto secondary_budget;
 		}
 		break;
 
