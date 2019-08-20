@@ -109,7 +109,7 @@ web_pkt(struct gk_bpf_pkt_ctx *ctx)
 	case 443:	/* HTTPS */
 	case 22:	/* SSH */
 		if (tcp_hdr->syn) {
-		       if (tcp_hdr->ack) {
+			if (tcp_hdr->ack) {
 				/* Amplification attack. */
 				return GK_BPF_PKT_RET_DECLINE;
 			}
