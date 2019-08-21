@@ -1647,9 +1647,10 @@ cleanup_gt_instance(struct gt_config *gt_conf, struct gt_instance *instance)
 	rte_free(instance->ggu_pkts);
 	instance->ggu_pkts = NULL;
 
-	/* If the pointer is NULL, the function does nothing. */
-	rte_ip_frag_table_destroy(instance->frag_tbl);
-	instance->frag_tbl = NULL;
+	if (instance->frag_tbl != NULL) {
+		rte_ip_frag_table_destroy(instance->frag_tbl);
+		instance->frag_tbl = NULL;
+	}
 
 	destroy_neigh_hash_table(&instance->neigh6);
 	destroy_neigh_hash_table(&instance->neigh);
