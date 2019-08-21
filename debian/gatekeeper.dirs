@@ -1,4 +1,4 @@
-etc/gatekeeper
+etc/gatekeeper/bpf
 usr/sbin
 usr/share/doc/gatekeeper/examples
 usr/share/gatekeeper

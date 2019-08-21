@@ -16,7 +16,7 @@ LUA_PATH = $(shell pwd)/dependencies/luajit-2.0/src
 
 override_dh_auto_configure:
 
-override_dh_auto_build: build_luajit build_dpdk build_gatekeeper
+override_dh_auto_build: build_luajit build_dpdk build_gatekeeper build_bpf
 
 build_luajit:
 	cd dependencies/luajit-2.0; \
@@ -36,7 +36,10 @@ build_gatekeeper: build_luajit build_dpdk
 		EXTRA_CFLAGS="-I$(LUA_PATH)" LDIR="-L$(LUA_PATH)" \
 		make
 
-override_dh_clean: clean_luajit clean_dpdk clean_gatekeeper
+build_bpf:
+	cd bpf; RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make
+
+override_dh_clean: clean_luajit clean_dpdk clean_gatekeeper clean_bpf
 	dh_clean
 
 clean_luajit:
@@ -47,9 +50,14 @@ clean_dpdk:
 	if [ -f "$(RTE_SDK)/build/.config" ]; then \
 		cd dependencies/dpdk && make clean;      \
 	fi
+	rm -rf dependencies/dpdk/$(RTE_TARGET)
 
 clean_gatekeeper:
 	RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make clean; true
+	rm -rf gkctl/gkctl generate_if_map build
+
+clean_bpf:
+	cd bpf; rm -f *.bpf
 
 override_dh_auto_install:
 

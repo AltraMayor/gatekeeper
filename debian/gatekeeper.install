@@ -1,4 +1,5 @@
 lua/*.lua etc/gatekeeper/
+bpf/*.bpf etc/gatekeeper/bpf/
 lua/gatekeeper/*.lua usr/share/lua/5.1/gatekeeper/
 lua/examples/*.lua usr/share/doc/gatekeeper/examples
 

@@ -2,3 +2,8 @@ gatekeeper: binary-without-manpage usr/sbin/gatekeeper
 gatekeeper: binary-without-manpage usr/sbin/gkctl
 gatekeeper: missing-dependency-on-libc needed by usr/sbin/gatekeeper and 1 others
 gatekeeper: binary-without-manpage usr/sbin/generate_if_map
+
+# We're explicitly ignoring the errors below, which are due to the BPF programs.
+gatekeeper: binary-in-etc etc/gatekeeper/bpf/*
+gatekeeper: unstripped-binary-or-object etc/gatekeeper/bpf/*
+gatekeeper: binary-from-other-architecture etc/gatekeeper/bpf/*
