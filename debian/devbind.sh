@@ -5,5 +5,5 @@ if [ "$#" -eq "0" ]; then
 fi
 
 for iface in $@; do
-  /sbin/dpdk-devbind --bind=uio_pci_generic $iface
+  /usr/bin/dpdk-devbind.py --bind=uio_pci_generic $iface
 done

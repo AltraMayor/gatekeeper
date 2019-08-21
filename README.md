@@ -38,10 +38,11 @@ page.
 Once the packages are downloaded, they can be installed with the commands below:
 
     $ sudo dpkg -i libgkrte-*.deb \
-        gatekeeper-dpdk_18.11.0-0_amd64.deb \
-        gatekeeper-dpdk-dev_18.11.0-0_amd64.deb \
-        gatekeeper-dpdk-igb-uio-dkms_18.11.0-0_amd64.deb \
-        gatekeeper-dpdk-rte-kni-dkms_18.11.0-0_amd64.deb \
+        libgkdpdk-dev_19.08.0-0_amd64.deb \
+        gatekeeper-dpdk_19.08.0-0_amd64.deb \
+        gatekeeper-dpdk-dev_19.08.0-0_amd64.deb \
+        gatekeeper-dpdk-igb-uio-dkms_19.08.0-0_amd64.deb \
+        gatekeeper-dpdk-rte-kni-dkms_19.08.0-0_amd64.deb \
         gatekeeper-bird_2.0.4-0_amd64.deb \
         gatekeeper-1.0.0-0_amd64.deb
 
