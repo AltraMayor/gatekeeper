@@ -13,14 +13,14 @@ return function (gatekeeper_server)
 	local front_ips  = {"10.0.1.1/24", "2001:db8:1::1/48"}
 	local front_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
 	local front_vlan_tag = 0x123
-	local front_vlan_insert = true
+	local front_vlan_insert = false
 	local front_mtu = 1500
 
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
 	local back_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
 	local back_vlan_tag = 0x456
-	local back_vlan_insert = true
+	local back_vlan_insert = false
 	local back_mtu = 2048
 
 	-- XXX #155 These parameters should only be changed for performance reasons.

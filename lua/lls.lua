@@ -5,7 +5,7 @@ return function (net_conf, numa_table)
 	--
 
 	-- These parameters should likely be initially changed.
-	local log_level = staticlib.c.RTE_LOG_DEBUG
+	local log_level = staticlib.c.RTE_LOG_INFO
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local mailbox_max_entries_exp = 7

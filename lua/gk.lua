@@ -34,7 +34,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local max_num_ipv4_fib_entries = 256
 	local max_num_ipv6_fib_entries = 65536
 
-	local basic_measurement_logging_ms = 60 * 1000 -- (1 minute)
+	local basic_measurement_logging_ms = 30 * 1000 -- (1 minute)
 
 	local front_icmp_msgs_per_sec = 1000
 	local front_icmp_msgs_burst = 50
