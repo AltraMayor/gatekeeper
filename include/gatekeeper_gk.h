@@ -240,14 +240,17 @@ struct gk_config {
 };
 
 /* A flow entry can be in one of the following states: */
-enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
+enum { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
 
 struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
 
 	/* The state of the entry. */
-	enum gk_flow_state state;
+	uint8_t state;
+
+	/* Whether this entry is currently in use in ip_flow_entry_table. */
+	bool    in_use;
 
 	/*
 	 * The fib entry that instructs where
