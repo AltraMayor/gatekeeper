@@ -161,8 +161,12 @@ struct gk_config {
 	unsigned int       max_num_ipv4_fib_entries;
 	unsigned int       max_num_ipv6_fib_entries;
 
-	/* Time for scanning the whole flow table in ms. */
-	unsigned int       flow_table_full_scan_ms;
+	/*
+	 * Number of iterations of the GK block's main loop
+	 * between scanning entries of the flow table. Set to
+	 * 0 to scan an entry every iteration of the loop.
+	 */
+	unsigned int       flow_table_scan_iter;
 
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t           front_max_pkt_burst;
