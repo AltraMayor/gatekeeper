@@ -25,6 +25,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	local flow_ht_size = 1024
 	local flow_table_scan_iter = 1000
+	local flow_table_agg_scan_iter = 10
 
 	local max_num_ipv4_rules = 1024
 	local num_ipv4_tbl8s = 256
@@ -86,6 +87,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	staticlib.c.set_gk_request_timeout(request_timeout_sec, gk_conf)
 	gk_conf.flow_table_scan_iter = flow_table_scan_iter
+	gk_conf.flow_table_agg_scan_iter = flow_table_agg_scan_iter
 	gk_conf.basic_measurement_logging_ms = basic_measurement_logging_ms
 
 	gk_conf.front_icmp_msgs_per_sec = math.floor(front_icmp_msgs_per_sec /

@@ -566,6 +566,21 @@ gk_flow_tbl_bucket_scan(uint32_t *bidx,
 				instance->ip_flow_hash_table, fe);
 		}
 
+		if (fe->state == GK_REQUEST) {
+			uint8_t priority = priority_from_delta_time(now,
+				fe->u.request.last_packet_seen_at);
+			/*
+			 * Remove request entries that are not doubling
+			 * its priority when a Gatekeeper server is overloaded.
+			 * We use +2 instead of +1 in the test below to account
+			 * for random delays in the network.
+			 */
+			if (priority > fe->u.request.last_priority + 2) {
+				gk_del_flow_entry_from_hash(
+					instance->ip_flow_hash_table, fe);
+			}
+		}
+
 		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
 			(void *)&key, &data, bidx, &next);
 	}
@@ -750,6 +765,8 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 		int ret = rte_hash_add_key_with_hash(
 			instance->ip_flow_hash_table, flow, rss_hash_val);
 		if (ret == -ENOSPC) {
+			instance->agg_scan = true;
+
 			RTE_VERIFY(!retried);
 			if (state_to_add == GK_REQUEST)
 				return ret;
@@ -1963,6 +1980,7 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
+		int agg_scan_on = instance->agg_scan;
 		front_num_pkts = 0;
 		back_num_pkts = 0;
 
@@ -1983,9 +2001,20 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
+		if (!agg_scan_on && instance->agg_scan) {
+			/* Aggressive scan mode was just activated. */
+			instance->agg_scan_bucket_idx = bucket_idx;
+			scan_iter = gk_conf->flow_table_agg_scan_iter + 1;
+		}
+
 		if (iter_count % scan_iter == 0) {
 			gk_flow_tbl_bucket_scan(&bucket_idx,
 				gk_conf->request_timeout_cycles, instance);
+			if (instance->agg_scan && (bucket_idx ==
+					instance->agg_scan_bucket_idx)) {
+				instance->agg_scan = false;
+				scan_iter = gk_conf->flow_table_scan_iter + 1;
+			}
 		}
 
 		if (rte_rdtsc() - last_measure_tsc >=

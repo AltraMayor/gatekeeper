@@ -114,6 +114,10 @@ struct gk_instance {
 	/* Data structures used to limit the rate of icmp messages. */
 	struct token_bucket_ratelimit_state front_icmp_rs;
 	struct token_bucket_ratelimit_state back_icmp_rs;
+	/* Whether the aggressive scan mode is enabled. */
+	int               agg_scan;
+	/* Bucket that the aggressive scan starts (and ends) at. */
+	uint32_t          agg_scan_bucket_idx;
 } __rte_cache_aligned;
 
 #define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)
@@ -167,6 +171,14 @@ struct gk_config {
 	 * 0 to scan an entry every iteration of the loop.
 	 */
 	unsigned int       flow_table_scan_iter;
+
+	/*
+	 * Number of iterations of the GK block's main loop
+	 * between scanning entries of the flow table during
+	 * aggressive scan mode. Aggressive scan mode is activated
+	 * when the flow table becomes full.
+	 */
+	unsigned int       flow_table_agg_scan_iter;
 
 	/* The maximum number of packets to retrieve/transmit. */
 	uint16_t           front_max_pkt_burst;
