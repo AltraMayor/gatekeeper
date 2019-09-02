@@ -193,6 +193,7 @@ initialize_flow_entry(struct flow_entry *fe,
 
 	rte_memcpy(&fe->flow, flow, sizeof(*flow));
 
+	fe->in_use = true;
 	fe->state = GK_REQUEST;
 	fe->u.request.last_packet_seen_at = rte_rdtsc();
 	fe->u.request.last_priority = START_PRIORITY;
@@ -548,41 +549,35 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 }
 
 static void
-gk_flow_tbl_bucket_scan(uint32_t *bidx,
+gk_flow_tbl_entry_scan(uint32_t entry_idx,
 	uint64_t request_timeout_cycles, struct gk_instance *instance)
 {
-	int32_t index;
-	const struct ip_flow *key;
-	void *data;
-	uint32_t next = 0;
-	uint64_t now = rte_rdtsc();
+	struct flow_entry *fe = &instance->ip_flow_entry_table[entry_idx];
+	uint64_t now;
 
-	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-		(void *)&key, &data, bidx, &next);
-	while (index >= 0) {
-		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
-		if (is_flow_expired(fe, now, request_timeout_cycles)) {
+	if (!fe->in_use)
+		return;
+
+	now = rte_rdtsc();
+	if (is_flow_expired(fe, now, request_timeout_cycles)) {
+		gk_del_flow_entry_from_hash(
+			instance->ip_flow_hash_table, fe);
+		return;
+	}
+
+	if (fe->state == GK_REQUEST) {
+		uint8_t priority = priority_from_delta_time(now,
+			fe->u.request.last_packet_seen_at);
+		/*
+		 * Remove request entries that are not doubling
+		 * its priority when a Gatekeeper server is overloaded.
+		 * We use +2 instead of +1 in the test below to account
+		 * for random delays in the network.
+		 */
+		if (priority > fe->u.request.last_priority + 2) {
 			gk_del_flow_entry_from_hash(
 				instance->ip_flow_hash_table, fe);
 		}
-
-		if (fe->state == GK_REQUEST) {
-			uint8_t priority = priority_from_delta_time(now,
-				fe->u.request.last_packet_seen_at);
-			/*
-			 * Remove request entries that are not doubling
-			 * its priority when a Gatekeeper server is overloaded.
-			 * We use +2 instead of +1 in the test below to account
-			 * for random delays in the network.
-			 */
-			if (priority > fe->u.request.last_priority + 2) {
-				gk_del_flow_entry_from_hash(
-					instance->ip_flow_hash_table, fe);
-			}
-		}
-
-		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-			(void *)&key, &data, bidx, &next);
 	}
 }
 
@@ -689,7 +684,7 @@ out:
 static struct flow_entry *
 find_flow_entry_candidate(struct gk_instance *instance,
 	uint32_t bidx, uint64_t request_timeout_cycles,
-	enum gk_flow_state state_to_add)
+	uint8_t state_to_add)
 {
 	int32_t index;
 	uint32_t next = 0;
@@ -739,7 +734,7 @@ find_flow_entry_candidate(struct gk_instance *instance,
 static int
 drop_flow_entry_heuristically(struct gk_instance *instance,
 	hash_sig_t sig, uint64_t request_timeout_cycles,
-	enum gk_flow_state state_to_add)
+	uint8_t state_to_add)
 {
 	uint32_t primary_bidx = rte_hash_get_primary_bucket(
 		instance->ip_flow_hash_table, sig);
@@ -758,7 +753,7 @@ drop_flow_entry_heuristically(struct gk_instance *instance,
 static int
 gk_hash_add_flow_entry(struct gk_instance *instance,
 	struct ip_flow *flow, unsigned int request_timeout_cycles,
-	uint32_t rss_hash_val, enum gk_flow_state state_to_add)
+	uint32_t rss_hash_val, uint8_t state_to_add)
 {
 	int retried = false;
 	while (true) {
@@ -828,7 +823,7 @@ add_new_flow_from_policy(
 
 	fe = &instance->ip_flow_entry_table[ret];
 	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
-
+	fe->in_use = true;
 	fe->grantor_fib = fib;
 
 	return fe;
@@ -1967,7 +1962,7 @@ gk_proc(void *arg)
 	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
 	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
 
-	uint32_t bucket_idx = 0;
+	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
@@ -2003,15 +1998,16 @@ gk_proc(void *arg)
 
 		if (!agg_scan_on && instance->agg_scan) {
 			/* Aggressive scan mode was just activated. */
-			instance->agg_scan_bucket_idx = bucket_idx;
+			instance->agg_scan_entry_idx = entry_idx;
 			scan_iter = gk_conf->flow_table_agg_scan_iter + 1;
 		}
 
+		entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
 		if (iter_count % scan_iter == 0) {
-			gk_flow_tbl_bucket_scan(&bucket_idx,
+			gk_flow_tbl_entry_scan(entry_idx,
 				gk_conf->request_timeout_cycles, instance);
-			if (instance->agg_scan && (bucket_idx ==
-					instance->agg_scan_bucket_idx)) {
+			if (instance->agg_scan && (entry_idx ==
+					instance->agg_scan_entry_idx)) {
 				instance->agg_scan = false;
 				scan_iter = gk_conf->flow_table_scan_iter + 1;
 			}

@@ -116,8 +116,8 @@ struct gk_instance {
 	struct token_bucket_ratelimit_state back_icmp_rs;
 	/* Whether the aggressive scan mode is enabled. */
 	int               agg_scan;
-	/* Bucket that the aggressive scan starts (and ends) at. */
-	uint32_t          agg_scan_bucket_idx;
+	/* Entry that the aggressive scan starts (and ends) at. */
+	uint32_t          agg_scan_entry_idx;
 } __rte_cache_aligned;
 
 #define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)
@@ -254,14 +254,17 @@ struct gk_config {
 };
 
 /* A flow entry can be in one of the following states: */
-enum gk_flow_state { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
+enum { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
 
 struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
 
 	/* The state of the entry. */
-	enum gk_flow_state state;
+	uint8_t state;
+
+	/* Whether this entry is currently in use in ip_flow_entry_table. */
+	uint8_t in_use;
 
 	/*
 	 * The fib entry that instructs where
