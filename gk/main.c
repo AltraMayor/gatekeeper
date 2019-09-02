@@ -745,18 +745,21 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	struct ip_flow *flow, unsigned int request_timeout_cycles,
 	uint32_t rss_hash_val, enum gk_flow_state state_to_add)
 {
+	int retried = false;
 	while (true) {
 		int ret = rte_hash_add_key_with_hash(
 			instance->ip_flow_hash_table, flow, rss_hash_val);
 		if (ret == -ENOSPC) {
-			GK_LOG(WARNING,
-				"The GK block failed to add new key to hash table in %s due to lack of space\n",
-				__func__);
+			RTE_VERIFY(!retried);
+			if (state_to_add == GK_REQUEST)
+				return ret;
+
 			ret = drop_flow_entry_heuristically(instance,
 				rss_hash_val, request_timeout_cycles,
 				state_to_add);
 			if (ret < 0)
 				return -ENOSPC;
+			retried = true;
 			continue;
 		}
 
