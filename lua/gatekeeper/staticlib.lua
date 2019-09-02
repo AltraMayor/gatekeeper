@@ -195,7 +195,7 @@ struct gk_config {
 	unsigned int max_num_ipv6_neighbors;
 	unsigned int max_num_ipv4_fib_entries;
 	unsigned int max_num_ipv6_fib_entries;
-	unsigned int flow_table_full_scan_ms;
+	unsigned int flow_table_scan_iter;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
 	uint32_t     front_icmp_msgs_per_sec;

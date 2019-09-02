@@ -1971,31 +1971,19 @@ gk_proc(void *arg)
 	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
 	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
 
-	int num_buckets = rte_hash_get_num_buckets(
-		instance->ip_flow_hash_table);
 	uint32_t bucket_idx = 0;
-	uint64_t last_scan_tsc = rte_rdtsc();
-	uint64_t last_measure_tsc = last_scan_tsc;
+	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
 		rte_get_tsc_hz() / 1000;
-	uint64_t bucket_scan_timeout_cycles = round(
-		(double)(gk_conf->flow_table_full_scan_ms *
-		rte_get_tsc_hz()) / (num_buckets * 1000.));
-	if (bucket_scan_timeout_cycles == 0) {
-		GK_LOG(WARNING,
-			"The value of the field flow_table_full_scan_ms in Gatekeeper configuration is too small\n");
-		exiting = true;
-		return -1;
-	}
+	uint32_t scan_iter = gk_conf->flow_table_scan_iter;
+	uint32_t iter_count = 0;
 
 	GK_LOG(NOTICE, "The GK block is running at lcore = %u\n", lcore);
 
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
-		uint64_t now;
-
 		front_num_pkts = 0;
 		back_num_pkts = 0;
 
@@ -2016,8 +2004,7 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		now = rte_rdtsc();
-		if (now - last_scan_tsc >= bucket_scan_timeout_cycles) {
+		if (iter_count >= scan_iter) {
 			/*
 			 * Reset the flag @has_insertion_failed when
 			 * one or more entries have been freed from
@@ -2026,11 +2013,11 @@ gk_proc(void *arg)
 			if (gk_flow_tbl_bucket_scan(&bucket_idx, instance))
 				instance->has_insertion_failed = false;
 
-			last_scan_tsc = rte_rdtsc();
-			now = last_scan_tsc;
-		}
+			iter_count = 0;
+		} else
+			iter_count++;
 
-		if (now - last_measure_tsc >=
+		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {
 			struct gk_measurement_metrics *stats =
 				&instance->traffic_stats;
