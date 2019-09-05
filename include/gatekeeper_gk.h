@@ -196,9 +196,6 @@ struct gk_config {
 	 * Configuration files should not refer to them.
 	 */
 
-	/* Timeout in cycles used to prune the expired request flow entries. */
-	uint64_t           request_timeout_cycles;
-
 	rte_atomic32_t     ref_cnt;
 
 	/* The lcore ids at which each instance runs. */
@@ -354,8 +351,6 @@ struct gk_cmd_entry {
 };
 
 struct gk_config *alloc_gk_conf(void);
-void set_gk_request_timeout(unsigned int request_timeout_sec,
-	struct gk_config *gk_conf);
 int gk_conf_put(struct gk_config *gk_conf);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);

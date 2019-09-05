@@ -34,7 +34,6 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local max_num_ipv4_fib_entries = 256
 	local max_num_ipv6_fib_entries = 65536
 
-	local request_timeout_sec = 48 * 60 * 60       -- (48 hours)
 	local basic_measurement_logging_ms = 60 * 1000 -- (1 minute)
 
 	local front_icmp_msgs_per_sec = 1000
@@ -84,7 +83,6 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 		gk_conf.max_num_ipv6_fib_entries = 0
 	end
 
-	staticlib.c.set_gk_request_timeout(request_timeout_sec, gk_conf)
 	gk_conf.flow_table_full_scan_ms = flow_table_full_scan_ms
 	gk_conf.basic_measurement_logging_ms = basic_measurement_logging_ms
 
