@@ -31,6 +31,8 @@
 #include <rte_cycles.h>
 #include <rte_malloc.h>
 #include <rte_icmp.h>
+#include <rte_vect.h>
+#include <rte_common.h>
 
 #include "gatekeeper_acl.h"
 #include "gatekeeper_gk.h"
@@ -1437,6 +1439,68 @@ send_request_to_grantor(struct ipacket *packet, struct gk_fib *fib,
 		drop_packet_front(packet->pkt, instance);
 }
 
+static void
+lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
+	int num_flows, struct gk_fib *fibs[])
+{
+	int i;
+	/* The batch size for IPv4 LPM table lookup. */
+	const uint8_t FWDSTEP = 4;
+	const uint32_t default_nh = 0xFFFFFF;
+	int k = RTE_ALIGN_FLOOR(num_flows, FWDSTEP);
+
+	for (i = 0; i < k; i += FWDSTEP) {
+		int j;
+		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
+			4, 5, 6, 7, 0, 1, 2, 3);
+		__m128i dip = _mm_set_epi32(flows[i + 3]->f.v4.dst.s_addr,
+			flows[i + 2]->f.v4.dst.s_addr,
+			flows[i + 1]->f.v4.dst.s_addr,
+			flows[i]->f.v4.dst.s_addr);
+		rte_xmm_t dst;
+
+		/* Byte swap 4 IPV4 addresses. */
+		dip = _mm_shuffle_epi8(dip, bswap_mask);
+
+		rte_lpm_lookupx4(ltbl->lpm, dip, dst.u32, default_nh);
+
+		for (j = 0; j < FWDSTEP; j++) {
+			if (dst.u32[j] != default_nh)
+				fibs[i + j] = &ltbl->fib_tbl[dst.u32[j]];
+			else
+				fibs[i + j] = NULL;
+		}
+	}
+
+	RTE_VERIFY(i == k);
+
+	for (; i < num_flows; i++)
+		fibs[i] = look_up_fib(ltbl, flows[i]);
+}
+
+static void
+lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
+	int num_flows, struct gk_fib *fibs[])
+{
+	int i;
+	uint8_t dst_ip[num_flows][RTE_LPM6_IPV6_ADDR_SIZE];
+	int32_t hop[num_flows];
+
+	for (i = 0; i < num_flows; i++) {
+		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
+			sizeof(dst_ip[i]));
+	}
+
+	rte_lpm6_lookup_bulk_func(ltbl->lpm6, dst_ip, hop, num_flows);
+
+	for (i = 0; i < num_flows; i++) {
+		if (hop[i] != -1)
+			fibs[i] = &ltbl->fib_tbl6[hop[i]];
+		else
+			fibs[i] = NULL;
+	}
+}
+
 static struct flow_entry *
 lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
@@ -1682,6 +1746,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 {
 	/* Get burst of RX packets, from first port of pair. */
 	int i;
+	int done_lookups;
 	int ret;
 	uint16_t num_rx;
 	uint16_t num_tx = 0;
@@ -1701,6 +1766,20 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
 	bool ipv4_configured_front = ipv4_if_configured(&gk_conf->net->front);
 	bool ipv6_configured_front = ipv6_if_configured(&gk_conf->net->front);
+	int num_ip_flows = 0;
+	struct ipacket pkt_arr[front_max_pkt_burst];
+	struct ip_flow *flow_arr[front_max_pkt_burst];
+	uint32_t flow_hash_val_arr[front_max_pkt_burst];
+	int num_lpm_lookups = 0;
+	int num_lpm6_lookups = 0;
+	struct ip_flow *flows[front_max_pkt_burst];
+	struct ip_flow *flows6[front_max_pkt_burst];
+	int32_t lpm_lookup_pos[front_max_pkt_burst];
+	int32_t lpm6_lookup_pos[front_max_pkt_burst];
+	int32_t pos_arr[front_max_pkt_burst];
+	struct gk_fib *fibs[front_max_pkt_burst];
+	struct gk_fib *fibs6[front_max_pkt_burst];
+	struct flow_entry *fe_arr[front_max_pkt_burst];
 
 	/* Load a set of packets from the front NIC. */
 	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
@@ -1711,21 +1790,16 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 	stats->tot_pkts_num += num_rx;
 
+	/* Extract packet and flow information. */
 	for (i = 0; i < num_rx; i++) {
-		struct ipacket packet;
-		/*
-		 * Pointer to the flow entry in request state 
-		 * under evaluation.
-		 */
-		struct flow_entry *fe;
+		struct ipacket *packet = &pkt_arr[num_ip_flows];
 		struct rte_mbuf *pkt = rx_bufs[i];
-		uint32_t ip_flow_hash_val;
 
 		stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
 
-		ret = extract_packet_info(pkt, &packet);
+		ret = extract_packet_info(pkt, packet);
 		if (ret < 0) {
-			if (likely(packet.flow.proto == RTE_ETHER_TYPE_ARP)) {
+			if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
 				stats->tot_pkts_num_distributed++;
 				stats->tot_pkts_size_distributed +=
 					rte_pktmbuf_pkt_len(pkt);
@@ -1739,56 +1813,95 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			continue;
 		}
 
-		if (unlikely((packet.flow.proto == RTE_ETHER_TYPE_IPV4 &&
+		if (unlikely((packet->flow.proto == RTE_ETHER_TYPE_IPV4 &&
 				!ipv4_configured_front) ||
-				(packet.flow.proto == RTE_ETHER_TYPE_IPV6 &&
+				(packet->flow.proto == RTE_ETHER_TYPE_IPV6 &&
 				!ipv6_configured_front))) {
 			drop_packet_front(pkt, instance);
 			continue;
 		}
 
-		ip_flow_hash_val = likely(front->rss) ? pkt->hash.rss :
-			rss_ip_flow_hf(&packet.flow, 0, 0);
+		flow_arr[num_ip_flows] = &packet->flow;
+		flow_hash_val_arr[num_ip_flows] = likely(front->rss) ?
+			pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
+		num_ip_flows++;
+	}
 
-		/* 
-		 * Find the flow entry for the IP pair.
-		 *
-		 * If the pair of source and destination addresses 
-		 * is in the flow table, proceed as the entry instructs,
-		 * and go to the next packet.
-		 */
-		ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
-			&packet.flow, ip_flow_hash_val);
-		if (ret >= 0)
-			fe = &instance->ip_flow_entry_table[ret];
-		else {
-			/*
-			 * Otherwise, look up the destination address
-		 	 * in the global LPM table.
-			 */
-			struct gk_fib *fib = look_up_fib(
-				&gk_conf->lpm_tbl, &packet.flow);
+	done_lookups = 0;
+	while (done_lookups < num_ip_flows) {
+		uint32_t num_keys = num_ip_flows - done_lookups;
+		if (num_keys > RTE_HASH_LOOKUP_BULK_MAX)
+			num_keys = RTE_HASH_LOOKUP_BULK_MAX;
 
-			fe = lookup_fe_from_lpm(&packet, ip_flow_hash_val,
-				fib, &num_tx, tx_bufs, acl4, acl6, num_pkts,
-				icmp_bufs, req_bufs, req_prio, &num_reqs,
-				front, back, instance, gk_conf);
-			if (fe == NULL)
-				continue;
+		ret = rte_hash_lookup_bulk_with_hash(
+			instance->ip_flow_hash_table,
+			(const void **)&flow_arr[done_lookups],
+			(hash_sig_t *)&flow_hash_val_arr[done_lookups],
+			num_keys, &pos_arr[done_lookups]);
+		if (ret != 0) {
+			GK_LOG(NOTICE,
+				"failed to find multiple keys in the hash table at lcore %u\n",
+				rte_lcore_id());
 		}
 
-		ret = process_flow_entry(fe, &packet, req_bufs, req_prio,
-			&num_reqs, gk_conf, stats);
+		done_lookups += num_keys;
+	}
+
+	for (i = 0; i < num_ip_flows; i++) {
+		if (pos_arr[i] >= 0)
+			fe_arr[i] = &instance->ip_flow_entry_table[pos_arr[i]];
+		else {
+			fe_arr[i] = NULL;
+			if (flow_arr[i]->proto == RTE_ETHER_TYPE_IPV4) {
+				lpm_lookup_pos[num_lpm_lookups] = i;
+				flows[num_lpm_lookups] = flow_arr[i];
+				num_lpm_lookups++;
+			} else {
+				lpm6_lookup_pos[num_lpm6_lookups] = i;
+				flows6[num_lpm6_lookups] = flow_arr[i];
+				num_lpm6_lookups++;
+			}
+		}
+	}
+
+	/* The remaining flows need LPM lookups. */
+	lookup_fib_bulk(&gk_conf->lpm_tbl, flows, num_lpm_lookups, fibs);
+	lookup_fib6_bulk(&gk_conf->lpm_tbl, flows6, num_lpm6_lookups, fibs6);
+
+	for (i = 0; i < num_lpm_lookups; i++) {
+		int fidx = lpm_lookup_pos[i];
+
+		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
+			flow_hash_val_arr[fidx], fibs[i], &num_tx, tx_bufs,
+			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			&num_reqs, front, back, instance, gk_conf);
+	}
+
+	for (i = 0; i < num_lpm6_lookups; i++) {
+		int fidx = lpm6_lookup_pos[i];
+
+		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
+			flow_hash_val_arr[fidx], fibs6[i], &num_tx, tx_bufs,
+			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			&num_reqs, front, back, instance, gk_conf);
+	}
+
+	for (i = 0; i < num_ip_flows; i++) {
+		if (fe_arr[i] == NULL)
+			continue;
+
+		ret = process_flow_entry(fe_arr[i], &pkt_arr[i], req_bufs,
+			req_prio, &num_reqs, gk_conf, stats);
 		if (ret < 0)
-			drop_packet_front(pkt, instance);
+			drop_packet_front(pkt_arr[i].pkt, instance);
 		else if (ret == EINPROGRESS) {
 			/* Request will be serviced by another lcore. */
 			continue;
 		} else if (likely(ret == 0))
-			tx_bufs[num_tx++] = pkt;
+			tx_bufs[num_tx++] = pkt_arr[i].pkt;
 		else
 			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
-				ret, fe->state);
+				ret, fe_arr[i]->state);
 	}
 
 	if (num_reqs > 0) {
@@ -1963,6 +2076,16 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	bool ipv4_configured_back = ipv4_if_configured(&gk_conf->net->back);
 	bool ipv6_configured_back = ipv6_if_configured(&gk_conf->net->back);
+	int num_ip_flows = 0;
+	struct ipacket pkt_arr[back_max_pkt_burst];
+	int num_lpm_lookups = 0;
+	int num_lpm6_lookups = 0;
+	int lpm_lookup_pos[back_max_pkt_burst];
+	int lpm6_lookup_pos[back_max_pkt_burst];
+	struct ip_flow *flows[back_max_pkt_burst];
+	struct ip_flow *flows6[back_max_pkt_burst];
+	struct gk_fib *fibs[back_max_pkt_burst];
+	struct gk_fib *fibs6[back_max_pkt_burst];
 
 	/* Load a set of packets from the back NIC. */
 	num_rx = rte_eth_rx_burst(port_back, rx_queue_back, rx_bufs,
@@ -1972,13 +2095,12 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 		return;
 
 	for (i = 0; i < num_rx; i++) {
-		struct ipacket packet;
-		struct gk_fib *fib;
+		struct ipacket *packet = &pkt_arr[num_ip_flows];
 		struct rte_mbuf *pkt = rx_bufs[i];
 
-		ret = extract_packet_info(pkt, &packet);
+		ret = extract_packet_info(pkt, packet);
 		if (ret < 0) {
-			if (likely(packet.flow.proto == RTE_ETHER_TYPE_ARP)) {
+			if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
 				arp_bufs[num_arp++] = pkt;
 				continue;
 			}
@@ -1988,18 +2110,44 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 			continue;
 		}
 
-		if (unlikely((packet.flow.proto == RTE_ETHER_TYPE_IPV4 &&
+		if (unlikely((packet->flow.proto == RTE_ETHER_TYPE_IPV4 &&
 				!ipv4_configured_back) ||
-				(packet.flow.proto == RTE_ETHER_TYPE_IPV6 &&
+				(packet->flow.proto == RTE_ETHER_TYPE_IPV6 &&
 				!ipv6_configured_back))) {
 			drop_packet_back(pkt, instance);
 			continue;
 		}
 
-		fib = look_up_fib(&gk_conf->lpm_tbl, &packet.flow);
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+			lpm_lookup_pos[num_lpm_lookups] = num_ip_flows;
+			flows[num_lpm_lookups] = &packet->flow;
+			num_lpm_lookups++;
+		} else {
+			lpm6_lookup_pos[num_lpm6_lookups] = num_ip_flows;
+			flows6[num_lpm6_lookups] = &packet->flow;
+			num_lpm6_lookups++;
+		}
 
-		process_fib(&packet, fib, &num_tx, tx_bufs, acl4, acl6,
-			num_pkts, icmp_bufs, front, back, instance);
+		num_ip_flows++;
+	}
+
+	lookup_fib_bulk(&gk_conf->lpm_tbl, flows, num_lpm_lookups, fibs);
+	lookup_fib6_bulk(&gk_conf->lpm_tbl, flows6, num_lpm6_lookups, fibs6);
+
+	for (i = 0; i < num_lpm_lookups; i++) {
+		int fidx = lpm_lookup_pos[i];
+
+		process_fib(&pkt_arr[fidx], fibs[i], &num_tx, tx_bufs,
+			acl4, acl6, num_pkts, icmp_bufs, front, back,
+			instance);
+	}
+
+	for (i = 0; i < num_lpm6_lookups; i++) {
+		int fidx = lpm6_lookup_pos[i];
+
+		process_fib(&pkt_arr[fidx], fibs6[i], &num_tx, tx_bufs,
+			acl4, acl6, num_pkts, icmp_bufs, front, back,
+			instance);
 	}
 
 	/* Send burst of TX packets, to second port of pair. */
