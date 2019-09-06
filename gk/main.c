@@ -520,9 +520,8 @@ is_flow_expired(struct flow_entry *fe, uint64_t now)
 
 		/*
 		 * A request entry is considered expired if it is not
-		 * doubling its priority when a Gatekeeper server is
-		 * overloaded. We use +2 instead of +1 in the test below
-		 * to account for random delays in the network.
+		 * doubling its waiting time. We use +2 instead of +1 in
+		 * the test below to account for random delays in the network.
 		 */
 		return priority_from_delta_time(now,
 			fe->u.request.last_packet_seen_at) >
