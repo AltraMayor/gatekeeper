@@ -1449,6 +1449,8 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	const uint32_t default_nh = 0xFFFFFF;
 	int k = RTE_ALIGN_FLOOR(num_flows, FWDSTEP);
 
+	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
+
 	for (i = 0; i < k; i += FWDSTEP) {
 		int j;
 		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
@@ -1465,17 +1467,22 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 		rte_lpm_lookupx4(ltbl->lpm, dip, dst.u32, default_nh);
 
 		for (j = 0; j < FWDSTEP; j++) {
-			if (dst.u32[j] != default_nh)
+			if (dst.u32[j] != default_nh) {
 				fibs[i + j] = &ltbl->fib_tbl[dst.u32[j]];
-			else
+
+				rte_prefetch0(fibs[i + j]);
+			} else
 				fibs[i + j] = NULL;
 		}
 	}
 
 	RTE_VERIFY(i == k);
 
-	for (; i < num_flows; i++)
+	for (; i < num_flows; i++) {
 		fibs[i] = look_up_fib(ltbl, flows[i]);
+		if (fibs[i])
+			rte_prefetch0(fibs[i]);
+	}
 }
 
 static void
@@ -1486,6 +1493,8 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	uint8_t dst_ip[num_flows][RTE_LPM6_IPV6_ADDR_SIZE];
 	int32_t hop[num_flows];
 
+	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
+
 	for (i = 0; i < num_flows; i++) {
 		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
 			sizeof(dst_ip[i]));
@@ -1494,9 +1503,11 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	rte_lpm6_lookup_bulk_func(ltbl->lpm6, dst_ip, hop, num_flows);
 
 	for (i = 0; i < num_flows; i++) {
-		if (hop[i] != -1)
+		if (hop[i] != -1) {
 			fibs[i] = &ltbl->fib_tbl6[hop[i]];
-		else
+
+			rte_prefetch0(fibs[i]);
+		} else
 			fibs[i] = NULL;
 	}
 }
@@ -1737,6 +1748,22 @@ process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 	return ret;
 }
 
+static inline void
+prefetch_flow_entry(struct flow_entry *fe)
+{
+#if RTE_CACHE_LINE_SIZE == 64
+	RTE_BUILD_BUG_ON(sizeof(*fe) <= RTE_CACHE_LINE_SIZE);
+	RTE_BUILD_BUG_ON(sizeof(*fe) > 2 * RTE_CACHE_LINE_SIZE);
+	rte_prefetch0(fe);
+	rte_prefetch0(((char *)fe) + RTE_CACHE_LINE_SIZE);
+#elif RTE_CACHE_LINE_SIZE == 128
+	RTE_BUILD_BUG_ON(sizeof(*fe) > RTE_CACHE_LINE_SIZE);
+	rte_prefetch0(fe);
+#else
+#error "Unsupported cache line size"
+#endif
+}
+
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint16_t port_front, uint16_t port_back,
@@ -1848,9 +1875,11 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	}
 
 	for (i = 0; i < num_ip_flows; i++) {
-		if (pos_arr[i] >= 0)
+		if (pos_arr[i] >= 0) {
 			fe_arr[i] = &instance->ip_flow_entry_table[pos_arr[i]];
-		else {
+
+			prefetch_flow_entry(fe_arr[i]);
+		} else {
 			fe_arr[i] = NULL;
 			if (flow_arr[i]->proto == RTE_ETHER_TYPE_IPV4) {
 				lpm_lookup_pos[num_lpm_lookups] = i;
