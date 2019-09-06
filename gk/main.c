@@ -504,8 +504,7 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 }
 
 static bool
-is_flow_expired(struct flow_entry *fe,
-	uint64_t now, uint64_t request_timeout_cycles)
+is_flow_expired(struct flow_entry *fe, uint64_t now)
 {
 	switch(fe->state) {
 	case GK_REQUEST:
@@ -519,8 +518,15 @@ is_flow_expired(struct flow_entry *fe,
 			return true;
 		}
 
-		return now - fe->u.request.last_packet_seen_at >=
-			request_timeout_cycles;
+		/*
+		 * A request entry is considered expired if it is not
+		 * doubling its priority when a Gatekeeper server is
+		 * overloaded. We use +2 instead of +1 in the test below
+		 * to account for random delays in the network.
+		 */
+		return priority_from_delta_time(now,
+			fe->u.request.last_packet_seen_at) >
+			fe->u.request.last_priority + 2;
 	case GK_GRANTED:
 		return now >= fe->u.granted.cap_expire_at;
 	case GK_DECLINED:
@@ -548,8 +554,7 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 }
 
 static void
-gk_flow_tbl_bucket_scan(uint32_t *bidx,
-	uint64_t request_timeout_cycles, struct gk_instance *instance)
+gk_flow_tbl_bucket_scan(uint32_t *bidx, struct gk_instance *instance)
 {
 	int32_t index;
 	const struct ip_flow *key;
@@ -561,7 +566,7 @@ gk_flow_tbl_bucket_scan(uint32_t *bidx,
 		(void *)&key, &data, bidx, &next);
 	while (index >= 0) {
 		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
-		if (is_flow_expired(fe, now, request_timeout_cycles)) {
+		if (is_flow_expired(fe, now)) {
 			gk_del_flow_entry_from_hash(
 				instance->ip_flow_hash_table, fe);
 		}
@@ -673,8 +678,7 @@ out:
 
 static struct flow_entry *
 find_flow_entry_candidate(struct gk_instance *instance,
-	uint32_t bidx, uint64_t request_timeout_cycles,
-	enum gk_flow_state state_to_add)
+	uint32_t bidx, enum gk_flow_state state_to_add)
 {
 	int32_t index;
 	uint32_t next = 0;
@@ -689,30 +693,19 @@ find_flow_entry_candidate(struct gk_instance *instance,
 		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
 
 		/* Expired flow entry. */
-		if (is_flow_expired(fe, now, request_timeout_cycles))
+		if (is_flow_expired(fe, now))
 			return fe;
 
 		/*
-		 * Only flow entries with state GK_REQUEST
-		 * will be possibly repaced, others have a higher priority.
+		 * Only flow entries with state GK_REQUEST will possibly
+		 * be repaced; others have a higher priority.
 		 */
-		if (fe->state == GK_REQUEST) {
-			uint8_t priority = priority_from_delta_time(now,
-				fe->u.request.last_packet_seen_at);
-			/*
-			 * Do not favor request entries that are not doubling
-			 * its priority when a Gatekeeper server is overloaded.
-			 * We use +2 instead of +1 in the test below to account
-			 * for random delays in the network.
-			 */
-			if (priority > fe->u.request.last_priority + 2)
-				return fe;
-
-			if (state_to_add != GK_REQUEST && (last_fe == NULL ||
-					last_fe->u.request.last_packet_seen_at >
-					fe->u.request.last_packet_seen_at))
-				last_fe = fe;
-		}
+		if (fe->state == GK_REQUEST &&
+				state_to_add != GK_REQUEST &&
+				(last_fe == NULL ||
+				last_fe->u.request.last_packet_seen_at >
+				fe->u.request.last_packet_seen_at))
+			last_fe = fe;
 
 		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
 			(void *)&key, &data, &bidx, &next);
@@ -723,13 +716,12 @@ find_flow_entry_candidate(struct gk_instance *instance,
 
 static int
 drop_flow_entry_heuristically(struct gk_instance *instance,
-	hash_sig_t sig, uint64_t request_timeout_cycles,
-	enum gk_flow_state state_to_add)
+	hash_sig_t sig, enum gk_flow_state state_to_add)
 {
 	uint32_t primary_bidx = rte_hash_get_primary_bucket(
 		instance->ip_flow_hash_table, sig);
 	struct flow_entry *fe = find_flow_entry_candidate(
-		instance, primary_bidx, request_timeout_cycles, state_to_add);
+		instance, primary_bidx, state_to_add);
 	if (fe == NULL)
 		return -ENOSPC;
 
@@ -742,8 +734,8 @@ drop_flow_entry_heuristically(struct gk_instance *instance,
  */
 static int
 gk_hash_add_flow_entry(struct gk_instance *instance,
-	struct ip_flow *flow, unsigned int request_timeout_cycles,
-	uint32_t rss_hash_val, enum gk_flow_state state_to_add)
+	struct ip_flow *flow, uint32_t rss_hash_val,
+	enum gk_flow_state state_to_add)
 {
 	int retried = false;
 	while (true) {
@@ -755,8 +747,7 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 				return ret;
 
 			ret = drop_flow_entry_heuristically(instance,
-				rss_hash_val, request_timeout_cycles,
-				state_to_add);
+				rss_hash_val, state_to_add);
 			if (ret < 0)
 				return -ENOSPC;
 			retried = true;
@@ -805,7 +796,7 @@ add_new_flow_from_policy(
 	}
 
 	ret = gk_hash_add_flow_entry(instance, &policy->flow,
-		gk_conf->request_timeout_cycles, rss_hash_val, policy->state);
+		rss_hash_val, policy->state);
 	if (ret < 0)
 		return NULL;
 
@@ -1550,7 +1541,6 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			 	 */
 				ret = gk_hash_add_flow_entry(
 					instance, &packet.flow,
-					gk_conf->request_timeout_cycles,
 					ip_flow_hash_val, GK_REQUEST);
 				if (ret == -ENOSPC) {
 					/*
@@ -1997,8 +1987,7 @@ gk_proc(void *arg)
 
 		now = rte_rdtsc();
 		if (now - last_scan_tsc >= bucket_scan_timeout_cycles) {
-			gk_flow_tbl_bucket_scan(&bucket_idx,
-				gk_conf->request_timeout_cycles, instance);
+			gk_flow_tbl_bucket_scan(&bucket_idx, instance);
 			last_scan_tsc = rte_rdtsc();
 			now = last_scan_tsc;
 		}
@@ -2038,14 +2027,6 @@ struct gk_config *
 alloc_gk_conf(void)
 {
 	return rte_calloc("gk_config", 1, sizeof(struct gk_config), 0);
-}
-
-void
-set_gk_request_timeout(unsigned int request_timeout_sec,
-	struct gk_config *gk_conf)
-{
-	gk_conf->request_timeout_cycles =
-		request_timeout_sec * rte_get_tsc_hz();
 }
 
 static void
