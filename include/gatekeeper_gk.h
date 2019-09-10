@@ -96,6 +96,7 @@ struct gk_measurement_metrics {
 
 /* Structures for each GK instance. */
 struct gk_instance {
+	bool              is_ht_full;
 	struct rte_hash   *ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
 	struct acl_search *acl4;

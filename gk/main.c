@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 
@@ -1538,6 +1539,15 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				 * brand-new entry instructs, and
 			 	 * go to the next packet.
 			 	 */
+				if (instance->is_ht_full) {
+					double r = rand()/(double)RAND_MAX;
+					if (r < 0.95) {
+						drop_packet_front(pkt,
+							instance);
+						continue;
+					}
+				}
+
 				ret = gk_hash_add_flow_entry(
 					instance, &packet.flow,
 					ip_flow_hash_val, GK_REQUEST);
@@ -1559,6 +1569,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 						drop_packet_front(
 							pkt, instance);
 					}
+					instance->is_ht_full = true;
 					continue;
 				} else if (ret < 0) {
 					drop_packet_front(pkt, instance);
@@ -1961,6 +1972,9 @@ gk_proc(void *arg)
 
 	gk_conf_hold(gk_conf);
 
+	srand((long)time(NULL));
+	instance->is_ht_full = false;
+
 	while (likely(!exiting)) {
 		uint64_t now;
 
@@ -1989,6 +2003,7 @@ gk_proc(void *arg)
 			gk_flow_tbl_bucket_scan(&bucket_idx, instance);
 			last_scan_tsc = rte_rdtsc();
 			now = last_scan_tsc;
+			instance->is_ht_full = false;
 		}
 
 		if (now - last_measure_tsc >=
@@ -2012,6 +2027,8 @@ gk_proc(void *arg)
 				stats->tot_pkts_size_distributed);
 
 			memset(stats, 0, sizeof(*stats));
+
+			instance->is_ht_full = false;
 
 			last_measure_tsc = rte_rdtsc();
 		}
