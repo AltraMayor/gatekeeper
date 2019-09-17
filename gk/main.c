@@ -552,7 +552,8 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 	return ret;
 }
 
-static void
+/* Return true when it removes at least one entry, and false otherwise. */
+static bool
 gk_flow_tbl_bucket_scan(uint32_t *bidx, struct gk_instance *instance)
 {
 	int32_t index;
@@ -560,6 +561,7 @@ gk_flow_tbl_bucket_scan(uint32_t *bidx, struct gk_instance *instance)
 	void *data;
 	uint32_t next = 0;
 	uint64_t now = rte_rdtsc();
+	bool flow_removed = false;
 
 	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
 		(void *)&key, &data, bidx, &next);
@@ -568,11 +570,14 @@ gk_flow_tbl_bucket_scan(uint32_t *bidx, struct gk_instance *instance)
 		if (is_flow_expired(fe, now)) {
 			gk_del_flow_entry_from_hash(
 				instance->ip_flow_hash_table, fe);
+			flow_removed = true;
 		}
 
 		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
 			(void *)&key, &data, bidx, &next);
 	}
+
+	return flow_removed;
 }
 
 static int
@@ -1408,6 +1413,24 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	return 0;
 }
 
+/*
+ * This function is only to be called on flows that
+ * are not backed by a flow entry.
+ */
+static void
+send_request_to_grantor(struct ipacket *packet, struct gk_fib *fib,
+		struct gk_instance *instance, struct gk_config *gk_conf) {
+	int ret;
+	struct flow_entry temp_fe;
+
+	initialize_flow_entry(&temp_fe, &packet->flow, fib);
+
+	ret = gk_process_request(&temp_fe, packet, gk_conf->sol_conf,
+		&instance->traffic_stats);
+	if (ret < 0)
+		drop_packet_front(packet->pkt, instance);
+}
+
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint16_t port_front, uint16_t port_back,
@@ -1527,6 +1550,21 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			switch (fib->action) {
 			case GK_FWD_GRANTOR:
 				/*
+				 * If the table is full at a given batch,
+				 * the table only has a chance to free entries
+				 * in between batches. So there's no reason to
+				 * risk trying another flow in the current
+				 * batch. However, we will give this flow a
+				 * chance sending a request to the grantor
+				 * server.
+				 */
+				if (instance->has_insertion_failed) {
+					send_request_to_grantor(&packet, fib,
+						instance, gk_conf);
+					continue;
+				}
+
+				/*
 				 * We heuristically drop entries to
 				 * alleviate memory pressure
 				 * when the table is full.
@@ -1549,18 +1587,12 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 					 * request to the grantor
 					 * server.
 					 */
-					struct flow_entry temp_fe;
-					initialize_flow_entry(&temp_fe,
-						&packet.flow, fib);
-					ret = gk_process_request(
-						&temp_fe, &packet,
-						gk_conf->sol_conf, stats);
-					if (ret < 0) {
-						drop_packet_front(
-							pkt, instance);
-					}
+					send_request_to_grantor(&packet, fib,
+						instance, gk_conf);
+					instance->has_insertion_failed = true;
 					continue;
-				} else if (ret < 0) {
+				}
+				if (ret < 0) {
 					drop_packet_front(pkt, instance);
 					continue;
 				}
@@ -1986,7 +2018,14 @@ gk_proc(void *arg)
 
 		now = rte_rdtsc();
 		if (now - last_scan_tsc >= bucket_scan_timeout_cycles) {
-			gk_flow_tbl_bucket_scan(&bucket_idx, instance);
+			/*
+			 * Reset the flag @has_insertion_failed when
+			 * one or more entries have been freed from
+			 * the flow table.
+			 */
+			if (gk_flow_tbl_bucket_scan(&bucket_idx, instance))
+				instance->has_insertion_failed = false;
+
 			last_scan_tsc = rte_rdtsc();
 			now = last_scan_tsc;
 		}
