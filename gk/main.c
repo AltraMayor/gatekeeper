@@ -1139,7 +1139,7 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	switch (entry->op) {
-	case GGU_POLICY_ADD:
+	case GK_ADD_POLICY_DECISION:
 		add_ggu_policy(&entry->u.ggu, instance, gk_conf);
 		break;
 

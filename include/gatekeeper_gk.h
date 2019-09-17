@@ -319,7 +319,7 @@ struct flow_entry {
 
 /* Define the possible command operations for GK block. */
 enum gk_cmd_op {
-	GGU_POLICY_ADD,
+	GK_ADD_POLICY_DECISION,
 	GK_SYNCH_WITH_LPM,
 	GK_FLUSH_FLOW_TABLE,
 	GK_LOG_FLOW_STATE,
@@ -340,7 +340,7 @@ struct gk_cmd_entry {
 	enum gk_cmd_op  op;
 
 	union {
-		/* GGU policy to be added with GGU_POLICY_ADD op. */
+		/* GGU policy to be added with GK_ADD_POLICY_DECISION op. */
 		struct ggu_policy ggu;
 		/* FIB entry to synchronize with GK_SYNCH_WITH_LPM op. */
 		struct gk_fib *fib;

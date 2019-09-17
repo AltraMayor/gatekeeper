@@ -69,7 +69,7 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 	if (entry == NULL)
 		return;
 
-	entry->op = GGU_POLICY_ADD;
+	entry->op = GK_ADD_POLICY_DECISION;
 	entry->u.ggu.state = policy->state;
 	rte_memcpy(&entry->u.ggu.flow, &policy->flow, sizeof(entry->u.ggu.flow));
 
