@@ -24,7 +24,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local max_pkt_burst_back = 32
 
 	local flow_ht_size = 1024
-	local flow_table_full_scan_ms = 10 * 60 * 1000 -- (10 minutes)
+	local flow_table_scan_iter = 1000
 
 	local max_num_ipv4_rules = 1024
 	local num_ipv4_tbl8s = 256
@@ -83,7 +83,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 		gk_conf.max_num_ipv6_fib_entries = 0
 	end
 
-	gk_conf.flow_table_full_scan_ms = flow_table_full_scan_ms
+	gk_conf.flow_table_scan_iter = flow_table_scan_iter
 	gk_conf.basic_measurement_logging_ms = basic_measurement_logging_ms
 
 	gk_conf.front_icmp_msgs_per_sec = math.floor(front_icmp_msgs_per_sec /
