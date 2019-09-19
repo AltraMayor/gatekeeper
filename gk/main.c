@@ -1431,6 +1431,233 @@ send_request_to_grantor(struct ipacket *packet, struct gk_fib *fib,
 		drop_packet_front(packet->pkt, instance);
 }
 
+static struct flow_entry *
+lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
+		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
+		struct acl_search *acl4, struct acl_search *acl6,
+		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+		struct gatekeeper_if *front, struct gatekeeper_if *back,
+		struct gk_instance *instance, struct gk_config *gk_conf) {
+	struct rte_mbuf *pkt = packet->pkt;
+	struct ether_cache *eth_cache;
+	struct gk_measurement_metrics *stats = &instance->traffic_stats;
+
+	if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+			stats->tot_pkts_num_distributed++;
+			stats->tot_pkts_size_distributed +=
+				rte_pktmbuf_pkt_len(pkt);
+
+			add_pkt_acl(acl4, pkt);
+		} else if (likely(packet->flow.proto ==
+				RTE_ETHER_TYPE_IPV6)) {
+			stats->tot_pkts_num_distributed++;
+			stats->tot_pkts_size_distributed +=
+				rte_pktmbuf_pkt_len(pkt);
+
+			add_pkt_acl(acl6, pkt);
+		} else {
+			print_flow_err_msg(&packet->flow,
+				"gk: failed to get the fib entry");
+			drop_packet_front(pkt, instance);
+		}
+		return NULL;
+	}
+
+	switch (fib->action) {
+	case GK_FWD_GRANTOR: {
+		int ret;
+		struct flow_entry *fe;
+
+		/*
+		 * If the table is full at a given batch,
+		 * the table only has a chance to free entries
+		 * in between batches. So there's no reason to
+		 * risk trying another flow in the current
+		 * batch. However, we will give this flow a
+		 * chance sending a request to the grantor
+		 * server.
+		 */
+		if (instance->has_insertion_failed) {
+			send_request_to_grantor(packet, fib,
+				instance, gk_conf);
+			return NULL;
+		}
+
+		/*
+		 * We heuristically drop entries to
+		 * alleviate memory pressure
+		 * when the table is full.
+		 *
+		 * The entry instructs to enforce
+		 * policies over its packets,
+	 	 * initialize an entry in the
+		 * flow table, proceed as the
+		 * brand-new entry instructs, and
+	 	 * go to the next packet.
+	 	 */
+		ret = gk_hash_add_flow_entry(
+			instance, &packet->flow,
+			ip_flow_hash_val, GK_REQUEST);
+		if (ret == -ENOSPC) {
+			/*
+			 * There is no room for a new
+			 * flow entry, but give this
+			 * flow a chance sending a
+			 * request to the grantor
+			 * server.
+			 */
+			send_request_to_grantor(packet, fib,
+				instance, gk_conf);
+			instance->has_insertion_failed = true;
+			return NULL;
+		}
+		if (ret < 0) {
+			drop_packet_front(pkt, instance);
+			return NULL;
+		}
+
+		fe = &instance->ip_flow_entry_table[ret];
+		initialize_flow_entry(fe, &packet->flow, fib);
+		return fe;
+	}
+
+	case GK_FWD_GATEWAY_BACK_NET: {
+		/*
+		 * The entry instructs to forward
+		 * its packets to the gateway in
+		 * the back network, forward accordingly.
+		 *
+		 * BP block bypasses from the front to the
+		 * back interface are expected to bypass
+		 * ranges of IP addresses that should not
+		 * go through Gatekeeper.
+		 *
+		 * Notice that one needs to update
+		 * the Ethernet header.
+		 */
+
+		eth_cache = fib->u.gateway.eth_cache;
+		RTE_VERIFY(eth_cache != NULL);
+
+		if (adjust_pkt_len(pkt, back, 0) == NULL ||
+				pkt_copy_cached_eth_header(pkt,
+					eth_cache,
+					back->l2_len_out)) {
+			drop_packet_front(pkt, instance);
+			return NULL;
+		}
+
+		if (update_ip_hop_count(front, packet,
+				num_pkts, icmp_bufs,
+				&instance->front_icmp_rs,
+				instance,
+				drop_packet_front) < 0)
+			return NULL;
+
+		tx_bufs[(*num_tx)++] = pkt;
+		return NULL;
+	}
+
+	case GK_FWD_NEIGHBOR_BACK_NET: {
+		/*
+		 * The entry instructs to forward
+		 * its packets to the neighbor in
+		 * the back network, forward accordingly.
+		 */
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+			eth_cache = lookup_ether_cache(
+				&fib->u.neigh,
+				&packet->flow.f.v4.dst);
+		} else {
+			eth_cache = lookup_ether_cache(
+				&fib->u.neigh6,
+				&packet->flow.f.v6.dst);
+		}
+
+		RTE_VERIFY(eth_cache != NULL);
+
+		if (adjust_pkt_len(pkt, back, 0) == NULL ||
+				pkt_copy_cached_eth_header(pkt,
+					eth_cache,
+					back->l2_len_out)) {
+			drop_packet_front(pkt, instance);
+			return NULL;
+		}
+
+		if (update_ip_hop_count(front, packet,
+				num_pkts, icmp_bufs,
+				&instance->front_icmp_rs,
+				instance,
+				drop_packet_front) < 0)
+			return NULL;
+
+		tx_bufs[(*num_tx)++] = pkt;
+		return NULL;
+	}
+
+	case GK_DROP:
+		/* FALLTHROUGH */
+	default:
+		drop_packet_front(pkt, instance);
+		return NULL;
+	}
+
+	return NULL;
+}
+
+static int
+process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
+	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
+{
+	int ret;
+
+	/*
+	 * Some notes regarding flow rates and units:
+	 *
+	 * Flows in the GK_REQUEST state are bandwidth limited
+	 * to an overall rate relative to the link. Therefore,
+	 * the Ethernet frame overhead is counted toward the
+	 * credits used by requests. The request channel rate
+	 * is measured in megabits (base 10) per second to
+	 * match the units used by hardware specifications.
+	 *
+	 * Granted flows (in state GK_GRANTED or sometimes
+	 * GK_BPF) are allocated budgets that are intended
+	 * to reflect the max throughput of the flow, and
+	 * therefore do not include the Ethernet frame overhead.
+	 * The budgets of granted flows are measured in
+	 * kibibytes (base 2).
+	 */
+	switch (fe->state) {
+	case GK_REQUEST:
+		ret = gk_process_request(fe, packet,
+			gk_conf->sol_conf, stats);
+		break;
+
+	case GK_GRANTED:
+		ret = gk_process_granted(fe, packet,
+			gk_conf->sol_conf, stats);
+		break;
+
+	case GK_DECLINED:
+		ret = gk_process_declined(fe, packet,
+			gk_conf->sol_conf, stats);
+		break;
+
+	case GK_BPF:
+		ret = gk_process_bpf(fe, packet, gk_conf, stats);
+		break;
+
+	default:
+		ret = -1;
+		GK_LOG(ERR, "Unknown flow state: %d\n", fe->state);
+		break;
+	}
+
+	return ret;
+}
+
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint16_t port_front, uint16_t port_back,
@@ -1523,209 +1750,15 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			 */
 			struct gk_fib *fib = look_up_fib(
 				&gk_conf->lpm_tbl, &packet.flow);
-			struct ether_cache *eth_cache;
 
-			if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-				if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
-					stats->tot_pkts_num_distributed++;
-					stats->tot_pkts_size_distributed +=
-						rte_pktmbuf_pkt_len(pkt);
-
-					add_pkt_acl(acl4, pkt);
-				} else if (likely(packet.flow.proto ==
-						RTE_ETHER_TYPE_IPV6)) {
-					stats->tot_pkts_num_distributed++;
-					stats->tot_pkts_size_distributed +=
-						rte_pktmbuf_pkt_len(pkt);
-
-					add_pkt_acl(acl6, pkt);
-				} else {
-					print_flow_err_msg(&packet.flow,
-						"gk: failed to get the fib entry");
-					drop_packet_front(pkt, instance);
-				}
+			fe = lookup_fe_from_lpm(&packet, ip_flow_hash_val,
+				fib, &num_tx, tx_bufs, acl4, acl6, num_pkts,
+				icmp_bufs, front, back, instance, gk_conf);
+			if (fe == NULL)
 				continue;
-			}
-
-			switch (fib->action) {
-			case GK_FWD_GRANTOR:
-				/*
-				 * If the table is full at a given batch,
-				 * the table only has a chance to free entries
-				 * in between batches. So there's no reason to
-				 * risk trying another flow in the current
-				 * batch. However, we will give this flow a
-				 * chance sending a request to the grantor
-				 * server.
-				 */
-				if (instance->has_insertion_failed) {
-					send_request_to_grantor(&packet, fib,
-						instance, gk_conf);
-					continue;
-				}
-
-				/*
-				 * We heuristically drop entries to
-				 * alleviate memory pressure
-				 * when the table is full.
-				 *
-				 * The entry instructs to enforce
-				 * policies over its packets,
-			 	 * initialize an entry in the
-				 * flow table, proceed as the
-				 * brand-new entry instructs, and
-			 	 * go to the next packet.
-			 	 */
-				ret = gk_hash_add_flow_entry(
-					instance, &packet.flow,
-					ip_flow_hash_val, GK_REQUEST);
-				if (ret == -ENOSPC) {
-					/*
-					 * There is no room for a new
-					 * flow entry, but give this
-					 * flow a chance sending a
-					 * request to the grantor
-					 * server.
-					 */
-					send_request_to_grantor(&packet, fib,
-						instance, gk_conf);
-					instance->has_insertion_failed = true;
-					continue;
-				}
-				if (ret < 0) {
-					drop_packet_front(pkt, instance);
-					continue;
-				}
-
-				fe = &instance->ip_flow_entry_table[ret];
-				initialize_flow_entry(fe, &packet.flow, fib);
-				break;
-
-			case GK_FWD_GATEWAY_BACK_NET: {
-			 	/*
-				 * The entry instructs to forward
-				 * its packets to the gateway in
-				 * the back network, forward accordingly.
-				 *
-				 * BP block bypasses from the front to the
-				 * back interface are expected to bypass
-				 * ranges of IP addresses that should not
-				 * go through Gatekeeper.
-				 *
-				 * Notice that one needs to update
-				 * the Ethernet header.
-				 */
-
-				eth_cache = fib->u.gateway.eth_cache;
-				RTE_VERIFY(eth_cache != NULL);
-
-				if (adjust_pkt_len(pkt, back, 0) == NULL ||
-						pkt_copy_cached_eth_header(pkt,
-							eth_cache,
-							back->l2_len_out)) {
-					drop_packet_front(pkt, instance);
-					continue;
-				}
-
-				if (update_ip_hop_count(front, &packet,
-						num_pkts, icmp_bufs,
-						&instance->front_icmp_rs,
-						instance,
-						drop_packet_front) < 0)
-					continue;
-
-				tx_bufs[num_tx++] = pkt;
-				continue;
-			}
-
-			case GK_FWD_NEIGHBOR_BACK_NET: {
-				/*
-				 * The entry instructs to forward
-				 * its packets to the neighbor in
-				 * the back network, forward accordingly.
-				 */
-				if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
-					eth_cache = lookup_ether_cache(
-						&fib->u.neigh,
-						&packet.flow.f.v4.dst);
-				} else {
-					eth_cache = lookup_ether_cache(
-						&fib->u.neigh6,
-						&packet.flow.f.v6.dst);
-				}
-
-				RTE_VERIFY(eth_cache != NULL);
-
-				if (adjust_pkt_len(pkt, back, 0) == NULL ||
-						pkt_copy_cached_eth_header(pkt,
-							eth_cache,
-							back->l2_len_out)) {
-					drop_packet_front(pkt, instance);
-					continue;
-				}
-
-				if (update_ip_hop_count(front, &packet,
-						num_pkts, icmp_bufs,
-						&instance->front_icmp_rs,
-						instance,
-						drop_packet_front) < 0)
-					continue;
-
-				tx_bufs[num_tx++] = pkt;
-				continue;
-			}
-
-			case GK_DROP:
-				/* FALLTHROUGH */
-			default:
-				drop_packet_front(pkt, instance);
-				continue;
-			}
 		}
 
-		/*
-		 * Some notes regarding flow rates and units:
-		 *
-		 * Flows in the GK_REQUEST state are bandwidth limited
-		 * to an overall rate relative to the link. Therefore,
-		 * the Ethernet frame overhead is counted toward the
-		 * credits used by requests. The request channel rate
-		 * is measured in megabits (base 10) per second to
-		 * match the units used by hardware specifications.
-		 *
-		 * Granted flows (in state GK_GRANTED or sometimes
-		 * GK_BPF) are allocated budgets that are intended
-		 * to reflect the max throughput of the flow, and
-		 * therefore do not include the Ethernet frame overhead.
-		 * The budgets of granted flows are measured in
-		 * kibibytes (base 2).
-		 */
-		switch (fe->state) {
-		case GK_REQUEST:
-			ret = gk_process_request(fe, &packet,
-				gk_conf->sol_conf, stats);
-			break;
-
-		case GK_GRANTED:
-			ret = gk_process_granted(fe, &packet,
-				gk_conf->sol_conf, stats);
-			break;
-
-		case GK_DECLINED:
-			ret = gk_process_declined(fe, &packet,
-				gk_conf->sol_conf, stats);
-			break;
-
-		case GK_BPF:
-			ret = gk_process_bpf(fe, &packet, gk_conf, stats);
-			break;
-
-		default:
-			ret = -1;
-			GK_LOG(ERR, "Unknown flow state: %d\n", fe->state);
-			break;
-		}
-
+		ret = process_flow_entry(fe, &packet, gk_conf, stats);
 		if (ret < 0)
 			drop_packet_front(pkt, instance);
 		else if (ret == EINPROGRESS) {
@@ -1755,6 +1788,115 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		lcore, acl4, RTE_ETHER_TYPE_IPV4);
 	process_pkts_acl(&gk_conf->net->front,
 		lcore, acl6, RTE_ETHER_TYPE_IPV6);
+}
+
+static void
+process_fib(struct ipacket *packet, struct gk_fib *fib,
+		uint16_t *num_tx, struct rte_mbuf **tx_bufs,
+		struct acl_search *acl4, struct acl_search *acl6,
+		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+		struct gatekeeper_if *front, struct gatekeeper_if *back,
+		struct gk_instance *instance) {
+	struct rte_mbuf *pkt = packet->pkt;
+	struct ether_cache *eth_cache;
+
+	if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4)
+			add_pkt_acl(acl4, pkt);
+		else if (likely(packet->flow.proto ==
+				RTE_ETHER_TYPE_IPV6))
+			add_pkt_acl(acl6, pkt);
+		else {
+			print_flow_err_msg(&packet->flow,
+				"gk: failed to get the fib entry or it is not an IP packet");
+			drop_packet(pkt);
+		}
+		return;
+	}
+
+	switch (fib->action) {
+	case GK_FWD_GATEWAY_FRONT_NET: {
+		/*
+		 * The entry instructs to forward
+		 * its packets to the gateway in
+		 * the front network, forward accordingly.
+		 *
+		 * BP bypasses from the back to the front interface
+		 * are expected to bypass the outgoing traffic
+		 * from the AS to its peers.
+		 *
+		 * Notice that one needs to update
+		 * the Ethernet header.
+		 */
+		eth_cache = fib->u.gateway.eth_cache;
+		RTE_VERIFY(eth_cache != NULL);
+
+		if (adjust_pkt_len(pkt, front, 0) == NULL ||
+				pkt_copy_cached_eth_header(pkt,
+					eth_cache,
+					front->l2_len_out)) {
+			drop_packet(pkt);
+			return;
+		}
+
+		if (update_ip_hop_count(back, packet,
+				num_pkts, icmp_bufs,
+				&instance->back_icmp_rs,
+				instance, drop_packet_back) < 0)
+			return;
+
+		tx_bufs[(*num_tx)++] = pkt;
+		break;
+	}
+
+	case GK_FWD_NEIGHBOR_FRONT_NET: {
+		/*
+		 * The entry instructs to forward
+		 * its packets to the neighbor in
+		 * the front network, forward accordingly.
+		 */
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
+			eth_cache = lookup_ether_cache(
+				&fib->u.neigh,
+				&packet->flow.f.v4.dst);
+		} else {
+			eth_cache = lookup_ether_cache(
+				&fib->u.neigh6,
+				&packet->flow.f.v6.dst);
+		}
+
+		RTE_VERIFY(eth_cache != NULL);
+
+		if (adjust_pkt_len(pkt, front, 0) == NULL ||
+				pkt_copy_cached_eth_header(pkt,
+					eth_cache,
+					front->l2_len_out)) {
+			drop_packet(pkt);
+			return;
+		}
+
+		if (update_ip_hop_count(back, packet,
+				num_pkts, icmp_bufs,
+				&instance->back_icmp_rs,
+				instance, drop_packet_back) < 0)
+			return;
+
+		tx_bufs[(*num_tx)++] = pkt;
+		break;
+	}
+
+	case GK_DROP:
+		drop_packet(pkt);
+		break;
+
+	default:
+		/* All other actions should log a warning. */
+		GK_LOG(WARNING,
+			"The fib entry has an unexpected action %u at %s\n",
+			fib->action, __func__);
+		drop_packet(pkt);
+		break;
+	}
 }
 
 /* Process the packets on the back interface. */
@@ -1793,7 +1935,6 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 		struct ipacket packet;
 		struct gk_fib *fib;
 		struct rte_mbuf *pkt = rx_bufs[i];
-		struct ether_cache *eth_cache;
 
 		ret = extract_packet_info(pkt, &packet);
 		if (ret < 0) {
@@ -1816,103 +1957,9 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 		}
 
 		fib = look_up_fib(&gk_conf->lpm_tbl, &packet.flow);
-		if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-			if (packet.flow.proto == RTE_ETHER_TYPE_IPV4)
-				add_pkt_acl(acl4, pkt);
-			else if (likely(packet.flow.proto ==
-					RTE_ETHER_TYPE_IPV6))
-				add_pkt_acl(acl6, pkt);
-			else {
-				print_flow_err_msg(&packet.flow,
-					"gk: failed to get the fib entry or it is not an IP packet");
-				drop_packet(pkt);
-			}
-			continue;
-		}
 
-		switch (fib->action) {
-		case GK_FWD_GATEWAY_FRONT_NET: {
-			/*
-			 * The entry instructs to forward
-			 * its packets to the gateway in
-			 * the front network, forward accordingly.
-			 *
-			 * BP bypasses from the back to the front interface
-			 * are expected to bypass the outgoing traffic
-			 * from the AS to its peers.
-			 *
-			 * Notice that one needs to update
-			 * the Ethernet header.
-			 */
-			eth_cache = fib->u.gateway.eth_cache;
-			RTE_VERIFY(eth_cache != NULL);
-
-			if (adjust_pkt_len(pkt, front, 0) == NULL ||
-					pkt_copy_cached_eth_header(pkt,
-						eth_cache,
-						front->l2_len_out)) {
-				drop_packet(pkt);
-				continue;
-			}
-
-			if (update_ip_hop_count(back, &packet,
-					num_pkts, icmp_bufs,
-					&instance->back_icmp_rs,
-					instance, drop_packet_back) < 0)
-				continue;
-
-			tx_bufs[num_tx++] = pkt;
-			continue;
-		}
-
-		case GK_FWD_NEIGHBOR_FRONT_NET: {
-			/*
-		 	 * The entry instructs to forward
-			 * its packets to the neighbor in
-			 * the front network, forward accordingly.
-			 */
-			if (packet.flow.proto == RTE_ETHER_TYPE_IPV4) {
-				eth_cache = lookup_ether_cache(
-					&fib->u.neigh,
-					&packet.flow.f.v4.dst);
-			} else {
-				eth_cache = lookup_ether_cache(
-					&fib->u.neigh6,
-					&packet.flow.f.v6.dst);
-			}
-
-			RTE_VERIFY(eth_cache != NULL);
-
-			if (adjust_pkt_len(pkt, front, 0) == NULL ||
-					pkt_copy_cached_eth_header(pkt,
-						eth_cache,
-						front->l2_len_out)) {
-				drop_packet(pkt);
-				continue;
-			}
-
-			if (update_ip_hop_count(back, &packet,
-					num_pkts, icmp_bufs,
-					&instance->back_icmp_rs,
-					instance, drop_packet_back) < 0)
-				continue;
-
-			tx_bufs[num_tx++] = pkt;
-			continue;
-		}
-
-		case GK_DROP:
-			drop_packet(pkt);
-			continue;
-
-		default:
-			/* All other actions should log a warning. */
-			GK_LOG(WARNING,
-				"The fib entry has an unexpected action %u at %s\n",
-				fib->action, __func__);
-			drop_packet(pkt);
-			continue;
-		}
+		process_fib(&packet, fib, &num_tx, tx_bufs, acl4, acl6,
+			num_pkts, icmp_bufs, front, back, instance);
 	}
 
 	/* Send burst of TX packets, to second port of pair. */
