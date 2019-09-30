@@ -78,8 +78,9 @@ mb_alloc_entry(struct mailbox *mb)
 {
 	void *obj = NULL;
 	int ret = rte_mempool_get(mb->pool, &obj);
-	if (ret == -ENOENT) {
-		G_LOG(ERR, "mailbox: not enough entries in the mempool\n");
+	if (ret < 0) {
+		G_LOG(ERR, "mailbox: failed to get a new entry from the mempool - %s\n",
+			strerror(-ret));
 		return NULL;
 	}
 
