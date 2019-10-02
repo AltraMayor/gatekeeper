@@ -600,24 +600,39 @@ alloc_sol_conf(void)
 }
 
 int
-gk_solicitor_enqueue(struct sol_config *sol_conf, struct rte_mbuf *pkt,
-	uint8_t priority)
+gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
+	struct rte_mbuf **pkts, uint8_t *priorities, uint16_t num_pkts)
 {
-	struct priority_req *req_node;
+	int i;
+	unsigned int num_enqueued;
+	struct priority_req *req_nodes[num_pkts];
 
-	if (priority > GK_MAX_REQ_PRIORITY) {
-		SOL_LOG(ERR, "Trying to enqueue a request with priority %hhu, but should be in range [0, %d]\n",
-			priority, GK_MAX_REQ_PRIORITY);
+	if (unlikely(rte_mempool_get_bulk(sol_conf->mb.pool,
+			(void **)req_nodes, num_pkts) != 0))
 		return -1;
+
+	for (i = 0; i < num_pkts; i++) {
+		if (priorities[i] > GK_MAX_REQ_PRIORITY) {
+			SOL_LOG(WARNING, "Trying to enqueue a request with priority %hhu, but should be in range [0, %d]. Overwrite the priority to PRIORITY_REQ_MIN (%hhu)\n",
+				priorities[i], GK_MAX_REQ_PRIORITY,
+				PRIORITY_REQ_MIN);
+			priorities[i] = PRIORITY_REQ_MIN;
+		}
+
+		INIT_LIST_HEAD(&req_nodes[i]->list);
+		req_nodes[i]->pkt = pkts[i];
+		req_nodes[i]->priority = priorities[i];
 	}
 
-	req_node = mb_alloc_entry(&sol_conf->mb);
-	if (req_node == NULL)
-		return -1;
+	num_enqueued = rte_ring_mp_enqueue_bulk(sol_conf->mb.ring,
+		(void **)req_nodes, num_pkts, NULL);
+	if (unlikely(num_enqueued < num_pkts)) {
+		SOL_LOG(ERR, "Failed to enqueue a bulk of %hu requests - only %u requests are enqueued\n",
+			num_pkts, num_enqueued);
+		rte_mempool_put_bulk(sol_conf->mb.pool,
+			(void **)&req_nodes[num_enqueued],
+			num_pkts - num_enqueued);
+	}
 
-	INIT_LIST_HEAD(&req_node->list);
-	req_node->pkt = pkt;
-	req_node->priority = priority;
-
-	return mb_send_entry(&sol_conf->mb, req_node);
+	return num_enqueued;
 }

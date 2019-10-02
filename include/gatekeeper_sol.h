@@ -159,7 +159,7 @@ struct sol_config {
 
 struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
-int gk_solicitor_enqueue(struct sol_config *sol_conf, struct rte_mbuf *pkt,
-	uint8_t priority);
+int gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
+	struct rte_mbuf **pkts, uint8_t *priorities, uint16_t num_pkts);
 
 #endif /* _GATEKEEPER_SOL_H_ */
