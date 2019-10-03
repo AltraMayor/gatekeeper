@@ -267,7 +267,8 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
  */
 static int
 gk_process_request(struct flow_entry *fe, struct ipacket *packet,
-	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
+	struct rte_mbuf **req_bufs, uint8_t *req_prio,
+	uint16_t *num_reqs, struct sol_config *sol_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
@@ -316,12 +317,9 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 			sol_conf->net->back.l2_len_out))
 		return -1;
 
-	ret = gk_solicitor_enqueue(sol_conf, packet->pkt, priority);
-	if (ret < 0)
-		return ret;
-
-	stats->pkts_num_request++;
-	stats->pkts_size_request += rte_pktmbuf_pkt_len(packet->pkt);
+	req_bufs[*num_reqs] = packet->pkt;
+	req_prio[*num_reqs] = priority;
+	(*num_reqs)++;
 
 	return EINPROGRESS;
 }
@@ -337,6 +335,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
+	struct rte_mbuf **req_bufs, uint8_t *req_prio, uint16_t *num_reqs,
 	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
 {
 	int ret;
@@ -350,7 +349,8 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 
 	if (now >= fe->u.granted.cap_expire_at) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf, stats);
+		return gk_process_request(fe, packet, req_bufs, req_prio,
+			num_reqs, sol_conf);
 	}
 
 	if (now >= fe->u.granted.budget_renew_at) {
@@ -406,13 +406,15 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
+	struct rte_mbuf **req_bufs, uint8_t *req_prio, uint16_t *num_reqs,
 	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
 {
 	uint64_t now = rte_rdtsc();
 
 	if (unlikely(now >= fe->u.declined.expire_at)) {
 		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, sol_conf, stats);
+		return gk_process_request(fe, packet, req_bufs, req_prio,
+			num_reqs, sol_conf);
 	}
 
 	stats->pkts_num_declined++;
@@ -432,6 +434,7 @@ gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
  */
 static int
 gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
+	struct rte_mbuf **req_bufs, uint8_t *req_prio, uint16_t *num_reqs,
 	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
 {
 	uint64_t bpf_ret;
@@ -488,7 +491,8 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 
 expired:
 	reinitialize_flow_entry(fe, now);
-	return gk_process_request(fe, packet, gk_conf->sol_conf, stats);
+	return gk_process_request(fe, packet, req_bufs, req_prio, num_reqs,
+		gk_conf->sol_conf);
 }
 
 static int
@@ -1419,14 +1423,16 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
  */
 static void
 send_request_to_grantor(struct ipacket *packet, struct gk_fib *fib,
-		struct gk_instance *instance, struct gk_config *gk_conf) {
+		struct rte_mbuf **req_bufs, uint8_t *req_prio,
+		uint16_t *num_reqs, struct gk_instance *instance,
+		struct gk_config *gk_conf) {
 	int ret;
 	struct flow_entry temp_fe;
 
 	initialize_flow_entry(&temp_fe, &packet->flow, fib);
 
-	ret = gk_process_request(&temp_fe, packet, gk_conf->sol_conf,
-		&instance->traffic_stats);
+	ret = gk_process_request(&temp_fe, packet, req_bufs,
+		req_prio, num_reqs, gk_conf->sol_conf);
 	if (ret < 0)
 		drop_packet_front(packet->pkt, instance);
 }
@@ -1436,6 +1442,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
 		struct acl_search *acl4, struct acl_search *acl6,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+		struct rte_mbuf **req_bufs, uint8_t *req_prio, uint16_t *num_reqs,
 		struct gatekeeper_if *front, struct gatekeeper_if *back,
 		struct gk_instance *instance, struct gk_config *gk_conf) {
 	struct rte_mbuf *pkt = packet->pkt;
@@ -1480,6 +1487,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		 */
 		if (instance->has_insertion_failed) {
 			send_request_to_grantor(packet, fib,
+				req_bufs, req_prio, num_reqs,
 				instance, gk_conf);
 			return NULL;
 		}
@@ -1508,6 +1516,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 * server.
 			 */
 			send_request_to_grantor(packet, fib,
+				req_bufs, req_prio, num_reqs,
 				instance, gk_conf);
 			instance->has_insertion_failed = true;
 			return NULL;
@@ -1608,6 +1617,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 
 static int
 process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
+	struct rte_mbuf **req_bufs, uint8_t *req_prio, uint16_t *num_reqs,
 	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
 {
 	int ret;
@@ -1632,21 +1642,26 @@ process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 	switch (fe->state) {
 	case GK_REQUEST:
 		ret = gk_process_request(fe, packet,
-			gk_conf->sol_conf, stats);
+			req_bufs, req_prio, num_reqs,
+			gk_conf->sol_conf);
 		break;
 
 	case GK_GRANTED:
 		ret = gk_process_granted(fe, packet,
+			req_bufs, req_prio, num_reqs,
 			gk_conf->sol_conf, stats);
 		break;
 
 	case GK_DECLINED:
 		ret = gk_process_declined(fe, packet,
+			req_bufs, req_prio, num_reqs,
 			gk_conf->sol_conf, stats);
 		break;
 
 	case GK_BPF:
-		ret = gk_process_bpf(fe, packet, gk_conf, stats);
+		ret = gk_process_bpf(fe, packet,
+			req_bufs, req_prio, num_reqs,
+			gk_conf, stats);
 		break;
 
 	default:
@@ -1672,10 +1687,13 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 	uint16_t num_tx = 0;
 	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
+	uint16_t num_reqs = 0;
 	uint16_t front_max_pkt_burst = gk_conf->front_max_pkt_burst;
+	uint8_t req_prio[front_max_pkt_burst];
 	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
 	struct rte_mbuf *tx_bufs[front_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
+	struct rte_mbuf *req_bufs[front_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
 	struct gatekeeper_if *front = &gk_conf->net->front;
@@ -1753,12 +1771,14 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 			fe = lookup_fe_from_lpm(&packet, ip_flow_hash_val,
 				fib, &num_tx, tx_bufs, acl4, acl6, num_pkts,
-				icmp_bufs, front, back, instance, gk_conf);
+				icmp_bufs, req_bufs, req_prio, &num_reqs,
+				front, back, instance, gk_conf);
 			if (fe == NULL)
 				continue;
 		}
 
-		ret = process_flow_entry(fe, &packet, gk_conf, stats);
+		ret = process_flow_entry(fe, &packet, req_bufs, req_prio,
+			&num_reqs, gk_conf, stats);
 		if (ret < 0)
 			drop_packet_front(pkt, instance);
 		else if (ret == EINPROGRESS) {
@@ -1769,6 +1789,26 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		else
 			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
 				ret, fe->state);
+	}
+
+	if (num_reqs > 0) {
+		uint64_t acc_size_request[num_reqs + 1];
+
+		acc_size_request[0] = 0;
+		for (i = 1; i <= num_reqs; i++) {
+			acc_size_request[i] = acc_size_request[i - 1] +
+				rte_pktmbuf_pkt_len(req_bufs[i - 1]);
+		}
+
+		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf, req_bufs,
+			req_prio, num_reqs), 0);
+		if (ret < num_reqs) {
+			for (i = ret; i < num_reqs; i++)
+				drop_packet_front(req_bufs[i], instance);
+		}
+
+		stats->pkts_num_request += ret;
+		stats->pkts_size_request += acc_size_request[ret];
 	}
 
 	/* Send burst of TX packets, to second port of pair. */
