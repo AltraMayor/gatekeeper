@@ -340,6 +340,11 @@ enum gk_cmd_op {
 	GK_CMD_OP_MAX,
 };
 
+struct gk_add_policy {
+	struct ggu_policy policy;
+	uint32_t flow_hash_val;
+};
+
 struct gk_flush_request {
 	struct ip_prefix src;
 	struct ip_prefix dst;
@@ -355,7 +360,7 @@ struct gk_cmd_entry {
 
 	union {
 		/* GGU policy to be added with GK_ADD_POLICY_DECISION op. */
-		struct ggu_policy ggu;
+		struct gk_add_policy ggu;
 		/* FIB entry to synchronize with GK_SYNCH_WITH_LPM op. */
 		struct gk_fib *fib;
 		/* Flow table flush request with GK_FLUSH_FLOW_TABLE op. */
@@ -370,7 +375,7 @@ int gk_conf_put(struct gk_config *gk_conf);
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);
 struct mailbox *get_responsible_gk_mailbox(
-	const struct ip_flow *flow, const struct gk_config *gk_conf);
+	uint32_t flow_hash_val, const struct gk_config *gk_conf);
 
 int gk_flush_flow_table(const char *src_prefix,
 	const char *dst_prefix, struct gk_config *gk_conf);

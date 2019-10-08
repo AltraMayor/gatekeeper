@@ -738,13 +738,14 @@ add_new_flow_from_policy(
 }
 
 static void
-add_ggu_policy(struct ggu_policy *policy,
+add_ggu_policy(struct gk_add_policy *ggu,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	int ret;
 	uint64_t now = rte_rdtsc();
+	struct ggu_policy *policy = &ggu->policy;
+	uint32_t rss_hash_val = ggu->flow_hash_val;
 	struct flow_entry *fe;
-	uint32_t rss_hash_val = rss_ip_flow_hf(&policy->flow, 0, 0);
 
 	/*
 	 * When the flow entry already exists,
@@ -2557,7 +2558,7 @@ success:
 }
 
 struct mailbox *
-get_responsible_gk_mailbox(const struct ip_flow *flow,
+get_responsible_gk_mailbox(uint32_t flow_hash_val,
 	const struct gk_config *gk_conf)
 {
 	/*
@@ -2576,8 +2577,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	}
 
 	RTE_VERIFY(gk_conf->rss_conf_front.reta_size > 0);
-	rss_hash_val = rss_ip_flow_hf(flow, 0, 0) %
-		gk_conf->rss_conf_front.reta_size;
+	rss_hash_val = flow_hash_val % gk_conf->rss_conf_front.reta_size;
 
 	/*
 	 * Identify which GK block is responsible for the
@@ -2720,7 +2720,7 @@ gk_log_flow_state(const char *src_addr,
 		flow.f.v6.dst = dst.ip.v6;
 	}
 
-	mb = get_responsible_gk_mailbox(&flow, gk_conf);
+	mb = get_responsible_gk_mailbox(rss_ip_flow_hf(&flow, 0, 0), gk_conf);
 	if (mb == NULL) {
 		GK_LOG(ERR, "gk: failed to get responsible GK mailbox to log flow state that matches src_addr=%s and dst_addr=%s\n",
 			src_addr, dst_addr);
