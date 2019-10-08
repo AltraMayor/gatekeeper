@@ -686,92 +686,26 @@ out:
 	return ret;
 }
 
-static struct flow_entry *
-find_flow_entry_candidate(struct gk_instance *instance,
-	uint32_t bidx, enum gk_flow_state state_to_add)
-{
-	int32_t index;
-	uint32_t next = 0;
-	const struct ip_flow *key;
-	struct flow_entry *last_fe = NULL;
-	void *data;
-	uint64_t now = rte_rdtsc();
-
-	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-		(void *)&key, &data, &bidx, &next);
-	while (index >= 0) {
-		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
-
-		/* Expired flow entry. */
-		if (is_flow_expired(fe, now))
-			return fe;
-
-		/*
-		 * Only flow entries with state GK_REQUEST will possibly
-		 * be repaced; others have a higher priority.
-		 */
-		if (fe->state == GK_REQUEST &&
-				state_to_add != GK_REQUEST &&
-				(last_fe == NULL ||
-				last_fe->u.request.last_packet_seen_at >
-				fe->u.request.last_packet_seen_at))
-			last_fe = fe;
-
-		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-			(void *)&key, &data, &bidx, &next);
-	}
-
-	return last_fe;
-}
-
-static int
-drop_flow_entry_heuristically(struct gk_instance *instance,
-	hash_sig_t sig, enum gk_flow_state state_to_add)
-{
-	uint32_t primary_bidx = rte_hash_get_primary_bucket(
-		instance->ip_flow_hash_table, sig);
-	struct flow_entry *fe = find_flow_entry_candidate(
-		instance, primary_bidx, state_to_add);
-	if (fe == NULL)
-		return -ENOSPC;
-
-	return gk_del_flow_entry_from_hash(instance->ip_flow_hash_table, fe);
-}
-
 /*
- * We heuristically drop entries to alleviate memory pressure
- * when the table is full.
+ * If the table is full at a given batch, there's no reason to risk trying
+ * another flow in the current batch because the table only has a chance
+ * to free entries in between batches.
  */
 static int
 gk_hash_add_flow_entry(struct gk_instance *instance,
-	struct ip_flow *flow, uint32_t rss_hash_val,
-	enum gk_flow_state state_to_add)
+	struct ip_flow *flow, uint32_t rss_hash_val)
 {
-	int retried = false;
-	while (true) {
-		int ret = rte_hash_add_key_with_hash(
-			instance->ip_flow_hash_table, flow, rss_hash_val);
-		if (ret == -ENOSPC) {
-			RTE_VERIFY(!retried);
-			if (state_to_add == GK_REQUEST)
-				return ret;
+	int ret;
 
-			ret = drop_flow_entry_heuristically(instance,
-				rss_hash_val, state_to_add);
-			if (ret < 0)
-				return -ENOSPC;
-			retried = true;
-			continue;
-		}
+	if (instance->has_insertion_failed)
+		return -ENOSPC;
 
-		if (ret < 0) {
-			GK_LOG(ERR,
-				"The GK block failed to add a new key to hash table in %s: %s\n",
-				__func__, strerror(-ret));
-		}
+	ret = rte_hash_add_key_with_hash(
+		instance->ip_flow_hash_table, flow, rss_hash_val);
+	if (ret == -ENOSPC)
+		instance->has_insertion_failed = true;
 
-		return ret;
-	}
+	return ret;
 }
 
 /*
@@ -805,8 +739,7 @@ add_new_flow_from_policy(
 		return NULL;
 	}
 
-	ret = gk_hash_add_flow_entry(instance, &policy->flow,
-		rss_hash_val, policy->state);
+	ret = gk_hash_add_flow_entry(instance, &policy->flow, rss_hash_val);
 	if (ret < 0)
 		return NULL;
 
@@ -1548,40 +1481,10 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 
 	switch (fib->action) {
 	case GK_FWD_GRANTOR: {
-		int ret;
 		struct flow_entry *fe;
-
-		/*
-		 * If the table is full at a given batch,
-		 * the table only has a chance to free entries
-		 * in between batches. So there's no reason to
-		 * risk trying another flow in the current
-		 * batch. However, we will give this flow a
-		 * chance sending a request to the grantor
-		 * server.
-		 */
-		if (instance->has_insertion_failed) {
-			send_request_to_grantor(packet, fib,
-				req_bufs, req_prio, num_reqs,
-				instance, gk_conf);
-			return NULL;
-		}
-
-		/*
-		 * We heuristically drop entries to
-		 * alleviate memory pressure
-		 * when the table is full.
-		 *
-		 * The entry instructs to enforce
-		 * policies over its packets,
-	 	 * initialize an entry in the
-		 * flow table, proceed as the
-		 * brand-new entry instructs, and
-	 	 * go to the next packet.
-	 	 */
-		ret = gk_hash_add_flow_entry(
+		int ret = gk_hash_add_flow_entry(
 			instance, &packet->flow,
-			ip_flow_hash_val, GK_REQUEST);
+			ip_flow_hash_val);
 		if (ret == -ENOSPC) {
 			/*
 			 * There is no room for a new
@@ -1593,7 +1496,6 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			send_request_to_grantor(packet, fib,
 				req_bufs, req_prio, num_reqs,
 				instance, gk_conf);
-			instance->has_insertion_failed = true;
 			return NULL;
 		}
 		if (ret < 0) {
