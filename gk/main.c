@@ -279,6 +279,14 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 			fe->u.request.last_packet_seen_at);
 	struct gk_fib *fib = fe->grantor_fib;
 	struct ether_cache *eth_cache;
+	struct gatekeeper_if *back = &sol_conf->net->back;
+	struct rte_mbuf *pkt = packet->pkt;
+
+	rte_prefetch0(fib);
+	rte_prefetch0(back);
+	prefetch0_128_bytes(pkt);
+	prefetch0_128_bytes(rte_pktmbuf_mtod_offset(
+		pkt, void *, 0));
 
 	fe->u.request.last_packet_seen_at = now;
 
@@ -308,16 +316,14 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	/* The assigned priority is @priority. */
 
 	/* Encapsulate the packet as a request. */
-	ret = encapsulate(packet->pkt, priority,
-		&sol_conf->net->back, &fib->u.grantor.gt_addr);
+	ret = encapsulate(pkt, priority, back, &fib->u.grantor.gt_addr);
 	if (ret < 0)
 		return ret;
 
 	eth_cache = fib->u.grantor.eth_cache;
 	RTE_VERIFY(eth_cache != NULL);
 	/* If needed, packet header space was adjusted by encapsulate(). */
-	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
-			sol_conf->net->back.l2_len_out))
+	if (pkt_copy_cached_eth_header(pkt, eth_cache, back->l2_len_out))
 		return -1;
 
 	req_bufs[*num_reqs] = packet->pkt;
@@ -1758,11 +1764,14 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
         * IPv4: 14 + 8 + 20 = 42
         * IPv6: 14 + 8 + 40 = 62
         */
-       for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++)
+       for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++) {
+		prefetch0_128_bytes(rx_bufs[i]);
 		rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
+	}
 
 	/* Extract packet and flow information. */
 	for (i = 0; i < (num_rx - PREFETCH_OFFSET); i++) {
+		prefetch0_128_bytes(rx_bufs[i + PREFETCH_OFFSET]);
 		rte_prefetch0(rte_pktmbuf_mtod_offset(
 			rx_bufs[i + PREFETCH_OFFSET], void *, 0));
 

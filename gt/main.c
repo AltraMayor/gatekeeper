@@ -1436,19 +1436,6 @@ process_cmds_from_mailbox(struct gt_instance *instance,
 	}
 }
 
-static inline void
-prefetch0_128_bytes(void *pointer)
-{
-#if RTE_CACHE_LINE_SIZE == 64
-	rte_prefetch0(pointer);
-	rte_prefetch0(((char *)pointer) + RTE_CACHE_LINE_SIZE);
-#elif RTE_CACHE_LINE_SIZE == 128
-	rte_prefetch0(pointer);
-#else
-#error "Unsupported cache line size"
-#endif
-}
-
 static int
 gt_proc(void *arg)
 {

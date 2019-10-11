@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 
+#include <rte_prefetch.h>
 #ifdef RTE_MACHINE_CPUFLAG_SSE4_2
 #include <rte_hash_crc.h>
 #define DEFAULT_HASH_FUNC       rte_hash_crc
@@ -51,5 +52,18 @@ extern FILE *log_file;
 
 char *rte_strdup(const char *type, const char *s);
 int gatekeeper_log_init(void);
+
+static inline void
+prefetch0_128_bytes(void *pointer)
+{
+#if RTE_CACHE_LINE_SIZE == 64
+	rte_prefetch0(pointer);
+	rte_prefetch0(((char *)pointer) + RTE_CACHE_LINE_SIZE);
+#elif RTE_CACHE_LINE_SIZE == 128
+	rte_prefetch0(pointer);
+#else
+#error "Unsupported cache line size"
+#endif
+}
 
 #endif /* _GATEKEEPER_MAIN_H_ */
