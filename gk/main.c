@@ -1719,6 +1719,17 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 	stats->tot_pkts_num += num_rx;
 
+       /*
+        * This prefetch is enough to load Ethernet header (14 bytes),
+        * optional Ethernet VLAN header (8 bytes), and either
+        * an IPv4 header without options (20 bytes), or
+        * an IPv6 header without options (40 bytes).
+        * IPv4: 14 + 8 + 20 = 42
+        * IPv6: 14 + 8 + 40 = 62
+        */
+       for (i = 0; i < num_rx; i++)
+               rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
+
 	/* Extract packet and flow information. */
 	for (i = 0; i < num_rx; i++) {
 		struct ipacket *packet = &pkt_arr[num_ip_flows];
@@ -2024,6 +2035,17 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 
 	if (unlikely(num_rx == 0))
 		return;
+
+       /*
+        * This prefetch is enough to load Ethernet header (14 bytes),
+        * optional Ethernet VLAN header (8 bytes), and either
+        * an IPv4 header without options (20 bytes), or
+        * an IPv6 header without options (40 bytes).
+        * IPv4: 14 + 8 + 20 = 42
+        * IPv6: 14 + 8 + 40 = 62
+        */
+       for (i = 0; i < num_rx; i++)
+               rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
 
 	for (i = 0; i < num_rx; i++) {
 		struct ipacket *packet = &pkt_arr[num_ip_flows];
