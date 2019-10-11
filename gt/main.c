@@ -1436,6 +1436,19 @@ process_cmds_from_mailbox(struct gt_instance *instance,
 	}
 }
 
+static inline void
+prefetch0_128_bytes(void *pointer)
+{
+#if RTE_CACHE_LINE_SIZE == 64
+	rte_prefetch0(pointer);
+	rte_prefetch0(((char *)pointer) + RTE_CACHE_LINE_SIZE);
+#elif RTE_CACHE_LINE_SIZE == 128
+	rte_prefetch0(pointer);
+#else
+#error "Unsupported cache line size"
+#endif
+}
+
 static int
 gt_proc(void *arg)
 {
@@ -1488,6 +1501,21 @@ gt_proc(void *arg)
 			process_cmds_from_mailbox(instance, gt_conf);
 			flush_notify_pkts(gt_conf, instance);
 			continue;
+		}
+
+		/*
+		 * Note that GT blocks expect packets that are encapsulated.
+		 *
+		 * This prefetch is enough to load Ethernet header (14 bytes),
+		 * optional Ethernet VLAN header (8 bytes), and either
+		 * two IPv4 headers without options (20*2 bytes), or
+		 * two IPv6 headers without options (40*2 bytes).
+		 * IPv4: 14 + 8 + 20*2 = 62
+		 * IPv6: 14 + 8 + 40*2 = 102
+		 */
+		for (i = 0; i < num_rx; i++) {
+			prefetch0_128_bytes(rte_pktmbuf_mtod_offset(
+				rx_bufs[i], void *, 0));
 		}
 
 		for (i = 0; i < num_rx; i++) {
