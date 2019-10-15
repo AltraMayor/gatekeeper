@@ -15,7 +15,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	}
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
-	local mailbox_max_entries_exp = 7
+	local mailbox_max_entries_exp = 14
 	local mailbox_mem_cache_size = 0
 	local mailbox_burst_size = 32
 	local log_ratelimit_interval_ms = 5000
