@@ -2184,6 +2184,8 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
+		struct flow_entry *fe;
+
 		front_num_pkts = 0;
 		back_num_pkts = 0;
 
@@ -2196,6 +2198,17 @@ gk_proc(void *arg)
 			rx_queue_back, tx_queue_front, lcore,
 			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
 
+		if (iter_count >= scan_iter) {
+			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
+			fe = &instance->ip_flow_entry_table[entry_idx];
+			/*
+			 * Only one prefetch is needed here because we only
+			 * need the beginning of a struct flow_entry to
+			 * check if it's expired.
+			 */
+			rte_prefetch_non_temporal(fe);
+		}
+
 		send_pkts(port_front, rx_queue_front,
 			front_num_pkts, front_icmp_bufs);
 
@@ -2205,14 +2218,10 @@ gk_proc(void *arg)
 		process_cmds_from_mailbox(instance, gk_conf);
 
 		if (iter_count >= scan_iter) {
-			struct flow_entry *fe;
-
 			/*
 			 * Reset the flag @has_insertion_failed when
 			 * an entry has been freed from the flow table.
 			 */
-			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
-			fe = &instance->ip_flow_entry_table[entry_idx];
 			if (gk_flow_tbl_entry_scan(fe, instance))
 				instance->has_insertion_failed = false;
 
