@@ -77,7 +77,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		outer_ip4hdr->dst_addr = gt_addr->ip.v4.s_addr;
 
 		outer_ip4hdr->total_length =
-			rte_cpu_to_be_16(pkt->data_len - iface->l2_len_out);
+			rte_cpu_to_be_16(pkt->pkt_len - iface->l2_len_out);
 
 		/*
 		 * The IP header checksum filed must be set to 0
@@ -115,7 +115,7 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		rte_memcpy(outer_ip6hdr->dst_addr, gt_addr->ip.v6.s6_addr,
 			sizeof(outer_ip6hdr->dst_addr));
 
-		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->data_len
+		outer_ip6hdr->payload_len = rte_cpu_to_be_16(pkt->pkt_len
 			- (sizeof(struct rte_ipv6_hdr) + iface->l2_len_out));
 	} else 
 		return -1;
