@@ -678,17 +678,17 @@ out:
  */
 static int
 gk_hash_add_flow_entry(struct gk_instance *instance,
-	struct ip_flow *flow, uint32_t rss_hash_val)
+	struct ip_flow *flow, uint32_t rss_hash_val, struct gk_config *gk_conf)
 {
 	int ret;
 
-	if (instance->has_insertion_failed)
+	if (instance->num_scan_del > 0)
 		return -ENOSPC;
 
 	ret = rte_hash_add_key_with_hash(
 		instance->ip_flow_hash_table, flow, rss_hash_val);
 	if (ret == -ENOSPC)
-		instance->has_insertion_failed = true;
+		instance->num_scan_del = gk_conf->scan_del_thresh;
 
 	return ret;
 }
@@ -724,7 +724,8 @@ add_new_flow_from_policy(
 		return NULL;
 	}
 
-	ret = gk_hash_add_flow_entry(instance, &policy->flow, rss_hash_val);
+	ret = gk_hash_add_flow_entry(instance,
+		&policy->flow, rss_hash_val, gk_conf);
 	if (ret < 0)
 		return NULL;
 
@@ -1469,7 +1470,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		struct flow_entry *fe;
 		int ret = gk_hash_add_flow_entry(
 			instance, &packet->flow,
-			ip_flow_hash_val);
+			ip_flow_hash_val, gk_conf);
 		if (ret == -ENOSPC) {
 			/*
 			 * There is no room for a new
@@ -2218,12 +2219,9 @@ gk_proc(void *arg)
 		process_cmds_from_mailbox(instance, gk_conf);
 
 		if (iter_count >= scan_iter) {
-			/*
-			 * Reset the flag @has_insertion_failed when
-			 * an entry has been freed from the flow table.
-			 */
-			if (gk_flow_tbl_entry_scan(fe, instance))
-				instance->has_insertion_failed = false;
+			if (gk_flow_tbl_entry_scan(fe, instance) &&
+					instance->num_scan_del > 0)
+				instance->num_scan_del--;
 
 			iter_count = 0;
 		} else
