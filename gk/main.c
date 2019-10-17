@@ -1666,6 +1666,51 @@ prefetch_flow_entry(struct flow_entry *fe)
 #endif
 }
 
+static void
+parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
+	struct rte_mbuf **arp_bufs, uint16_t *num_arp,
+	bool ipv4_configured_front, bool ipv6_configured_front,
+	struct ip_flow **flow_arr, uint32_t *flow_hash_val_arr,
+	int *num_ip_flows, struct gatekeeper_if *front,
+	struct gk_instance *instance)
+{
+	int ret;
+	struct gk_measurement_metrics *stats = &instance->traffic_stats;
+
+	stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
+
+	ret = extract_packet_info(pkt, packet);
+	if (ret < 0) {
+		if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
+			stats->tot_pkts_num_distributed++;
+			stats->tot_pkts_size_distributed +=
+				rte_pktmbuf_pkt_len(pkt);
+
+			arp_bufs[(*num_arp)++] = pkt;
+			return;
+		}
+
+		/* Drop non-IP and non-ARP packets. */
+		drop_packet_front(pkt, instance);
+		return;
+	}
+
+	if (unlikely((packet->flow.proto == RTE_ETHER_TYPE_IPV4 &&
+			!ipv4_configured_front) ||
+			(packet->flow.proto == RTE_ETHER_TYPE_IPV6 &&
+			!ipv6_configured_front))) {
+		drop_packet_front(pkt, instance);
+		return;
+	}
+
+	flow_arr[*num_ip_flows] = &packet->flow;
+	flow_hash_val_arr[*num_ip_flows] = likely(front->rss) ?
+		pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
+	(*num_ip_flows)++;
+}
+
+#define PREFETCH_OFFSET (4)
+
 /* Process the packets on the front interface. */
 static void
 process_pkts_front(uint16_t port_front, uint16_t port_back,
@@ -1727,44 +1772,26 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
         * IPv4: 14 + 8 + 20 = 42
         * IPv6: 14 + 8 + 40 = 62
         */
-       for (i = 0; i < num_rx; i++)
-               rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
+       for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++)
+		rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
 
 	/* Extract packet and flow information. */
-	for (i = 0; i < num_rx; i++) {
-		struct ipacket *packet = &pkt_arr[num_ip_flows];
-		struct rte_mbuf *pkt = rx_bufs[i];
+	for (i = 0; i < (num_rx - PREFETCH_OFFSET); i++) {
+		rte_prefetch0(rte_pktmbuf_mtod_offset(
+			rx_bufs[i + PREFETCH_OFFSET], void *, 0));
 
-		stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
+		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
+			&num_arp, ipv4_configured_front, ipv6_configured_front,
+			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
+			instance);
+	}
 
-		ret = extract_packet_info(pkt, packet);
-		if (ret < 0) {
-			if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
-				stats->tot_pkts_num_distributed++;
-				stats->tot_pkts_size_distributed +=
-					rte_pktmbuf_pkt_len(pkt);
-
-				arp_bufs[num_arp++] = pkt;
-				continue;
-			}
-
-			/* Drop non-IP and non-ARP packets. */
-			drop_packet_front(pkt, instance);
-			continue;
-		}
-
-		if (unlikely((packet->flow.proto == RTE_ETHER_TYPE_IPV4 &&
-				!ipv4_configured_front) ||
-				(packet->flow.proto == RTE_ETHER_TYPE_IPV6 &&
-				!ipv6_configured_front))) {
-			drop_packet_front(pkt, instance);
-			continue;
-		}
-
-		flow_arr[num_ip_flows] = &packet->flow;
-		flow_hash_val_arr[num_ip_flows] = likely(front->rss) ?
-			pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
-		num_ip_flows++;
+	/* Extract the rest packet and flow information. */
+	for (; i < num_rx; i++) {
+		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
+			&num_arp, ipv4_configured_front, ipv6_configured_front,
+			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
+			instance);
 	}
 
 	done_lookups = 0;
