@@ -195,6 +195,7 @@ initialize_flow_entry(struct flow_entry *fe,
 
 	rte_memcpy(&fe->flow, flow, sizeof(*flow));
 
+	fe->in_use = true;
 	fe->state = GK_REQUEST;
 	fe->u.request.last_packet_seen_at = rte_rdtsc();
 	fe->u.request.last_priority = START_PRIORITY;
@@ -558,32 +559,16 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 	return ret;
 }
 
-/* Return true when it removes at least one entry, and false otherwise. */
+/* Return true when it removes an entry, and false otherwise. */
 static bool
-gk_flow_tbl_bucket_scan(uint32_t *bidx, struct gk_instance *instance)
+gk_flow_tbl_entry_scan(struct flow_entry *fe, struct gk_instance *instance)
 {
-	int32_t index;
-	const struct ip_flow *key;
-	void *data;
-	uint32_t next = 0;
-	uint64_t now = rte_rdtsc();
-	bool flow_removed = false;
-
-	index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-		(void *)&key, &data, bidx, &next);
-	while (index >= 0) {
-		struct flow_entry *fe = &instance->ip_flow_entry_table[index];
-		if (is_flow_expired(fe, now)) {
-			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
-			flow_removed = true;
-		}
-
-		index = rte_hash_bucket_iterate(instance->ip_flow_hash_table,
-			(void *)&key, &data, bidx, &next);
+	if (fe->in_use && is_flow_expired(fe, rte_rdtsc())) {
+		gk_del_flow_entry_from_hash(
+			instance->ip_flow_hash_table, fe);
+		return true;
 	}
-
-	return flow_removed;
+	return false;
 }
 
 static int
@@ -693,17 +678,17 @@ out:
  */
 static int
 gk_hash_add_flow_entry(struct gk_instance *instance,
-	struct ip_flow *flow, uint32_t rss_hash_val)
+	struct ip_flow *flow, uint32_t rss_hash_val, struct gk_config *gk_conf)
 {
 	int ret;
 
-	if (instance->has_insertion_failed)
+	if (instance->num_scan_del > 0)
 		return -ENOSPC;
 
 	ret = rte_hash_add_key_with_hash(
 		instance->ip_flow_hash_table, flow, rss_hash_val);
 	if (ret == -ENOSPC)
-		instance->has_insertion_failed = true;
+		instance->num_scan_del = gk_conf->scan_del_thresh;
 
 	return ret;
 }
@@ -739,13 +724,14 @@ add_new_flow_from_policy(
 		return NULL;
 	}
 
-	ret = gk_hash_add_flow_entry(instance, &policy->flow, rss_hash_val);
+	ret = gk_hash_add_flow_entry(instance,
+		&policy->flow, rss_hash_val, gk_conf);
 	if (ret < 0)
 		return NULL;
 
 	fe = &instance->ip_flow_entry_table[ret];
 	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
-
+	fe->in_use = true;
 	fe->grantor_fib = fib;
 
 	return fe;
@@ -1484,7 +1470,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		struct flow_entry *fe;
 		int ret = gk_hash_add_flow_entry(
 			instance, &packet->flow,
-			ip_flow_hash_val);
+			ip_flow_hash_val, gk_conf);
 		if (ret == -ENOSPC) {
 			/*
 			 * There is no room for a new
@@ -2186,7 +2172,7 @@ gk_proc(void *arg)
 	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
 	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
 
-	uint32_t bucket_idx = 0;
+	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
@@ -2199,6 +2185,8 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
+		struct flow_entry *fe;
+
 		front_num_pkts = 0;
 		back_num_pkts = 0;
 
@@ -2211,6 +2199,17 @@ gk_proc(void *arg)
 			rx_queue_back, tx_queue_front, lcore,
 			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
 
+		if (iter_count >= scan_iter) {
+			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
+			fe = &instance->ip_flow_entry_table[entry_idx];
+			/*
+			 * Only one prefetch is needed here because we only
+			 * need the beginning of a struct flow_entry to
+			 * check if it's expired.
+			 */
+			rte_prefetch_non_temporal(fe);
+		}
+
 		send_pkts(port_front, rx_queue_front,
 			front_num_pkts, front_icmp_bufs);
 
@@ -2220,13 +2219,9 @@ gk_proc(void *arg)
 		process_cmds_from_mailbox(instance, gk_conf);
 
 		if (iter_count >= scan_iter) {
-			/*
-			 * Reset the flag @has_insertion_failed when
-			 * one or more entries have been freed from
-			 * the flow table.
-			 */
-			if (gk_flow_tbl_bucket_scan(&bucket_idx, instance))
-				instance->has_insertion_failed = false;
+			if (gk_flow_tbl_entry_scan(fe, instance) &&
+					instance->num_scan_del > 0)
+				instance->num_scan_del--;
 
 			iter_count = 0;
 		} else
