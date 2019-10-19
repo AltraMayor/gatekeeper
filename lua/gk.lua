@@ -24,7 +24,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local max_pkt_burst_back = 32
 
 	local flow_ht_size = 1024
-	local flow_table_scan_iter = 1000
+	local flow_table_scan_iter = 0
 	local scan_del_thresh = flow_ht_size * 0.01
 
 	local max_num_ipv4_rules = 1024
