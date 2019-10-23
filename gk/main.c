@@ -984,10 +984,11 @@ out:
 }
 
 static void
-log_flow_state(struct ip_flow *flow, struct gk_instance *instance)
+log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 {
 	struct flow_entry *fe;
-	int ret = rte_hash_lookup(instance->ip_flow_hash_table, flow);
+	int ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
+		&log->flow, log->flow_hash_val);
 	if (ret < 0) {
 		char err_msg[1024];
 
@@ -996,7 +997,7 @@ log_flow_state(struct ip_flow *flow, struct gk_instance *instance)
 			__func__, rte_lcore_id());
 
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-		print_flow_err_msg(flow, err_msg);
+		print_flow_err_msg(&log->flow, err_msg);
 		return;
 	}
 
@@ -1079,7 +1080,7 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 		break;
 
 	case GK_LOG_FLOW_STATE:
-		log_flow_state(&entry->u.flow, instance);
+		log_flow_state(&entry->u.log, instance);
 		break;
 
 	default:
@@ -2663,6 +2664,7 @@ gk_log_flow_state(const char *src_addr,
 	const char *dst_addr, struct gk_config *gk_conf)
 {
 	int ret;
+	uint32_t flow_hash_val;
 	struct ipaddr src;
 	struct ipaddr dst;
 	struct ip_flow flow;
@@ -2720,7 +2722,9 @@ gk_log_flow_state(const char *src_addr,
 		flow.f.v6.dst = dst.ip.v6;
 	}
 
-	mb = get_responsible_gk_mailbox(rss_ip_flow_hf(&flow, 0, 0), gk_conf);
+	flow_hash_val = rss_ip_flow_hf(&flow, 0, 0);
+
+	mb = get_responsible_gk_mailbox(flow_hash_val, gk_conf);
 	if (mb == NULL) {
 		GK_LOG(ERR, "gk: failed to get responsible GK mailbox to log flow state that matches src_addr=%s and dst_addr=%s\n",
 			src_addr, dst_addr);
@@ -2736,7 +2740,8 @@ gk_log_flow_state(const char *src_addr,
 	}
 
 	entry->op = GK_LOG_FLOW_STATE;
-	entry->u.flow = flow;
+	entry->u.log.flow = flow;
+	entry->u.log.flow_hash_val = flow_hash_val;
 
 	mb_send_entry(mb, entry);
 

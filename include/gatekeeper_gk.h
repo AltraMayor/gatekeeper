@@ -350,6 +350,11 @@ struct gk_flush_request {
 	struct ip_prefix dst;
 };
 
+struct gk_log_flow {
+	struct ip_flow flow;
+	uint32_t flow_hash_val;
+};
+
 /*
  * Structure for each command.
  *
@@ -366,7 +371,7 @@ struct gk_cmd_entry {
 		/* Flow table flush request with GK_FLUSH_FLOW_TABLE op. */
 		struct gk_flush_request flush;
 		/* Flow state logging request with GK_LOG_FLOW_STATE op. */
-		struct ip_flow flow;
+		struct gk_log_flow log;
 	} u;
 };
 
