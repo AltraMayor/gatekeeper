@@ -447,7 +447,7 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 	if (unlikely(now >= fe->u.bpf.expire_at))
 		goto expired;
 
-	program_index = fe->u.bpf.program_index;
+	program_index = fe->program_index;
 	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, now,
 		&bpf_ret);
 	if (unlikely(rc != 0)) {
@@ -811,8 +811,7 @@ print_flow_state(struct flow_entry *fe)
 			"gk: log the flow state [state: GK_BPF (%hhu), expire_at: 0x%"PRIx64", program_index=%u, cookie="
 			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
 			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->u.bpf.expire_at,
-			fe->u.bpf.program_index,
+			fe->state, fe->u.bpf.expire_at, fe->program_index,
 			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
 			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
 			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
@@ -2005,7 +2004,7 @@ update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
 		fe->state = GK_BPF;
 		fe->u.bpf.expire_at = now +
 			policy->params.bpf.expire_sec * cycles_per_sec;
-		fe->u.bpf.program_index = policy->params.bpf.program_index;
+		fe->program_index = policy->params.bpf.program_index;
 		fe->u.bpf.cookie = policy->params.bpf.cookie;
 		break;
 
