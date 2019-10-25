@@ -693,34 +693,6 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	return ret;
 }
 
-/*
- * This function is only called when a policy from GGU block
- * tries to add a new flow entry in the flow table.
- *
- * Notice, the function doesn't fully initialize the new flow entry,
- * instead it only initializes the @flow and @grantor_fib fields.
- */
-static struct flow_entry *
-add_new_flow_from_policy(
-	struct gk_fib *fib, struct ggu_policy *policy,
-	struct gk_instance *instance, struct gk_config *gk_conf,
-	uint32_t rss_hash_val)
-{
-	struct flow_entry *fe;
-
-	int ret = gk_hash_add_flow_entry(instance,
-		&policy->flow, rss_hash_val, gk_conf);
-	if (ret < 0)
-		return NULL;
-
-	fe = &instance->ip_flow_entry_table[ret];
-	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
-	fe->in_use = true;
-	fe->grantor_fib = fib;
-
-	return fe;
-}
-
 static void
 flush_flow_table(struct ip_prefix *src,
 	struct ip_prefix *dst, struct gk_instance *instance)
@@ -1287,6 +1259,9 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
+	if (num_flows == 0)
+		return;
+
 	for (i = 0; i < k; i += FWDSTEP) {
 		int j;
 		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
@@ -1330,6 +1305,9 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	int32_t hop[num_flows];
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
+
+	if (num_flows == 0)
+		return;
 
 	for (i = 0; i < num_flows; i++) {
 		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
@@ -2095,6 +2073,38 @@ update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
 }
 
 static void
+update_flow_table(struct gk_fib *fib, struct ggu_policy *policy,
+	struct gk_instance *instance, struct gk_config *gk_conf,
+	uint32_t rss_hash_val)
+{
+	int ret;
+	struct flow_entry *fe;
+
+	if (fib == NULL || fib->action != GK_FWD_GRANTOR) {
+		/* Drop this solicitation to add a policy decision. */
+		char err_msg[128];
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gk: at %s initialize flow entry error",
+			__func__);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+		print_flow_err_msg(&policy->flow, err_msg);
+		return;
+	}
+
+	ret = gk_hash_add_flow_entry(instance,
+		&policy->flow, rss_hash_val, gk_conf);
+	if (ret < 0)
+		return;
+
+	fe = &instance->ip_flow_entry_table[ret];
+	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
+	fe->in_use = true;
+	fe->grantor_fib = fib;
+
+	update_flow_entry(fe, policy);
+}
+
+static void
 add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
@@ -2103,6 +2113,14 @@ add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
 	struct ip_flow *flow_arr[num_policies];
 	hash_sig_t flow_hash_val_arr[num_policies];
 	int32_t pos_arr[num_policies];
+	int num_lpm_lookups = 0;
+	int num_lpm6_lookups = 0;
+	int32_t lpm_lookup_pos[num_policies];
+	int32_t lpm6_lookup_pos[num_policies];
+	struct ip_flow *flows[num_policies];
+	struct ip_flow *flows6[num_policies];
+	struct gk_fib *fibs[num_policies];
+	struct gk_fib *fibs6[num_policies];
 
 	for (i = 0; i < num_policies; i++) {
 		flow_arr[i] = &policies[i]->policy.flow;
@@ -2132,41 +2150,44 @@ add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
 
 	for (i = 0; i < num_policies; i++) {
 		int pos = pos_arr[i];
-		struct flow_entry *fe;
-		struct ggu_policy *policy = &policies[i]->policy;
 
-		if (pos >= 0)
-			fe = &instance->ip_flow_entry_table[pos];
-		else if (instance->num_scan_del > 0)
-			continue;
-		else {
-			struct gk_fib *fib = look_up_fib(
-				&gk_conf->lpm_tbl, &policy->flow);
-			if (fib == NULL || fib->action !=
-					GK_FWD_GRANTOR) {
-				/*
-				 * Drop this solicitation to add
-				 * a policy decision.
-				 */
-				char err_msg[128];
-				int ret = snprintf(err_msg, sizeof(err_msg),
-					"gk: at %s initialize flow entry error",
-					__func__);
-				RTE_VERIFY(ret > 0 &&
-					ret < (int)sizeof(err_msg));
-				print_flow_err_msg(
-					&policy->flow, err_msg);
-				continue;
-			}
+		if (pos >= 0) {
+			struct ggu_policy *policy =
+				&policies[i]->policy;
+			struct flow_entry *fe =
+				&instance->ip_flow_entry_table[pos];
 
-			fe = add_new_flow_from_policy(fib,
-				policy, instance, gk_conf,
-				flow_hash_val_arr[i]);
-			if (fe == NULL)
-				continue;
+			update_flow_entry(fe, policy);
+		} else if (flow_arr[i]->proto == RTE_ETHER_TYPE_IPV4) {
+			lpm_lookup_pos[num_lpm_lookups] = i;
+			flows[num_lpm_lookups] = flow_arr[i];
+			num_lpm_lookups++;
+		} else {
+			lpm6_lookup_pos[num_lpm6_lookups] = i;
+			flows6[num_lpm6_lookups] = flow_arr[i];
+			num_lpm6_lookups++;
 		}
+	}
 
-		update_flow_entry(fe, policy);
+	if (instance->num_scan_del > 0)
+		return;
+
+	/* The remaining flows need LPM lookups. */
+	lookup_fib_bulk(&gk_conf->lpm_tbl, flows, num_lpm_lookups, fibs);
+	lookup_fib6_bulk(&gk_conf->lpm_tbl, flows6, num_lpm6_lookups, fibs6);
+
+	for (i = 0; i < num_lpm_lookups; i++) {
+		int fidx = lpm_lookup_pos[i];
+
+		update_flow_table(fibs[i], &policies[fidx]->policy,
+			instance, gk_conf, policies[fidx]->flow_hash_val);
+	}
+
+	for (i = 0; i < num_lpm6_lookups; i++) {
+		int fidx = lpm6_lookup_pos[i];
+
+		update_flow_table(fibs6[i], &policies[fidx]->policy,
+			instance, gk_conf, policies[fidx]->flow_hash_val);
 	}
 }
 
