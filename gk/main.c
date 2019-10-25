@@ -182,8 +182,8 @@ out:
 }
 
 static inline void
-initialize_flow_entry(struct flow_entry *fe,
-	struct ip_flow *flow, struct gk_fib *grantor_fib)
+initialize_flow_entry(struct flow_entry *fe, struct ip_flow *flow,
+	uint32_t flow_hash_val, struct gk_fib *grantor_fib)
 {
 	/*
 	 * The flow table is a critical data structure, so,
@@ -196,6 +196,7 @@ initialize_flow_entry(struct flow_entry *fe,
 	rte_memcpy(&fe->flow, flow, sizeof(*flow));
 
 	fe->in_use = true;
+	fe->flow_hash_val = flow_hash_val;
 	fe->state = GK_REQUEST;
 	fe->u.request.last_packet_seen_at = rte_rdtsc();
 	fe->u.request.last_priority = START_PRIORITY;
@@ -545,10 +546,9 @@ is_flow_expired(struct flow_entry *fe, uint64_t now)
 }
 
 static int
-gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe,
-	uint32_t flow_hash_val)
+gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 {
-	int ret = rte_hash_del_key_with_hash(h, &fe->flow, flow_hash_val);
+	int ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0))
 		memset(fe, 0, sizeof(*fe));
 	else {
@@ -732,8 +732,7 @@ flush_flow_table(struct ip_prefix *src,
 
 		if (matched) {
 			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe,
-				rss_ip_flow_hf(&fe->flow, 0, 0));
+				instance->ip_flow_hash_table, fe);
 			num_flushed_flows++;
 		}
 
@@ -780,15 +779,17 @@ print_flow_state(struct flow_entry *fe)
 	switch (fe->state) {
 	case GK_REQUEST:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_REQUEST (%hhu), last_packet_seen_at: %"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->u.request.last_packet_seen_at,
+			"gk: log the flow state [state: GK_REQUEST (%hhu), flow hash value: %u, last_packet_seen_at: %"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->flow_hash_val,
+			fe->u.request.last_packet_seen_at,
 			fe->u.request.last_priority, fe->u.request.allowance,
 			ip, __func__, rte_lcore_id());
 		break;
 	case GK_GRANTED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_GRANTED (%hhu), cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->u.granted.cap_expire_at,
+			"gk: log the flow state [state: GK_GRANTED (%hhu), flow hash value: %u, cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->flow_hash_val,
+			fe->u.granted.cap_expire_at,
 			fe->u.granted.budget_renew_at,
 			fe->u.granted.tx_rate_kib_cycle,
 			fe->u.granted.budget_byte,
@@ -798,8 +799,8 @@ print_flow_state(struct flow_entry *fe)
 		break;
 	case GK_DECLINED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_DECLINED (%hhu), expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->u.declined.expire_at,
+			"gk: log the flow state [state: GK_DECLINED (%hhu), flow hash value: %u, expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			fe->state, fe->flow_hash_val, fe->u.declined.expire_at,
 			ip, __func__, rte_lcore_id());
 		break;
 	case GK_BPF: {
@@ -808,10 +809,11 @@ print_flow_state(struct flow_entry *fe)
 		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
 
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_BPF (%hhu), expire_at: 0x%"PRIx64", program_index=%u, cookie="
+			"gk: log the flow state [state: GK_BPF (%hhu), flow hash value: %u, expire_at: 0x%"PRIx64", program_index=%u, cookie="
 			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
 			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->u.bpf.expire_at, fe->program_index,
+			fe->state, fe->flow_hash_val,
+			fe->u.bpf.expire_at, fe->program_index,
 			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
 			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
 			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
@@ -821,8 +823,9 @@ print_flow_state(struct flow_entry *fe)
 	}
 	default:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: unknown flow with state %hhu in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			fe->state, __func__, rte_lcore_id());
+			"gk: unknown flow with state %hhu and flow hash value %u in the flow table at %s with lcore %u, there is a bug in the GK block\n",
+			fe->state, fe->flow_hash_val,
+			__func__, rte_lcore_id());
 		break;
 	}
 
@@ -872,8 +875,7 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 				&instance->ip_flow_entry_table[index];
 			if (fe->grantor_fib == fib) {
 				gk_del_flow_entry_from_hash(
-					instance->ip_flow_hash_table, fe,
-					rss_ip_flow_hf(&fe->flow, 0, 0));
+					instance->ip_flow_hash_table, fe);
 			}
 
 			index = rte_hash_iterate(instance->ip_flow_hash_table,
@@ -1194,14 +1196,14 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
  * are not backed by a flow entry.
  */
 static void
-send_request_to_grantor(struct ipacket *packet, struct gk_fib *fib,
-		struct rte_mbuf **req_bufs, uint8_t *req_prio,
-		uint16_t *num_reqs, struct gk_instance *instance,
-		struct gk_config *gk_conf) {
+send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
+		struct gk_fib *fib, struct rte_mbuf **req_bufs,
+		uint8_t *req_prio, uint16_t *num_reqs,
+		struct gk_instance *instance, struct gk_config *gk_conf) {
 	int ret;
 	struct flow_entry temp_fe;
 
-	initialize_flow_entry(&temp_fe, &packet->flow, fib);
+	initialize_flow_entry(&temp_fe, &packet->flow, flow_hash_val, fib);
 
 	ret = gk_process_request(&temp_fe, packet, req_bufs,
 		req_prio, num_reqs, gk_conf->sol_conf);
@@ -1336,8 +1338,8 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 * request to the grantor
 			 * server.
 			 */
-			send_request_to_grantor(packet, fib,
-				req_bufs, req_prio, num_reqs,
+			send_request_to_grantor(packet, ip_flow_hash_val,
+				fib, req_bufs, req_prio, num_reqs,
 				instance, gk_conf);
 			return NULL;
 		}
@@ -1347,7 +1349,8 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		}
 
 		fe = &instance->ip_flow_entry_table[ret];
-		initialize_flow_entry(fe, &packet->flow, fib);
+		initialize_flow_entry(fe,
+			&packet->flow, ip_flow_hash_val, fib);
 		return fe;
 	}
 
@@ -2193,7 +2196,6 @@ gk_proc(void *arg)
 
 	while (likely(!exiting)) {
 		struct flow_entry *fe = NULL;
-		uint32_t flow_hash_val;
 
 		tx_front_num_pkts = 0;
 		tx_back_num_pkts = 0;
@@ -2224,9 +2226,9 @@ gk_proc(void *arg)
 
 		if (fe != NULL && fe->in_use &&
 				is_flow_expired(fe, rte_rdtsc())) {
-			flow_hash_val = rss_ip_flow_hf(&fe->flow, 0, 0);
 			rte_hash_prefetch_buckets_non_temporal(
-				instance->ip_flow_hash_table, flow_hash_val);
+				instance->ip_flow_hash_table,
+				fe->flow_hash_val);
 		} else
 			fe = NULL;
 
@@ -2240,8 +2242,7 @@ gk_proc(void *arg)
 
 		if (fe != NULL) {
 			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table,
-				fe, flow_hash_val);
+				instance->ip_flow_hash_table, fe);
 
 			if (instance->num_scan_del > 0)
 				instance->num_scan_del--;

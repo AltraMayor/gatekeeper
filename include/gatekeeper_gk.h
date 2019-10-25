@@ -251,6 +251,9 @@ struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
 
+	/* RSS hash value of the IP flow. */
+	uint32_t flow_hash_val;
+
 	/* The state of the entry. */
 	uint8_t state;
 
