@@ -693,118 +693,6 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	return ret;
 }
 
-/*
- * This function is only called when a policy from GGU block
- * tries to add a new flow entry in the flow table.
- *
- * Notice, the function doesn't fully initialize the new flow entry,
- * instead it only initializes the @flow and @grantor_fib fields.
- */
-static struct flow_entry *
-add_new_flow_from_policy(
-	struct ggu_policy *policy, struct gk_instance *instance,
-	struct gk_config *gk_conf, uint32_t rss_hash_val)
-{
-	int ret;
-	struct gk_fib *fib;
-	struct flow_entry *fe;
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-
-	fib = look_up_fib(ltbl, &policy->flow);
-	if (fib == NULL || fib->action != GK_FWD_GRANTOR) {
-		/*
-		 * Drop this solicitation to add
-		 * a policy decision.
-		 */
-		char err_msg[128];
-		ret = snprintf(err_msg, sizeof(err_msg),
-			"gk: at %s initialize flow entry error", __func__);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-		print_flow_err_msg(&policy->flow, err_msg);
-		return NULL;
-	}
-
-	ret = gk_hash_add_flow_entry(instance,
-		&policy->flow, rss_hash_val, gk_conf);
-	if (ret < 0)
-		return NULL;
-
-	fe = &instance->ip_flow_entry_table[ret];
-	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
-	fe->in_use = true;
-	fe->grantor_fib = fib;
-
-	return fe;
-}
-
-static void
-add_ggu_policy(struct ggu_policy *policy,
-	struct gk_instance *instance, struct gk_config *gk_conf)
-{
-	int ret;
-	uint64_t now = rte_rdtsc();
-	struct flow_entry *fe;
-	uint32_t rss_hash_val = rss_ip_flow_hf(&policy->flow, 0, 0);
-
-	/*
-	 * When the flow entry already exists,
-	 * the grantor ID should be already known.
-	 * Otherwise, Grantor ID comes from LPM lookup.
-	 */
-	ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
-		&policy->flow, rss_hash_val);
-	if (ret < 0) {
-		/*
-	 	 * The function add_ggu_policy() only fills up
-		 * GK_GRANTED and GK_DECLINED states. So, it doesn't
-		 * need to call initialize_flow_entry().
-		 */
-		fe = add_new_flow_from_policy(
-			policy, instance, gk_conf, rss_hash_val);
-		if (fe == NULL)
-			return;
-	} else
-		fe = &instance->ip_flow_entry_table[ret];
-
-	switch (policy->state) {
-	case GK_GRANTED:
-		fe->state = GK_GRANTED;
-		fe->u.granted.cap_expire_at = now +
-			policy->params.granted.cap_expire_sec *
-			cycles_per_sec;
-		fe->u.granted.tx_rate_kib_cycle =
-			policy->params.granted.tx_rate_kib_sec;
-		fe->u.granted.send_next_renewal_at = now +
-			policy->params.granted.next_renewal_ms *
-			cycles_per_ms;
-		fe->u.granted.renewal_step_cycle =
-			policy->params.granted.renewal_step_ms *
-			cycles_per_ms;
-		fe->u.granted.budget_renew_at = now + cycles_per_sec;
-		fe->u.granted.budget_byte =
-			(uint64_t)fe->u.granted.tx_rate_kib_cycle * 1024;
-		break;
-
-	case GK_DECLINED:
-		fe->state = GK_DECLINED;
-		fe->u.declined.expire_at = now +
-			policy->params.declined.expire_sec * cycles_per_sec;
-		break;
-
-	case GK_BPF:
-		fe->state = GK_BPF;
-		fe->u.bpf.expire_at = now +
-			policy->params.bpf.expire_sec * cycles_per_sec;
-		fe->u.bpf.program_index = policy->params.bpf.program_index;
-		fe->u.bpf.cookie = policy->params.bpf.cookie;
-		break;
-
-	default:
-		GK_LOG(ERR, "Unknown flow state %u\n", policy->state);
-		break;
-	}
-}
-
 static void
 flush_flow_table(struct ip_prefix *src,
 	struct ip_prefix *dst, struct gk_instance *instance)
@@ -983,10 +871,11 @@ out:
 }
 
 static void
-log_flow_state(struct ip_flow *flow, struct gk_instance *instance)
+log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 {
 	struct flow_entry *fe;
-	int ret = rte_hash_lookup(instance->ip_flow_hash_table, flow);
+	int ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
+		&log->flow, log->flow_hash_val);
 	if (ret < 0) {
 		char err_msg[1024];
 
@@ -995,7 +884,7 @@ log_flow_state(struct ip_flow *flow, struct gk_instance *instance)
 			__func__, rte_lcore_id());
 
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-		print_flow_err_msg(flow, err_msg);
+		print_flow_err_msg(&log->flow, err_msg);
 		return;
 	}
 
@@ -1060,12 +949,12 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 }
 
 static void
-process_gk_cmd(struct gk_cmd_entry *entry,
-	struct gk_instance *instance, struct gk_config *gk_conf)
+process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
+	int *num_policies, struct gk_instance *instance)
 {
 	switch (entry->op) {
 	case GK_ADD_POLICY_DECISION:
-		add_ggu_policy(&entry->u.ggu, instance, gk_conf);
+		policies[(*num_policies)++] = &entry->u.ggu;
 		break;
 
 	case GK_SYNCH_WITH_LPM:
@@ -1078,7 +967,7 @@ process_gk_cmd(struct gk_cmd_entry *entry,
 		break;
 
 	case GK_LOG_FLOW_STATE:
-		log_flow_state(&entry->u.flow, instance);
+		log_flow_state(&entry->u.log, instance);
 		break;
 
 	default:
@@ -1370,6 +1259,9 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
+	if (num_flows == 0)
+		return;
+
 	for (i = 0; i < k; i += FWDSTEP) {
 		int j;
 		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
@@ -1413,6 +1305,9 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	int32_t hop[num_flows];
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
+
+	if (num_flows == 0)
+		return;
 
 	for (i = 0; i < num_flows; i++) {
 		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
@@ -2134,22 +2029,190 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 }
 
 static void
+update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
+{
+	uint64_t now = rte_rdtsc();
+
+	switch (policy->state) {
+	case GK_GRANTED:
+		fe->state = GK_GRANTED;
+		fe->u.granted.cap_expire_at = now +
+			policy->params.granted.cap_expire_sec *
+			cycles_per_sec;
+		fe->u.granted.tx_rate_kib_cycle =
+			policy->params.granted.tx_rate_kib_sec;
+		fe->u.granted.send_next_renewal_at = now +
+			policy->params.granted.next_renewal_ms *
+			cycles_per_ms;
+		fe->u.granted.renewal_step_cycle =
+			policy->params.granted.renewal_step_ms *
+			cycles_per_ms;
+		fe->u.granted.budget_renew_at = now + cycles_per_sec;
+		fe->u.granted.budget_byte =
+			(uint64_t)fe->u.granted.tx_rate_kib_cycle * 1024;
+		break;
+
+	case GK_DECLINED:
+		fe->state = GK_DECLINED;
+		fe->u.declined.expire_at = now +
+			policy->params.declined.expire_sec * cycles_per_sec;
+		break;
+
+	case GK_BPF:
+		fe->state = GK_BPF;
+		fe->u.bpf.expire_at = now +
+			policy->params.bpf.expire_sec * cycles_per_sec;
+		fe->u.bpf.program_index = policy->params.bpf.program_index;
+		fe->u.bpf.cookie = policy->params.bpf.cookie;
+		break;
+
+	default:
+		GK_LOG(ERR, "Unknown flow state %u\n", policy->state);
+		break;
+	}
+}
+
+static void
+update_flow_table(struct gk_fib *fib, struct ggu_policy *policy,
+	struct gk_instance *instance, struct gk_config *gk_conf,
+	uint32_t rss_hash_val)
+{
+	int ret;
+	struct flow_entry *fe;
+
+	if (fib == NULL || fib->action != GK_FWD_GRANTOR) {
+		/* Drop this solicitation to add a policy decision. */
+		char err_msg[128];
+		ret = snprintf(err_msg, sizeof(err_msg),
+			"gk: at %s initialize flow entry error",
+			__func__);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+		print_flow_err_msg(&policy->flow, err_msg);
+		return;
+	}
+
+	ret = gk_hash_add_flow_entry(instance,
+		&policy->flow, rss_hash_val, gk_conf);
+	if (ret < 0)
+		return;
+
+	fe = &instance->ip_flow_entry_table[ret];
+	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
+	fe->in_use = true;
+	fe->grantor_fib = fib;
+
+	update_flow_entry(fe, policy);
+}
+
+static void
+add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
+	struct gk_instance *instance, struct gk_config *gk_conf)
+{
+	int i;
+	int done_lookups;
+	struct ip_flow *flow_arr[num_policies];
+	hash_sig_t flow_hash_val_arr[num_policies];
+	int32_t pos_arr[num_policies];
+	int num_lpm_lookups = 0;
+	int num_lpm6_lookups = 0;
+	int32_t lpm_lookup_pos[num_policies];
+	int32_t lpm6_lookup_pos[num_policies];
+	struct ip_flow *flows[num_policies];
+	struct ip_flow *flows6[num_policies];
+	struct gk_fib *fibs[num_policies];
+	struct gk_fib *fibs6[num_policies];
+
+	for (i = 0; i < num_policies; i++) {
+		flow_arr[i] = &policies[i]->policy.flow;
+		flow_hash_val_arr[i] = policies[i]->flow_hash_val;
+	}
+
+	done_lookups = 0;
+	while (done_lookups < num_policies) {
+		int ret;
+		uint32_t num_keys = num_policies - done_lookups;
+		if (num_keys > RTE_HASH_LOOKUP_BULK_MAX)
+			num_keys = RTE_HASH_LOOKUP_BULK_MAX;
+
+		ret = rte_hash_lookup_bulk_with_hash(
+			instance->ip_flow_hash_table,
+			(const void **)&flow_arr[done_lookups],
+			&flow_hash_val_arr[done_lookups],
+			num_keys, &pos_arr[done_lookups]);
+		if (ret != 0) {
+			GK_LOG(NOTICE,
+				"failed to find multiple keys in the hash table at lcore %u\n",
+				rte_lcore_id());
+		}
+
+		done_lookups += num_keys;
+	}
+
+	for (i = 0; i < num_policies; i++) {
+		int pos = pos_arr[i];
+
+		if (pos >= 0) {
+			struct ggu_policy *policy =
+				&policies[i]->policy;
+			struct flow_entry *fe =
+				&instance->ip_flow_entry_table[pos];
+
+			update_flow_entry(fe, policy);
+		} else if (flow_arr[i]->proto == RTE_ETHER_TYPE_IPV4) {
+			lpm_lookup_pos[num_lpm_lookups] = i;
+			flows[num_lpm_lookups] = flow_arr[i];
+			num_lpm_lookups++;
+		} else {
+			lpm6_lookup_pos[num_lpm6_lookups] = i;
+			flows6[num_lpm6_lookups] = flow_arr[i];
+			num_lpm6_lookups++;
+		}
+	}
+
+	if (instance->num_scan_del > 0)
+		return;
+
+	/* The remaining flows need LPM lookups. */
+	lookup_fib_bulk(&gk_conf->lpm_tbl, flows, num_lpm_lookups, fibs);
+	lookup_fib6_bulk(&gk_conf->lpm_tbl, flows6, num_lpm6_lookups, fibs6);
+
+	for (i = 0; i < num_lpm_lookups; i++) {
+		int fidx = lpm_lookup_pos[i];
+
+		update_flow_table(fibs[i], &policies[fidx]->policy,
+			instance, gk_conf, policies[fidx]->flow_hash_val);
+	}
+
+	for (i = 0; i < num_lpm6_lookups; i++) {
+		int fidx = lpm6_lookup_pos[i];
+
+		update_flow_table(fibs6[i], &policies[fidx]->policy,
+			instance, gk_conf, policies[fidx]->flow_hash_val);
+	}
+}
+
+static void
 process_cmds_from_mailbox(
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
 	int i;
 	int num_cmd;
+	int num_policies = 0;
 	unsigned int mailbox_burst_size = gk_conf->mailbox_burst_size;
 	struct gk_cmd_entry *gk_cmds[mailbox_burst_size];
+	struct gk_add_policy *policies[mailbox_burst_size];
 
 	/* Load a set of commands from its mailbox ring. */
         num_cmd = mb_dequeue_burst(&instance->mb,
 		(void **)gk_cmds, mailbox_burst_size);
 
-        for (i = 0; i < num_cmd; i++) {
-		process_gk_cmd(gk_cmds[i], instance, gk_conf);
-		mb_free_entry(&instance->mb, gk_cmds[i]);
-        }
+        for (i = 0; i < num_cmd; i++)
+		process_gk_cmd(gk_cmds[i], policies, &num_policies, instance);
+
+	if (num_policies > 0)
+		add_ggu_policy_bulk(policies, num_policies, instance, gk_conf);
+
+	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
 static int
@@ -2557,7 +2620,7 @@ success:
 }
 
 struct mailbox *
-get_responsible_gk_mailbox(const struct ip_flow *flow,
+get_responsible_gk_mailbox(uint32_t flow_hash_val,
 	const struct gk_config *gk_conf)
 {
 	/*
@@ -2576,8 +2639,7 @@ get_responsible_gk_mailbox(const struct ip_flow *flow,
 	}
 
 	RTE_VERIFY(gk_conf->rss_conf_front.reta_size > 0);
-	rss_hash_val = rss_ip_flow_hf(flow, 0, 0) %
-		gk_conf->rss_conf_front.reta_size;
+	rss_hash_val = flow_hash_val % gk_conf->rss_conf_front.reta_size;
 
 	/*
 	 * Identify which GK block is responsible for the
@@ -2663,6 +2725,7 @@ gk_log_flow_state(const char *src_addr,
 	const char *dst_addr, struct gk_config *gk_conf)
 {
 	int ret;
+	uint32_t flow_hash_val;
 	struct ipaddr src;
 	struct ipaddr dst;
 	struct ip_flow flow;
@@ -2720,7 +2783,9 @@ gk_log_flow_state(const char *src_addr,
 		flow.f.v6.dst = dst.ip.v6;
 	}
 
-	mb = get_responsible_gk_mailbox(&flow, gk_conf);
+	flow_hash_val = rss_ip_flow_hf(&flow, 0, 0);
+
+	mb = get_responsible_gk_mailbox(flow_hash_val, gk_conf);
 	if (mb == NULL) {
 		GK_LOG(ERR, "gk: failed to get responsible GK mailbox to log flow state that matches src_addr=%s and dst_addr=%s\n",
 			src_addr, dst_addr);
@@ -2736,7 +2801,8 @@ gk_log_flow_state(const char *src_addr,
 	}
 
 	entry->op = GK_LOG_FLOW_STATE;
-	entry->u.flow = flow;
+	entry->u.log.flow = flow;
+	entry->u.log.flow_hash_val = flow_hash_val;
 
 	mb_send_entry(mb, entry);
 

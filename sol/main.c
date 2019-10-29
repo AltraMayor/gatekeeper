@@ -629,8 +629,8 @@ gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
 	if (unlikely(num_enqueued < num_pkts)) {
 		SOL_LOG(ERR, "Failed to enqueue a bulk of %hu requests - only %u requests are enqueued\n",
 			num_pkts, num_enqueued);
-		rte_mempool_put_bulk(sol_conf->mb.pool,
-			(void **)&req_nodes[num_enqueued],
+		mb_free_entry_bulk(&sol_conf->mb,
+			(void * const *)&req_nodes[num_enqueued],
 			num_pkts - num_enqueued);
 	}
 

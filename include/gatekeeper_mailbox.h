@@ -55,4 +55,10 @@ mb_free_entry(struct mailbox *mb, void *obj)
 	rte_mempool_put(mb->pool, obj);
 }
 
+static inline void
+mb_free_entry_bulk(struct mailbox *mb, void * const *obj_table, unsigned int n)
+{
+	rte_mempool_put_bulk(mb->pool, obj_table, n);
+}
+
 #endif /* _GATEKEEPER_MAILBOX_H_ */
