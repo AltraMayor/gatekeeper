@@ -1365,7 +1365,7 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	int i;
 	/* The batch size for IPv4 LPM table lookup. */
 	const uint8_t FWDSTEP = 4;
-	const uint32_t default_nh = 0xFFFFFF;
+	const uint32_t default_nh = -1;
 	int k = RTE_ALIGN_FLOOR(num_flows, FWDSTEP);
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
