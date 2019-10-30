@@ -1884,21 +1884,18 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 
 /* Process the packets on the back interface. */
 static void
-process_pkts_back(uint16_t port_back, uint16_t port_front,
-	uint16_t rx_queue_back, uint16_t tx_queue_front,
-	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
+	unsigned int lcore,
+	uint16_t *tx_front_num_pkts, struct rte_mbuf **tx_front_pkts,
+	uint16_t *tx_back_num_pkts, struct rte_mbuf **tx_back_pkts,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
-	/* Get burst of RX packets, from first port of pair. */
 	int i;
 	int ret;
 	uint16_t num_rx;
-	uint16_t num_tx = 0;
-	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
 	uint16_t back_max_pkt_burst = gk_conf->back_max_pkt_burst;
 	struct rte_mbuf *rx_bufs[back_max_pkt_burst];
-	struct rte_mbuf *tx_bufs[back_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[back_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
 	struct acl_search *acl6 = instance->acl6;
@@ -1978,27 +1975,19 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	for (i = 0; i < num_lpm_lookups; i++) {
 		int fidx = lpm_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, front, back,
+		process_fib(&pkt_arr[fidx], fibs[i],
+			tx_front_num_pkts, tx_front_pkts, acl4, acl6,
+			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
 	}
 
 	for (i = 0; i < num_lpm6_lookups; i++) {
 		int fidx = lpm6_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs6[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, front, back,
+		process_fib(&pkt_arr[fidx], fibs6[i],
+			tx_front_num_pkts, tx_front_pkts, acl4, acl6,
+			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
-	}
-
-	/* Send burst of TX packets, to second port of pair. */
-	num_tx_succ = rte_eth_tx_burst(port_front, tx_queue_front,
-		tx_bufs, num_tx);
-
-	/* XXX #71 Do something better here! For now, free any unsent packets. */
-	if (unlikely(num_tx_succ < num_tx)) {
-		for (i = num_tx_succ; i < num_tx; i++)
-			drop_packet(tx_bufs[i]);
 	}
 
 	if (num_arp > 0)
@@ -2255,9 +2244,10 @@ gk_proc(void *arg)
 			&tx_back_num_pkts, tx_back_pkts,
 			instance, gk_conf);
 
-		process_pkts_back(port_back, port_front,
-			rx_queue_back, tx_queue_front, lcore,
-			&tx_back_num_pkts, tx_back_pkts, instance, gk_conf);
+		process_pkts_back(port_back, rx_queue_back, lcore,
+			&tx_front_num_pkts, tx_front_pkts,
+			&tx_back_num_pkts, tx_back_pkts,
+			instance, gk_conf);
 
 		if (fe != NULL && fe->in_use &&
 				is_flow_expired(fe, rte_rdtsc())) {
