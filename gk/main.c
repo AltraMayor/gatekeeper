@@ -1585,24 +1585,21 @@ parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
 
 /* Process the packets on the front interface. */
 static void
-process_pkts_front(uint16_t port_front, uint16_t port_back,
-	uint16_t rx_queue_front, uint16_t tx_queue_back,
-	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
+	unsigned int lcore,
+	uint16_t *tx_front_num_pkts, struct rte_mbuf **tx_front_pkts,
+	uint16_t *tx_back_num_pkts, struct rte_mbuf **tx_back_pkts,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
-	/* Get burst of RX packets, from first port of pair. */
 	int i;
 	int done_lookups;
 	int ret;
 	uint16_t num_rx;
-	uint16_t num_tx = 0;
-	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
 	uint16_t num_reqs = 0;
 	uint16_t front_max_pkt_burst = gk_conf->front_max_pkt_burst;
 	uint8_t req_prio[front_max_pkt_burst];
 	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
-	struct rte_mbuf *tx_bufs[front_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
 	struct rte_mbuf *req_bufs[front_max_pkt_burst];
 	struct acl_search *acl4 = instance->acl4;
@@ -1713,8 +1710,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		int fidx = lpm_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			flow_hash_val_arr[fidx], fibs[i],
+			tx_back_num_pkts, tx_back_pkts, acl4, acl6,
+			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
 
@@ -1722,8 +1720,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		int fidx = lpm6_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs6[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			flow_hash_val_arr[fidx], fibs6[i],
+			tx_back_num_pkts, tx_back_pkts, acl4, acl6,
+			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
 
@@ -1739,7 +1738,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			/* Request will be serviced by another lcore. */
 			continue;
 		} else if (likely(ret == 0))
-			tx_bufs[num_tx++] = pkt_arr[i].pkt;
+			tx_back_pkts[(*tx_back_num_pkts)++] = pkt_arr[i].pkt;
 		else
 			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
 				ret, fe_arr[i]->state);
@@ -1754,8 +1753,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				rte_pktmbuf_pkt_len(req_bufs[i - 1]);
 		}
 
-		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf, req_bufs,
-			req_prio, num_reqs), 0);
+		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf,
+			req_bufs, req_prio, num_reqs), 0);
 		if (ret < num_reqs) {
 			for (i = ret; i < num_reqs; i++)
 				drop_packet_front(req_bufs[i], instance);
@@ -1763,16 +1762,6 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 
 		stats->pkts_num_request += ret;
 		stats->pkts_size_request += acc_size_request[ret];
-	}
-
-	/* Send burst of TX packets, to second port of pair. */
-	num_tx_succ = rte_eth_tx_burst(port_back, tx_queue_back,
-		tx_bufs, num_tx);
-
-	/* XXX #71 Do something better here! For now, free any unsent packets. */
-	if (unlikely(num_tx_succ < num_tx)) {
-		for (i = num_tx_succ; i < num_tx; i++)
-			drop_packet_front(tx_bufs[i], instance);
 	}
 
 	if (num_arp > 0)
@@ -2223,8 +2212,10 @@ gk_proc(void *arg)
 
 	uint16_t tx_front_num_pkts;
 	uint16_t tx_back_num_pkts;
-	struct rte_mbuf *tx_front_pkts[gk_conf->front_max_pkt_burst];
-	struct rte_mbuf *tx_back_pkts[gk_conf->back_max_pkt_burst];
+	uint16_t tx_max_num_pkts = gk_conf->front_max_pkt_burst +
+		gk_conf->back_max_pkt_burst;
+	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
+	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
 
 	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
@@ -2259,9 +2250,9 @@ gk_proc(void *arg)
 		} else
 			iter_count++;
 
-		process_pkts_front(port_front, port_back,
-			rx_queue_front, tx_queue_back,
-			lcore, &tx_front_num_pkts, tx_front_pkts,
+		process_pkts_front(port_front, rx_queue_front, lcore,
+			&tx_front_num_pkts, tx_front_pkts,
+			&tx_back_num_pkts, tx_back_pkts,
 			instance, gk_conf);
 
 		process_pkts_back(port_back, port_front,
