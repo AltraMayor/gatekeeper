@@ -567,8 +567,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	char ht_name[64];
 	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
-	unsigned int gk_max_pkt_burst = RTE_MAX(gk_conf->front_max_pkt_burst,
-		gk_conf->back_max_pkt_burst);
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 	struct rte_hash_parameters ip_flow_hash_params = {
@@ -608,31 +606,11 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_hash;
 	}
 
-	instance->acl4 = alloc_acl_search(gk_max_pkt_burst);
-	if (instance->acl4 == NULL) {
-		GK_LOG(ERR,
-			"The GK block can't create acl search for IPv4 at lcore %u\n",
-			lcore_id);
-
-		ret = -1;
-		goto flow_entry;
-	}
-
-	instance->acl6 = alloc_acl_search(gk_max_pkt_burst);
-	if (instance->acl6 == NULL) {
-		GK_LOG(ERR,
-			"The GK block can't create acl search for IPv6 at lcore %u\n",
-			lcore_id);
-
-		ret = -1;
-		goto acl4_search;
-	}
-
 	ret = init_mailbox("gk", gk_conf->mailbox_max_entries_exp,
 		sizeof(struct gk_cmd_entry), gk_conf->mailbox_mem_cache_size,
 		lcore_id, &instance->mb);
     	if (ret < 0)
-		goto acl6_search;
+		goto flow_entry;
 
 	tb_ratelimit_state_init(&instance->front_icmp_rs,
 		gk_conf->front_icmp_msgs_per_sec,
@@ -644,12 +622,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	ret = 0;
 	goto out;
 
-acl6_search:
-	destroy_acl_search(instance->acl6);
-	instance->acl6 = NULL;
-acl4_search:
-	destroy_acl_search(instance->acl4);
-	instance->acl4 = NULL;
 flow_entry:
     	rte_free(instance->ip_flow_entry_table);
     	instance->ip_flow_entry_table = NULL;
@@ -1602,8 +1574,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
 	struct rte_mbuf *req_bufs[front_max_pkt_burst];
-	struct acl_search *acl4 = instance->acl4;
-	struct acl_search *acl6 = instance->acl6;
+	DEFINE_ACL_SEARCH(acl4, front_max_pkt_burst);
+	DEFINE_ACL_SEARCH(acl6, front_max_pkt_burst);
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
@@ -1711,7 +1683,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
 			flow_hash_val_arr[fidx], fibs[i],
-			tx_back_num_pkts, tx_back_pkts, acl4, acl6,
+			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
@@ -1721,7 +1693,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
 			flow_hash_val_arr[fidx], fibs6[i],
-			tx_back_num_pkts, tx_back_pkts, acl4, acl6,
+			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
@@ -1768,9 +1740,9 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
 
 	process_pkts_acl(&gk_conf->net->front,
-		lcore, acl4, RTE_ETHER_TYPE_IPV4);
+		lcore, &acl4, RTE_ETHER_TYPE_IPV4);
 	process_pkts_acl(&gk_conf->net->front,
-		lcore, acl6, RTE_ETHER_TYPE_IPV6);
+		lcore, &acl6, RTE_ETHER_TYPE_IPV6);
 }
 
 static void
@@ -1897,8 +1869,8 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 	uint16_t back_max_pkt_burst = gk_conf->back_max_pkt_burst;
 	struct rte_mbuf *rx_bufs[back_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[back_max_pkt_burst];
-	struct acl_search *acl4 = instance->acl4;
-	struct acl_search *acl6 = instance->acl6;
+	DEFINE_ACL_SEARCH(acl4, back_max_pkt_burst);
+	DEFINE_ACL_SEARCH(acl6, back_max_pkt_burst);
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	bool ipv4_configured_back = ipv4_if_configured(&gk_conf->net->back);
@@ -1976,7 +1948,7 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 		int fidx = lpm_lookup_pos[i];
 
 		process_fib(&pkt_arr[fidx], fibs[i],
-			tx_front_num_pkts, tx_front_pkts, acl4, acl6,
+			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
 			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
 	}
@@ -1985,7 +1957,7 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 		int fidx = lpm6_lookup_pos[i];
 
 		process_fib(&pkt_arr[fidx], fibs6[i],
-			tx_front_num_pkts, tx_front_pkts, acl4, acl6,
+			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
 			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
 	}
@@ -1993,8 +1965,10 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
-	process_pkts_acl(&gk_conf->net->back, lcore, acl4, RTE_ETHER_TYPE_IPV4);
-	process_pkts_acl(&gk_conf->net->back, lcore, acl6, RTE_ETHER_TYPE_IPV6);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl4,
+		RTE_ETHER_TYPE_IPV4);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl6,
+		RTE_ETHER_TYPE_IPV6);
 }
 
 static void
@@ -2341,11 +2315,6 @@ cleanup_gk(struct gk_config *gk_conf)
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
 		}
-
-		if (gk_conf->instances[i].acl4 != NULL)
-			destroy_acl_search(gk_conf->instances[i].acl4);
-		if (gk_conf->instances[i].acl6 != NULL)
-			destroy_acl_search(gk_conf->instances[i].acl6);
 
 		destroy_mailbox(&gk_conf->instances[i].mb);
 	}
