@@ -2275,10 +2275,10 @@ gk_proc(void *arg)
 		} else
 			fe = NULL;
 
-		send_pkts(port_front, rx_queue_front,
+		send_pkts(port_front, tx_queue_front,
 			front_num_pkts, front_icmp_bufs);
 
-		send_pkts(port_back, rx_queue_back,
+		send_pkts(port_back, tx_queue_back,
 			back_num_pkts, back_icmp_bufs);
 
 		process_cmds_from_mailbox(instance, gk_conf);
