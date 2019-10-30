@@ -2221,10 +2221,10 @@ gk_proc(void *arg)
 	uint16_t rx_queue_back = instance->rx_queue_back;
 	uint16_t tx_queue_back = instance->tx_queue_back;
 
-	uint16_t front_num_pkts;
-	uint16_t back_num_pkts;
-	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
-	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
+	uint16_t tx_front_num_pkts;
+	uint16_t tx_back_num_pkts;
+	struct rte_mbuf *tx_front_pkts[gk_conf->front_max_pkt_burst];
+	struct rte_mbuf *tx_back_pkts[gk_conf->back_max_pkt_burst];
 
 	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
@@ -2242,8 +2242,8 @@ gk_proc(void *arg)
 		struct flow_entry *fe = NULL;
 		uint32_t flow_hash_val;
 
-		front_num_pkts = 0;
-		back_num_pkts = 0;
+		tx_front_num_pkts = 0;
+		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
 			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
@@ -2261,14 +2261,15 @@ gk_proc(void *arg)
 
 		process_pkts_front(port_front, port_back,
 			rx_queue_front, tx_queue_back,
-			lcore, &front_num_pkts, front_icmp_bufs,
+			lcore, &tx_front_num_pkts, tx_front_pkts,
 			instance, gk_conf);
 
 		process_pkts_back(port_back, port_front,
 			rx_queue_back, tx_queue_front, lcore,
-			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
+			&tx_back_num_pkts, tx_back_pkts, instance, gk_conf);
 
-		if (fe != NULL && fe->in_use && is_flow_expired(fe, rte_rdtsc())) {
+		if (fe != NULL && fe->in_use &&
+				is_flow_expired(fe, rte_rdtsc())) {
 			flow_hash_val = rss_ip_flow_hf(&fe->flow, 0, 0);
 			rte_hash_prefetch_buckets_non_temporal(
 				instance->ip_flow_hash_table, flow_hash_val);
@@ -2276,10 +2277,10 @@ gk_proc(void *arg)
 			fe = NULL;
 
 		send_pkts(port_front, tx_queue_front,
-			front_num_pkts, front_icmp_bufs);
+			tx_front_num_pkts, tx_front_pkts);
 
 		send_pkts(port_back, tx_queue_back,
-			back_num_pkts, back_icmp_bufs);
+			tx_back_num_pkts, tx_back_pkts);
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
