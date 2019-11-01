@@ -32,7 +32,7 @@ struct acl_search {
 	struct rte_mbuf **mbufs;
 };
 
-/* Declare and initialize a struct acl_search/ */
+/* Declare and initialize a struct acl_search. */
 #define DEFINE_ACL_SEARCH(name, num_pkts)			\
 	const uint8_t *name##_data_array[(num_pkts)];		\
 	struct rte_mbuf *name##_mbufs_array[(num_pkts)];	\
