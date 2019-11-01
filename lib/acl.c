@@ -27,29 +27,6 @@
 /* Result returned when the ACL does not find a matching rule. */
 #define ACL_NO_MATCH (0)
 
-struct acl_search *
-alloc_acl_search(uint8_t num_pkts)
-{
-	struct acl_search *acl = rte_calloc(
-		"acl", 1, sizeof(struct acl_search) +
-		num_pkts * (sizeof(const uint8_t *) +
-			sizeof(struct rte_mbuf *)), 0);
-	if (acl == NULL)
-		return NULL;
-
-	acl->mbufs = (struct rte_mbuf **)
-		((char *)acl + sizeof(struct acl_search));
-	acl->data = (const uint8_t **)&acl->mbufs[num_pkts];
-
-	return acl;
-}
-
-void
-destroy_acl_search(struct acl_search *acl)
-{
-	rte_free(acl);
-}
-
 /* Callback function for when there's no classification match. */
 static int
 drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,

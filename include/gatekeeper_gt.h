@@ -94,9 +94,6 @@ struct gt_instance {
 	 */
 	struct rte_ip_frag_tbl *frag_tbl;
 
-	struct acl_search *acl4;
-	struct acl_search *acl6;
-
 	/*
 	 * Fixed array of packet buffers for policy decision
 	 * notification packets for the last @max_ggu_pkts

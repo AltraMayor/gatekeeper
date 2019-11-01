@@ -32,12 +32,7 @@ struct acl_search {
 	struct rte_mbuf **mbufs;
 };
 
-/*
- * Declare and initialize a struct acl_search.
- *
- * This struct must not be passed to destroy_acl_search().
- * Assuming that it's empty, just let the struct go out of scope.
- */
+/* Declare and initialize a struct acl_search. */
 #define DEFINE_ACL_SEARCH(name, num_pkts)			\
 	const uint8_t *name##_data_array[(num_pkts)];		\
 	struct rte_mbuf *name##_mbufs_array[(num_pkts)];	\
@@ -46,9 +41,6 @@ struct acl_search {
 		.data = name##_data_array,			\
 		.mbufs = name##_mbufs_array,			\
 	}
-
-struct acl_search *alloc_acl_search(uint8_t num_pkts);
-void destroy_acl_search(struct acl_search *acl);
 
 /* Classify batches of packets in @acl and invoke callback functions. */
 int process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
