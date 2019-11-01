@@ -567,8 +567,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	char ht_name[64];
 	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
-	unsigned int gk_max_pkt_burst = RTE_MAX(gk_conf->front_max_pkt_burst,
-		gk_conf->back_max_pkt_burst);
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 	struct rte_hash_parameters ip_flow_hash_params = {
@@ -608,31 +606,11 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		goto flow_hash;
 	}
 
-	instance->acl4 = alloc_acl_search(gk_max_pkt_burst);
-	if (instance->acl4 == NULL) {
-		GK_LOG(ERR,
-			"The GK block can't create acl search for IPv4 at lcore %u\n",
-			lcore_id);
-
-		ret = -1;
-		goto flow_entry;
-	}
-
-	instance->acl6 = alloc_acl_search(gk_max_pkt_burst);
-	if (instance->acl6 == NULL) {
-		GK_LOG(ERR,
-			"The GK block can't create acl search for IPv6 at lcore %u\n",
-			lcore_id);
-
-		ret = -1;
-		goto acl4_search;
-	}
-
 	ret = init_mailbox("gk", gk_conf->mailbox_max_entries_exp,
 		sizeof(struct gk_cmd_entry), gk_conf->mailbox_mem_cache_size,
 		lcore_id, &instance->mb);
     	if (ret < 0)
-		goto acl6_search;
+		goto flow_entry;
 
 	tb_ratelimit_state_init(&instance->front_icmp_rs,
 		gk_conf->front_icmp_msgs_per_sec,
@@ -644,12 +622,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	ret = 0;
 	goto out;
 
-acl6_search:
-	destroy_acl_search(instance->acl6);
-	instance->acl6 = NULL;
-acl4_search:
-	destroy_acl_search(instance->acl4);
-	instance->acl4 = NULL;
 flow_entry:
     	rte_free(instance->ip_flow_entry_table);
     	instance->ip_flow_entry_table = NULL;
@@ -1585,28 +1557,25 @@ parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
 
 /* Process the packets on the front interface. */
 static void
-process_pkts_front(uint16_t port_front, uint16_t port_back,
-	uint16_t rx_queue_front, uint16_t tx_queue_back,
-	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
+	unsigned int lcore,
+	uint16_t *tx_front_num_pkts, struct rte_mbuf **tx_front_pkts,
+	uint16_t *tx_back_num_pkts, struct rte_mbuf **tx_back_pkts,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
-	/* Get burst of RX packets, from first port of pair. */
 	int i;
 	int done_lookups;
 	int ret;
 	uint16_t num_rx;
-	uint16_t num_tx = 0;
-	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
 	uint16_t num_reqs = 0;
 	uint16_t front_max_pkt_burst = gk_conf->front_max_pkt_burst;
 	uint8_t req_prio[front_max_pkt_burst];
 	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
-	struct rte_mbuf *tx_bufs[front_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
 	struct rte_mbuf *req_bufs[front_max_pkt_burst];
-	struct acl_search *acl4 = instance->acl4;
-	struct acl_search *acl6 = instance->acl6;
+	DEFINE_ACL_SEARCH(acl4, front_max_pkt_burst);
+	DEFINE_ACL_SEARCH(acl6, front_max_pkt_burst);
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
@@ -1713,8 +1682,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		int fidx = lpm_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			flow_hash_val_arr[fidx], fibs[i],
+			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
+			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
 
@@ -1722,8 +1692,9 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		int fidx = lpm6_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs6[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, req_bufs, req_prio,
+			flow_hash_val_arr[fidx], fibs6[i],
+			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
+			tx_front_num_pkts, tx_front_pkts, req_bufs, req_prio,
 			&num_reqs, front, back, instance, gk_conf);
 	}
 
@@ -1739,7 +1710,7 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 			/* Request will be serviced by another lcore. */
 			continue;
 		} else if (likely(ret == 0))
-			tx_bufs[num_tx++] = pkt_arr[i].pkt;
+			tx_back_pkts[(*tx_back_num_pkts)++] = pkt_arr[i].pkt;
 		else
 			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
 				ret, fe_arr[i]->state);
@@ -1754,8 +1725,8 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 				rte_pktmbuf_pkt_len(req_bufs[i - 1]);
 		}
 
-		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf, req_bufs,
-			req_prio, num_reqs), 0);
+		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf,
+			req_bufs, req_prio, num_reqs), 0);
 		if (ret < num_reqs) {
 			for (i = ret; i < num_reqs; i++)
 				drop_packet_front(req_bufs[i], instance);
@@ -1765,23 +1736,13 @@ process_pkts_front(uint16_t port_front, uint16_t port_back,
 		stats->pkts_size_request += acc_size_request[ret];
 	}
 
-	/* Send burst of TX packets, to second port of pair. */
-	num_tx_succ = rte_eth_tx_burst(port_back, tx_queue_back,
-		tx_bufs, num_tx);
-
-	/* XXX #71 Do something better here! For now, free any unsent packets. */
-	if (unlikely(num_tx_succ < num_tx)) {
-		for (i = num_tx_succ; i < num_tx; i++)
-			drop_packet_front(tx_bufs[i], instance);
-	}
-
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
 
 	process_pkts_acl(&gk_conf->net->front,
-		lcore, acl4, RTE_ETHER_TYPE_IPV4);
+		lcore, &acl4, RTE_ETHER_TYPE_IPV4);
 	process_pkts_acl(&gk_conf->net->front,
-		lcore, acl6, RTE_ETHER_TYPE_IPV6);
+		lcore, &acl6, RTE_ETHER_TYPE_IPV6);
 }
 
 static void
@@ -1895,24 +1856,21 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 
 /* Process the packets on the back interface. */
 static void
-process_pkts_back(uint16_t port_back, uint16_t port_front,
-	uint16_t rx_queue_back, uint16_t tx_queue_front,
-	unsigned int lcore, uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
+process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
+	unsigned int lcore,
+	uint16_t *tx_front_num_pkts, struct rte_mbuf **tx_front_pkts,
+	uint16_t *tx_back_num_pkts, struct rte_mbuf **tx_back_pkts,
 	struct gk_instance *instance, struct gk_config *gk_conf)
 {
-	/* Get burst of RX packets, from first port of pair. */
 	int i;
 	int ret;
 	uint16_t num_rx;
-	uint16_t num_tx = 0;
-	uint16_t num_tx_succ;
 	uint16_t num_arp = 0;
 	uint16_t back_max_pkt_burst = gk_conf->back_max_pkt_burst;
 	struct rte_mbuf *rx_bufs[back_max_pkt_burst];
-	struct rte_mbuf *tx_bufs[back_max_pkt_burst];
 	struct rte_mbuf *arp_bufs[back_max_pkt_burst];
-	struct acl_search *acl4 = instance->acl4;
-	struct acl_search *acl6 = instance->acl6;
+	DEFINE_ACL_SEARCH(acl4, back_max_pkt_burst);
+	DEFINE_ACL_SEARCH(acl6, back_max_pkt_burst);
 	struct gatekeeper_if *front = &gk_conf->net->front;
 	struct gatekeeper_if *back = &gk_conf->net->back;
 	bool ipv4_configured_back = ipv4_if_configured(&gk_conf->net->back);
@@ -1989,34 +1947,28 @@ process_pkts_back(uint16_t port_back, uint16_t port_front,
 	for (i = 0; i < num_lpm_lookups; i++) {
 		int fidx = lpm_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, front, back,
+		process_fib(&pkt_arr[fidx], fibs[i],
+			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
+			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
 	}
 
 	for (i = 0; i < num_lpm6_lookups; i++) {
 		int fidx = lpm6_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs6[i], &num_tx, tx_bufs,
-			acl4, acl6, num_pkts, icmp_bufs, front, back,
+		process_fib(&pkt_arr[fidx], fibs6[i],
+			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
+			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
-	}
-
-	/* Send burst of TX packets, to second port of pair. */
-	num_tx_succ = rte_eth_tx_burst(port_front, tx_queue_front,
-		tx_bufs, num_tx);
-
-	/* XXX #71 Do something better here! For now, free any unsent packets. */
-	if (unlikely(num_tx_succ < num_tx)) {
-		for (i = num_tx_succ; i < num_tx; i++)
-			drop_packet(tx_bufs[i]);
 	}
 
 	if (num_arp > 0)
 		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
 
-	process_pkts_acl(&gk_conf->net->back, lcore, acl4, RTE_ETHER_TYPE_IPV4);
-	process_pkts_acl(&gk_conf->net->back, lcore, acl6, RTE_ETHER_TYPE_IPV6);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl4,
+		RTE_ETHER_TYPE_IPV4);
+	process_pkts_acl(&gk_conf->net->back, lcore, &acl6,
+		RTE_ETHER_TYPE_IPV6);
 }
 
 static void
@@ -2221,10 +2173,12 @@ gk_proc(void *arg)
 	uint16_t rx_queue_back = instance->rx_queue_back;
 	uint16_t tx_queue_back = instance->tx_queue_back;
 
-	uint16_t front_num_pkts;
-	uint16_t back_num_pkts;
-	struct rte_mbuf *front_icmp_bufs[gk_conf->front_max_pkt_burst];
-	struct rte_mbuf *back_icmp_bufs[gk_conf->back_max_pkt_burst];
+	uint16_t tx_front_num_pkts;
+	uint16_t tx_back_num_pkts;
+	uint16_t tx_max_num_pkts = gk_conf->front_max_pkt_burst +
+		gk_conf->back_max_pkt_burst;
+	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
+	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
 
 	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
@@ -2242,8 +2196,8 @@ gk_proc(void *arg)
 		struct flow_entry *fe = NULL;
 		uint32_t flow_hash_val;
 
-		front_num_pkts = 0;
-		back_num_pkts = 0;
+		tx_front_num_pkts = 0;
+		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
 			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
@@ -2259,27 +2213,29 @@ gk_proc(void *arg)
 		} else
 			iter_count++;
 
-		process_pkts_front(port_front, port_back,
-			rx_queue_front, tx_queue_back,
-			lcore, &front_num_pkts, front_icmp_bufs,
+		process_pkts_front(port_front, rx_queue_front, lcore,
+			&tx_front_num_pkts, tx_front_pkts,
+			&tx_back_num_pkts, tx_back_pkts,
 			instance, gk_conf);
 
-		process_pkts_back(port_back, port_front,
-			rx_queue_back, tx_queue_front, lcore,
-			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
+		process_pkts_back(port_back, rx_queue_back, lcore,
+			&tx_front_num_pkts, tx_front_pkts,
+			&tx_back_num_pkts, tx_back_pkts,
+			instance, gk_conf);
 
-		if (fe != NULL && fe->in_use && is_flow_expired(fe, rte_rdtsc())) {
+		if (fe != NULL && fe->in_use &&
+				is_flow_expired(fe, rte_rdtsc())) {
 			flow_hash_val = rss_ip_flow_hf(&fe->flow, 0, 0);
 			rte_hash_prefetch_buckets_non_temporal(
 				instance->ip_flow_hash_table, flow_hash_val);
 		} else
 			fe = NULL;
 
-		send_pkts(port_front, rx_queue_front,
-			front_num_pkts, front_icmp_bufs);
+		send_pkts(port_front, tx_queue_front,
+			tx_front_num_pkts, tx_front_pkts);
 
-		send_pkts(port_back, rx_queue_back,
-			back_num_pkts, back_icmp_bufs);
+		send_pkts(port_back, tx_queue_back,
+			tx_back_num_pkts, tx_back_pkts);
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
@@ -2359,11 +2315,6 @@ cleanup_gk(struct gk_config *gk_conf)
 			rte_free(gk_conf->instances[i].
 				ip_flow_entry_table);
 		}
-
-		if (gk_conf->instances[i].acl4 != NULL)
-			destroy_acl_search(gk_conf->instances[i].acl4);
-		if (gk_conf->instances[i].acl6 != NULL)
-			destroy_acl_search(gk_conf->instances[i].acl6);
 
 		destroy_mailbox(&gk_conf->instances[i].mb);
 	}

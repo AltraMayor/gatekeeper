@@ -29,8 +29,23 @@ struct acl_search {
 	/* Fixed field here. */
 	const uint8_t   **data;
 	/* List of references to each packet's mbuf. */
-	struct rte_mbuf *mbufs[0];
+	struct rte_mbuf **mbufs;
 };
+
+/*
+ * Declare and initialize a struct acl_search.
+ *
+ * This struct must not be passed to destroy_acl_search().
+ * Assuming that it's empty, just let the struct go out of scope.
+ */
+#define DEFINE_ACL_SEARCH(name, num_pkts)			\
+	const uint8_t *name##_data_array[(num_pkts)];		\
+	struct rte_mbuf *name##_mbufs_array[(num_pkts)];	\
+	struct acl_search name = {				\
+		.num = 0,					\
+		.data = name##_data_array,			\
+		.mbufs = name##_mbufs_array,			\
+	}
 
 struct acl_search *alloc_acl_search(uint8_t num_pkts);
 void destroy_acl_search(struct acl_search *acl);

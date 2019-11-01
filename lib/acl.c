@@ -37,6 +37,8 @@ alloc_acl_search(uint8_t num_pkts)
 	if (acl == NULL)
 		return NULL;
 
+	acl->mbufs = (struct rte_mbuf **)
+		((char *)acl + sizeof(struct acl_search));
 	acl->data = (const uint8_t **)&acl->mbufs[num_pkts];
 
 	return acl;
