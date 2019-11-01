@@ -545,9 +545,10 @@ is_flow_expired(struct flow_entry *fe, uint64_t now)
 }
 
 static int
-gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
+gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe,
+	uint32_t flow_hash_val)
 {
-	int ret = rte_hash_del_key(h, &fe->flow);
+	int ret = rte_hash_del_key_with_hash(h, &fe->flow, flow_hash_val);
 	if (likely(ret >= 0))
 		memset(fe, 0, sizeof(*fe));
 	else {
@@ -557,18 +558,6 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 	}
 
 	return ret;
-}
-
-/* Return true when it removes an entry, and false otherwise. */
-static bool
-gk_flow_tbl_entry_scan(struct flow_entry *fe, struct gk_instance *instance)
-{
-	if (fe->in_use && is_flow_expired(fe, rte_rdtsc())) {
-		gk_del_flow_entry_from_hash(
-			instance->ip_flow_hash_table, fe);
-		return true;
-	}
-	return false;
 }
 
 static int
@@ -771,7 +760,8 @@ flush_flow_table(struct ip_prefix *src,
 
 		if (matched) {
 			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
+				instance->ip_flow_hash_table, fe,
+				rss_ip_flow_hf(&fe->flow, 0, 0));
 			num_flushed_flows++;
 		}
 
@@ -911,7 +901,8 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 				&instance->ip_flow_entry_table[index];
 			if (fe->grantor_fib == fib) {
 				gk_del_flow_entry_from_hash(
-					instance->ip_flow_hash_table, fe);
+					instance->ip_flow_hash_table, fe,
+					rss_ip_flow_hf(&fe->flow, 0, 0));
 			}
 
 			index = rte_hash_iterate(instance->ip_flow_hash_table,
@@ -2248,19 +2239,11 @@ gk_proc(void *arg)
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {
-		struct flow_entry *fe;
+		struct flow_entry *fe = NULL;
+		uint32_t flow_hash_val;
 
 		front_num_pkts = 0;
 		back_num_pkts = 0;
-
-		process_pkts_front(port_front, port_back,
-			rx_queue_front, tx_queue_back,
-			lcore, &front_num_pkts, front_icmp_bufs,
-			instance, gk_conf);
-
-		process_pkts_back(port_back, port_front,
-			rx_queue_back, tx_queue_front, lcore,
-			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
 
 		if (iter_count >= scan_iter) {
 			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
@@ -2271,7 +2254,26 @@ gk_proc(void *arg)
 			 * check if it's expired.
 			 */
 			rte_prefetch_non_temporal(fe);
-		}
+
+			iter_count = 0;
+		} else
+			iter_count++;
+
+		process_pkts_front(port_front, port_back,
+			rx_queue_front, tx_queue_back,
+			lcore, &front_num_pkts, front_icmp_bufs,
+			instance, gk_conf);
+
+		process_pkts_back(port_back, port_front,
+			rx_queue_back, tx_queue_front, lcore,
+			&back_num_pkts, back_icmp_bufs, instance, gk_conf);
+
+		if (fe != NULL && fe->in_use && is_flow_expired(fe, rte_rdtsc())) {
+			flow_hash_val = rss_ip_flow_hf(&fe->flow, 0, 0);
+			rte_hash_prefetch_buckets_non_temporal(
+				instance->ip_flow_hash_table, flow_hash_val);
+		} else
+			fe = NULL;
 
 		send_pkts(port_front, rx_queue_front,
 			front_num_pkts, front_icmp_bufs);
@@ -2281,14 +2283,14 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		if (iter_count >= scan_iter) {
-			if (gk_flow_tbl_entry_scan(fe, instance) &&
-					instance->num_scan_del > 0)
-				instance->num_scan_del--;
+		if (fe != NULL) {
+			gk_del_flow_entry_from_hash(
+				instance->ip_flow_hash_table,
+				fe, flow_hash_val);
 
-			iter_count = 0;
-		} else
-			iter_count++;
+			if (instance->num_scan_del > 0)
+				instance->num_scan_del--;
+		}
 
 		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {
