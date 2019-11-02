@@ -251,11 +251,26 @@ struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
 
+	/* RSS hash value of the IP flow. */
+	uint32_t flow_hash_val;
+
 	/* The state of the entry. */
 	uint8_t state;
 
 	/* Whether this entry is currently in use in ip_flow_entry_table. */
 	bool    in_use;
+
+	/*
+	 * This field was moved from u.bpf.program_index below to solve the
+	 * structure padding issue that prevents us from adding new fields.
+	 *
+	 * More specifically, before this move, the sizeof(struct flow_entry)
+	 * is 128, so we cannot add new fields due to the compilation check
+	 * in gk/main.c (i.e., RTE_BUILD_BUG_ON(sizeof(*fe) > 128)).
+	 *
+	 * Index of the BPF program associated to the GK_BPF state.
+	 */
+	uint8_t	 program_index;
 
 	/*
 	 * The fib entry that instructs where
@@ -318,8 +333,6 @@ struct flow_entry {
 		struct {
 			/* When this state is no longer valid. */
 			uint64_t expire_at;
-			/* Index of the BPF program associated to this state. */
-			uint8_t	 program_index;
 			/*
 			 * Memory to be passed to the BPF proram each time
 			 * it is executed.
