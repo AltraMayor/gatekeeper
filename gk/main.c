@@ -2168,8 +2168,8 @@ gk_proc(void *arg)
 	unsigned int block_idx = get_block_idx(gk_conf, lcore);
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 
-	uint16_t port_front = get_net_conf()->front.id;
-	uint16_t port_back = get_net_conf()->back.id;
+	uint16_t port_front = gk_conf->net->front.id;
+	uint16_t port_back = gk_conf->net->back.id;
 	uint16_t rx_queue_front = instance->rx_queue_front;
 	uint16_t tx_queue_front = instance->tx_queue_front;
 	uint16_t rx_queue_back = instance->rx_queue_back;
