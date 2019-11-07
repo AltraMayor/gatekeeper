@@ -19,6 +19,8 @@
 #ifndef _GATEKEEPER_GK_BPF_H_
 #define _GATEKEEPER_GK_BPF_H_
 
+#include "gatekeeper_gk.h"
+
 /*
  * Load the BPF program that handles flows into @gk_conf at
  * position @index.
