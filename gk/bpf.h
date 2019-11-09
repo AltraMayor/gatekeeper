@@ -20,6 +20,7 @@
 #define _GATEKEEPER_GK_BPF_H_
 
 #include "gatekeeper_gk.h"
+#include "co.h"
 
 /*
  * Load the BPF program that handles flows into @gk_conf at
@@ -32,7 +33,7 @@
 int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	const char *filename, int jit);
 
-int gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
+int gk_bpf_decide_pkt(struct gk_co *this_co, uint8_t program_index,
 	struct flow_entry *fe, struct ipacket *packet, uint64_t now,
 	uint64_t *p_bpf_ret);
 

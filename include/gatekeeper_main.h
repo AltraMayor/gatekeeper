@@ -20,6 +20,7 @@
 #define _GATEKEEPER_MAIN_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <rte_mbuf.h>
 #include <rte_prefetch.h>
@@ -70,6 +71,34 @@ static inline void
 rte_mbuf_prefetch_part1_non_temporal(struct rte_mbuf *m)
 {
 	rte_prefetch_non_temporal(&m->cacheline0);
+}
+
+/* XXX #52 This should be part of DPDK. */
+/**
+ * Prefetch the second part of the mbuf
+ *
+ * The next 64 bytes of the mbuf corresponds to fields that are used in the
+ * transmit path. If the cache line of the architecture is higher than 64B,
+ * this function does nothing as it is expected that the full mbuf is
+ * already in cache.
+ *
+ * @param m
+ *   The pointer to the mbuf.
+ */
+static inline bool
+rte_mbuf_prefetch_part2_non_temporal(struct rte_mbuf *m)
+{
+#if RTE_CACHE_LINE_SIZE == 64
+	/* TODO Do we need this prefetch?
+	rte_prefetch_non_temporal(&m->cacheline1);
+	return true;
+	*/
+	RTE_SET_USED(m);
+	return false;
+#else
+	RTE_SET_USED(m);
+	return false;
+#endif
 }
 
 #endif /* _GATEKEEPER_MAIN_H_ */

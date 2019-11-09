@@ -106,12 +106,13 @@ static const struct rte_bpf_xsym flow_handler_init_xsym[] = {
 };
 
 struct gk_bpf_pkt_frame {
-	uint64_t		password;
-	struct flow_entry	*fe;
-	struct ipacket          *packet;
-	struct gk_config	*gk_conf;
-	bool			ready_to_tx;
-	struct gk_bpf_pkt_ctx	ctx;
+	uint64_t              password;
+	struct flow_entry     *fe;
+	struct ipacket        *packet;
+	struct gk_co          *this_co;
+	bool                  pkt_part2_prefetched;
+	bool                  ready_to_tx;
+	struct gk_bpf_pkt_ctx ctx;
 };
 
 static const uint64_t pkt_password = 0xa2e329ba8b15af05;
@@ -199,6 +200,7 @@ gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 	int direct_if_possible)
 {
 	int ret;
+	struct gatekeeper_if *back;
 	struct gk_bpf_pkt_frame *frame = pkt_ctx_to_frame(ctx);
 	if (unlikely(frame == NULL))
 		return -EINVAL;
@@ -208,11 +210,18 @@ gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 	if (unlikely(priority < 0 || priority > PRIORITY_MAX))
 		return -EINVAL;
 
+	/* Prepare packet for transmission if needed. */
+	if (likely(!frame->pkt_part2_prefetched)) {
+		frame->pkt_part2_prefetched = true;
+		if (likely(rte_mbuf_prefetch_part2_non_temporal(
+				frame->packet->pkt)))
+			gk_yield_next(frame->this_co);
+	}
+
+	back = &frame->this_co->work->gk_conf->net->back;
 	ret = (direct_if_possible != 0 && priority == PRIORITY_GRANTED)
-		? update_pkt_priority(frame->packet, priority,
-			&frame->gk_conf->net->back)
-		: encapsulate(frame->packet->pkt, priority,
-			&frame->gk_conf->net->back,
+		? update_pkt_priority(frame->packet, priority, back)
+		: encapsulate(frame->packet->pkt, priority, back,
 			&frame->fe->grantor_fib->u.grantor.gt_addr);
 
 	frame->ready_to_tx = ret == 0;
@@ -486,7 +495,7 @@ parse_packet_further(struct ipacket *packet, struct gk_bpf_pkt_ctx *ctx)
 }
 
 int
-gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
+gk_bpf_decide_pkt(struct gk_co *this_co, uint8_t program_index,
 	struct flow_entry *fe, struct ipacket *packet, uint64_t now,
 	uint64_t *p_bpf_ret)
 {
@@ -494,7 +503,8 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 		.password = pkt_password,
 		.fe = fe,
 		.packet = packet,
-		.gk_conf = gk_conf,
+		.this_co = this_co,
+		.pkt_part2_prefetched = false,
 		.ready_to_tx = false,
 		.ctx = {
 			.now = now,
@@ -502,7 +512,7 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 		},
 	};
 	const struct gk_bpf_flow_handler *handler =
-		&gk_conf->flow_handlers[program_index];
+		&this_co->work->gk_conf->flow_handlers[program_index];
 
 	if (unlikely(handler->f_pkt == NULL)) {
 		GK_LOG(WARNING,

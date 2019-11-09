@@ -284,4 +284,7 @@ void
 gk_co_process_front_pkt_software_rss(struct gk_co *this_co,
 	struct gk_co_task *task);
 
+void
+gk_yield_next(struct gk_co *this_co);
+
 #endif /* _GATEKEEPER_GK_CO_H_ */

@@ -40,8 +40,8 @@ get_next_co(struct gk_co *this_co)
 	return list_next_entry(this_co, co_list);
 }
 
-static void
-yield_next(struct gk_co *this_co)
+void
+gk_yield_next(struct gk_co *this_co)
 {
 	struct gk_co *next_co = get_next_co(this_co);
 	if (unlikely(this_co == next_co))
@@ -156,7 +156,7 @@ parse_front_pkt(struct gk_co *this_co,
 
 	/* TODO Does this prefetch improve performance?
 	rte_mbuf_prefetch_part1_non_temporal(pkt);
-	yield_next(this_co);
+	gk_yield_next(this_co);
 	*/
        /*
         * This prefetch is enough to load Ethernet header (14 bytes),
@@ -166,7 +166,7 @@ parse_front_pkt(struct gk_co *this_co,
         * IPv4: 14 + 8 + 20 = 42
         * IPv6: 14 + 8 + 40 = 62
 	rte_prefetch_non_temporal(rte_pktmbuf_mtod_offset(pkt, void *, 0));
-	yield_next(this_co);
+	gk_yield_next(this_co);
         */
 
 	ret = extract_packet_info(pkt, packet);
@@ -335,6 +335,10 @@ gk_process_request(struct gk_co *this_co, struct flow_entry *fe,
 
 	/* The assigned priority is @priority. */
 
+	/* Prepare packet for transmission. */
+	if (likely(rte_mbuf_prefetch_part2_non_temporal(pkt)))
+		gk_yield_next(this_co);
+
 	/* Encapsulate the packet as a request. */
 	ret = encapsulate(pkt, priority, back, &fib->u.grantor.gt_addr);
 	if (ret < 0)
@@ -398,6 +402,10 @@ gk_process_granted(struct gk_co *this_co, struct flow_entry *fe,
 		priority = PRIORITY_RENEW_CAP;
 	}
 
+	/* Prepare packet for transmission. */
+	if (likely(rte_mbuf_prefetch_part2_non_temporal(pkt)))
+		gk_yield_next(this_co);
+
 	/*
 	 * Encapsulate packet as a granted packet,
 	 * mark it as a capability renewal request if @renew_cap is true,
@@ -447,7 +455,6 @@ gk_process_bpf(struct gk_co *this_co, struct flow_entry *fe,
 {
 	struct rte_mbuf *pkt = packet->pkt;
 	struct gk_co_work *work = this_co->work;
-	struct gk_config *gk_conf = work->gk_conf;
 	struct gk_measurement_metrics *stats;
 	uint64_t bpf_ret;
 	int program_index, rc;
@@ -457,7 +464,7 @@ gk_process_bpf(struct gk_co *this_co, struct flow_entry *fe,
 		goto expired;
 
 	program_index = fe->program_index;
-	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, now,
+	rc = gk_bpf_decide_pkt(this_co, program_index, fe, packet, now,
 		&bpf_ret);
 	if (unlikely(rc != 0)) {
 		GK_LOG(WARNING,
@@ -477,7 +484,7 @@ gk_process_bpf(struct gk_co *this_co, struct flow_entry *fe,
 		 * packet header space.
 		 */
 		if (pkt_copy_cached_eth_header(pkt, eth_cache,
-				gk_conf->net->back.l2_len_out))
+				work->gk_conf->net->back.l2_len_out))
 			goto drop_pkt;
 
 		stats->pkts_num_granted++;
@@ -890,7 +897,7 @@ static void
 prefetch_and_yield(void *addr, void *this_co)
 {
 	rte_prefetch_non_temporal(addr);
-	yield_next(this_co);
+	gk_yield_next(this_co);
 }
 
 static void
@@ -922,7 +929,7 @@ gk_co_process_front_pkt_final(struct gk_co *this_co, struct gk_co_task *task)
 		fe = &work->instance->ip_flow_entry_table[ret];
 		/* TODO Break this prefetch into part1 and part2. */
 		prefetch_flow_entry(fe);
-		yield_next(this_co);
+		gk_yield_next(this_co);
 		process_flow_entry(this_co, fe, packet);
 		save_fe_leftover(work, fe);
 		return;
@@ -1039,7 +1046,7 @@ gk_co_scan_flow_table(struct gk_co *this_co, struct gk_co_task *task)
 	 * check if it's expired.
 	 */
 	rte_prefetch_non_temporal(fe);
-	yield_next(this_co);
+	gk_yield_next(this_co);
 
 	if (!fe->in_use || !is_flow_expired(fe, rte_rdtsc()))
 		return;
