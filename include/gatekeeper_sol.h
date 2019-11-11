@@ -26,15 +26,6 @@
 #include "gatekeeper_log_ratelimit.h"
 #include "list.h"
 
-struct priority_req {
-	/* Doubly-linked list node. */
-	struct list_head    list;
-	/* The packet for this request. */
-	struct rte_mbuf     *pkt;
-	/* The priority of this request. */
-	uint8_t             priority;
-};
-
 /*
  * The maximum priority that a packet can be assigned.
  *
@@ -50,46 +41,46 @@ struct priority_req {
  */
 struct req_queue {
 	/* Length of the priority queue. */
-	uint32_t              len;
+	uint32_t         len;
 	/* The highest priority of any packet currently in the queue. */
-	uint16_t              highest_priority;
+	uint16_t         highest_priority;
 	/* The lowest priority of any packet currently in the queue. */
-	uint16_t              lowest_priority;
+	uint16_t         lowest_priority;
 
 	/*
 	 * The head of the priority queue, referencing the node
 	 * that contains the packet with the highest priority.
 	 */
-	struct list_head      head;
+	struct list_head head;
 	/* Array of pointers to packets of each priority. */
-	struct priority_req   *priorities[GK_MAX_REQ_PRIORITY + 1];
+	struct rte_mbuf  *priorities[GK_MAX_REQ_PRIORITY + 1];
 
 	/*
 	 * Token bucket algorithm state.
 	 */
 
 	/* Capacity of the token bucket (the max number of credits). */
-	uint64_t              tb_max_credit_bytes;
+	uint64_t         tb_max_credit_bytes;
 
 	/* Number of credits currently in the token bucket. */
-	uint64_t              tb_credit_bytes;
+	uint64_t         tb_credit_bytes;
 
 	/*
 	 * CPU cycles per byte for the request queue,
 	 * approximated as a rational a/b.
 	 */
-	uint64_t              cycles_per_byte_a;
-	uint64_t              cycles_per_byte_b;
+	uint64_t         cycles_per_byte_a;
+	uint64_t         cycles_per_byte_b;
 
 	/*
 	 * The floor function of CPU cycles per byte, which is useful
 	 * to quickly determine whether we have enough cycles to
 	 * add some number of credits before executing a division.
 	 */
-	uint64_t              cycles_per_byte_floor;
+	uint64_t         cycles_per_byte_floor;
 
 	/* Current CPU time measured in CPU cyles. */
-	uint64_t              time_cpu_cycles;
+	uint64_t         time_cpu_cycles;
 };
 
 /* Configuration for the Solicitor functional block. */
@@ -126,9 +117,6 @@ struct sol_config {
 	 */
 	double             req_channel_bw_mbps;
 
-	/* Parameters to setup the mailbox instance. */
-	unsigned int       mailbox_mem_cache_size;
-
 	/* Log level for SOL block. */
 	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
@@ -147,10 +135,10 @@ struct sol_config {
 	struct req_queue   req_queue;
 
 	/*
-	 * Mailbox into which GK instances enqueue request packets
+	 * Ring into which GK instances enqueue request packets
 	 * to be serviced and sent out by the Solicitor.
 	 */
-	struct mailbox     mb;
+	struct rte_ring    *ring;
 
 	/* TX queue on the back interface. */
 	uint16_t           tx_queue_back;
@@ -160,6 +148,6 @@ struct sol_config {
 struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 int gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
-	struct rte_mbuf **pkts, uint8_t *priorities, uint16_t num_pkts);
+	struct rte_mbuf **pkts, uint16_t num_pkts);
 
 #endif /* _GATEKEEPER_SOL_H_ */
