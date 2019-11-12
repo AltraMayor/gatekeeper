@@ -25,7 +25,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 
 	local flow_ht_size = 1024
 	local flow_table_scan_iter = 0
-	local scan_del_thresh = flow_ht_size * 0.01
+	local scan_del_thresh = flow_ht_size * 0.1
 
 	local max_num_ipv4_rules = 1024
 	local num_ipv4_tbl8s = 256
