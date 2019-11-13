@@ -8,7 +8,6 @@ return function (net_conf, lcore)
 	local log_level = staticlib.c.RTE_LOG_DEBUG
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
-	local mailbox_mem_cache_size = 0
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
 	local pri_req_max_len = 1024
@@ -33,7 +32,6 @@ return function (net_conf, lcore)
 
 	sol_conf.log_level = log_level
 
-	sol_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
 	sol_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	sol_conf.log_ratelimit_burst = log_ratelimit_burst
 	sol_conf.pri_req_max_len = pri_req_max_len

@@ -1666,7 +1666,8 @@ init_net_stage1(void *arg)
 		net_conf->gatekeeper_pktmbuf_pool[i] =
 			rte_pktmbuf_pool_create(pool_name,
 				net_conf->gatekeeper_num_mbuf,
-				net_conf->gatekeeper_per_lcore_cache_size, 0,
+				net_conf->gatekeeper_per_lcore_cache_size,
+				sizeof(struct list_head),
 				RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
 
 		/*

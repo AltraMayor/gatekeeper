@@ -40,8 +40,18 @@ int sol_logtype;
  * the linked list and drop the packet of lowest priority if necessary.
  */
 
+static inline struct list_head *
+mbuf_to_list(struct rte_mbuf *m)
+{
+	return rte_mbuf_to_priv(m);
+}
+
+/*
+ * This function doesn't require that the list field of
+ * a request to be initialized.
+ */
 static void
-insert_new_priority_req(struct req_queue *req_queue, struct priority_req *pr,
+insert_new_priority_req(struct req_queue *req_queue, struct rte_mbuf *req,
 	uint8_t priority)
 {
 	uint8_t next;
@@ -49,11 +59,11 @@ insert_new_priority_req(struct req_queue *req_queue, struct priority_req *pr,
 	/* This should be the first request of @priority. */
 	RTE_VERIFY(req_queue->priorities[priority] == NULL);
 
-	req_queue->priorities[priority] = pr;
+	req_queue->priorities[priority] = req;
 
 	/* This is the first packet in the queue. */
 	if (req_queue->len == 0) {
-		list_add(&pr->list, &req_queue->head);
+		list_add(mbuf_to_list(req), &req_queue->head);
 		req_queue->highest_priority = priority;
 		req_queue->lowest_priority = priority;
 		return;
@@ -61,7 +71,7 @@ insert_new_priority_req(struct req_queue *req_queue, struct priority_req *pr,
 
 	/* Not the first packet, but still insert at the head of the queue. */
 	if (priority > req_queue->highest_priority) {
-		list_add(&pr->list, &req_queue->head);
+		list_add(mbuf_to_list(req), &req_queue->head);
 		req_queue->highest_priority = priority;
 		return;
 	}
@@ -81,7 +91,8 @@ insert_new_priority_req(struct req_queue *req_queue, struct priority_req *pr,
 	RTE_VERIFY(priority != req_queue->highest_priority);
 	for (next = priority + 1; next <= req_queue->highest_priority; next++) {
 		if (req_queue->priorities[next] != NULL) {
-			list_add(&pr->list, &req_queue->priorities[next]->list);
+			list_add(mbuf_to_list(req),
+				mbuf_to_list(req_queue->priorities[next]));
 			return;
 		}
 	}
@@ -90,55 +101,112 @@ insert_new_priority_req(struct req_queue *req_queue, struct priority_req *pr,
 		__func__);
 }
 
-static void
-drop_lowest_priority_pkt(struct sol_config *sol_conf,
-	struct req_queue *req_queue)
+/*
+ * Get the rte_mbuf struct for this entry.
+ * XXX This function should be part of DPDK.
+ */
+static inline struct rte_mbuf *
+rte_priv_to_mbuf(void *ptr)
 {
-	struct priority_req *lowest_pr = list_last_entry(&req_queue->head,
-		struct priority_req, list);
-	struct priority_req *next_lowest_pr;
+	return RTE_PTR_SUB(ptr, sizeof(struct rte_mbuf));
+}
+
+static inline struct rte_mbuf *
+list_to_mbuf(struct list_head *list)
+{
+	return rte_priv_to_mbuf(list);
+}
+
+/*
+ * Get the first rte_mbuf element from a list.
+ * Note, that list is expected to be not empty.
+ */
+static inline struct rte_mbuf *
+list_first_entry_m(struct list_head *ptr)
+{
+	return list_to_mbuf(ptr->next);
+}
+
+/*
+ * Get the last rte_mbuf element from a list.
+ * Note, that list is expected to be not empty.
+ */
+static inline struct rte_mbuf *
+list_last_entry_m(struct list_head *ptr)
+{
+	return list_to_mbuf(ptr->prev);
+}
+
+/* Get the prev rte_mbuf element in list. */
+static inline struct rte_mbuf *
+list_prev_entry_m(struct rte_mbuf *pos)
+{
+	return list_to_mbuf(mbuf_to_list(pos)->prev);
+}
+
+/* Get the next rte_mbuf element in list. */
+static inline struct rte_mbuf *
+list_next_entry_m(struct rte_mbuf *pos)
+{
+	return list_to_mbuf(mbuf_to_list(pos)->next);
+}
+
+static void
+drop_lowest_priority_pkt(struct req_queue *req_queue)
+{
+	struct rte_mbuf *lowest_pr = list_last_entry_m(&req_queue->head);
+	struct rte_mbuf *next_lowest_pr;
 
 	RTE_VERIFY(req_queue->len > 0);
 
 	if (unlikely(req_queue->len == 1)) {
-		req_queue->priorities[lowest_pr->priority] = NULL;
+		req_queue->priorities[lowest_pr->udata64] = NULL;
 		req_queue->highest_priority = 0;
 		req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
 		goto drop;
 	}
 
-	next_lowest_pr = list_prev_entry(lowest_pr, list);
+	next_lowest_pr = list_prev_entry_m(lowest_pr);
 
 	/* The lowest priority packet was the only one of that priority. */
-	if (lowest_pr->priority != next_lowest_pr->priority) {
-		req_queue->priorities[lowest_pr->priority] = NULL;
-		req_queue->lowest_priority = next_lowest_pr->priority;
+	if (lowest_pr->udata64 != next_lowest_pr->udata64) {
+		req_queue->priorities[lowest_pr->udata64] = NULL;
+		req_queue->lowest_priority = next_lowest_pr->udata64;
 		goto drop;
 	}
 
-	req_queue->priorities[lowest_pr->priority] = next_lowest_pr;
+	req_queue->priorities[lowest_pr->udata64] = next_lowest_pr;
 
 drop:
-	list_del(&lowest_pr->list);
-	rte_pktmbuf_free(lowest_pr->pkt);
-	mb_free_entry(&sol_conf->mb, lowest_pr);
+	list_del(mbuf_to_list(lowest_pr));
+	rte_pktmbuf_free(lowest_pr);
 	req_queue->len--;
 }
 
+/*
+ * This function doesn't require that the list field of
+ * a request to be initialized.
+ */
 static void
-enqueue_req(struct sol_config *sol_conf, struct priority_req *req)
+enqueue_req(struct sol_config *sol_conf, struct rte_mbuf *req)
 {
 	struct req_queue *req_queue = &sol_conf->req_queue;
-	uint8_t priority = req->priority;
+	uint8_t priority = req->udata64;
+
+	if (unlikely(priority > GK_MAX_REQ_PRIORITY)) {
+		SOL_LOG(WARNING, "Trying to enqueue a request with priority %hhu, but should be in range [0, %d]. Overwrite the priority to PRIORITY_REQ_MIN (%hhu)\n",
+			priority, GK_MAX_REQ_PRIORITY, PRIORITY_REQ_MIN);
+		req->udata64 = PRIORITY_REQ_MIN;
+		priority = PRIORITY_REQ_MIN;
+	}
 
 	if (req_queue->len >= sol_conf->pri_req_max_len) {
 		/* New packet is lowest priority, so drop it. */
 		if (req_queue->lowest_priority >= priority) {
-			rte_pktmbuf_free(req->pkt);
-			mb_free_entry(&sol_conf->mb, req);
+			rte_pktmbuf_free(req);
 			return;
 		}
-		drop_lowest_priority_pkt(sol_conf, req_queue);
+		drop_lowest_priority_pkt(req_queue);
 	}
 
 	if (req_queue->priorities[priority] == NULL) {
@@ -146,7 +214,8 @@ enqueue_req(struct sol_config *sol_conf, struct priority_req *req)
 		insert_new_priority_req(req_queue, req, priority);
 	} else {
 		/* Append request to end of the appropriate priority. */
-		list_add(&req->list, &req_queue->priorities[priority]->list);
+		list_add(mbuf_to_list(req), mbuf_to_list(
+			req_queue->priorities[priority]));
 		req_queue->priorities[priority] = req;
 	}
 
@@ -156,12 +225,12 @@ enqueue_req(struct sol_config *sol_conf, struct priority_req *req)
 static void
 enqueue_reqs(struct sol_config *sol_conf)
 {
-	struct priority_req *req_nodes[sol_conf->enq_burst_size];
-	int num_reqs = mb_dequeue_burst(&sol_conf->mb,
-		(void **)req_nodes, sol_conf->enq_burst_size);
+	struct rte_mbuf *reqs[sol_conf->enq_burst_size];
+	int num_reqs = rte_ring_sc_dequeue_burst(sol_conf->ring,
+		(void **)reqs, sol_conf->enq_burst_size, NULL);
 	int i;
 	for (i = 0; i < num_reqs; i++)
-		enqueue_req(sol_conf, req_nodes[i]);
+		enqueue_req(sol_conf, reqs[i]);
 }
 
 static inline void
@@ -215,11 +284,20 @@ credits_check(struct req_queue *req_queue, struct rte_mbuf *pkt)
 	return true;
 }
 
+/*
+ * Iterate over list of rte_mbufs safe against removal of list entry.
+ */
+#define list_for_each_entry_safe_m(pos, n, head)	\
+	for (pos = list_first_entry_m(head),		\
+			n = list_next_entry_m(pos);	\
+		mbuf_to_list(pos) != (head);		\
+		pos = n, n = list_next_entry_m(n))
+
 static void
 dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
 {
 	struct req_queue *req_queue = &sol_conf->req_queue;
-	struct priority_req *entry, *next;
+	struct rte_mbuf *entry, *next;
 
 	struct rte_mbuf *pkts_out[sol_conf->deq_burst_size];
 	uint32_t nb_pkts_out = 0;
@@ -228,10 +306,8 @@ dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
 	/* Get an up-to-date view of our credits. */
 	credits_update(req_queue);
 
-	list_for_each_entry_safe(entry, next, &req_queue->head, list) {
-		struct rte_mbuf *pkt = entry->pkt;
-
-		if (!credits_check(req_queue, pkt)) {
+	list_for_each_entry_safe_m(entry, next, &req_queue->head) {
+		if (!credits_check(req_queue, entry)) {
 			/*
 			 * The library log_ratelimit will throtle
 			 * the log rate of the log entry below when
@@ -241,13 +317,12 @@ dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
 			goto out;
 		}
 
-		if (req_queue->len == 1 || (entry->priority != next->priority))
-			req_queue->priorities[entry->priority] = NULL;
-		list_del(&entry->list);
-		mb_free_entry(&sol_conf->mb, entry);
+		if (req_queue->len == 1 || (entry->udata64 != next->udata64))
+			req_queue->priorities[entry->udata64] = NULL;
+		list_del(mbuf_to_list(entry));
 		req_queue->len--;
 
-		pkts_out[nb_pkts_out++] = pkt;
+		pkts_out[nb_pkts_out++] = entry;
 
 		if (nb_pkts_out >= sol_conf->deq_burst_size)
 			break;
@@ -258,9 +333,8 @@ out:
 		req_queue->highest_priority = 0;
 		req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
 	} else {
-		struct priority_req *first = list_first_entry(&req_queue->head,
-			struct priority_req, list);
-		req_queue->highest_priority = first->priority;
+		struct rte_mbuf *first = list_first_entry_m(&req_queue->head);
+		req_queue->highest_priority = first->udata64;
 	}
 
 	/* We cannot drop the packets, so re-send. */
@@ -388,12 +462,11 @@ static int
 cleanup_sol(struct sol_config *sol_conf)
 {
 	struct req_queue *req_queue = &sol_conf->req_queue;
-	struct priority_req *entry, *next;
+	struct rte_mbuf *entry, *next;
 
-	list_for_each_entry_safe(entry, next, &req_queue->head, list) {
-		rte_pktmbuf_free(entry->pkt);
-		list_del(&entry->list);
-		mb_free_entry(&sol_conf->mb, entry);
+	list_for_each_entry_safe_m(entry, next, &req_queue->head) {
+		list_del(mbuf_to_list(entry));
+		rte_pktmbuf_free(entry);
 		req_queue->len--;
 	}
 
@@ -401,7 +474,7 @@ cleanup_sol(struct sol_config *sol_conf)
 		SOL_LOG(NOTICE, "Bug: removing all requests from the priority queue on cleanup leaves the queue length at %"PRIu32"\n",
 			req_queue->len);
 
-	destroy_mailbox(&sol_conf->mb);
+	rte_ring_free(sol_conf->ring);
 	rte_free(sol_conf);
 	return 0;
 }
@@ -532,25 +605,35 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	}
 
 	/*
-	 * Need to account for the packets lingering in
-	 * the queue of the SOL block as well.
+	 * Need to account for the packets in the following scenarios:
+	 *
+	 * (1) sol_conf->pri_req_max_len packets may sit at the ring;
+	 * (2) sol_conf->pri_req_max_len packet may sit at the actually queue;
+	 * (3) enqueue_reqs() temporarily adds sol_conf->enq_burst_size
+	 *     more packets;
+	 * (4) sol_conf->deq_burst_size does not count because dequeue_reqs()
+	 *     only reduces the number of packets, that is, it does not add.
 	 *
 	 * Although the packets are going to the back interface,
 	 * they are allocated at the front interface.
 	 */
-	front_inc = sol_conf->pri_req_max_len + sol_conf->deq_burst_size;
+	front_inc = 2 * sol_conf->pri_req_max_len + sol_conf->enq_burst_size;
 	net_conf->front.total_pkt_burst += front_inc;
 
-	ret = init_mailbox("sol_reqs", rte_log2_u32(2 *
-		sol_conf->pri_req_max_len), sizeof(struct priority_req),
-		sol_conf->mailbox_mem_cache_size, sol_conf->lcore_id,
-		&sol_conf->mb);
-	if (ret < 0)
+	sol_conf->ring = rte_ring_create("sol_reqs_ring",
+		rte_align32pow2(sol_conf->pri_req_max_len),
+		rte_lcore_to_socket_id(sol_conf->lcore_id), RING_F_SC_DEQ);
+	if (sol_conf->ring == NULL) {
+		G_LOG(ERR,
+			"mailbox: can't create ring sol_reqs_ring at lcore %u\n",
+			sol_conf->lcore_id);
+		ret = -1;
 		goto burst;
+	}
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 0, 1, sol_stage1, sol_conf);
 	if (ret < 0)
-		goto mb;
+		goto ring;
 
 	ret = launch_at_stage2(sol_stage2, sol_conf);
 	if (ret < 0)
@@ -569,8 +652,8 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
-mb:
-	destroy_mailbox(&sol_conf->mb);
+ring:
+	rte_ring_free(sol_conf->ring);
 burst:
 	net_conf->front.total_pkt_burst -= front_inc;
 out:
@@ -601,37 +684,13 @@ alloc_sol_conf(void)
 
 int
 gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
-	struct rte_mbuf **pkts, uint8_t *priorities, uint16_t num_pkts)
+	struct rte_mbuf **pkts, uint16_t num_pkts)
 {
-	int i;
-	unsigned int num_enqueued;
-	struct priority_req *req_nodes[num_pkts];
-
-	if (unlikely(rte_mempool_get_bulk(sol_conf->mb.pool,
-			(void **)req_nodes, num_pkts) != 0))
-		return -1;
-
-	for (i = 0; i < num_pkts; i++) {
-		if (priorities[i] > GK_MAX_REQ_PRIORITY) {
-			SOL_LOG(WARNING, "Trying to enqueue a request with priority %hhu, but should be in range [0, %d]. Overwrite the priority to PRIORITY_REQ_MIN (%hhu)\n",
-				priorities[i], GK_MAX_REQ_PRIORITY,
-				PRIORITY_REQ_MIN);
-			priorities[i] = PRIORITY_REQ_MIN;
-		}
-
-		INIT_LIST_HEAD(&req_nodes[i]->list);
-		req_nodes[i]->pkt = pkts[i];
-		req_nodes[i]->priority = priorities[i];
-	}
-
-	num_enqueued = rte_ring_mp_enqueue_bulk(sol_conf->mb.ring,
-		(void **)req_nodes, num_pkts, NULL);
+	unsigned int num_enqueued = rte_ring_mp_enqueue_bulk(sol_conf->ring,
+		(void **)pkts, num_pkts, NULL);
 	if (unlikely(num_enqueued < num_pkts)) {
 		SOL_LOG(ERR, "Failed to enqueue a bulk of %hu requests - only %u requests are enqueued\n",
 			num_pkts, num_enqueued);
-		mb_free_entry_bulk(&sol_conf->mb,
-			(void * const *)&req_nodes[num_enqueued],
-			num_pkts - num_enqueued);
 	}
 
 	return num_enqueued;

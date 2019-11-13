@@ -311,7 +311,6 @@ struct sol_config {
 	unsigned int deq_burst_size;
 	double       tb_rate_approx_err;
 	double       req_channel_bw_mbps;
-	unsigned int mailbox_mem_cache_size;
 	uint32_t     log_level;
 	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
