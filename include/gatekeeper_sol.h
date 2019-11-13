@@ -52,7 +52,7 @@ struct req_queue {
 	 * that contains the packet with the highest priority.
 	 */
 	struct list_head head;
-	/* Array of pointers to packets of each priority. */
+	/* Array of pointers to the last packets of each priority. */
 	struct rte_mbuf  *priorities[GK_MAX_REQ_PRIORITY + 1];
 
 	/*
