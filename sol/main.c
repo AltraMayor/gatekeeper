@@ -103,7 +103,7 @@ insert_new_priority_req(struct req_queue *req_queue, struct rte_mbuf *req,
 
 /*
  * Get the rte_mbuf struct for this entry.
- * XXX This function should be part of DPDK.
+ * XXX #52 This function should be part of DPDK.
  */
 static inline struct rte_mbuf *
 rte_priv_to_mbuf(void *ptr)
