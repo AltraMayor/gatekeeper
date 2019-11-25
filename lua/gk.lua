@@ -42,8 +42,12 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	local back_icmp_msgs_per_sec = 1000
 	local back_icmp_msgs_burst = 50
 
+	local co_max_num = 16
+
 	-- These variables are unlikely to need to be changed.
 	local bpf_enable_jit = true
+	-- CAUTION: stacks too small will crash the GK blocks.
+	local co_stack_size_kb = 16
 
 	--
 	-- End configuration of GK block.
@@ -99,6 +103,9 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 		staticlib.get_front_burst_config(max_pkt_burst_front, net_conf)
 	gk_conf.back_max_pkt_burst =
 		staticlib.get_back_burst_config(max_pkt_burst_back, net_conf)
+
+	gk_conf.co_max_num = co_max_num
+	gk_conf.co_stack_size_kb = co_stack_size_kb
 
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should

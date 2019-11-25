@@ -45,6 +45,7 @@
 #include "gatekeeper_flow_bpf.h"
 
 #include "bpf.h"
+#include "co.h"
 
 #define	START_PRIORITY		 (38)
 /* Set @START_ALLOWANCE as the double size of a large DNS reply. */
@@ -559,6 +560,56 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 	return ret;
 }
 
+static void
+free_cos(struct gk_co *cos, unsigned int num)
+{
+	unsigned int i;
+
+	if (cos == NULL)
+		return;
+
+	for (i = 0; i < num; i++) {
+		struct gk_co *co = &cos[i];
+
+		if (co->stack.sptr == NULL)
+			continue;
+
+		/* Free @co. */
+		coro_destroy(&co->coro);
+		coro_stack_free(&co->stack);
+	}
+
+	rte_free(cos);
+}
+
+static struct gk_co *
+alloc_cos(unsigned int num, unsigned int stack_size_byte)
+{
+	unsigned int stack_size_ptr = stack_size_byte / sizeof(void *);
+	unsigned int i;
+
+	struct gk_co *cos = rte_calloc(__func__, num, sizeof(*cos), 0);
+	if (cos == NULL)
+		return NULL;
+
+	for (i = 0; i < num; i++) {
+		struct gk_co *co = &cos[i];
+
+		if (unlikely(!coro_stack_alloc(&co->stack, stack_size_ptr))) {
+			free_cos(cos, num);
+			return NULL;
+		}
+
+		coro_create(&co->coro, gk_co_main, co,
+			co->stack.sptr, co->stack.ssze);
+		INIT_LIST_HEAD_WITH_POISON(&co->co_list);
+		INIT_LIST_HEAD(&co->task_queue);
+		co->work = NULL;
+	}
+
+	return cos;
+}
+
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
@@ -586,7 +637,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		GK_LOG(ERR,
 			"The GK block cannot create hash table at lcore %u\n",
 			lcore_id);
-
 		ret = -1;
 		goto out;
 	}
@@ -600,7 +650,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		GK_LOG(ERR,
 			"The GK block can't create flow entry table at lcore %u\n",
 			lcore_id);
-
 		ret = -1;
 		goto flow_hash;
 	}
@@ -610,6 +659,19 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		lcore_id, &instance->mb);
     	if (ret < 0)
 		goto flow_entry;
+
+	coro_create(&instance->coro_root, NULL, NULL, NULL, 0);
+
+	/* Allocate coroutines. */
+	instance->cos = alloc_cos(gk_conf->co_max_num,
+		gk_conf->co_stack_size_kb * 1024);
+	if (instance->cos == NULL) {
+		GK_LOG(ERR,
+			"The GK block can't allocate coroutines at lcore %u\n",
+			lcore_id);
+		ret = -1;
+		goto coro_root;
+	}
 
 	tb_ratelimit_state_init(&instance->front_icmp_rs,
 		gk_conf->front_icmp_msgs_per_sec,
@@ -621,6 +683,10 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	ret = 0;
 	goto out;
 
+coro_root:
+	coro_destroy(&instance->coro_root);
+/*mailbox:*/
+	destroy_mailbox(&instance->mb);
 flow_entry:
     	rte_free(instance->ip_flow_entry_table);
     	instance->ip_flow_entry_table = NULL;
@@ -2153,6 +2219,177 @@ process_cmds_from_mailbox(
 	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
+static void
+add_cos_to_work(struct gk_co_work *work, struct gk_config *gk_conf,
+	struct gk_instance *instance)
+{
+	unsigned int i;
+
+	work->gk_conf = gk_conf;
+	work->instance = instance;
+	work->cos = instance->cos;
+	work->co_max_num = gk_conf->co_max_num;
+	work->co_num = RTE_MIN(2, work->co_max_num);
+
+	RTE_VERIFY(work->co_num > 0);
+
+	for (i = 0; i < work->co_max_num; i++)
+		work->cos[i].work = work;
+}
+
+static void
+update_cos(struct gk_co_work *work)
+{
+	/*
+	 * The local variable @co_num is needed here to enable one to go
+	 * above @work->co_max_num and below zero if needed.
+	 */
+	int32_t co_num = work->co_num;
+
+	if (work->co_delta_num > 0) {
+		/* @work->co_num is going up. */
+
+		if (unlikely(co_num >= work->co_max_num)) {
+			/*
+			 * @work->co_num is at its maximum;
+			 * Reverse direction.
+			 */
+			RTE_VERIFY(co_num == work->co_max_num);
+			work->co_delta_num = - work->co_delta_num;
+			work->co_num = RTE_MAX(1, co_num + work->co_delta_num);
+			return;
+		}
+
+		work->co_num = RTE_MIN(work->co_max_num,
+			co_num + work->co_delta_num);
+		return;
+	}
+
+	/* @work->co_num is going down. */
+	RTE_VERIFY(work->co_delta_num < 0);
+
+	if (unlikely(co_num <= 1)) {
+		/* @work->co_num is at its minimum; reverse direction. */
+		RTE_VERIFY(co_num == 1);
+		work->co_delta_num = - work->co_delta_num;
+		work->co_num = RTE_MIN(work->co_max_num,
+				co_num + work->co_delta_num);
+		return;
+	}
+
+	work->co_num = RTE_MAX(1, co_num + work->co_delta_num);
+}
+
+static void
+do_work(struct gk_co_work *work)
+{
+	uint16_t i, real_co_num = 0;
+	uint64_t cycles;
+	double avg_cycles_per_task;
+
+	/* Add coroutines with tasks to @work->working_cos. */
+	for (i = 0; i < work->co_num; i++) {
+		struct gk_co *co = &work->cos[i];
+		if (!list_empty(&co->task_queue)) {
+			list_add_tail(&co->co_list, &work->working_cos);
+			real_co_num++;
+		}
+	}
+
+	/* Is there any work to do? */
+	if (unlikely(list_empty(&work->working_cos))) {
+		RTE_VERIFY(real_co_num == 0);
+		RTE_VERIFY(work->task_num == 0);
+		return;
+	}
+	RTE_VERIFY(real_co_num > 0);
+	RTE_VERIFY(work->task_num > 0);
+
+	/* Do work. */
+	cycles = rte_rdtsc();
+	coro_transfer(&work->instance->coro_root,
+		&list_first_entry(&work->working_cos, struct gk_co, co_list)->
+		coro);
+	cycles = rte_rdtsc() - cycles;
+	avg_cycles_per_task = (double)cycles / work->task_num;
+
+	if (work->co_num != real_co_num) {
+		/* Workload changed; adjust quickly. */
+		RTE_VERIFY(work->co_num > real_co_num);
+		work->co_prv_num = real_co_num;
+		work->avg_cycles_per_task = avg_cycles_per_task;
+		work->co_num = real_co_num;
+		return update_cos(work);
+	}
+
+	if (work->co_prv_num == 0) {
+		/* Initialize the performance tracking fields. */
+		work->co_prv_num = real_co_num;
+		work->avg_cycles_per_task = avg_cycles_per_task;
+		return update_cos(work);
+	}
+
+	if (avg_cycles_per_task >= work->avg_cycles_per_task) {
+		/* The last change did not bring an improvement; go back. */
+		work->co_num = work->co_prv_num;
+		/* Reset measurement. */
+		work->co_prv_num = 0;
+		/* Change adjustment direction. */
+		work->co_delta_num = - work->co_delta_num;
+		return;
+	}
+
+	/* @real_co_num is an improvement. */
+	work->co_prv_num = real_co_num;
+	work->avg_cycles_per_task = avg_cycles_per_task;
+	update_cos(work);
+}
+
+static void
+flush_work(struct gk_co_work *work,
+	uint16_t port_front, uint16_t tx_queue_front,
+	uint16_t port_back, uint16_t tx_queue_back)
+{
+	uint16_t front_max_pkt_burst = work->gk_conf->front_max_pkt_burst;
+	uint16_t back_max_pkt_burst = work->gk_conf->back_max_pkt_burst;
+	uint32_t max_pkt_burst = front_max_pkt_burst + back_max_pkt_burst;
+
+	/*
+	 * Flush packets.
+	 */
+
+	send_pkts(port_front, tx_queue_front,
+		work->tx_front_num_pkts, work->tx_front_pkts);
+	RTE_VERIFY(work->tx_front_num_pkts <= max_pkt_burst);
+	work->tx_front_num_pkts = 0;
+
+	send_pkts(port_back, tx_queue_back,
+		work->tx_back_num_pkts, work->tx_back_pkts);
+	RTE_VERIFY(work->tx_back_num_pkts <= max_pkt_burst);
+	work->tx_back_num_pkts = 0;
+
+	/*
+	 * TODO Flush front.
+	 */
+
+	/*
+	 * TODO Flush back.
+	 */
+
+	/*
+	 * Reset fields of @work.
+	 */
+
+	RTE_VERIFY(work->task_num <= work->task_total);
+	work->task_num = 0;
+	work->any_co_index = 0;
+	RTE_VERIFY(work->temp_fes_num <=
+		(front_max_pkt_burst + work->gk_conf->mailbox_burst_size));
+	work->temp_fes_num = 0;
+	memset(work->leftover, 0,
+		sizeof(*work->leftover) * (work->leftover_mask + 1));
+}
+
 static int
 gk_proc(void *arg)
 {
@@ -2168,13 +2405,6 @@ gk_proc(void *arg)
 	uint16_t rx_queue_back = instance->rx_queue_back;
 	uint16_t tx_queue_back = instance->tx_queue_back;
 
-	uint16_t tx_front_num_pkts;
-	uint16_t tx_back_num_pkts;
-	uint16_t tx_max_num_pkts = gk_conf->front_max_pkt_burst +
-		gk_conf->back_max_pkt_burst;
-	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
-	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
-
 	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
@@ -2183,15 +2413,25 @@ gk_proc(void *arg)
 	uint32_t scan_iter = gk_conf->flow_table_scan_iter;
 	uint32_t iter_count = 0;
 
+	DEFINE_GK_CO_WORK(work, gk_conf->front_max_pkt_burst,
+		gk_conf->back_max_pkt_burst, gk_conf->mailbox_burst_size,
+		/*
+		 * The 4* is intended to minimize collisions, whereas the -1 is
+		 * intended to avoid doubling the size when
+		 * the expression already is a power of 2.
+		 */
+		rte_combine32ms1b(4 * (gk_conf->front_max_pkt_burst +
+			gk_conf->mailbox_burst_size) - 1),
+		1 /* One extra tast for the full scanning of the flow table. */
+	);
+
 	GK_LOG(NOTICE, "The GK block is running at lcore = %u\n", lcore);
 
 	gk_conf_hold(gk_conf);
+	add_cos_to_work(&work, gk_conf, instance);
 
 	while (likely(!exiting)) {
 		struct flow_entry *fe = NULL;
-
-		tx_front_num_pkts = 0;
-		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
 			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
@@ -2207,14 +2447,16 @@ gk_proc(void *arg)
 		} else
 			iter_count++;
 
+		do_work(&work);
+
 		process_pkts_front(port_front, rx_queue_front, lcore,
-			&tx_front_num_pkts, tx_front_pkts,
-			&tx_back_num_pkts, tx_back_pkts,
+			&work.tx_front_num_pkts, work.tx_front_pkts,
+			&work.tx_back_num_pkts,  work.tx_back_pkts,
 			instance, gk_conf);
 
 		process_pkts_back(port_back, rx_queue_back, lcore,
-			&tx_front_num_pkts, tx_front_pkts,
-			&tx_back_num_pkts, tx_back_pkts,
+			&work.tx_front_num_pkts, work.tx_front_pkts,
+			&work.tx_back_num_pkts,  work.tx_back_pkts,
 			instance, gk_conf);
 
 		if (fe != NULL && fe->in_use &&
@@ -2225,11 +2467,8 @@ gk_proc(void *arg)
 		} else
 			fe = NULL;
 
-		send_pkts(port_front, tx_queue_front,
-			tx_front_num_pkts, tx_front_pkts);
-
-		send_pkts(port_back, tx_queue_back,
-			tx_back_num_pkts, tx_back_pkts);
+		flush_work(&work, port_front, tx_queue_front,
+			port_back, tx_queue_back);
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
@@ -2310,6 +2549,8 @@ cleanup_gk(struct gk_config *gk_conf)
 		}
 
 		destroy_mailbox(&gk_conf->instances[i].mb);
+		free_cos(gk_conf->instances[i].cos, gk_conf->co_max_num);
+		coro_destroy(&gk_conf->instances[i].coro_root);
 	}
 
 	if (gk_conf->lpm_tbl.fib_tbl != NULL) {
@@ -2514,6 +2755,12 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	if (!(gk_conf->front_max_pkt_burst > 0 &&
 			gk_conf->back_max_pkt_burst > 0)) {
+		ret = -1;
+		goto out;
+	}
+
+	if (gk_conf->co_max_num == 0) {
+		GK_LOG(ERR, "There must be at least one coroutine\n");
 		ret = -1;
 		goto out;
 	}

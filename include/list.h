@@ -34,11 +34,23 @@ struct list_head {
 
 #define LIST_HEAD_INIT(name) { &(name), &(name) }
 
+#define LIST_POISON1  ((void *) 0x00100100)
+#define LIST_POISON2  ((void *) 0x00200200)
+
+#define LIST_HEAD_INIT_WITH_POISON(name) { LIST_POISON1, LIST_POISON2 }
+
 static inline void
 INIT_LIST_HEAD(struct list_head *list)
 {
 	list->next = list;
 	list->prev = list;
+}
+
+static inline void
+INIT_LIST_HEAD_WITH_POISON(struct list_head *list)
+{
+	list->next = LIST_POISON1;
+	list->prev = LIST_POISON2;
 }
 
 /**
@@ -133,6 +145,16 @@ list_is_singular(const struct list_head *head)
 	return !list_empty(head) && (head->next == head->prev);
 }
 
+/**
+ * list_poison - tests whether @entry has been poisoned.
+ * @entry: the entry to test.
+ */
+static inline int
+list_poison(const struct list_head *entry)
+{
+	return entry->next == LIST_POISON1 && entry->prev == LIST_POISON2;
+}
+
 /*
  * Insert a new entry between two known consecutive entries.
  *
@@ -191,8 +213,6 @@ __list_del(struct list_head *prev, struct list_head *next)
 	prev->next = next;
 }
 
-#define LIST_POISON1  ((void *) 0x00100100)
-#define LIST_POISON2  ((void *) 0x00200200)
 /**
  * list_del - deletes entry from list.
  * @entry: the element to delete from the list.

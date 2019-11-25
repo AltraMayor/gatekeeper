@@ -32,15 +32,25 @@ struct acl_search {
 	struct rte_mbuf **mbufs;
 };
 
+#define DECLARE_ACL_SEARCH_VARIABLE_PART(name, num_pkts)	\
+	const uint8_t *name##_data_array[(num_pkts)];		\
+	struct rte_mbuf *name##_mbufs_array[(num_pkts)]
+
+/*
+ * This macro can only be used if the macro DECLARE_ACL_SEARCH_VARIABLE_PART()
+ * has been placed before it.
+ */
+#define ACL_SEARCH_INIT(name)			\
+	{					\
+		.num = 0,			\
+		.data = name##_data_array,	\
+		.mbufs = name##_mbufs_array,	\
+	}
+
 /* Declare and initialize a struct acl_search. */
 #define DEFINE_ACL_SEARCH(name, num_pkts)			\
-	const uint8_t *name##_data_array[(num_pkts)];		\
-	struct rte_mbuf *name##_mbufs_array[(num_pkts)];	\
-	struct acl_search name = {				\
-		.num = 0,					\
-		.data = name##_data_array,			\
-		.mbufs = name##_mbufs_array,			\
-	}
+	DECLARE_ACL_SEARCH_VARIABLE_PART(name, num_pkts);	\
+	struct acl_search name = ACL_SEARCH_INIT(name)
 
 /* Classify batches of packets in @acl and invoke callback functions. */
 int process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,

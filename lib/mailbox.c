@@ -111,9 +111,13 @@ void
 destroy_mailbox(struct mailbox *mb)
 {
 	if (mb) {
-		if (mb->ring)
+		if (mb->ring) {
     			rte_ring_free(mb->ring);
-		if (mb->pool)
+			mb->ring = NULL;
+		}
+		if (mb->pool) {
 			rte_mempool_free(mb->pool);
+			mb->pool = NULL;
+		}
 	}
 }
