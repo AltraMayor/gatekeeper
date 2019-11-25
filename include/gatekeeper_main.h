@@ -21,6 +21,9 @@
 
 #include <stdint.h>
 
+#include <rte_mbuf.h>
+#include <rte_prefetch.h>
+
 #ifdef RTE_MACHINE_CPUFLAG_SSE4_2
 #include <rte_hash_crc.h>
 #define DEFAULT_HASH_FUNC       rte_hash_crc
@@ -51,5 +54,22 @@ extern FILE *log_file;
 
 char *rte_strdup(const char *type, const char *s);
 int gatekeeper_log_init(void);
+
+/* XXX #52 This should be part of DPDK. */
+/**
+ * Prefetch the first part of the mbuf
+ *
+ * The first 64 bytes of the mbuf corresponds to fields that are used early
+ * in the receive path. If the cache line of the architecture is higher than
+ * 64B, the second part will also be prefetched.
+ *
+ * @param m
+ *   The pointer to the mbuf.
+ */
+static inline void
+rte_mbuf_prefetch_part1_non_temporal(struct rte_mbuf *m)
+{
+	rte_prefetch_non_temporal(&m->cacheline0);
+}
 
 #endif /* _GATEKEEPER_MAIN_H_ */

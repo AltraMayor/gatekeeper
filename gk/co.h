@@ -122,6 +122,12 @@ struct gk_co_work {
 	 * It must be of the form (2^n - 1) for any n >= 0.
 	 */
 	const uint32_t leftover_mask;
+	/*
+	 * The following fields release the coroutines of acquiring
+	 * a writer lock on the flow table.
+	 */
+	/* If different of NULL, free this entry in flush_work(). */
+	struct flow_entry *del_fe;
 
 	/* Fields for front and back packets. */
 	uint16_t tx_front_num_pkts;
@@ -192,6 +198,7 @@ struct gk_co_work {
 		.temp_fes = name##_temp_fes_array,			\
 		.temp_fes_num = 0,					\
 		.leftover_mask = (lo_mask),				\
+		.del_fe = NULL,						\
 		.tx_front_num_pkts = 0,					\
 		.tx_back_num_pkts  = 0,					\
 		.tx_front_pkts = name##_tx_front_pkts_array,		\
@@ -237,7 +244,44 @@ schedule_task_to_any_co(struct gk_co_work *work, struct gk_co_task *task)
 	work->any_co_index = (work->any_co_index + 1) % work->co_num;
 }
 
+static inline struct flow_entry **
+__get_fe_leftover_bucket(struct gk_co_work *work, uint32_t hash)
+{
+	return &work->leftover[hash & work->leftover_mask];
+}
+
+static inline struct flow_entry **
+get_fe_leftover_bucket(struct gk_co_work *work, struct flow_entry *fe)
+{
+	return __get_fe_leftover_bucket(work, fe->flow_hash_val);
+}
+
+static inline struct flow_entry *
+get_fe_leftover(struct gk_co_work *work, uint32_t hash)
+{
+	return *__get_fe_leftover_bucket(work, hash);
+}
+
+/*
+ * Notice that if the bucket is not empty, that reference will be lost.
+ * That is, the code favors the newer entry over the older entry.
+ */
+static inline void
+save_fe_leftover(struct gk_co_work *work, struct flow_entry *fe)
+{
+	*get_fe_leftover_bucket(work, fe) = fe;
+}
+
 void
 gk_co_main(void *arg);
+
+void
+gk_co_scan_flow_table(struct gk_co *this_co, struct gk_co_task *task);
+
+void
+gk_co_process_front_pkt(struct gk_co *this_co, struct gk_co_task *task);
+void
+gk_co_process_front_pkt_software_rss(struct gk_co *this_co,
+	struct gk_co_task *task);
 
 #endif /* _GATEKEEPER_GK_CO_H_ */

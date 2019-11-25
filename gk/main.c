@@ -44,15 +44,14 @@
 #include "gatekeeper_sol.h"
 #include "gatekeeper_flow_bpf.h"
 
-#include "bpf.h"
 #include "co.h"
-
-#define	START_PRIORITY		 (38)
-/* Set @START_ALLOWANCE as the double size of a large DNS reply. */
-#define	START_ALLOWANCE		 (8)
 
 int gk_logtype;
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 /* We should avoid calling integer_log_base_2() with zero. */
 static inline uint8_t
 integer_log_base_2(uint64_t delta_time)
@@ -64,18 +63,22 @@ integer_log_base_2(uint64_t delta_time)
 #endif
 }
 
-/* 
- * It converts the difference of time between the current packet and 
- * the last seen packet into a given priority. 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
  */
-static uint8_t 
+/*
+ * It converts the difference of time between the current packet and
+ * the last seen packet into a given priority.
+ */
+static uint8_t
 priority_from_delta_time(uint64_t present, uint64_t past)
 {
 	uint64_t delta_time;
 
 	if (unlikely(present < past)) {
 		/*
-		 * This should never happen, but we handle it gracefully here 
+		 * This should never happen, but we handle it gracefully here
 		 * in order to keep going.
 		 */
 		GK_LOG(ERR, "The present time smaller than the past time\n");
@@ -85,10 +88,14 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	delta_time = (present - past) * picosec_per_cycle;
 	if (unlikely(delta_time < 1))
 		return 0;
-	
+
 	return integer_log_base_2(delta_time);
 }
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static struct gk_fib *
 look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
 {
@@ -114,6 +121,10 @@ look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
 	return NULL; /* Unreachable. */
 }
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static int
 extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 {
@@ -181,41 +192,17 @@ out:
 	return ret;
 }
 
-static inline void
-initialize_flow_entry(struct flow_entry *fe, struct ip_flow *flow,
-	uint32_t flow_hash_val, struct gk_fib *grantor_fib)
-{
-	/*
-	 * The flow table is a critical data structure, so,
-	 * whenever the size of entries grow too much,
-	 * one must look for alternatives before increasing
-	 * the limit below.
-	 */
-	RTE_BUILD_BUG_ON(sizeof(*fe) > 128);
-
-	rte_memcpy(&fe->flow, flow, sizeof(*flow));
-
-	fe->in_use = true;
-	fe->flow_hash_val = flow_hash_val;
-	fe->state = GK_REQUEST;
-	fe->u.request.last_packet_seen_at = rte_rdtsc();
-	fe->u.request.last_priority = START_PRIORITY;
-	fe->u.request.allowance = START_ALLOWANCE - 1;
-	fe->grantor_fib = grantor_fib;
-}
-
-static inline void
-reinitialize_flow_entry(struct flow_entry *fe, uint64_t now)
-{
-	fe->state = GK_REQUEST;
-	fe->u.request.last_packet_seen_at = now;
-	fe->u.request.last_priority = START_PRIORITY;
-	fe->u.request.allowance = START_ALLOWANCE - 1;
-}
-
+/*
+ * TODO A copy of this typedef is available in gk/co.c,
+ * so drop it when possible.
+ */
 typedef int (*packet_drop_cb_func)(struct rte_mbuf *pkt,
 	struct gk_instance *instance);
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static int
 drop_packet_front(struct rte_mbuf *pkt, struct gk_instance *instance)
 {
@@ -258,247 +245,6 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 	return stale;
 }
 
-/* 
- * When a flow entry is at request state, all the GK block processing
- * that entry does is to:
- * (1) compute the priority of the packet.
- * (2) encapsulate the packet as a request.
- * (3) put this encapsulated packet in the request queue.
- *
- * Returns a negative integer on error, or EINPROGRESS to indicate
- * that the request is being processed by another lcore, and should
- * not be forwarded or dropped on returning from this function.
- */
-static int
-gk_process_request(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct sol_config *sol_conf)
-{
-	int ret;
-	uint64_t now = rte_rdtsc();
-	uint8_t priority = priority_from_delta_time(now,
-			fe->u.request.last_packet_seen_at);
-	struct gk_fib *fib = fe->grantor_fib;
-	struct ether_cache *eth_cache;
-
-	fe->u.request.last_packet_seen_at = now;
-
-	/*
-	 * The reason for using "<" instead of "<=" is that the equal case 
-	 * means that the source has waited enough time to have the same 
-	 * last priority, so it should be awarded with the allowance.
-	 */
-	if (priority < fe->u.request.last_priority &&
-			fe->u.request.allowance > 0) {
-		fe->u.request.allowance--;
-		priority = fe->u.request.last_priority;
-	} else {
-		fe->u.request.last_priority = priority;
-		fe->u.request.allowance = START_ALLOWANCE - 1;
-	}
-
-	/*
-	 * Adjust @priority for the DSCP field.
-	 * DSCP 0 for legacy packets; 1 for granted packets; 
-	 * 2 for capability renew; 3-63 for requests.
-	 */
-	priority += PRIORITY_REQ_MIN;
-	if (unlikely(priority > PRIORITY_MAX))
-		priority = PRIORITY_MAX;
-
-	/* The assigned priority is @priority. */
-
-	/* Encapsulate the packet as a request. */
-	ret = encapsulate(packet->pkt, priority,
-		&sol_conf->net->back, &fib->u.grantor.gt_addr);
-	if (ret < 0)
-		return ret;
-
-	eth_cache = fib->u.grantor.eth_cache;
-	RTE_VERIFY(eth_cache != NULL);
-	/* If needed, packet header space was adjusted by encapsulate(). */
-	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
-			sol_conf->net->back.l2_len_out))
-		return -1;
-
-	req_bufs[*num_reqs] = packet->pkt;
-	req_bufs[*num_reqs]->udata64 = priority;
-	(*num_reqs)++;
-
-	return EINPROGRESS;
-}
-
-/*
- * Returns:
- *   * zero on success; the granted packet can be enqueued and forwarded
- *   * a negative number on error or when the packet needs to be
- *     otherwise dropped because it has exceeded its budget
- *   * EINPROGRESS to indicate that the packet is now a request that
- *     is being processed by another lcore, and should not
- *     be forwarded or dropped on returning from this function.
- */
-static int
-gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
-{
-	int ret;
-	bool renew_cap;
-	uint8_t priority = PRIORITY_GRANTED;
-	uint64_t now = rte_rdtsc();
-	struct rte_mbuf *pkt = packet->pkt;
-	struct gk_fib *fib = fe->grantor_fib;
-	struct ether_cache *eth_cache;
-	uint32_t pkt_len;
-
-	if (now >= fe->u.granted.cap_expire_at) {
-		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, req_bufs,
-			num_reqs, sol_conf);
-	}
-
-	if (now >= fe->u.granted.budget_renew_at) {
-		fe->u.granted.budget_renew_at = now + cycles_per_sec;
-		fe->u.granted.budget_byte =
-			(uint64_t)fe->u.granted.tx_rate_kib_cycle * 1024;
-	}
-
-	pkt_len = rte_pktmbuf_pkt_len(pkt);
-	if (pkt_len > fe->u.granted.budget_byte) {
-		stats->pkts_num_declined++;
-		stats->pkts_size_declined += pkt_len;
-		return -1;
-	}
-
-	fe->u.granted.budget_byte -= pkt_len;
-	renew_cap = now >= fe->u.granted.send_next_renewal_at;
-	if (renew_cap) {
-		fe->u.granted.send_next_renewal_at = now +
-			fe->u.granted.renewal_step_cycle;
-		priority = PRIORITY_RENEW_CAP;
-	}
-
-	/*
-	 * Encapsulate packet as a granted packet,
-	 * mark it as a capability renewal request if @renew_cap is true,
-	 * enter destination according to @fe->grantor_fib.
-	 */
-	ret = encapsulate(packet->pkt, priority,
-		&sol_conf->net->back, &fib->u.grantor.gt_addr);
-	if (ret < 0)
-		return ret;
-
-	eth_cache = fib->u.grantor.eth_cache;
-	RTE_VERIFY(eth_cache != NULL);
-	/* If needed, packet header space was adjusted by encapsulate(). */
-	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
-			sol_conf->net->back.l2_len_out))
-		return -1;
-
-	stats->pkts_num_granted++;
-	stats->pkts_size_granted += pkt_len;
-	return 0;
-}
-
-/*
- * Returns:
- *   * a negative number on error or when the packet needs to be
- *     otherwise dropped because it is declined
- *   * EINPROGRESS to indicate that the packet is now a request that
- *     is being processed by another lcore, and should not
- *     be forwarded or dropped on returning from this function.
- */
-static int
-gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct sol_config *sol_conf, struct gk_measurement_metrics *stats)
-{
-	uint64_t now = rte_rdtsc();
-
-	if (unlikely(now >= fe->u.declined.expire_at)) {
-		reinitialize_flow_entry(fe, now);
-		return gk_process_request(fe, packet, req_bufs,
-			num_reqs, sol_conf);
-	}
-
-	stats->pkts_num_declined++;
-	stats->pkts_size_declined += rte_pktmbuf_pkt_len(packet->pkt);
-
-	return -1;
-}
-
-/*
- * Returns:
- *   * zero on success; the packet can be enqueued and forwarded
- *   * a negative number on error or when the packet needs to be
- *     otherwise dropped because it has exceeded a limit
- *   * EINPROGRESS to indicate that the packet is now a request that
- *     is being processed by another lcore, and should not
- *     be forwarded or dropped on returning from this function.
- */
-static int
-gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
-{
-	uint64_t bpf_ret;
-	int program_index, rc;
-	uint64_t now = rte_rdtsc();
-
-	if (unlikely(now >= fe->u.bpf.expire_at))
-		goto expired;
-
-	program_index = fe->program_index;
-	rc = gk_bpf_decide_pkt(gk_conf, program_index, fe, packet, now,
-		&bpf_ret);
-	if (unlikely(rc != 0)) {
-		GK_LOG(WARNING,
-			"The BPF program at index %u failed to run its function pkt\n",
-			program_index);
-		goto expired;
-	}
-
-	switch (bpf_ret) {
-	case GK_BPF_PKT_RET_FORWARD: {
-		struct ether_cache *eth_cache =
-			fe->grantor_fib->u.grantor.eth_cache;
-		RTE_VERIFY(eth_cache != NULL);
-		/*
-		 * If needed, encapsulate() already adjusted
-		 * packet header space.
-		 */
-		if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
-				gk_conf->net->back.l2_len_out))
-			return -1;
-
-		stats->pkts_num_granted++;
-		stats->pkts_size_granted += rte_pktmbuf_pkt_len(packet->pkt);
-		return 0;
-	}
-	case GK_BPF_PKT_RET_DECLINE:
-		stats->pkts_num_declined++;
-		stats->pkts_size_declined += rte_pktmbuf_pkt_len(packet->pkt);
-		return -1;
-	case GK_BPF_PKT_RET_ERROR:
-		GK_LOG(WARNING,
-			"The function pkt of the BPF program at index %u returned GK_BPF_PKT_RET_ERROR\n",
-			program_index);
-		return -1;
-	default:
-		GK_LOG(WARNING,
-			"The function pkt of the BPF program at index %u returned an invalid return: %" PRIu64 "\n",
-			program_index, bpf_ret);
-		return -1;
-	}
-
-	rte_panic("Unexpected condition at %s()", __func__);
-
-expired:
-	reinitialize_flow_entry(fe, now);
-	return gk_process_request(fe, packet, req_bufs, num_reqs,
-		gk_conf->sol_conf);
-}
-
 static int
 get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 {
@@ -511,6 +257,10 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 	return 0;
 }
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static bool
 is_flow_expired(struct flow_entry *fe, uint64_t now)
 {
@@ -546,12 +296,17 @@ is_flow_expired(struct flow_entry *fe, uint64_t now)
 }
 
 static int
-gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
+gk_del_flow_entry_from_hash(struct gk_instance *instance, struct flow_entry *fe)
 {
-	int ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
-	if (likely(ret >= 0))
+
+	int ret = rte_hash_del_key_with_hash(instance->ip_flow_hash_table,
+		&fe->flow, fe->flow_hash_val);
+	if (likely(ret >= 0)) {
 		memset(fe, 0, sizeof(*fe));
-	else {
+
+		if (instance->num_scan_del > 0)
+			instance->num_scan_del--;
+	} else {
 		GK_LOG(ERR,
 			"The GK block failed to delete a key from hash table at %s: %s\n",
 			__func__, strerror(-ret));
@@ -796,8 +551,7 @@ flush_flow_table(struct ip_prefix *src,
 		}
 
 		if (matched) {
-			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
+			gk_del_flow_entry_from_hash(instance, fe);
 			num_flushed_flows++;
 		}
 
@@ -938,10 +692,8 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 		while (index >= 0) {
 			struct flow_entry *fe =
 				&instance->ip_flow_entry_table[index];
-			if (fe->grantor_fib == fib) {
-				gk_del_flow_entry_from_hash(
-					instance->ip_flow_hash_table, fe);
-			}
+			if (fe->grantor_fib == fib)
+				gk_del_flow_entry_from_hash(instance, fe);
 
 			index = rte_hash_iterate(instance->ip_flow_hash_table,
 				(void *)&key, &data, &next);
@@ -1056,6 +808,10 @@ out:
 	return ret;
 }
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static void
 xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
@@ -1131,6 +887,10 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	(*num_pkts)++;
 }
 
+/*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
 static void
 xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 	uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
@@ -1203,6 +963,10 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 }
 
 /*
+ * TODO A copy of this function is available in gk/co.c,
+ * so drop it when possible.
+ */
+/*
  * For IPv4, according to the RFC 1812 section 5.3.1 Time to Live (TTL),
  * if the TTL is reduced to zero (or less), the packet MUST be
  * discarded, and if the destination is not a multicast address the
@@ -1254,26 +1018,6 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	}
 
 	return 0;
-}
-
-/*
- * This function is only to be called on flows that
- * are not backed by a flow entry.
- */
-static void
-send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
-		struct gk_fib *fib, struct rte_mbuf **req_bufs,
-		uint16_t *num_reqs, struct gk_instance *instance,
-		struct gk_config *gk_conf) {
-	int ret;
-	struct flow_entry temp_fe;
-
-	initialize_flow_entry(&temp_fe, &packet->flow, flow_hash_val, fib);
-
-	ret = gk_process_request(&temp_fe, packet, req_bufs,
-		num_reqs, gk_conf->sol_conf);
-	if (ret < 0)
-		drop_packet_front(packet->pkt, instance);
 }
 
 static void
@@ -1353,457 +1097,6 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 		} else
 			fibs[i] = NULL;
 	}
-}
-
-static struct flow_entry *
-lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
-		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
-		struct acl_search *acl4, struct acl_search *acl6,
-		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
-		struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-		struct gatekeeper_if *front, struct gatekeeper_if *back,
-		struct gk_instance *instance, struct gk_config *gk_conf) {
-	struct rte_mbuf *pkt = packet->pkt;
-	struct ether_cache *eth_cache;
-	struct gk_measurement_metrics *stats = &instance->traffic_stats;
-
-	if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
-			add_pkt_acl(acl4, pkt);
-		} else if (likely(packet->flow.proto ==
-				RTE_ETHER_TYPE_IPV6)) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
-			add_pkt_acl(acl6, pkt);
-		} else {
-			print_flow_err_msg(&packet->flow,
-				"gk: failed to get the fib entry");
-			drop_packet_front(pkt, instance);
-		}
-		return NULL;
-	}
-
-	switch (fib->action) {
-	case GK_FWD_GRANTOR: {
-		struct flow_entry *fe;
-		int ret = gk_hash_add_flow_entry(
-			instance, &packet->flow,
-			ip_flow_hash_val, gk_conf);
-		if (ret == -ENOSPC) {
-			/*
-			 * There is no room for a new
-			 * flow entry, but give this
-			 * flow a chance sending a
-			 * request to the grantor
-			 * server.
-			 */
-			send_request_to_grantor(packet, ip_flow_hash_val,
-				fib, req_bufs, num_reqs, instance, gk_conf);
-			return NULL;
-		}
-		if (ret < 0) {
-			drop_packet_front(pkt, instance);
-			return NULL;
-		}
-
-		fe = &instance->ip_flow_entry_table[ret];
-		initialize_flow_entry(fe,
-			&packet->flow, ip_flow_hash_val, fib);
-		return fe;
-	}
-
-	case GK_FWD_GATEWAY_BACK_NET: {
-		/*
-		 * The entry instructs to forward
-		 * its packets to the gateway in
-		 * the back network, forward accordingly.
-		 *
-		 * BP block bypasses from the front to the
-		 * back interface are expected to bypass
-		 * ranges of IP addresses that should not
-		 * go through Gatekeeper.
-		 *
-		 * Notice that one needs to update
-		 * the Ethernet header.
-		 */
-
-		eth_cache = fib->u.gateway.eth_cache;
-		RTE_VERIFY(eth_cache != NULL);
-
-		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
-					back->l2_len_out)) {
-			drop_packet_front(pkt, instance);
-			return NULL;
-		}
-
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
-				drop_packet_front) < 0)
-			return NULL;
-
-		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
-	}
-
-	case GK_FWD_NEIGHBOR_BACK_NET: {
-		/*
-		 * The entry instructs to forward
-		 * its packets to the neighbor in
-		 * the back network, forward accordingly.
-		 */
-		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh,
-				&packet->flow.f.v4.dst);
-		} else {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh6,
-				&packet->flow.f.v6.dst);
-		}
-
-		RTE_VERIFY(eth_cache != NULL);
-
-		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
-					back->l2_len_out)) {
-			drop_packet_front(pkt, instance);
-			return NULL;
-		}
-
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
-				drop_packet_front) < 0)
-			return NULL;
-
-		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
-	}
-
-	case GK_DROP:
-		/* FALLTHROUGH */
-	default:
-		drop_packet_front(pkt, instance);
-		return NULL;
-	}
-
-	return NULL;
-}
-
-static int
-process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
-{
-	int ret;
-
-	/*
-	 * Some notes regarding flow rates and units:
-	 *
-	 * Flows in the GK_REQUEST state are bandwidth limited
-	 * to an overall rate relative to the link. Therefore,
-	 * the Ethernet frame overhead is counted toward the
-	 * credits used by requests. The request channel rate
-	 * is measured in megabits (base 10) per second to
-	 * match the units used by hardware specifications.
-	 *
-	 * Granted flows (in state GK_GRANTED or sometimes
-	 * GK_BPF) are allocated budgets that are intended
-	 * to reflect the max throughput of the flow, and
-	 * therefore do not include the Ethernet frame overhead.
-	 * The budgets of granted flows are measured in
-	 * kibibytes (base 2).
-	 */
-	switch (fe->state) {
-	case GK_REQUEST:
-		ret = gk_process_request(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf);
-		break;
-
-	case GK_GRANTED:
-		ret = gk_process_granted(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
-		break;
-
-	case GK_DECLINED:
-		ret = gk_process_declined(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
-		break;
-
-	case GK_BPF:
-		ret = gk_process_bpf(fe, packet,
-			req_bufs, num_reqs, gk_conf, stats);
-		break;
-
-	default:
-		ret = -1;
-		GK_LOG(ERR, "Unknown flow state: %d\n", fe->state);
-		break;
-	}
-
-	return ret;
-}
-
-static inline void
-prefetch_flow_entry(struct flow_entry *fe)
-{
-#if RTE_CACHE_LINE_SIZE == 64
-	RTE_BUILD_BUG_ON(sizeof(*fe) <= RTE_CACHE_LINE_SIZE);
-	RTE_BUILD_BUG_ON(sizeof(*fe) > 2 * RTE_CACHE_LINE_SIZE);
-	rte_prefetch0(fe);
-	rte_prefetch0(((char *)fe) + RTE_CACHE_LINE_SIZE);
-#elif RTE_CACHE_LINE_SIZE == 128
-	RTE_BUILD_BUG_ON(sizeof(*fe) > RTE_CACHE_LINE_SIZE);
-	rte_prefetch0(fe);
-#else
-#error "Unsupported cache line size"
-#endif
-}
-
-static void
-parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
-	struct rte_mbuf **arp_bufs, uint16_t *num_arp,
-	bool ipv4_configured_front, bool ipv6_configured_front,
-	struct ip_flow **flow_arr, uint32_t *flow_hash_val_arr,
-	int *num_ip_flows, struct gatekeeper_if *front,
-	struct gk_instance *instance)
-{
-	int ret;
-	struct gk_measurement_metrics *stats = &instance->traffic_stats;
-
-	stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
-
-	ret = extract_packet_info(pkt, packet);
-	if (ret < 0) {
-		if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
-			arp_bufs[(*num_arp)++] = pkt;
-			return;
-		}
-
-		/* Drop non-IP and non-ARP packets. */
-		drop_packet_front(pkt, instance);
-		return;
-	}
-
-	if (unlikely((packet->flow.proto == RTE_ETHER_TYPE_IPV4 &&
-			!ipv4_configured_front) ||
-			(packet->flow.proto == RTE_ETHER_TYPE_IPV6 &&
-			!ipv6_configured_front))) {
-		drop_packet_front(pkt, instance);
-		return;
-	}
-
-	flow_arr[*num_ip_flows] = &packet->flow;
-	flow_hash_val_arr[*num_ip_flows] = likely(front->rss) ?
-		pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
-	(*num_ip_flows)++;
-}
-
-#define PREFETCH_OFFSET (4)
-
-/* Process the packets on the front interface. */
-static void
-process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
-	unsigned int lcore,
-	uint16_t *tx_front_num_pkts, struct rte_mbuf **tx_front_pkts,
-	uint16_t *tx_back_num_pkts, struct rte_mbuf **tx_back_pkts,
-	struct gk_instance *instance, struct gk_config *gk_conf)
-{
-	int i;
-	int done_lookups;
-	int ret;
-	uint16_t num_rx;
-	uint16_t num_arp = 0;
-	uint16_t num_reqs = 0;
-	uint16_t front_max_pkt_burst = gk_conf->front_max_pkt_burst;
-	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
-	struct rte_mbuf *arp_bufs[front_max_pkt_burst];
-	struct rte_mbuf *req_bufs[front_max_pkt_burst];
-	DEFINE_ACL_SEARCH(acl4, front_max_pkt_burst);
-	DEFINE_ACL_SEARCH(acl6, front_max_pkt_burst);
-	struct gatekeeper_if *front = &gk_conf->net->front;
-	struct gatekeeper_if *back = &gk_conf->net->back;
-	struct gk_measurement_metrics *stats = &instance->traffic_stats;
-	bool ipv4_configured_front = ipv4_if_configured(&gk_conf->net->front);
-	bool ipv6_configured_front = ipv6_if_configured(&gk_conf->net->front);
-	int num_ip_flows = 0;
-	struct ipacket pkt_arr[front_max_pkt_burst];
-	struct ip_flow *flow_arr[front_max_pkt_burst];
-	uint32_t flow_hash_val_arr[front_max_pkt_burst];
-	int num_lpm_lookups = 0;
-	int num_lpm6_lookups = 0;
-	struct ip_flow *flows[front_max_pkt_burst];
-	struct ip_flow *flows6[front_max_pkt_burst];
-	int32_t lpm_lookup_pos[front_max_pkt_burst];
-	int32_t lpm6_lookup_pos[front_max_pkt_burst];
-	int32_t pos_arr[front_max_pkt_burst];
-	struct gk_fib *fibs[front_max_pkt_burst];
-	struct gk_fib *fibs6[front_max_pkt_burst];
-	struct flow_entry *fe_arr[front_max_pkt_burst];
-
-	/* Load a set of packets from the front NIC. */
-	num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
-		front_max_pkt_burst);
-
-	if (unlikely(num_rx == 0))
-		return;
-
-	stats->tot_pkts_num += num_rx;
-
-       /*
-        * This prefetch is enough to load Ethernet header (14 bytes),
-        * optional Ethernet VLAN header (8 bytes), and either
-        * an IPv4 header without options (20 bytes), or
-        * an IPv6 header without options (40 bytes).
-        * IPv4: 14 + 8 + 20 = 42
-        * IPv6: 14 + 8 + 40 = 62
-        */
-       for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++)
-		rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
-
-	/* Extract packet and flow information. */
-	for (i = 0; i < (num_rx - PREFETCH_OFFSET); i++) {
-		rte_prefetch0(rte_pktmbuf_mtod_offset(
-			rx_bufs[i + PREFETCH_OFFSET], void *, 0));
-
-		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
-			&num_arp, ipv4_configured_front, ipv6_configured_front,
-			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
-			instance);
-	}
-
-	/* Extract the rest packet and flow information. */
-	for (; i < num_rx; i++) {
-		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
-			&num_arp, ipv4_configured_front, ipv6_configured_front,
-			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
-			instance);
-	}
-
-	done_lookups = 0;
-	while (done_lookups < num_ip_flows) {
-		uint32_t num_keys = num_ip_flows - done_lookups;
-		if (num_keys > RTE_HASH_LOOKUP_BULK_MAX)
-			num_keys = RTE_HASH_LOOKUP_BULK_MAX;
-
-		ret = rte_hash_lookup_bulk_with_hash(
-			instance->ip_flow_hash_table,
-			(const void **)&flow_arr[done_lookups],
-			(hash_sig_t *)&flow_hash_val_arr[done_lookups],
-			num_keys, &pos_arr[done_lookups]);
-		if (ret != 0) {
-			GK_LOG(NOTICE,
-				"failed to find multiple keys in the hash table at lcore %u\n",
-				rte_lcore_id());
-		}
-
-		done_lookups += num_keys;
-	}
-
-	for (i = 0; i < num_ip_flows; i++) {
-		if (pos_arr[i] >= 0) {
-			fe_arr[i] = &instance->ip_flow_entry_table[pos_arr[i]];
-
-			prefetch_flow_entry(fe_arr[i]);
-		} else {
-			fe_arr[i] = NULL;
-			if (flow_arr[i]->proto == RTE_ETHER_TYPE_IPV4) {
-				lpm_lookup_pos[num_lpm_lookups] = i;
-				flows[num_lpm_lookups] = flow_arr[i];
-				num_lpm_lookups++;
-			} else {
-				lpm6_lookup_pos[num_lpm6_lookups] = i;
-				flows6[num_lpm6_lookups] = flow_arr[i];
-				num_lpm6_lookups++;
-			}
-		}
-	}
-
-	/* The remaining flows need LPM lookups. */
-	lookup_fib_bulk(&gk_conf->lpm_tbl, flows, num_lpm_lookups, fibs);
-	lookup_fib6_bulk(&gk_conf->lpm_tbl, flows6, num_lpm6_lookups, fibs6);
-
-	for (i = 0; i < num_lpm_lookups; i++) {
-		int fidx = lpm_lookup_pos[i];
-
-		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs[i],
-			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
-			tx_front_num_pkts, tx_front_pkts, req_bufs,
-			&num_reqs, front, back, instance, gk_conf);
-	}
-
-	for (i = 0; i < num_lpm6_lookups; i++) {
-		int fidx = lpm6_lookup_pos[i];
-
-		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs6[i],
-			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
-			tx_front_num_pkts, tx_front_pkts, req_bufs,
-			&num_reqs, front, back, instance, gk_conf);
-	}
-
-	for (i = 0; i < num_ip_flows; i++) {
-		if (fe_arr[i] == NULL)
-			continue;
-
-		ret = process_flow_entry(fe_arr[i], &pkt_arr[i], req_bufs,
-			&num_reqs, gk_conf, stats);
-		if (ret < 0)
-			drop_packet_front(pkt_arr[i].pkt, instance);
-		else if (ret == EINPROGRESS) {
-			/* Request will be serviced by another lcore. */
-			continue;
-		} else if (likely(ret == 0))
-			tx_back_pkts[(*tx_back_num_pkts)++] = pkt_arr[i].pkt;
-		else
-			rte_panic("Invalid return value (%d) from processing a packet in a flow with state %d",
-				ret, fe_arr[i]->state);
-	}
-
-	if (num_reqs > 0) {
-		uint64_t acc_size_request[num_reqs + 1];
-
-		acc_size_request[0] = 0;
-		for (i = 1; i <= num_reqs; i++) {
-			acc_size_request[i] = acc_size_request[i - 1] +
-				rte_pktmbuf_pkt_len(req_bufs[i - 1]);
-		}
-
-		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf,
-			req_bufs, num_reqs), 0);
-		if (ret < num_reqs) {
-			for (i = ret; i < num_reqs; i++)
-				drop_packet_front(req_bufs[i], instance);
-		}
-
-		stats->pkts_num_request += ret;
-		stats->pkts_size_request += acc_size_request[ret];
-	}
-
-	if (num_arp > 0)
-		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
-
-	process_pkts_acl(&gk_conf->net->front,
-		lcore, &acl4, RTE_ETHER_TYPE_IPV4);
-	process_pkts_acl(&gk_conf->net->front,
-		lcore, &acl6, RTE_ETHER_TYPE_IPV6);
 }
 
 static void
@@ -2220,6 +1513,71 @@ process_cmds_from_mailbox(
 }
 
 static void
+populate_front_tasks(struct gk_co_work *work,
+	uint16_t port_front, uint16_t rx_queue_front)
+{
+	uint16_t front_max_pkt_burst = work->gk_conf->front_max_pkt_burst;
+	struct rte_mbuf *rx_bufs[front_max_pkt_burst];
+	/* Load a set of packets from the front NIC. */
+	uint16_t num_rx = rte_eth_rx_burst(port_front, rx_queue_front, rx_bufs,
+		front_max_pkt_burst);
+	struct gk_measurement_metrics *stats;
+	bool has_rss;
+	int i;
+
+	if (unlikely(num_rx == 0))
+		return;
+
+	stats = &work->instance->traffic_stats;
+	stats->tot_pkts_num += num_rx;
+
+	has_rss = work->gk_conf->net->front.rss;
+	for (i = 0; i < num_rx; i++) {
+		struct gk_co_task *task = &work->all_tasks[work->task_num++];
+		struct rte_mbuf *pkt = rx_bufs[i];
+
+		stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
+
+		if (likely(has_rss)) {
+			task->task_hash = pkt->hash.rss;
+			task->task_arg = pkt;
+			task->task_func = gk_co_process_front_pkt;
+			schedule_task(work, task);
+		} else {
+			struct ipacket *packet = &work->packets[i];
+			/*
+			 * There is a chance that packets on the same flow
+			 * are brought out of order. For example, consider that
+			 * (1) three packets arrive on the following order:
+			 * 	pkt1, pkt2, pkt3;
+			 * (2) there are only two coroutines doing the work;
+			 * (3) The packets are mapped to
+			 * 	the coroutines as follow:
+			 * 	* pkt1 and pkt2 goes coroutine 1,
+			 * 	* pkt3 goes to coroutine 2;
+			 * (4) Packets pkt2 and pkt3 belong to the same flow.
+			 *
+			 * Packet pkt1 and ptk3 are processed in parallel,
+			 * receive their correct hashes, and are rescheduled.
+			 * Once pk2 is recheduled, it is going to be placed
+			 * after pk3 in the task queue of
+			 * the assigned coroutine, that is, pk3 is going to
+			 * be sent out before pkt2 (inverted order).
+			 */
+			task->task_hash = 0; /* Dummy hash. */
+			/*
+			 * Passing @packet instead of just @pkt so @packet
+			 * can be carried over once the task is rescheduled.
+			 */
+			packet->pkt = pkt;
+			task->task_arg = packet;
+			task->task_func = gk_co_process_front_pkt_software_rss;
+			schedule_task_to_any_co(work, task);
+		}
+	}
+}
+
+static void
 add_cos_to_work(struct gk_co_work *work, struct gk_config *gk_conf,
 	struct gk_instance *instance)
 {
@@ -2230,6 +1588,8 @@ add_cos_to_work(struct gk_co_work *work, struct gk_config *gk_conf,
 	work->cos = instance->cos;
 	work->co_max_num = gk_conf->co_max_num;
 	work->co_num = RTE_MIN(2, work->co_max_num);
+	work->front_ipv4_configured = ipv4_if_configured(&gk_conf->net->front);
+	work->front_ipv6_configured = ipv6_if_configured(&gk_conf->net->front);
 
 	RTE_VERIFY(work->co_num > 0);
 
@@ -2348,11 +1708,15 @@ do_work(struct gk_co_work *work)
 static void
 flush_work(struct gk_co_work *work,
 	uint16_t port_front, uint16_t tx_queue_front,
-	uint16_t port_back, uint16_t tx_queue_back)
+	uint16_t port_back, uint16_t tx_queue_back,
+	unsigned int lcore)
 {
+	struct gk_instance *instance = work->instance;
+
 	uint16_t front_max_pkt_burst = work->gk_conf->front_max_pkt_burst;
 	uint16_t back_max_pkt_burst = work->gk_conf->back_max_pkt_burst;
 	uint32_t max_pkt_burst = front_max_pkt_burst + back_max_pkt_burst;
+	struct gatekeeper_if *front = &work->gk_conf->net->front;
 
 	/*
 	 * Flush packets.
@@ -2369,12 +1733,107 @@ flush_work(struct gk_co_work *work,
 	work->tx_back_num_pkts = 0;
 
 	/*
-	 * TODO Flush front.
+	 * Flush front.
 	 */
+
+	if (work->front_num_req > 0) {
+		uint16_t num_req = work->front_num_req;
+		uint64_t acc_size_request[num_req + 1];
+		struct gk_measurement_metrics *stats = &instance->traffic_stats;
+		int i, ret;
+
+		/*
+		 * The byte length of the packets must be computed before
+		 * calling gk_solicitor_enqueue_bulk() because after it
+		 * the GK block no longer owns the packets.
+		 */
+		acc_size_request[0] = 0;
+		for (i = 1; i <= num_req; i++) {
+			acc_size_request[i] = acc_size_request[i - 1] +
+				rte_pktmbuf_pkt_len(
+					work->front_req_bufs[i - 1]
+				);
+		}
+
+		ret = RTE_MAX(
+			gk_solicitor_enqueue_bulk(work->gk_conf->sol_conf,
+				work->front_req_bufs, num_req),
+			0);
+
+		stats->pkts_num_request += ret;
+		stats->pkts_size_request += acc_size_request[ret];
+
+		for (i = ret; i < num_req; i++)
+			drop_packet_front(work->front_req_bufs[i], instance);
+
+		RTE_VERIFY(num_req <= front_max_pkt_burst);
+		work->front_num_req = 0;
+	}
+
+	if (work->front_num_arp > 0) {
+		submit_arp(work->front_arp_bufs, work->front_num_arp, front);
+		RTE_VERIFY(work->front_num_arp <= front_max_pkt_burst);
+		work->front_num_arp = 0;
+	}
+
+	RTE_VERIFY(work->front_acl4.num <= front_max_pkt_burst);
+	RTE_VERIFY(work->front_acl6.num <= front_max_pkt_burst);
+	process_pkts_acl(front, lcore, &work->front_acl4, RTE_ETHER_TYPE_IPV4);
+	process_pkts_acl(front, lcore, &work->front_acl6, RTE_ETHER_TYPE_IPV6);
 
 	/*
 	 * TODO Flush back.
 	 */
+
+	/*
+	 * Update flow table.
+	 */
+
+	if (work->del_fe != NULL) {
+		RTE_VERIFY(work->del_fe->in_use);
+		/*
+		 * Test that the flow entry is expired once more because
+		 * it may have been update since it tested as expired and
+		 * arriving here.
+		 */
+		if (likely(is_flow_expired(work->del_fe, rte_rdtsc())))
+			gk_del_flow_entry_from_hash(instance, work->del_fe);
+		work->del_fe = NULL;
+	}
+
+	/*
+	 * Adding new entries to the flow table should be among the last steps
+	 * to do because when the flow table is full,
+	 * rte_hash_cuckoo_make_space_mw() is going to be called. And
+	 * this function disrupts the cache of the running core.
+	 * rte_hash_cuckoo_make_space_mw() may access up to 1000 buckets and,
+	 * on 64-bit platforms, consumes about 32KB of execution stack.
+	 */
+	if (work->temp_fes_num > 0) {
+		unsigned int i;
+		for (i = 0; i < work->temp_fes_num; i++) {
+			struct flow_entry *temp_fe = &work->temp_fes[i];
+			struct flow_entry *fe;
+			int ret = gk_hash_add_flow_entry(instance,
+				&temp_fe->flow, temp_fe->flow_hash_val,
+				work->gk_conf);
+			if (ret == -ENOSPC) {
+				/* Flow table is full. */
+				break;
+			}
+			if (unlikely(ret < 0)) {
+				GK_LOG(ERR,
+					"Failed to add an flow entry ret=%i\n",
+					ret);
+				continue;
+			}
+			fe = &instance->ip_flow_entry_table[ret];
+			rte_memcpy(fe, temp_fe, sizeof(*fe));
+		}
+		RTE_VERIFY(work->temp_fes_num <= (front_max_pkt_burst +
+			work->gk_conf->mailbox_burst_size));
+		work->temp_fes_num = 0;
+	}
 
 	/*
 	 * Reset fields of @work.
@@ -2383,9 +1842,6 @@ flush_work(struct gk_co_work *work,
 	RTE_VERIFY(work->task_num <= work->task_total);
 	work->task_num = 0;
 	work->any_co_index = 0;
-	RTE_VERIFY(work->temp_fes_num <=
-		(front_max_pkt_burst + work->gk_conf->mailbox_burst_size));
-	work->temp_fes_num = 0;
 	memset(work->leftover, 0,
 		sizeof(*work->leftover) * (work->leftover_mask + 1));
 }
@@ -2431,17 +1887,23 @@ gk_proc(void *arg)
 	add_cos_to_work(&work, gk_conf, instance);
 
 	while (likely(!exiting)) {
-		struct flow_entry *fe = NULL;
 
+		populate_front_tasks(&work, port_front, rx_queue_front);
+
+		/*
+		 * Have the expiration test after all flow-ralated work to
+		 * give one more chance for entries to not expire.
+		 */
 		if (iter_count >= scan_iter) {
+			struct gk_co_task *task =
+				&work.all_tasks[work.task_num++];
 			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
-			fe = &instance->ip_flow_entry_table[entry_idx];
-			/*
-			 * Only one prefetch is needed here because we only
-			 * need the beginning of a struct flow_entry to
-			 * check if it's expired.
-			 */
-			rte_prefetch_non_temporal(fe);
+
+			task->task_hash = 0; /* Dummy hash. */
+			task->task_arg =
+				&instance->ip_flow_entry_table[entry_idx];
+			task->task_func = gk_co_scan_flow_table;
+			schedule_task_to_any_co(&work, task);
 
 			iter_count = 0;
 		} else
@@ -2449,36 +1911,15 @@ gk_proc(void *arg)
 
 		do_work(&work);
 
-		process_pkts_front(port_front, rx_queue_front, lcore,
-			&work.tx_front_num_pkts, work.tx_front_pkts,
-			&work.tx_back_num_pkts,  work.tx_back_pkts,
-			instance, gk_conf);
-
 		process_pkts_back(port_back, rx_queue_back, lcore,
 			&work.tx_front_num_pkts, work.tx_front_pkts,
 			&work.tx_back_num_pkts,  work.tx_back_pkts,
 			instance, gk_conf);
 
-		if (fe != NULL && fe->in_use &&
-				is_flow_expired(fe, rte_rdtsc())) {
-			rte_hash_prefetch_buckets_non_temporal(
-				instance->ip_flow_hash_table,
-				fe->flow_hash_val);
-		} else
-			fe = NULL;
-
 		flush_work(&work, port_front, tx_queue_front,
-			port_back, tx_queue_back);
+			port_back, tx_queue_back, lcore);
 
 		process_cmds_from_mailbox(instance, gk_conf);
-
-		if (fe != NULL) {
-			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
-
-			if (instance->num_scan_del > 0)
-				instance->num_scan_del--;
-		}
 
 		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {
