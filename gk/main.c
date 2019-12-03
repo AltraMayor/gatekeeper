@@ -1600,6 +1600,13 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 
 	stats->tot_pkts_num += num_rx;
 
+	for (i = 0; i < num_rx; i++) {
+		stats->tot_pkts_size += rte_pktmbuf_pkt_len(rx_bufs[i]);
+		drop_packet_front(rx_bufs[i], instance);
+	}
+
+	return;
+
        /*
         * This prefetch is enough to load Ethernet header (14 bytes),
         * optional Ethernet VLAN header (8 bytes), and either
