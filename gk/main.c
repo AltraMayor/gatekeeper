@@ -2299,6 +2299,8 @@ cleanup_gk(struct gk_config *gk_conf)
 	unsigned int ui;
 
 	for (i = 0; i < gk_conf->num_lcores; i++) {
+		destroy_mempool(gk_conf->instances[i].mp);
+
 		if (gk_conf->instances[i].ip_flow_hash_table != NULL) {
 			rte_hash_free(gk_conf->instances[i].
 				ip_flow_hash_table);
@@ -2363,6 +2365,7 @@ gk_stage1(void *arg)
 	struct gk_config *gk_conf = arg;
 	int num_rx_queues = gk_conf->net->front.num_rx_queues;
 	int ret, i;
+	unsigned int num_mbuf;
 
 	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
 		sizeof(struct gk_instance), 0);
@@ -2386,13 +2389,22 @@ gk_stage1(void *arg)
 	if (ret < 0)
 		goto cleanup;
 
+	num_mbuf = calculate_mempool_config_para("gk", gk_conf->net,
+		gk_conf->net->front.total_pkt_burst +
+		gk_conf->net->back.total_pkt_burst);
+
 	for (i = 0; i < gk_conf->num_lcores; i++) {
 		unsigned int lcore = gk_conf->lcores[i];
 		struct gk_instance *inst_ptr = &gk_conf->instances[i];
 
+		inst_ptr->mp = create_pktmbuf_pool("gk", lcore, num_mbuf);
+		if (inst_ptr->mp == NULL)
+			goto cleanup;
+
 		/* Set up queue identifiers for RSS. */
 
-		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore);
+		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_RX, lcore,
+			inst_ptr->mp);
 		if (ret < 0) {
 			GK_LOG(ERR, "Cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
@@ -2401,7 +2413,8 @@ gk_stage1(void *arg)
 		inst_ptr->rx_queue_front = ret;
 		gk_conf->queue_id_to_instance[ret] = i;
 
-		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_TX, lcore);
+		ret = get_queue_id(&gk_conf->net->front, QUEUE_TYPE_TX, lcore,
+			NULL);
 		if (ret < 0) {
 			GK_LOG(ERR, "Cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
@@ -2409,7 +2422,8 @@ gk_stage1(void *arg)
 		}
 		inst_ptr->tx_queue_front = ret;
 
-		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_RX, lcore);
+		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_RX, lcore,
+			inst_ptr->mp);
 		if (ret < 0) {
 			GK_LOG(ERR, "Cannot assign an RX queue for the back interface for lcore %u\n",
 				lcore);
@@ -2417,7 +2431,8 @@ gk_stage1(void *arg)
 		}
 		inst_ptr->rx_queue_back = ret;
 
-		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore);
+		ret = get_queue_id(&gk_conf->net->back, QUEUE_TYPE_TX, lcore,
+			NULL);
 		if (ret < 0) {
 			GK_LOG(ERR, "Cannot assign a TX queue for the back interface for lcore %u\n",
 				lcore);
@@ -2518,9 +2533,9 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto out;
 	}
 
-	front_inc = gk_conf->front_max_pkt_burst * gk_conf->num_lcores;
+	front_inc = gk_conf->front_max_pkt_burst;
 	net_conf->front.total_pkt_burst += front_inc;
-	back_inc = gk_conf->back_max_pkt_burst * gk_conf->num_lcores;
+	back_inc = gk_conf->back_max_pkt_burst;
 	net_conf->back.total_pkt_burst += back_inc;
 
 	gk_conf->net = net_conf;

@@ -36,42 +36,42 @@ extern int cps_logtype;
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
 	/* lcore that the CPS block runs on. */
-	unsigned int      lcore_id;
+	unsigned int       lcore_id;
 	/* Source and destination TCP ports to capture BGP traffic. */
-	uint16_t          tcp_port_bgp;
+	uint16_t           tcp_port_bgp;
 
 	/* Log level for CPS block. */
-	uint32_t          log_level;
+	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
-	int               log_type;
+	int                log_type;
 	/* Log ratelimit interval in ms for CPS block. */
-	uint32_t          log_ratelimit_interval_ms;
+	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for CPS block. */
-	uint32_t          log_ratelimit_burst;
+	uint32_t           log_ratelimit_burst;
 
 	/* The maximum number of packets to retrieve/transmit. */
-	uint16_t          front_max_pkt_burst;
-	uint16_t          back_max_pkt_burst;
+	uint16_t           front_max_pkt_burst;
+	uint16_t           back_max_pkt_burst;
 
 	/* Number of times to attempt bring a KNI interface up or down. */
-	unsigned int      num_attempts_kni_link_set;
+	unsigned int       num_attempts_kni_link_set;
 
 	/* Maximum number of route update packets to serve at once. */
-	unsigned int      max_rt_update_pkts;
+	unsigned int       max_rt_update_pkts;
 
 	/*
 	 * Period between scans of the outstanding
 	 * resolution requests from KNIs.
 	 */
-	unsigned int      scan_interval_sec;
+	unsigned int       scan_interval_sec;
 
 	/* Parameters to setup the mailbox instance. */
-	unsigned int      mailbox_max_entries_exp;
-	unsigned int      mailbox_mem_cache_size;
-	unsigned int      mailbox_burst_size;
+	unsigned int       mailbox_max_entries_exp;
+	unsigned int       mailbox_mem_cache_size;
+	unsigned int       mailbox_burst_size;
 
 	/* Netlink port ID for communicating with routing daemon. */
-	uint32_t          nl_pid;
+	uint32_t           nl_pid;
 
 	/*
 	 * The fields below are for internal use.
@@ -79,44 +79,48 @@ struct cps_config {
 	 */
 
 	/* The maximum number of packets submitted to CPS mailbox. */
-	unsigned int      mailbox_max_pkt_burst;
+	unsigned int       mailbox_max_pkt_burst;
 
-	struct net_config *net;
-	struct lls_config *lls;
+	struct net_config  *net;
+	struct lls_config  *lls;
 
 	/* Kernel NIC interfaces for control plane messages */
-	struct rte_kni    *front_kni;
-	struct rte_kni    *back_kni;
+	struct rte_kni     *front_kni;
+	struct rte_kni     *back_kni;
 
 	/* Output interface IDs for the KNIs; used with routing daemons. */
-	unsigned int      front_kni_index;
-	unsigned int      back_kni_index;
+	unsigned int       front_kni_index;
+	unsigned int       back_kni_index;
 
 	/* Mailbox to hold requests from other blocks. */
-	struct mailbox    mailbox;
+	struct mailbox     mailbox;
 
 	/* Receive and transmit queues for both interfaces. */
-	uint16_t          rx_queue_front;
-	uint16_t          tx_queue_front;
-	uint16_t          rx_queue_back;
-	uint16_t          tx_queue_back;
+	uint16_t           rx_queue_front;
+	uint16_t           tx_queue_front;
+	uint16_t           rx_queue_back;
+	uint16_t           tx_queue_back;
 
 	/* Unanswered resolution requests from the KNIs. */
-	struct list_head  arp_requests;
-	struct list_head  nd_requests;
+	struct list_head   arp_requests;
+	struct list_head   nd_requests;
 
 	/* Timer to scan over outstanding resolution requests. */
-	struct rte_timer  scan_timer;
+	struct rte_timer   scan_timer;
 
 	/*
 	 * Netlink socket for receiving from the routing daemon.
 	 * Bound to @nl_pid so that userspace routing daemons
 	 * can be configured to update Gatekeeper.
 	 */
-	struct mnl_socket *rd_nl;
+	struct mnl_socket  *rd_nl;
 
-	struct gk_config  *gk;
-	struct gt_config  *gt;
+	struct gk_config   *gk;
+	struct gt_config   *gt;
+
+	unsigned int       total_pkt_burst;
+	/* The packet mbuf pool for the CPS block. */
+	struct rte_mempool *mp;
 };
 
 /* Information needed to submit IPv6 BGP packets to the CPS block. */

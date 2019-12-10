@@ -332,13 +332,12 @@ iface_bonded(struct gatekeeper_if *iface)
  */
 int
 get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
-	unsigned int lcore)
+	unsigned int lcore, struct rte_mempool *mp)
 {
 	int16_t *queues;
 	int ret;
 	uint16_t port;
 	unsigned int numa_node;
-	struct rte_mempool *mp;
 	int16_t new_queue_id;
 
 	RTE_VERIFY(lcore < RTE_MAX_LCORE);
@@ -368,7 +367,6 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	 * before the bonded port can be started.
 	 */
 	numa_node = rte_lcore_to_socket_id(lcore);
-	mp = config.gatekeeper_pktmbuf_pool[numa_node];
 	for (port = 0; port < iface->num_ports; port++) {
 		ret = configure_queue(iface, iface->ports[port],
 			(uint16_t)new_queue_id, ty, numa_node, mp);
@@ -1547,151 +1545,77 @@ destroy_init:
 	return ret;
 }
 
-static void
-calculate_net_config_para(struct net_config *net_conf)
+unsigned int
+calculate_mempool_config_para(const char *block_name,
+	struct net_config *net_conf, unsigned int total_pkt_burst)
 {
-	int i;
-
-	const char *filtered_blocks[] = { "dynamic_conf" };
-
-	/*
-	 * The total number of lcores used by any functional block
-	 * for either RX or TX except for Dynamic Configuration.
-	 */
-	int gatekeeper_num_lcores = launch_count_lcores(filtered_blocks,
-		RTE_DIM(filtered_blocks));
+	unsigned int num_mbuf;
 
 	/*
 	 * The total number of receive descriptors to
-	 * allocate for the receive ring over all interfaces.
+	 * allocate per lcore for the receive ring over all interfaces.
 	 */
-	uint16_t gatekeeper_total_rx_desc = net_conf->front.num_rx_queues *
-		net_conf->front.num_rx_desc + (net_conf->back_iface_enabled ?
-		net_conf->back.num_rx_queues * net_conf->back.num_rx_desc : 0);
+	uint16_t total_rx_desc = net_conf->front.num_rx_desc +
+		(net_conf->back_iface_enabled ? net_conf->back.num_rx_desc : 0);
 
 	/*
 	 * The total number of transmit descriptors to
-	 * allocate for the transmit ring over all interfaces.
+	 * allocate per lcore for the transmit ring over all interfaces.
 	 */
-	uint16_t gatekeeper_total_tx_desc = net_conf->front.num_tx_queues *
-		net_conf->front.num_tx_desc + (net_conf->back_iface_enabled ?
-		net_conf->back.num_tx_queues * net_conf->back.num_tx_desc : 0);
+	uint16_t total_tx_desc = net_conf->front.num_tx_desc +
+		(net_conf->back_iface_enabled ? net_conf->back.num_tx_desc : 0);
 
 	/*
 	 * The number of elements in the mbuf pool.
 	 *
 	 * Need to provision enough memory for the worst case.
-	 * It's the number of RX descriptors (across all queues for all ports),
-	 * the number of TX descriptors (across all queues for all ports),
-	 * the number of packet burst buffers (across all lcores and
-	 * all interfaces including the KNI), the number of slots in
-	 * the packet buffer cache (across all lcores).
+	 * It's the number of RX descriptors, the number of TX descriptors,
+	 * and the number of packet burst buffers.
 	 */
-	uint32_t gatekeeper_max_num_pkt = gatekeeper_total_rx_desc +
-		gatekeeper_total_tx_desc + net_conf->front.total_pkt_burst +
-		net_conf->back.total_pkt_burst + gatekeeper_num_lcores *
-		RTE_MEMPOOL_CACHE_MAX_SIZE;
+	uint32_t max_num_pkt = total_rx_desc + total_tx_desc + total_pkt_burst;
 
 	/*
 	 * The optimum size (in terms of memory usage) for a mempool is when
 	 * it is a power of two minus one.
 	 */
-	net_conf->gatekeeper_num_mbuf = rte_align32pow2(
-		gatekeeper_max_num_pkt) - 1;
+	num_mbuf = rte_align32pow2(max_num_pkt) - 1;
 
-	/*
-	 * XXX #155 The size of the per-core object cache, i.e.,
-	 * number of struct rte_mbuf elements in the per-core object
-	 * cache. This should be analyzed or tested further to find
-	 * optimal value.
-	 *
-	 * Notice that, gatekeeper_per_core_lcache_size must be lower or
-	 * equal to CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE and n / 1.5.
-	 * It is advised to choose cache_size to have
-	 * "n modulo cache_size == 0": if this is not the case,
-	 * some elements will always stay in the pool
-	 * and will never be used. Here, n is gatekeeper_num_mbuf.
-	 *
-	 * The maximum cache size can be adjusted in DPDK's .config file:
-	 * CONFIG_RTE_MEMPOOL_CACHE_MAX_SIZE.
-	 */
-	net_conf->gatekeeper_per_lcore_cache_size = RTE_MIN(
-		RTE_MEMPOOL_CACHE_MAX_SIZE,
-		net_conf->gatekeeper_num_mbuf / 1.5);
-	for (i = net_conf->gatekeeper_per_lcore_cache_size; i >= 1; i--) {
-		if (net_conf->gatekeeper_num_mbuf % i == 0) {
-			net_conf->gatekeeper_per_lcore_cache_size = i;
-			break;
-		}
-	}
+	G_LOG(NOTICE, "%s: %s: total_pkt_burst = %hu packets, total_rx_desc = %hu descriptors, total_tx_desc = %hu descriptors, max_num_pkt = %u packets, num_mbuf = %u packets.\n",
+		block_name, __func__, total_pkt_burst, total_rx_desc,
+		total_tx_desc, max_num_pkt, num_mbuf);
 
-	G_LOG(NOTICE, "net: %s: total_pkt_burst (front) = %hu packets, total_pkt_burst (back) = %hu packets, gatekeeper_num_lcores = %d lcores, gatekeeper_total_rx_desc = %hu descriptors, gatekeeper_total_tx_desc = %hu descriptors, gatekeeper_max_num_pkt = %u packets, gatekeeper_num_mbuf = %u packets, gatekeeper_per_lcore_cache_size = %u mbufs.\n",
-		__func__, net_conf->front.total_pkt_burst,
-		net_conf->back.total_pkt_burst, gatekeeper_num_lcores,
-		gatekeeper_total_rx_desc, gatekeeper_total_tx_desc,
-		gatekeeper_max_num_pkt, net_conf->gatekeeper_num_mbuf,
-		net_conf->gatekeeper_per_lcore_cache_size);
+	return num_mbuf;
 }
 
-static int
-init_net_stage1(void *arg)
+struct rte_mempool *
+create_pktmbuf_pool(const char *block_name, unsigned int lcore,
+	unsigned int num_mbuf)
 {
-	struct net_config *net_conf = arg;
-	uint32_t i;
+	struct rte_mempool *mp;
+	char pool_name[64];
+	int ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%s_%u",
+		block_name, lcore);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
+	mp = rte_pktmbuf_pool_create_by_ops(pool_name, num_mbuf, 0,
+		sizeof(struct list_head), RTE_MBUF_DEFAULT_BUF_SIZE,
+		rte_lcore_to_socket_id(lcore), "ring_mp_sc");
+	if (mp == NULL) {
+		G_LOG(ERR,
+			"net: failed to allocate mbuf for block %s at lcore %u\n",
+			block_name, lcore);
 
-	calculate_net_config_para(net_conf);
+		if (rte_errno == E_RTE_NO_CONFIG) G_LOG(ERR, "function could not get pointer to rte_config structure\n");
+		else if (rte_errno == E_RTE_SECONDARY) G_LOG(ERR, "function was called from a secondary process instance\n");
+		else if (rte_errno == EINVAL) G_LOG(ERR, "cache size provided is too large\n");
+		else if (rte_errno == ENOSPC) G_LOG(ERR, "the maximum number of memzones has already been allocated\n");
+		else if (rte_errno == EEXIST) G_LOG(ERR, "a memzone with the same name already exists\n");
+		else if (rte_errno == ENOMEM) G_LOG(ERR, "no appropriate memory area found in which to create memzone\n");
+		else G_LOG(ERR, "unknown error creating mbuf pool\n");
 
-	if (net_conf->gatekeeper_pktmbuf_pool == NULL) {
-		net_conf->gatekeeper_pktmbuf_pool =
-			rte_calloc("mbuf_pool", net_conf->numa_nodes,
-				sizeof(struct rte_mempool *), 0);
-		if (net_conf->gatekeeper_pktmbuf_pool == NULL) {
-			G_LOG(ERR, "net: %s: out of memory\n", __func__);
-			return -1;
-		}
+		return NULL;
 	}
 
-	/* Initialize pktmbuf pool on each used NUMA node. */
-	for (i = 0; i < net_conf->numa_nodes; i++) {
-		char pool_name[64];
-		int ret;
-
-		if (!net_conf->numa_used[i] ||
-				net_conf->gatekeeper_pktmbuf_pool[i] != NULL)
-			continue;
-
-		ret = snprintf(pool_name, sizeof(pool_name), "pktmbuf_pool_%u",
-			i);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
-		net_conf->gatekeeper_pktmbuf_pool[i] =
-			rte_pktmbuf_pool_create(pool_name,
-				net_conf->gatekeeper_num_mbuf,
-				net_conf->gatekeeper_per_lcore_cache_size,
-				sizeof(struct list_head),
-				RTE_MBUF_DEFAULT_BUF_SIZE, (unsigned)i);
-
-		/*
-		 * No cleanup for this step, since DPDK
-		 * doesn't offer a way to deallocate pools.
-		 */
-		if (net_conf->gatekeeper_pktmbuf_pool[i] == NULL) {
-			G_LOG(ERR,
-				"net: failed to allocate mbuf for numa node %u\n",
-				i);
-
-			if (rte_errno == E_RTE_NO_CONFIG) G_LOG(ERR, "net: function could not get pointer to rte_config structure\n");
-			else if (rte_errno == E_RTE_SECONDARY) G_LOG(ERR, "net: function was called from a secondary process instance\n");
-			else if (rte_errno == EINVAL) G_LOG(ERR, "net: cache size provided is too large\n");
-			else if (rte_errno == ENOSPC) G_LOG(ERR, "net: the maximum number of memzones has already been allocated\n");
-			else if (rte_errno == EEXIST) G_LOG(ERR, "net: a memzone with the same name already exists\n");
-			else if (rte_errno == ENOMEM) G_LOG(ERR, "net: no appropriate memory area found in which to create memzone\n");
-			else G_LOG(ERR, "net: unknown error creating mbuf pool\n");
-
-			return -1;
-		}
-	}
-
-	return 0;
+	return mp;
 }
 
 static int
@@ -1874,24 +1798,8 @@ gatekeeper_init_network(struct net_config *net_conf)
 			goto do_not_start_net;
 	}
 
-	/*
-	 * Initialize memory pools after figuring out which lcores
-	 * are used and the number of RX queues are needed.
-	 * RX queues vary depending on the availability of RSS
-	 * at the network cards.
-	 */
-	ret = launch_at_stage1(init_net_stage1, net_conf);
-	if (ret < 0) {
-		if (net_conf->back_iface_enabled)
-			goto destroy_back;
-		else
-			goto do_not_start_net;
-	}
-
 	goto out;
 
-destroy_back:
-	pop_n_at_stage1(1);
 do_not_start_net:
 	pop_n_at_stage2(1);
 destroy_front:

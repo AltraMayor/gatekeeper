@@ -113,6 +113,10 @@ struct gk_instance {
 	struct token_bucket_ratelimit_state front_icmp_rs;
 	struct token_bucket_ratelimit_state back_icmp_rs;
 	unsigned int num_scan_del;
+	/*
+	 * The memory pool used for packet buffers in this instance.
+	 */
+	struct rte_mempool *mp;
 } __rte_cache_aligned;
 
 #define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)

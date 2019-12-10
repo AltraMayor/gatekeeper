@@ -93,8 +93,10 @@ cleanup_lls(void)
 		lls_cache_destroy(&lls_conf.nd_cache);
 	if (arp_enabled(&lls_conf))
 		lls_cache_destroy(&lls_conf.arp_cache);
-	destroy_mailbox(&lls_conf.requests);
+	rte_timer_stop(&lls_conf.log_timer);
 	rte_timer_stop(&lls_conf.scan_timer);
+	destroy_mailbox(&lls_conf.requests);
+	destroy_mempool(lls_conf.mp);
 	return 0;
 }
 
@@ -1063,6 +1065,31 @@ static int
 assign_lls_queue_ids(struct lls_config *lls_conf)
 {
 	int ret;
+	/*
+	 * Take the packets created for processing requests
+	 * from mailbox as well as ARP and ND cache tables scan.
+	 */
+	unsigned int total_pkt_burst = lls_conf->total_pkt_burst +
+		lls_conf->mailbox_burst_size + 2 *
+		lls_conf->max_num_cache_records;
+	unsigned int num_mbuf;
+
+	/* The front NIC doesn't have hardware support. */
+	if (!lls_conf->net->front.rss)
+		total_pkt_burst -= lls_conf->front_max_pkt_burst;
+
+	/* The back NIC is enabled and doesn't have hardware support. */
+	if (lls_conf->net->back_iface_enabled && !lls_conf->net->back.rss)
+		total_pkt_burst -= lls_conf->back_max_pkt_burst;
+
+	num_mbuf = calculate_mempool_config_para("lls",
+		lls_conf->net, total_pkt_burst);
+	lls_conf->mp = create_pktmbuf_pool("lls",
+		lls_conf->lcore_id, num_mbuf);
+	if (lls_conf->mp == NULL) {
+		ret = -1;
+		goto fail;
+	}
 
 	/*
 	 * LLS should only get its own RX queue if RSS is enabled,
@@ -1081,14 +1108,14 @@ assign_lls_queue_ids(struct lls_config *lls_conf)
 
 	if (lls_conf->net->front.rss) {
 		ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_RX,
-			lls_conf->lcore_id);
+			lls_conf->lcore_id, lls_conf->mp);
 		if (ret < 0)
 			goto fail;
 		lls_conf->rx_queue_front = ret;
 	}
 
 	ret = get_queue_id(&lls_conf->net->front, QUEUE_TYPE_TX,
-		lls_conf->lcore_id);
+		lls_conf->lcore_id, NULL);
 	if (ret < 0)
 		goto fail;
 	lls_conf->tx_queue_front = ret;
@@ -1096,14 +1123,14 @@ assign_lls_queue_ids(struct lls_config *lls_conf)
 	if (lls_conf->net->back_iface_enabled) {
 		if (lls_conf->net->back.rss) {
 			ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_RX,
-				lls_conf->lcore_id);
+				lls_conf->lcore_id, lls_conf->mp);
 			if (ret < 0)
 				goto fail;
 			lls_conf->rx_queue_back = ret;
 		}
 
 		ret = get_queue_id(&lls_conf->net->back, QUEUE_TYPE_TX,
-			lls_conf->lcore_id);
+			lls_conf->lcore_id, NULL);
 		if (ret < 0)
 			goto fail;
 		lls_conf->tx_queue_back = ret;
@@ -1277,6 +1304,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		back_inc = lls_conf->back_max_pkt_burst;
 		net_conf->back.total_pkt_burst += back_inc;
 	}
+	lls_conf->total_pkt_burst = front_inc + back_inc;
 
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, lls_stage1, lls_conf);
 	if (ret < 0)

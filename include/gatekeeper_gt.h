@@ -105,6 +105,9 @@ struct gt_instance {
 	unsigned int          num_ggu_pkts;
 
 	struct mailbox        mb;
+
+	/* The packet mbuf pool for the GT instance. */
+	struct rte_mempool    *mp;
 } __rte_cache_aligned;
 
 /* Configuration for the GT functional block. */
