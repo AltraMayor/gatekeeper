@@ -113,6 +113,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			outer_ipv4_hdr->type_of_service & IPTOS_ECN_MASK;
 		break;
 	case RTE_ETHER_TYPE_IPV6: {
+		uint32_t vtc_flow;
 		uint8_t encapsulated_proto;
 
 		if (pkt->data_len < parsed_len + sizeof(struct rte_ipv6_hdr))
@@ -131,10 +132,9 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 			return -1;
 
 		parsed_len += outer_ipv6_hdr_len;
-		info->priority = (((outer_ipv6_hdr->vtc_flow >> 20)
-			& 0xFF) >> 2);
-		info->outer_ecn =
-			(outer_ipv6_hdr->vtc_flow >> 20) & IPTOS_ECN_MASK;
+		vtc_flow = rte_be_to_cpu_32(outer_ipv6_hdr->vtc_flow);
+		info->priority = ((vtc_flow >> 20) & 0xFF) >> 2;
+		info->outer_ecn = (vtc_flow >> 20) & IPTOS_ECN_MASK;
 		break;
 	}
 	default:
@@ -654,7 +654,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		 */
 		struct rte_ipv6_hdr *inner_ipv6_hdr = pkt_info->inner_l3_hdr;
 		if (pkt_info->outer_ecn == IPTOS_ECN_CE)
-			inner_ipv6_hdr->vtc_flow |= IPTOS_ECN_CE << 20;
+			inner_ipv6_hdr->vtc_flow |=
+				rte_cpu_to_be_32(IPTOS_ECN_CE << 20);
 
 		neigh = &instance->neigh6;
 		ip_dst = inner_ipv6_hdr->dst_addr;
