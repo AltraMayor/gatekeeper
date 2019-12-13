@@ -39,6 +39,11 @@ local simple_policy = {
 		-- to simplify this example.
 		[policylib.c.gt_cpu_to_be_16(80)] = dcs_friendly,
 	},
+	[policylib.c.IPV6] = {
+		-- Loosely assume that TCP and UDP ports are equivalents
+		-- to simplify this example.
+		[policylib.c.gt_cpu_to_be_16(80)] = dcs_friendly,
+	},
 }
 
 -- Function that looks up the simple policy for the packet.
@@ -160,7 +165,7 @@ local function lookup_lpm_policy(pkt_info)
 	if pkt_info.inner_ip_ver == policylib.c.IPV6 then
 		local ipv6_hdr = ffi.cast("struct rte_ipv6_hdr *",
 			pkt_info.inner_l3_hdr)
-		local src_addr = ffi.cast("struct in6_addr *",
+		local src_addr = ffi.cast("struct in6_addr &",
 			ipv6_hdr.src_addr)
 		local policy_id = lpmlib.lpm6_lookup(lpm6, src_addr)
 		if policy_id < 0 then
