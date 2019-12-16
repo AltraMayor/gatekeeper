@@ -36,7 +36,7 @@ SRCS-y := main/main.c
 SRCS-y += config/static.c config/dynamic.c
 SRCS-y += cps/main.c cps/kni.c cps/elf.c
 SRCS-y += ggu/main.c
-SRCS-y += gk/main.c gk/fib.c gk/bpf.c
+SRCS-y += gk/main.c gk/fib.c gk/bpf.c gk/co.c
 SRCS-y += gt/main.c gt/lua_lpm.c
 SRCS-y += lls/main.c lls/cache.c lls/arp.c lls/nd.c
 SRCS-y += sol/main.c
@@ -44,12 +44,12 @@ SRCS-y += sol/main.c
 # Libraries.
 SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
 	lib/luajit-ffi-cdata.c lib/launch.c lib/lpm.c lib/acl.c lib/varip.c \
-	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c
+	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c lib/coro.c
 
 LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod
 CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.0/
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
-	-Wno-deprecated-declarations
+	-Wno-deprecated-declarations -DCORO_ASM
 
 include $(RTE_SDK)/mk/rte.extapp.mk
 

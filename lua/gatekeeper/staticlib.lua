@@ -211,6 +211,8 @@ struct gk_config {
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
 	unsigned int basic_measurement_logging_ms;
+	uint16_t     co_max_num;
+	uint16_t     co_stack_size_kb;
 	/* This struct has hidden fields. */
 };
 

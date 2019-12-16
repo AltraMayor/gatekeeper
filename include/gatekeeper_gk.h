@@ -19,6 +19,8 @@
 #ifndef _GATEKEEPER_GK_H_
 #define _GATEKEEPER_GK_H_
 
+#include <coro.h>
+
 #include <rte_atomic.h>
 #include <rte_bpf.h>
 
@@ -98,6 +100,14 @@ struct gk_measurement_metrics {
 struct gk_instance {
 	struct rte_hash   *ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
+	/*
+	 * Coroutines.
+	 *
+	 * These structs must be here and not in struct gk_co_work because
+	 * initialization functions (e.g. coro_create()) are not reentrant.
+	 */
+	struct coro_context coro_root;
+	struct gk_co      *cos;
 	/* RX queue on the front interface. */
 	uint16_t          rx_queue_front;
 	/* TX queue on the front interface. */
@@ -200,6 +210,11 @@ struct gk_config {
 
 	/* Time for logging the basic measurements in ms. */
 	unsigned int       basic_measurement_logging_ms;
+
+	/* Maximum number of coroutines running in parallel per GK instance. */
+	uint16_t           co_max_num;
+	/* Size of the stack of each coroutine in KB. */
+	uint16_t           co_stack_size_kb;
 
 	/*
 	 * The fields below are for internal use.
