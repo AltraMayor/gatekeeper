@@ -505,7 +505,7 @@ sol_stage1(void *arg)
 {
 	struct sol_config *sol_conf = arg;
 	int ret = get_queue_id(&sol_conf->net->back, QUEUE_TYPE_TX,
-		sol_conf->lcore_id);
+		sol_conf->lcore_id, NULL);
 	if (ret < 0) {
 		SOL_LOG(ERR, "Cannot assign a TX queue for the back interface for lcore %u\n",
 			sol_conf->lcore_id);

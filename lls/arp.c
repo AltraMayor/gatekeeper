@@ -52,9 +52,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	struct lls_config *lls_conf = get_lls_conf();
 	int ret;
 
-	struct rte_mempool *mp = lls_conf->net->gatekeeper_pktmbuf_pool[
-		rte_lcore_to_socket_id(lls_conf->lcore_id)];
-	created_pkt = rte_pktmbuf_alloc(mp);
+	created_pkt = rte_pktmbuf_alloc(lls_conf->mp);
 	if (created_pkt == NULL) {
 		LLS_LOG(ERR, "Could not alloc a packet for an ARP request\n");
 		return;

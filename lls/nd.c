@@ -138,9 +138,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	struct nd_opt_lladdr *nd_opt;
 	size_t l2_len;
 
-	struct rte_mempool *mp = lls_conf->net->gatekeeper_pktmbuf_pool[
-		rte_lcore_to_socket_id(lls_conf->lcore_id)];
-	struct rte_mbuf *created_pkt = rte_pktmbuf_alloc(mp);
+	struct rte_mbuf *created_pkt = rte_pktmbuf_alloc(lls_conf->mp);
 	if (created_pkt == NULL) {
 		LLS_LOG(ERR,
 			"Could not alloc a packet for an ND Neighbor Solicitation\n");

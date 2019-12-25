@@ -668,8 +668,16 @@ ggu_stage1(void *arg)
 	 */
 
 	if (ggu_conf->net->back.rss) {
+		unsigned int num_mbuf = calculate_mempool_config_para("ggu",
+			ggu_conf->net, ggu_conf->total_pkt_burst);
+
+		ggu_conf->mp = create_pktmbuf_pool("ggu",
+			ggu_conf->lcore_id, num_mbuf);
+		if (ggu_conf->mp == NULL)
+			return -1;
+
 		ret = get_queue_id(&ggu_conf->net->back, QUEUE_TYPE_RX,
-			ggu_conf->lcore_id);
+			ggu_conf->lcore_id, ggu_conf->mp);
 		if (ret < 0) {
 			GGU_LOG(ERR, "Cannot assign an RX queue for the back interface for lcore %u\n",
 				ggu_conf->lcore_id);
@@ -815,6 +823,7 @@ run_ggu(struct net_config *net_conf,
 
 	back_inc = ggu_conf->max_pkt_burst;
 	net_conf->back.total_pkt_burst += back_inc;
+	ggu_conf->total_pkt_burst = back_inc;
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 1, 0, ggu_stage1, ggu_conf);
 	if (ret < 0)
@@ -889,6 +898,7 @@ alloc_ggu_conf(void)
 int
 cleanup_ggu(struct ggu_config *ggu_conf)
 {
+	destroy_mempool(ggu_conf->mp);
 	destroy_mailbox(&ggu_conf->mailbox);
 	ggu_conf->net = NULL;
 	gk_conf_put(ggu_conf->gk);

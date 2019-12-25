@@ -74,13 +74,6 @@ int
 launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 	unsigned int lcore_id);
 
-/*
- * Get the number of lcores used except for blocks @filtered_blocks.
- * This function can be called any time before stage 3 begins.
- */
-int
-launch_count_lcores(const char *filtered_blocks[], unsigned int num_blocks);
-
 /* Drop the @n last entries of stage3. */
 void
 pop_n_at_stage3(int n);

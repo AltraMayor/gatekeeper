@@ -28,28 +28,28 @@
 
 /* Configuration for the GK-GT Unit functional block. */
 struct ggu_config {
-	unsigned int      lcore_id;
+	unsigned int       lcore_id;
 
 	/* The UDP source and destination port numbers for GGU. */
-	uint16_t          ggu_src_port;
-	uint16_t          ggu_dst_port;
+	uint16_t           ggu_src_port;
+	uint16_t           ggu_dst_port;
 
 	/* The maximum number of packets to retrieve/transmit. */
-	uint16_t          max_pkt_burst;
+	uint16_t           max_pkt_burst;
 
 	/* Parameters to setup the mailbox instance. */
-	unsigned int      mailbox_max_entries_exp;
-	unsigned int      mailbox_mem_cache_size;
-	unsigned int      mailbox_burst_size;
+	unsigned int       mailbox_max_entries_exp;
+	unsigned int       mailbox_mem_cache_size;
+	unsigned int       mailbox_burst_size;
 
 	/* Log level for GK-GT Unit block. */
-	uint32_t          log_level;
+	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
-	int               log_type;
+	int                log_type;
 	/* Log ratelimit interval in ms for GK-GT Unit block. */
-	uint32_t          log_ratelimit_interval_ms;
+	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for GK-GT Unit block. */
-	uint32_t          log_ratelimit_burst;
+	uint32_t           log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.
@@ -57,15 +57,19 @@ struct ggu_config {
 	 */
 
 	/* The maximum number of packets submitted to GGU mailbox. */
-	uint16_t          mailbox_max_pkt_burst;
+	uint16_t           mailbox_max_pkt_burst;
 
 	/* RX queue on the back interface. */
-	uint16_t          rx_queue_back;
-	struct net_config *net;
-	struct gk_config  *gk;
+	uint16_t           rx_queue_back;
+	struct net_config  *net;
+	struct gk_config   *gk;
 
 	/* Mailbox to hold requests from other blocks. */
-	struct mailbox    mailbox;
+	struct mailbox     mailbox;
+
+	unsigned int       total_pkt_burst;
+	/* The packet mbuf pool for the GGU block. */
+	struct rte_mempool *mp;
 };
 
 /* Enumeration of policy decisions the GGU block can process. */

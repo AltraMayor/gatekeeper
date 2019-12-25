@@ -125,7 +125,10 @@ struct gatekeeper_if {
 	uint16_t        num_rx_queues;
 	uint16_t        num_tx_queues;
 
-	/* The total burst size of any functional block for this interface. */
+	/*
+	 * The total burst size of any functional block that
+	 * does not have hardware support for this interface.
+	 */
 	uint16_t        total_pkt_burst;
 
 	/* Timeouts for cache entries (in seconds) for Link Layer Support. */
@@ -323,7 +326,7 @@ enum queue_type {
 };
 
 int get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
-	unsigned int lcore);
+	unsigned int lcore, struct rte_mempool *mp);
 
 /* Configuration for the Network. */
 struct net_config {
@@ -366,15 +369,6 @@ struct net_config {
 	 * Configuration files should not refer to them.
 	 */
 
-	/* The number of struct rte_mbuf elements in the mbuf pool. */
-	unsigned int         gatekeeper_num_mbuf;
-
-	/*
-	 * The size of the per-core object cache, i.e.,
-	 * number of struct rte_mbuf elements in the per-core objec cache.
-	 */
-	unsigned int         gatekeeper_per_lcore_cache_size;
-
 	struct gatekeeper_if front;
 	struct gatekeeper_if back;
 
@@ -386,12 +380,6 @@ struct net_config {
 
 	/* The group ID of the user that will run Gatekeeper after it boots. */
 	gid_t                pw_gid;
-
-	/*
-	 * There is a memory pool per NUMA node to be used for
-	 * packet buffers in that node.
-	 */
-	struct rte_mempool   **gatekeeper_pktmbuf_pool;
 };
 
 extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
@@ -450,6 +438,20 @@ int gatekeeper_init_network(struct net_config *net_conf);
 void gatekeeper_free_network(void);
 bool ipv4_configured(struct net_config *net_conf);
 bool ipv6_configured(struct net_config *net_conf);
+unsigned int calculate_mempool_config_para(const char *block_name,
+	struct net_config *net_conf, unsigned int total_pkt_burst);
+struct rte_mempool *create_pktmbuf_pool(const char *block_name,
+	unsigned int lcore, unsigned int num_mbuf);
+
+/*
+ * No cleanup for this step, since DPDK
+ * doesn't offer a way to deallocate pools.
+ */
+static inline void
+destroy_mempool(__attribute__((unused)) struct rte_mempool *mp)
+{
+	return;
+}
 
 static inline bool
 ipv4_if_configured(struct gatekeeper_if *iface)

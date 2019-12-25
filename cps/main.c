@@ -57,6 +57,9 @@ cleanup_cps(void)
 		gk_conf_put(cps_conf.gk);
 	cps_conf.gk = NULL;
 
+	rte_timer_stop(&cps_conf.scan_timer);
+	destroy_mailbox(&cps_conf.mailbox);
+	rm_kni();
 	/*
 	 * rd_event_sock_close() can be called even when the netlink
 	 * socket is not open, and rte_kni_release() can be passed NULL.
@@ -64,9 +67,7 @@ cleanup_cps(void)
 	rd_event_sock_close(&cps_conf);
 	rte_kni_release(cps_conf.back_kni);
 	rte_kni_release(cps_conf.front_kni);
-	rte_timer_stop(&cps_conf.scan_timer);
-	destroy_mailbox(&cps_conf.mailbox);
-	rm_kni();
+	destroy_mempool(cps_conf.mp);
 	return 0;
 }
 
@@ -85,12 +86,9 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	struct rte_arp_hdr *arp_hdr;
 	size_t pkt_size;
 	struct rte_kni *kni;
-	struct rte_mempool *mp;
 	int ret;
 
-	mp = cps_conf->net->gatekeeper_pktmbuf_pool[
-		rte_lcore_to_socket_id(cps_conf->lcore_id)];
-	created_pkt = rte_pktmbuf_alloc(mp);
+	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
 	if (created_pkt == NULL) {
 		CPS_LOG(ERR, "Could not allocate an ARP reply on the %s KNI\n",
 			iface->name);
@@ -149,12 +147,9 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	struct nd_neigh_msg *nd_msg;
 	struct nd_opt_lladdr *nd_opt;
 	struct rte_kni *kni;
-	struct rte_mempool *mp;
 	int ret;
 
-	mp = cps_conf->net->gatekeeper_pktmbuf_pool[
-		rte_lcore_to_socket_id(cps_conf->lcore_id)];
-	created_pkt = rte_pktmbuf_alloc(mp);
+	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
 	if (created_pkt == NULL) {
 		CPS_LOG(ERR,
 			"Could not allocate an ND advertisement on the %s KNI\n",
@@ -575,6 +570,30 @@ static int
 assign_cps_queue_ids(struct cps_config *cps_conf)
 {
 	int ret;
+	/*
+	 * Take the packets created for processing requests from mailbox
+	 * as well as the packets in the KNI into account.
+	 */
+	unsigned int total_pkt_burst = 2 * cps_conf->total_pkt_burst +
+		cps_conf->mailbox_burst_size;
+	unsigned int num_mbuf;
+
+	/* The front NIC doesn't have hardware support. */
+	if (!cps_conf->net->front.rss)
+		total_pkt_burst -= cps_conf->front_max_pkt_burst;
+
+	/* The back NIC is enabled but doesn't have hardware support. */
+	if (cps_conf->net->back_iface_enabled && !cps_conf->net->back.rss)
+		total_pkt_burst -= cps_conf->back_max_pkt_burst;
+
+	num_mbuf = calculate_mempool_config_para("cps",
+		cps_conf->net, total_pkt_burst);
+	cps_conf->mp = create_pktmbuf_pool("cps",
+		cps_conf->lcore_id, num_mbuf);
+	if (cps_conf->mp == NULL) {
+		ret = -1;
+		goto fail;
+	}
 
 	/*
 	 * CPS should only get its own RX queue if RSS is enabled,
@@ -593,14 +612,14 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 
 	if (cps_conf->net->front.rss) {
 		ret = get_queue_id(&cps_conf->net->front, QUEUE_TYPE_RX,
-			cps_conf->lcore_id);
+			cps_conf->lcore_id, cps_conf->mp);
 		if (ret < 0)
 			goto fail;
 		cps_conf->rx_queue_front = ret;
 	}
 
 	ret = get_queue_id(&cps_conf->net->front, QUEUE_TYPE_TX,
-		cps_conf->lcore_id);
+		cps_conf->lcore_id, NULL);
 	if (ret < 0)
 		goto fail;
 	cps_conf->tx_queue_front = ret;
@@ -608,14 +627,14 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 	if (cps_conf->net->back_iface_enabled) {
 		if (cps_conf->net->back.rss) {
 			ret = get_queue_id(&cps_conf->net->back, QUEUE_TYPE_RX,
-				cps_conf->lcore_id);
+				cps_conf->lcore_id, cps_conf->mp);
 			if (ret < 0)
 				goto fail;
 			cps_conf->rx_queue_back = ret;
 		}
 
 		ret = get_queue_id(&cps_conf->net->back, QUEUE_TYPE_TX,
-			cps_conf->lcore_id);
+			cps_conf->lcore_id, NULL);
 		if (ret < 0)
 			goto fail;
 		cps_conf->tx_queue_back = ret;
@@ -763,7 +782,6 @@ static int
 cps_stage1(void *arg)
 {
 	struct cps_config *cps_conf = arg;
-	unsigned int socket_id = rte_lcore_to_socket_id(cps_conf->lcore_id);
 	char name[RTE_KNI_NAMESIZE];
 	int ret;
 
@@ -776,8 +794,7 @@ cps_stage1(void *arg)
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
 
 	ret = kni_create(&cps_conf->front_kni, name,
-		cps_conf->net->gatekeeper_pktmbuf_pool[socket_id],
-		&cps_conf->net->front);
+		cps_conf->mp, &cps_conf->net->front);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Failed to create KNI for the front iface\n");
 		goto error;
@@ -809,8 +826,7 @@ cps_stage1(void *arg)
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
 
 		ret = kni_create(&cps_conf->back_kni, name,
-			cps_conf->net->gatekeeper_pktmbuf_pool[socket_id],
-			&cps_conf->net->back);
+			cps_conf->mp, &cps_conf->net->back);
 		if (ret < 0) {
 			CPS_LOG(ERR,
 				"Failed to create KNI for the back iface\n");
@@ -1171,13 +1187,13 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		cps_conf->log_ratelimit_interval_ms,
 		cps_conf->log_ratelimit_burst);
 
-	/* Take the packets needed in the KNI into account as well. */
-	front_inc = 2 * cps_conf->front_max_pkt_burst;
+	front_inc = cps_conf->front_max_pkt_burst;
 	net_conf->front.total_pkt_burst += front_inc;
 	if (net_conf->back_iface_enabled) {
-		back_inc = 2 * cps_conf->back_max_pkt_burst;
+		back_inc = cps_conf->back_max_pkt_burst;
 		net_conf->back.total_pkt_burst += back_inc;
 	}
+	cps_conf->total_pkt_burst = front_inc + back_inc;
 
 	ret = net_launch_at_stage1(net_conf, 1, 1, 1, 1, cps_stage1, cps_conf);
 	if (ret < 0)

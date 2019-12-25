@@ -1072,8 +1072,7 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 			lcore_id, ggu_pkt->ipaddr.proto);
 	}
 
-	ggu_pkt->buf = rte_pktmbuf_alloc(
-		gt_conf->net->gatekeeper_pktmbuf_pool[rte_socket_id()]);
+	ggu_pkt->buf = rte_pktmbuf_alloc(instance->mp);
 	if (ggu_pkt->buf == NULL) {
 		GT_LOG(ERR,
 			"Failed to allocate notification packet on lcore %u\n",
@@ -1669,6 +1668,7 @@ alloc_gt_conf(void)
 static inline void
 cleanup_gt_instance(struct gt_config *gt_conf, struct gt_instance *instance)
 {
+	destroy_mempool(instance->mp);
 	destroy_mailbox(&instance->mb);
 
 	flush_notify_pkts(gt_conf, instance);
@@ -1894,13 +1894,33 @@ init_gt_instances(struct gt_config *gt_conf)
 	int ret;
 	int num_succ_instances = 0;
 	struct gt_instance *inst_ptr;
+	/*
+	 * Take the GGU packets into account.
+	 *
+	 * (1) The GGU packets that GT normally sends out.
+	 *
+	 * (2) As the GT blocks call process_death_row() to process
+	 * the expired packets. In the worst case, process_death_row()
+	 * needs to notify Gatekeeper the decisions about all the packets
+	 * in the fragmentation table via GGU packets.
+	 */
+	unsigned int num_mbuf = calculate_mempool_config_para("gt",
+		gt_conf->net, gt_conf->net->front.total_pkt_burst +
+		gt_conf->max_pkt_burst + gt_conf->frag_max_entries);
 
 	/* Set up queue identifiers now for RSS, before instances start. */
 	for (i = 0; i < gt_conf->num_lcores; i++) {
 		unsigned int lcore = gt_conf->lcores[i];
 		inst_ptr = &gt_conf->instances[i];
 
-		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_RX, lcore);
+		inst_ptr->mp = create_pktmbuf_pool("gt", lcore, num_mbuf);
+		if (inst_ptr->mp == NULL) {
+			ret = -1;
+			goto free_gt_instance;
+		}
+
+		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_RX, lcore,
+			inst_ptr->mp);
 		if (ret < 0) {
 			GT_LOG(ERR, "Cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
@@ -1908,7 +1928,8 @@ init_gt_instances(struct gt_config *gt_conf)
 		}
 		inst_ptr->rx_queue = ret;
 
-		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_TX, lcore);
+		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_TX, lcore,
+			NULL);
 		if (ret < 0) {
 			GT_LOG(ERR, "Cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
@@ -2015,8 +2036,7 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 			gt_conf->log_ratelimit_burst);
 	}
 
-	front_inc = gt_conf->num_lcores *
-		(gt_conf->max_pkt_burst + gt_conf->frag_max_entries);
+	front_inc = gt_conf->max_pkt_burst + gt_conf->frag_max_entries;
 	net_conf->front.total_pkt_burst += front_inc;
 
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",

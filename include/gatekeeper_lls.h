@@ -180,67 +180,71 @@ struct lls_cache {
 
 struct lls_config {
 	/* lcore that the LLS block runs on. */
-	unsigned int      lcore_id;
+	unsigned int       lcore_id;
 
 	/* The maximum number of packets to retrieve/transmit. */
-	uint16_t          front_max_pkt_burst;
-	uint16_t          back_max_pkt_burst;
+	uint16_t           front_max_pkt_burst;
+	uint16_t           back_max_pkt_burst;
 
 	/* The maximum number of ARP or ND packets submitted by GK or GT. */
-	unsigned int      mailbox_max_pkt_sub;
+	unsigned int       mailbox_max_pkt_sub;
 
 	/* Parameters to setup the mailbox instance. */
-	unsigned int      mailbox_max_entries_exp;
-	unsigned int      mailbox_mem_cache_size;
-	unsigned int      mailbox_burst_size;
+	unsigned int       mailbox_max_entries_exp;
+	unsigned int       mailbox_mem_cache_size;
+	unsigned int       mailbox_burst_size;
 
 	/* Number of records that a LLS cache can hold. */
-	unsigned int      max_num_cache_records;
+	unsigned int       max_num_cache_records;
 
 	/* Length of time (in seconds) to wait between scans of the cache. */
-	unsigned int      cache_scan_interval_sec;
+	unsigned int       cache_scan_interval_sec;
 
 	/* Log level for LLS block. */
-	uint32_t          log_level;
+	uint32_t           log_level;
 	/* Dynamic logging type, assigned at runtime. */
-	int               log_type;
+	int                log_type;
 	/* Log ratelimit interval in ms for LLS block. */
-	uint32_t          log_ratelimit_interval_ms;
+	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for LLS block. */
-	uint32_t          log_ratelimit_burst;
+	uint32_t           log_ratelimit_burst;
 
 	/* The rate and burst size of the icmp messages. */
-	uint32_t          front_icmp_msgs_per_sec;
-	uint32_t          front_icmp_msgs_burst;
-	uint32_t          back_icmp_msgs_per_sec;
-	uint32_t          back_icmp_msgs_burst;
+	uint32_t           front_icmp_msgs_per_sec;
+	uint32_t           front_icmp_msgs_burst;
+	uint32_t           back_icmp_msgs_per_sec;
+	uint32_t           back_icmp_msgs_burst;
 
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
-	struct net_config *net;
+	struct net_config  *net;
 
 	/* Mailbox to hold requests from other blocks. */
-	struct mailbox    requests;
+	struct mailbox     requests;
 
 	/* Cache of entries that map IPv4 addresses to Ethernet addresses. */
-	struct lls_cache  arp_cache;
+	struct lls_cache   arp_cache;
 
 	/* Cache of entries that map IPv6 addresses to Ethernet addresses. */
-	struct lls_cache  nd_cache;
+	struct lls_cache   nd_cache;
 
 	/* Timer to scan over LLS cache(s). */
-	struct rte_timer  scan_timer;
+	struct rte_timer   scan_timer;
 
 	/* Timer to create new log files. */
-	struct rte_timer  log_timer;
+	struct rte_timer   log_timer;
 
 	/* Receive and transmit queues for both interfaces. */
-	uint16_t          rx_queue_front;
-	uint16_t          tx_queue_front;
-	uint16_t          rx_queue_back;
-	uint16_t          tx_queue_back;
+	uint16_t           rx_queue_front;
+	uint16_t           tx_queue_front;
+	uint16_t           rx_queue_back;
+	uint16_t           tx_queue_back;
+
+	unsigned int       total_pkt_burst;
+	/* The packet mbuf pool for the LLS block. */
+	struct rte_mempool *mp;
 
 	/* Data structures used to limit the rate of icmp messages. */
 	struct token_bucket_ratelimit_state front_icmp_rs;
