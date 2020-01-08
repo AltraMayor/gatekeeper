@@ -46,9 +46,31 @@ get_cps_conf(void)
 	return &cps_conf;
 }
 
+/*
+ * In run_cps(), the KNI kernel module, mailbox and scan timer are initialized
+ * before the functions cps_stage1(), cps_stage2() and cps_stage3() are
+ * really called.
+ *
+ * In cps_stage1(), the packet mempool and KNIs are created.
+ * In cps_stage2(), rd_event_sock_open() is called to open a Netlink socket.
+ *
+ * In the reverse order, we should (1) close the Netlink socket;
+ * (2) release KNIs; (3) release the packet mempool; (4) release the reference
+ * to the GT or GK configuration data structure; (5) stop the scan timer,
+ * release mailbox and KNI kernel module.
+ */
 static int
 cleanup_cps(void)
 {
+	/*
+	 * rd_event_sock_close() can be called even when the netlink
+	 * socket is not open, and rte_kni_release() can be passed NULL.
+	 */
+	rd_event_sock_close(&cps_conf);
+	rte_kni_release(cps_conf.back_kni);
+	rte_kni_release(cps_conf.front_kni);
+	destroy_mempool(cps_conf.mp);
+
 	if (cps_conf.gt != NULL)
 		gt_conf_put(cps_conf.gt);
 	cps_conf.gt = NULL;
@@ -60,14 +82,6 @@ cleanup_cps(void)
 	rte_timer_stop(&cps_conf.scan_timer);
 	destroy_mailbox(&cps_conf.mailbox);
 	rm_kni();
-	/*
-	 * rd_event_sock_close() can be called even when the netlink
-	 * socket is not open, and rte_kni_release() can be passed NULL.
-	 */
-	rd_event_sock_close(&cps_conf);
-	rte_kni_release(cps_conf.back_kni);
-	rte_kni_release(cps_conf.front_kni);
-	destroy_mempool(cps_conf.mp);
 	return 0;
 }
 
