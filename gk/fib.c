@@ -398,6 +398,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 		.key_len = key_len,
 		.hash_func = hash_func,
 		.hash_func_init_val = 0,
+		.socket_id = socket_id,
 	};
 
 	ret = snprintf(ht_name, sizeof(ht_name),
@@ -406,7 +407,6 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 
 	/* Setup the neighbor hash table. */
 	neigh_hash_params.name = ht_name;
-	neigh_hash_params.socket_id = socket_id;
 	neigh->hash_table = rte_hash_create(&neigh_hash_params);
 	if (neigh->hash_table == NULL) {
 		GK_LOG(ERR, "Cannot create hash table for neighbor FIB\n");
@@ -415,8 +415,8 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	}
 
 	/* Setup the Ethernet header cache table. */
-	neigh->cache_tbl = rte_calloc(NULL,
-		ht_size, sizeof(struct ether_cache), 0);
+	neigh->cache_tbl = rte_calloc_socket(NULL,
+		ht_size, sizeof(struct ether_cache), 0, socket_id);
 	if (neigh->cache_tbl == NULL) {
 		GK_LOG(ERR, "Cannot create Ethernet header cache table\n");
 		ret = -1;
@@ -653,9 +653,9 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto out;
 		}
 
-		ltbl->fib_tbl = rte_calloc(NULL,
+		ltbl->fib_tbl = rte_calloc_socket(NULL,
 			gk_conf->max_num_ipv4_fib_entries,
-			sizeof(struct gk_fib), 0);
+			sizeof(struct gk_fib), 0, socket_id);
 		if (ltbl->fib_tbl == NULL) {
 			GK_LOG(ERR,
 				"Failed to allocate the IPv4 FIB table at %s\n",
@@ -684,9 +684,9 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto free_lpm_tbl;
 		}
 
-		ltbl->fib_tbl6 = rte_calloc(NULL,
+		ltbl->fib_tbl6 = rte_calloc_socket(NULL,
 			gk_conf->max_num_ipv6_fib_entries,
-			sizeof(struct gk_fib), 0);
+			sizeof(struct gk_fib), 0, socket_id);
 		if (ltbl->fib_tbl6 == NULL) {
 			GK_LOG(ERR,
 				"Failed to allocate the IPv6 FIB table at %s\n",
