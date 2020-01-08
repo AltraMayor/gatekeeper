@@ -383,7 +383,7 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 }
 
 /*
- * @sol_conf is allocated using rte_calloc(), so initializations
+ * @sol_conf is allocated using rte_calloc_socket(), so initializations
  * to 0 are not strictly necessary in this function.
  */
 static int
@@ -664,20 +664,27 @@ out:
  * There should be only one sol_config instance.
  * Return an error if trying to allocate the second instance.
  *
- * Use rte_calloc() to zero-out the instance and initialize the
+ * Use rte_calloc_socket() to zero-out the instance and initialize the
  * request queue list to guarantee that cleanup_sol() won't fail
  * during initialization.
  */
 struct sol_config *
-alloc_sol_conf(void)
+alloc_sol_conf(unsigned int lcore)
 {
 	struct sol_config *sol_conf;
 	static rte_atomic16_t num_sol_conf_alloc = RTE_ATOMIC16_INIT(0);
-	if (rte_atomic16_test_and_set(&num_sol_conf_alloc) > 1) {
+	if (rte_atomic16_test_and_set(&num_sol_conf_alloc) != 1) {
 		SOL_LOG(ERR, "Trying to allocate the second instance of struct sol_config\n");
 		return NULL;
 	}
-	sol_conf = rte_calloc("sol_config", 1, sizeof(struct sol_config), 0);
+	sol_conf = rte_calloc_socket("sol_config", 1,
+		sizeof(struct sol_config), 0, rte_lcore_to_socket_id(lcore));
+	if (sol_conf == NULL) {
+		rte_atomic16_clear(&num_sol_conf_alloc);
+		SOL_LOG(ERR, "Failed to allocate the first instance of struct sol_config\n");
+		return NULL;
+	}
+	sol_conf->lcore_id = lcore;
 	INIT_LIST_HEAD(&sol_conf->req_queue.head);
 	return sol_conf;
 }

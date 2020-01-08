@@ -375,7 +375,7 @@ int run_dynamic_config(struct net_config *net_conf,
 	const char *dynamic_config_file, struct dynamic_config *dy_conf,
 	int mode);
 
-struct sol_config *alloc_sol_conf(void);
+struct sol_config *alloc_sol_conf(unsigned int lcore);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 
 ]]
