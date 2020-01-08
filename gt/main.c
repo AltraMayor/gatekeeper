@@ -1895,18 +1895,27 @@ init_gt_instances(struct gt_config *gt_conf)
 	int num_succ_instances = 0;
 	struct gt_instance *inst_ptr;
 	/*
-	 * Take the GGU packets into account.
+	 * (1) Need gt_conf->max_pkt_burst to read those packets
+	 * from the queue of the NIC.
 	 *
-	 * (1) The GGU packets that GT normally sends out.
+	 * (2) Need gt_conf->frag_max_entries for the fragment packets.
 	 *
-	 * (2) As the GT blocks call process_death_row() to process
+	 * Take the GGU packets into account as well.
+	 *
+	 * (3) The GGU packets that GT normally sends out.
+	 *
+	 * (4) As the GT blocks call process_death_row() to process
 	 * the expired packets. In the worst case, process_death_row()
 	 * needs to notify Gatekeeper the decisions about all the packets
-	 * in the fragmentation table via GGU packets.
+	 * in the fragmentation table via GGU packets. However, the number
+	 * of GGU packets is limited by gt_conf->max_ggu_notify_pkts.
 	 */
 	unsigned int num_mbuf = calculate_mempool_config_para("gt",
-		gt_conf->net, gt_conf->net->front.total_pkt_burst +
-		gt_conf->max_pkt_burst + gt_conf->frag_max_entries);
+		gt_conf->net, gt_conf->max_pkt_burst +
+		gt_conf->frag_max_entries + gt_conf->max_pkt_burst +
+		gt_conf->max_ggu_notify_pkts +
+		(gt_conf->net->front.total_pkt_burst +
+		gt_conf->num_lcores - 1) / gt_conf->num_lcores);
 
 	/* Set up queue identifiers now for RSS, before instances start. */
 	for (i = 0; i < gt_conf->num_lcores; i++) {
@@ -2011,7 +2020,6 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	const char *lua_base_directory, const char *lua_policy_file)
 {
 	int ret = -1, i;
-	uint16_t front_inc;
 
 	if (net_conf == NULL || gt_conf == NULL ||
 			lua_base_directory == NULL ||
@@ -2036,13 +2044,12 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 			gt_conf->log_ratelimit_burst);
 	}
 
-	front_inc = gt_conf->max_pkt_burst + gt_conf->frag_max_entries;
-	net_conf->front.total_pkt_burst += front_inc;
-
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",
 		lua_base_directory);
-	if (gt_conf->lua_base_directory == NULL)
-		goto burst;
+	if (gt_conf->lua_base_directory == NULL) {
+		ret = -1;
+		goto out;
+	}
 
 	gt_conf->lua_policy_file = rte_strdup("lua_policy_file",
 		lua_policy_file);
@@ -2108,8 +2115,6 @@ gt_config_file:
 policy_dir:
 	rte_free(gt_conf->lua_base_directory);
 	gt_conf->lua_base_directory = NULL;
-burst:
-	net_conf->front.total_pkt_burst -= front_inc;
 out:
 	return ret;
 }
