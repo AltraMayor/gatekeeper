@@ -270,7 +270,7 @@ void ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	unsigned int decision_list_len, ggu_policy_fn policy_fn,
 	void *policy_arg, const char *block);
 
-struct ggu_config *alloc_ggu_conf(void);
+struct ggu_config *alloc_ggu_conf(unsigned int lcore);
 int run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf);
 int cleanup_ggu(struct ggu_config *ggu_conf);

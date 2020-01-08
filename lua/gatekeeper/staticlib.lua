@@ -350,7 +350,7 @@ int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 int run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct sol_config *sol_conf);
 
-struct ggu_config *alloc_ggu_conf(void);
+struct ggu_config *alloc_ggu_conf(unsigned int lcore);
 int run_ggu(struct net_config *net_conf,
 	struct gk_config *gk_conf, struct ggu_config *ggu_conf);
 int cleanup_ggu(struct ggu_config *ggu_conf);

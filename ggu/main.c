@@ -880,13 +880,21 @@ out:
  * Return an error if trying to allocate the second instance.
  */
 struct ggu_config *
-alloc_ggu_conf(void)
+alloc_ggu_conf(unsigned int lcore)
 {
 	static rte_atomic16_t num_ggu_conf_alloc = RTE_ATOMIC16_INIT(0);
 
 	if (rte_atomic16_test_and_set(&num_ggu_conf_alloc) == 1) {
-		ggu_conf = rte_calloc("ggu_config", 1,
-			sizeof(struct ggu_config), 0);
+		ggu_conf = rte_calloc_socket("ggu_config", 1,
+			sizeof(struct ggu_config), 0,
+			rte_lcore_to_socket_id(lcore));
+		if (ggu_conf == NULL) {
+			rte_atomic16_clear(&num_ggu_conf_alloc);
+			GGU_LOG(ERR,
+				"Failed to allocate the first instance of struct ggu_config\n");
+			return NULL;
+		}
+		ggu_conf->lcore_id = lcore;
 		return ggu_conf;
 	} else {
 		GGU_LOG(ERR,
