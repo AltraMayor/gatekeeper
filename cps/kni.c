@@ -2022,9 +2022,10 @@ void
 kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr)
 {
+	int ret;
 	struct rte_arp_hdr *arp_hdr;
 	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
-	struct arp_request *arp_req;
+	struct arp_request *arp_req = NULL;
 	struct arp_request *entry;
 
 	if (unlikely(!arp_enabled(cps_conf->lls))) {
@@ -2053,9 +2054,10 @@ kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			goto out;
 	}
 
-	arp_req = rte_malloc(__func__, sizeof(*arp_req), 0);
-	if (unlikely(entry == NULL)) {
-		CPS_LOG(ERR, "%s: DPDK ran out of memory", __func__);
+	ret = rte_mempool_get(cps_conf->arp_mp, &arp_req);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "cps: failed to get a new entry from the ARP request mempool - %s\n",
+			strerror(-ret));
 		goto out;
 	}
 
