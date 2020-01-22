@@ -290,6 +290,7 @@ struct cps_config {
 	unsigned int mailbox_burst_size;
 	uint32_t     nl_pid;
 	unsigned int arp_max_entries_exp;
+	unsigned int nd_max_entries_exp;
 	/* This struct has hidden fields. */
 };
 

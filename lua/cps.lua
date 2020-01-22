@@ -16,6 +16,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	local front_max_pkt_burst = 32
 	local back_max_pkt_burst = 32
 	local arp_max_entries_exp = 10
+	local nd_max_entries_exp = 10
 
 	-- These variables are unlikely to need to be changed.
 	local tcp_port_bgp = 179
@@ -54,6 +55,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.nl_pid = 0x6A7E
 
 	cps_conf.arp_max_entries_exp = arp_max_entries_exp
+	cps_conf.nd_max_entries_exp = nd_max_entries_exp
 
 	local ret = staticlib.c.run_cps(net_conf, gk_conf, gt_conf,
 		cps_conf, lls_conf, kni_kmod_path)

@@ -2123,9 +2123,10 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
 	uint16_t pkt_len)
 {
+	int ret;
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
-	struct nd_request *nd_req;
+	struct nd_request *nd_req = NULL;
 	struct nd_request *entry;
 
 	if (unlikely(!nd_enabled(cps_conf->lls))) {
@@ -2156,9 +2157,10 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			goto out;
 	}
 
-	nd_req = rte_malloc(__func__, sizeof(*nd_req), 0);
-	if (unlikely(entry == NULL)) {
-		CPS_LOG(ERR, "%s: DPDK ran out of memory", __func__);
+	ret = rte_mempool_get(cps_conf->nd_mp, &nd_req);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "cps: failed to get a new entry from the ND request mempool - %s\n",
+			strerror(-ret));
 		goto out;
 	}
 
