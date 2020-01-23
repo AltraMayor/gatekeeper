@@ -53,16 +53,16 @@ init_mailbox(const char *tag, int mailbox_max_entries_exp,
 		sizeof(pool_name), "%s_mailbox_pool_%d", tag, lcore_id);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 
-    	mb->pool = (struct rte_mempool *)rte_mempool_create(
-		pool_name, (1 << mailbox_max_entries_exp) - 1, ele_size,
+	mb->pool = rte_mempool_create(pool_name,
+		(1 << mailbox_max_entries_exp) - 1, ele_size,
 		cache_size, 0, NULL, NULL, NULL, NULL, socket_id, 0);
-    	if (mb->pool == NULL) {
+	if (mb->pool == NULL) {
 		G_LOG(ERR,
 			"mailbox: can't create mempool %s (len = %d) at lcore %u\n",
 			pool_name, ret, lcore_id);
 		ret = -1;
-        	goto free_ring;
-    	}
+		goto free_ring;
+	}
 
 	ret  = 0;
 	goto out;
