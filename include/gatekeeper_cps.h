@@ -73,6 +73,12 @@ struct cps_config {
 	/* Netlink port ID for communicating with routing daemon. */
 	uint32_t           nl_pid;
 
+	/* Parameters to setup the ARP requests mempool. */
+	unsigned int       arp_max_entries_exp;
+
+	/* Parameters to setup the ND requests mempool. */
+	unsigned int       nd_max_entries_exp;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -121,6 +127,10 @@ struct cps_config {
 	unsigned int       total_pkt_burst;
 	/* The packet mbuf pool for the CPS block. */
 	struct rte_mempool *mp;
+	/* The ARP requests pool for the CPS block. */
+	struct rte_mempool *arp_mp;
+	/* The ND requests pool for the CPS block. */
+	struct rte_mempool *nd_mp;
 };
 
 /* Information needed to submit IPv6 BGP packets to the CPS block. */

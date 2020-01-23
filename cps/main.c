@@ -82,6 +82,10 @@ cleanup_cps(void)
 	rte_timer_stop(&cps_conf.scan_timer);
 	destroy_mailbox(&cps_conf.mailbox);
 	rm_kni();
+	if (cps_conf.nd_mp)
+	    rte_mempool_free(cps_conf.nd_mp);
+	if (cps_conf.arp_mp)
+	    rte_mempool_free(cps_conf.arp_mp);
 	return 0;
 }
 
@@ -265,7 +269,7 @@ process_reqs(struct cps_config *cps_conf)
 					&cps_conf->arp_requests, list) {
 				if (arp->ip == entry->addr) {
 					list_del(&entry->list);
-					rte_free(entry);
+					rte_mempool_put(cps_conf->arp_mp, entry);
 					break;
 				}
 			}
@@ -281,7 +285,7 @@ process_reqs(struct cps_config *cps_conf)
 					&cps_conf->nd_requests, list) {
 				if (ipv6_addrs_equal(nd->ip, entry->addr)) {
 					list_del(&entry->list);
-					rte_free(entry);
+					rte_mempool_put(cps_conf->nd_mp, entry);
 					break;
 				}
 			}
@@ -771,7 +775,7 @@ cps_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 				put_arp((struct in_addr *)&entry->addr,
 					cps_conf->lcore_id);
 				list_del(&entry->list);
-				rte_free(entry);
+				rte_mempool_put(cps_conf->arp_mp, entry);
 			} else
 				entry->stale = true;
 		}
@@ -785,7 +789,7 @@ cps_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 				put_nd((struct in6_addr *)entry->addr,
 					cps_conf->lcore_id);
 				list_del(&entry->list);
-				rte_free(entry);
+				rte_mempool_put(cps_conf->nd_mp, entry);
 			} else
 				entry->stale = true;
 		}
@@ -1178,6 +1182,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	int ret;
 	int ele_size;
 	uint16_t front_inc, back_inc = 0;
+	unsigned int socket_id = rte_lcore_to_socket_id(cps_conf->lcore_id);
 
 	if (net_conf == NULL || (gk_conf == NULL && gt_conf == NULL) ||
 			cps_conf == NULL || lls_conf == NULL) {
@@ -1229,10 +1234,33 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto stage3;
 	}
 
+	cps_conf->arp_mp = rte_mempool_create(
+		"arp_request_pool", (1 << cps_conf->arp_max_entries_exp) - 1,
+		sizeof(struct arp_request), 0, 0, NULL, NULL, NULL, NULL,
+		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+	if (cps_conf->arp_mp == NULL) {
+		G_LOG(ERR,
+			"cps: can't create mempool arp_request_pool at lcore %u\n",
+			lcore_id);
+		ret = -1;
+		goto stage3;
+	}
+
+	cps_conf->nd_mp = rte_mempool_create(
+		"nd_request_pool", (1 << cps_conf->nd_max_entries_exp) - 1,
+		sizeof(struct nd_request), 0, 0, NULL, NULL, NULL, NULL,
+		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
+	if (cps_conf->nd_mp == NULL) {
+		G_LOG(ERR,
+			"cps: can't create mempool nd_request_pool at lcore %u\n", lcore_id);
+		ret = -1;
+		goto arp_mp;
+	}
+
 	ret = init_kni(kni_kmod_path, net_conf->back_iface_enabled ? 2 : 1);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Couldn't initialize KNI\n");
-		goto stage3;
+		goto nd_mp;
 	}
 
 	if (gk_conf != NULL) {
@@ -1285,6 +1313,10 @@ mailbox:
 	destroy_mailbox(&cps_conf->mailbox);
 kni:
 	rm_kni();
+nd_mp:
+	rte_mempool_free(cps_conf->nd_mp);
+arp_mp:
+	rte_mempool_free(cps_conf->arp_mp);
 stage3:
 	pop_n_at_stage3(1);
 stage2:
