@@ -1239,9 +1239,9 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		sizeof(struct arp_request), 0, 0, NULL, NULL, NULL, NULL,
 		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
 	if (cps_conf->arp_mp == NULL) {
-		G_LOG(ERR,
-			"cps: can't create mempool arp_request_pool at lcore %u\n",
-			lcore_id);
+		CPS_LOG(ERR,
+			"Can't create mempool arp_request_pool at lcore %u\n",
+			cps_conf->lcore_id);
 		ret = -1;
 		goto stage3;
 	}
@@ -1251,8 +1251,9 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		sizeof(struct nd_request), 0, 0, NULL, NULL, NULL, NULL,
 		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
 	if (cps_conf->nd_mp == NULL) {
-		G_LOG(ERR,
-			"cps: can't create mempool nd_request_pool at lcore %u\n", lcore_id);
+		CPS_LOG(ERR,
+			"Can't create mempool nd_request_pool at lcore %u\n",
+			cps_conf->lcore_id);
 		ret = -1;
 		goto arp_mp;
 	}
