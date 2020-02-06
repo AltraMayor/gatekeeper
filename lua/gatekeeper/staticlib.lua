@@ -54,13 +54,17 @@ function all_ipairs (a)
 	end, table.maxn(a), -1
 end
 
+local function alloc_lcores_at_numa (numa_table, numa, n)
+	local a1, a2 = split_array(numa_table[numa], n)
+	numa_table[numa] = a2
+	numa_table["__net_conf"].numa_used[numa] = true
+	return a1
+end
+
 function alloc_lcores_from_same_numa (numa_table, n)
 	for numa, lcores in all_ipairs(numa_table) do
 		if #lcores >= n then
-			local a1, a2 = split_array(lcores, n)
-			numa_table[numa] = a2
-			numa_table["__net_conf"].numa_used[numa] = true
-			return a1
+			return alloc_lcores_at_numa(numa_table, numa, n)
 		end
 	end
 	return nil
@@ -72,6 +76,52 @@ function alloc_an_lcore (numa_table)
 		error("There is not enough lcores");
 	end
 	return lcore_t[1]
+end
+
+function count_numa_nodes (numa_table)
+	local count = 0
+	for numa, lcores in all_ipairs(numa_table) do
+		count = count + 1
+	end
+	return count
+end
+
+function alloc_lcores_evenly_from_all_numa_nodes (numa_table, n,
+		fixed_lcores_per_numa)
+	local num_numa_nodes = count_numa_nodes(numa_table)
+	local q = n / num_numa_nodes
+	local r = n % num_numa_nodes
+	local i = 0
+	local res = {["__net_conf"] = numa_table["__net_conf"], }
+	for numa, lcores in all_ipairs(numa_table) do
+		local lcores_needed = q + ((i < r) and 1 or 0)
+		if lcores_needed > 0 then
+			lcores_needed = lcores_needed + fixed_lcores_per_numa
+		else
+			break
+		end
+		if #lcores >= lcores_needed then
+			res[numa] = alloc_lcores_at_numa(numa_table, numa, lcores_needed)
+		else
+			error("There is not enough lcores");
+		end
+		i = i + 1
+	end
+	return res
+end
+
+local function append_array (a, b)
+	for i, v in ipairs(b) do
+		table.insert(a, v)
+	end
+end
+
+function convert_numa_table_to_array (numa_table)
+	local res = {}
+	for numa, lcores in all_ipairs(numa_table) do
+		append_array(res, lcores)
+	end
+	return res
 end
 
 function print_lcore_array (array)

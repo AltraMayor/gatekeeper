@@ -36,13 +36,13 @@ function gatekeeper_init()
 	local gt_conf
 
 	if gatekeeper_server == true then
-		-- n_lcores + 2 on same NUMA: for GK-GT Unit and Solicitor.
 		local n_lcores = 2
-		local gk_lcores =
-			staticlib.alloc_lcores_from_same_numa(numa_table,
-				n_lcores + 2)
-		local sol_lcore = table.remove(gk_lcores)
-		local ggu_lcore = table.remove(gk_lcores)
+		local gk_lcores_tbl =
+			staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
+				n_lcores, 0)
+		local gk_lcores = staticlib.convert_numa_table_to_array(gk_lcores_tbl)
+		local sol_lcore = staticlib.alloc_an_lcore(numa_table)
+		local ggu_lcore = staticlib.alloc_an_lcore(numa_table)
 
 		local solf = require("sol")
 		local sol_conf = solf(net_conf, sol_lcore)
