@@ -350,7 +350,7 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	struct ether_cache *eth_cache;
 	uint32_t pkt_len;
 
-	if (now >= fe->u.granted.cap_expire_at) {
+	if (now >= fe->expire_at) {
 		reinitialize_flow_entry(fe, now);
 		return gk_process_request(fe, packet, req_bufs,
 			num_reqs, sol_conf);
@@ -414,7 +414,7 @@ gk_process_declined(struct flow_entry *fe, struct ipacket *packet,
 {
 	uint64_t now = rte_rdtsc();
 
-	if (unlikely(now >= fe->u.declined.expire_at)) {
+	if (unlikely(now >= fe->expire_at)) {
 		reinitialize_flow_entry(fe, now);
 		return gk_process_request(fe, packet, req_bufs,
 			num_reqs, sol_conf);
@@ -444,7 +444,7 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 	int program_index, rc;
 	uint64_t now = rte_rdtsc();
 
-	if (unlikely(now >= fe->u.bpf.expire_at))
+	if (unlikely(now >= fe->expire_at))
 		goto expired;
 
 	program_index = fe->program_index;
@@ -534,11 +534,11 @@ is_flow_expired(struct flow_entry *fe, uint64_t now)
 			fe->u.request.last_packet_seen_at) >
 			fe->u.request.last_priority + 2;
 	case GK_GRANTED:
-		return now >= fe->u.granted.cap_expire_at;
+		/* FALLTHROUGH */
 	case GK_DECLINED:
-		return now >= fe->u.declined.expire_at;
+		/* FALLTHROUGH */
 	case GK_BPF:
-		return now >= fe->u.bpf.expire_at;
+		return now >= fe->expire_at;
 	default:
 		return true;
 	}
@@ -786,9 +786,9 @@ print_flow_state(struct flow_entry *fe)
 		break;
 	case GK_GRANTED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_GRANTED (%hhu), flow hash value: %u, cap_expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
+			"gk: log the flow state [state: GK_GRANTED (%hhu), flow hash value: %u, expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
 			fe->state, fe->flow_hash_val,
-			fe->u.granted.cap_expire_at,
+			fe->expire_at,
 			fe->u.granted.budget_renew_at,
 			fe->u.granted.tx_rate_kib_cycle,
 			fe->u.granted.budget_byte,
@@ -799,7 +799,7 @@ print_flow_state(struct flow_entry *fe)
 	case GK_DECLINED:
 		ret = snprintf(state_msg, sizeof(state_msg),
 			"gk: log the flow state [state: GK_DECLINED (%hhu), flow hash value: %u, expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val, fe->u.declined.expire_at,
+			fe->state, fe->flow_hash_val, fe->expire_at,
 			ip, __func__, rte_lcore_id());
 		break;
 	case GK_BPF: {
@@ -812,7 +812,7 @@ print_flow_state(struct flow_entry *fe)
 			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
 			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
 			fe->state, fe->flow_hash_val,
-			fe->u.bpf.expire_at, fe->program_index,
+			fe->expire_at, fe->program_index,
 			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
 			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
 			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
@@ -1974,7 +1974,7 @@ update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
 	switch (policy->state) {
 	case GK_GRANTED:
 		fe->state = GK_GRANTED;
-		fe->u.granted.cap_expire_at = now +
+		fe->expire_at = now +
 			policy->params.granted.cap_expire_sec *
 			cycles_per_sec;
 		fe->u.granted.tx_rate_kib_cycle =
@@ -1992,13 +1992,13 @@ update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
 
 	case GK_DECLINED:
 		fe->state = GK_DECLINED;
-		fe->u.declined.expire_at = now +
+		fe->expire_at = now +
 			policy->params.declined.expire_sec * cycles_per_sec;
 		break;
 
 	case GK_BPF:
 		fe->state = GK_BPF;
-		fe->u.bpf.expire_at = now +
+		fe->expire_at = now +
 			policy->params.bpf.expire_sec * cycles_per_sec;
 		fe->program_index = policy->params.bpf.program_index;
 		fe->u.bpf.cookie = policy->params.bpf.cookie;

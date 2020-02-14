@@ -498,7 +498,7 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 		.ready_to_tx = false,
 		.ctx = {
 			.now = now,
-			.expire_at = fe->u.bpf.expire_at,
+			.expire_at = fe->expire_at,
 		},
 	};
 	const struct gk_bpf_flow_handler *handler =
