@@ -180,10 +180,47 @@ out:
 	return ret;
 }
 
+static inline uint64_t
+calc_request_expire_at(uint8_t priority, uint64_t now)
+{
+	uint8_t above_priority = priority + 4;
+
+	RTE_BUILD_BUG_ON(PRIORITY_MAX >= (sizeof(uint64_t) * 8));
+	if (unlikely(above_priority > PRIORITY_MAX)) {
+		/* Avoid overflow of the left shift operator below. */
+		above_priority = PRIORITY_MAX;
+	}
+
+	/*
+	 * TCP waits for 2^i seconds between each retransmitted SYN packet,
+	 * where i is greater or equal to 0. Thus, the corresponding
+	 * priority p for each retransmitted packet i is:
+	 *
+	 * floor(log_2(2^i * 10^12)) = floor(i + log_2(10^12)) = i + 39
+	 *
+	 * If one sets above_priority = p + 4 and waits for the amount
+	 * of time corresponding for the above_priority priority,
+	 * TCP can transmit two more SYN packets:
+	 *
+	 * (2^(i+1)+2^(i+2)) * 10^12 <= 2 ^ above_priority =>
+	 * 2^(i+1) * 10^12 + 2^(i+2) * 10^12 <= 2^(i+2) * 2^41 =>
+	 * 2^(i+2) * 5 * 10^11 + 2^(i+2) * 10^12 <= 2^(i+2) * 2^41 =>
+	 * 5 * 10^11 + 10^12 <= 2^41 (TRUE)
+	 */
+
+	/*
+	 * The cast `(uint64_t)` is needed to force the compiler
+	 * to use the 64-bit version of `<<`.
+	 */
+	return now + (((uint64_t)1 << above_priority) / picosec_per_cycle);
+}
+
 static inline void
 initialize_flow_entry(struct flow_entry *fe, struct ip_flow *flow,
 	uint32_t flow_hash_val, struct gk_fib *grantor_fib)
 {
+	uint64_t now = rte_rdtsc();
+
 	/*
 	 * The flow table is a critical data structure, so,
 	 * whenever the size of entries grow too much,
@@ -197,7 +234,8 @@ initialize_flow_entry(struct flow_entry *fe, struct ip_flow *flow,
 	fe->in_use = true;
 	fe->flow_hash_val = flow_hash_val;
 	fe->state = GK_REQUEST;
-	fe->u.request.last_packet_seen_at = rte_rdtsc();
+	fe->expire_at = calc_request_expire_at(START_PRIORITY, now);
+	fe->u.request.last_packet_seen_at = now;
 	fe->u.request.last_priority = START_PRIORITY;
 	fe->u.request.allowance = START_ALLOWANCE - 1;
 	fe->grantor_fib = grantor_fib;
@@ -207,6 +245,7 @@ static inline void
 reinitialize_flow_entry(struct flow_entry *fe, uint64_t now)
 {
 	fe->state = GK_REQUEST;
+	fe->expire_at = calc_request_expire_at(START_PRIORITY, now);
 	fe->u.request.last_packet_seen_at = now;
 	fe->u.request.last_priority = START_PRIORITY;
 	fe->u.request.allowance = START_ALLOWANCE - 1;
@@ -294,6 +333,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	} else {
 		fe->u.request.last_priority = priority;
 		fe->u.request.allowance = START_ALLOWANCE - 1;
+		fe->expire_at = calc_request_expire_at(priority, now);
 	}
 
 	/*
@@ -508,40 +548,6 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 	rte_panic("Unexpected condition: lcore %u is not running a gk block\n",
 		lcore_id);
 	return 0;
-}
-
-static bool
-is_flow_expired(struct flow_entry *fe, uint64_t now)
-{
-	switch(fe->state) {
-	case GK_REQUEST:
-		if (fe->u.request.last_packet_seen_at > now) {
-			char err_msg[128];
-			int ret = snprintf(err_msg, sizeof(err_msg),
-				"gk: buggy condition at %s: wrong timestamp",
-				__func__);
-			RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-			print_flow_err_msg(&fe->flow, err_msg);
-			return true;
-		}
-
-		/*
-		 * A request entry is considered expired if it is not
-		 * doubling its waiting time. We use +2 instead of +1 in
-		 * the test below to account for random delays in the network.
-		 */
-		return priority_from_delta_time(now,
-			fe->u.request.last_packet_seen_at) >
-			fe->u.request.last_priority + 2;
-	case GK_GRANTED:
-		/* FALLTHROUGH */
-	case GK_DECLINED:
-		/* FALLTHROUGH */
-	case GK_BPF:
-		return now >= fe->expire_at;
-	default:
-		return true;
-	}
 }
 
 static int
@@ -2217,8 +2223,7 @@ gk_proc(void *arg)
 			&tx_back_num_pkts, tx_back_pkts,
 			instance, gk_conf);
 
-		if (fe != NULL && fe->in_use &&
-				is_flow_expired(fe, rte_rdtsc())) {
+		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at) {
 			rte_hash_prefetch_buckets_non_temporal(
 				instance->ip_flow_hash_table,
 				fe->flow_hash_val);
