@@ -282,6 +282,11 @@ struct flow_entry {
 	 */
 	struct gk_fib *grantor_fib;
 
+	/*
+	 * The time at which this flow entry expires (in cycles).
+	 */
+	uint64_t expire_at;
+
 	union {
 		struct {
 			/* The time the last packet of the entry was seen. */
@@ -301,8 +306,6 @@ struct flow_entry {
 		} request;
 
 		struct {
-			/* When the granted capability expires. */
-			uint64_t cap_expire_at;
 			/* When @budget_byte is reset. */
 			uint64_t budget_renew_at;
 			/*
@@ -327,16 +330,6 @@ struct flow_entry {
 		} granted;
 
 		struct {
-			/*
-			 * When the punishment (i.e. the declined capability)
-			 * expires.
-			 */
-			uint64_t expire_at;
-		} declined;
-
-		struct {
-			/* When this state is no longer valid. */
-			uint64_t expire_at;
 			/*
 			 * Memory to be passed to the BPF proram each time
 			 * it is executed.
