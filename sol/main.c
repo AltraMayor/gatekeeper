@@ -411,7 +411,7 @@ req_queue_init(struct sol_config *sol_conf)
 			sol_conf->req_bw_rate * link_speed_bytes;
 	} else {
 		SOL_LOG(NOTICE, "Back interface link speed: undefined\n");
-		if (sol_conf->req_channel_bw_mbps == 0) {
+		if (sol_conf->req_channel_bw_mbps <= 0) {
 			SOL_LOG(ERR, "When link speed on back interface is undefined, parameter req_channel_bw_mbps must be calculated and defined\n");
 			return -1;
 		}
