@@ -1726,7 +1726,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 				rte_pktmbuf_pkt_len(req_bufs[i - 1]);
 		}
 
-		ret = RTE_MAX(gk_solicitor_enqueue_bulk(gk_conf->sol_conf,
+		ret = RTE_MAX(gk_solicitor_enqueue_bulk(instance->sol_inst,
 			req_bufs, num_reqs), 0);
 		if (ret < num_reqs) {
 			for (i = ret; i < num_reqs; i++)
@@ -2372,6 +2372,7 @@ gk_stage1(void *arg)
 	int ret, i;
 	unsigned int num_mbuf;
 	unsigned int socket_id = rte_lcore_to_socket_id(gk_conf->lcores[0]);
+	struct sol_config *sol_conf;
 
 	gk_conf->instances = rte_calloc_socket(__func__, gk_conf->num_lcores,
 		sizeof(struct gk_instance), 0, socket_id);
@@ -2400,6 +2401,7 @@ gk_stage1(void *arg)
 		gk_conf->net->back.total_pkt_burst + gk_conf->num_lcores - 1) /
 		gk_conf->num_lcores);
 
+	sol_conf = gk_conf->sol_conf;
 	for (i = 0; i < gk_conf->num_lcores; i++) {
 		unsigned int lcore = gk_conf->lcores[i];
 		struct gk_instance *inst_ptr = &gk_conf->instances[i];
@@ -2446,6 +2448,14 @@ gk_stage1(void *arg)
 			goto cleanup;
 		}
 		inst_ptr->tx_queue_back = ret;
+
+		if (gk_conf->gk_sol_map[i] >= (unsigned int)sol_conf->num_lcores) {
+			GK_LOG(ERR, "Invalid index (%u) of sol_conf->instances[] for lcore %u\n",
+				gk_conf->gk_sol_map[i], lcore);
+			goto cleanup;
+		}
+
+		inst_ptr->sol_inst = &sol_conf->instances[gk_conf->gk_sol_map[i]];
 
 		/* Setup the GK instance at @lcore. */
 		ret = setup_gk_instance(lcore, gk_conf);
@@ -2535,6 +2545,12 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	if (!(gk_conf->front_max_pkt_burst > 0 &&
 			gk_conf->back_max_pkt_burst > 0)) {
+		ret = -1;
+		goto out;
+	}
+
+	if (gk_conf->gk_sol_map == NULL) {
+		GK_LOG(ERR, "GK-to-SOL mapping is required for initialization\n");
 		ret = -1;
 		goto out;
 	}

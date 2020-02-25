@@ -83,26 +83,39 @@ struct req_queue {
 	uint64_t         time_cpu_cycles;
 };
 
+/* Structures for each SOL instance. */
+struct sol_instance {
+	/*
+	 * Ring into which GK instances enqueue request packets
+	 * to be serviced and sent out by the Solicitor.
+	 */
+	struct rte_ring  *ring;
+
+	/* TX queue on the back interface. */
+	uint16_t         tx_queue_back;
+
+	/* Priority queue for request packets. */
+	struct req_queue req_queue;
+} __rte_cache_aligned;
+
 /* Configuration for the Solicitor functional block. */
 struct sol_config {
-	unsigned int       lcore_id;
-
 	/* Maximum number of requests to store in priority queue at once. */
-	unsigned int       pri_req_max_len;
+	unsigned int        pri_req_max_len;
 
 	/*
 	 * Bandwidth limit for the priority queue of requests,
 	 * as a percentage of the capacity of the link. Must
 	 * be > 0 and < 1.
 	 */
-	double             req_bw_rate;
+	double              req_bw_rate;
 
 	/* Maximum request enqueue/dequeue size. */
-	unsigned int       enq_burst_size;
-	unsigned int       deq_burst_size;
+	unsigned int        enq_burst_size;
+	unsigned int        deq_burst_size;
 
 	/* Token bucket rate approximation error. */
-	double             tb_rate_approx_err;
+	double              tb_rate_approx_err;
 
 	/*
 	 * Bandwidth of request channel in Mbps.
@@ -115,39 +128,35 @@ struct sol_config {
 	 *
 	 * Should be set to 0 if not needed.
 	 */
-	double             req_channel_bw_mbps;
+	double              req_channel_bw_mbps;
 
 	/* Log level for SOL block. */
-	uint32_t           log_level;
+	uint32_t            log_level;
 	/* Dynamic logging type, assigned at runtime. */
-	int                log_type;
+	int                 log_type;
 	/* Log ratelimit interval in ms for SOL block. */
-	uint32_t           log_ratelimit_interval_ms;
+	uint32_t            log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for SOL block. */
-	uint32_t           log_ratelimit_burst;
+	uint32_t            log_ratelimit_burst;
 
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
 
-	/* Priority queue for request packets. */
-	struct req_queue   req_queue;
+	/* The lcore ids at which each instance runs. */
+	unsigned int        *lcores;
 
-	/*
-	 * Ring into which GK instances enqueue request packets
-	 * to be serviced and sent out by the Solicitor.
-	 */
-	struct rte_ring    *ring;
+	/* The number of lcore ids in @lcores. */
+	int                 num_lcores;
 
-	/* TX queue on the back interface. */
-	uint16_t           tx_queue_back;
-	struct net_config  *net;
+	struct sol_instance *instances;
+	struct net_config   *net;
 };
 
-struct sol_config *alloc_sol_conf(unsigned int lcore);
+struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
-int gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
+int gk_solicitor_enqueue_bulk(struct sol_instance *instance,
 	struct rte_mbuf **pkts, uint16_t num_pkts);
 
 #endif /* _GATEKEEPER_SOL_H_ */

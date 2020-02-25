@@ -23,7 +23,7 @@ function gatekeeper_init()
 
 	local numa_table = staticlib.get_numa_table(net_conf)
 
-	local n_fixed_lcores = gatekeeper_server and 5 or 3
+	local n_fixed_lcores = gatekeeper_server and 4 or 3
 	local aux_numa_table =
 		staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
 			n_fixed_lcores, 0)
@@ -40,21 +40,32 @@ function gatekeeper_init()
 	local gt_conf
 
 	if gatekeeper_server == true then
-		local n_lcores = 2
-		local gk_lcores_tbl =
+		-- The following expression to set the number of
+		-- GK block instances is a good recommendation,
+		-- but it may not be optimal for all cases.
+		local n_gk_lcores = 2 * staticlib.count_numa_nodes(numa_table)
+		if n_gk_lcores <= 0 then
+			error("No GK block allocated for Gatekeeper server")
+		end
+
+		local n_sol_lcores_per_socket = 1
+		local lcores_table =
 			staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
-				n_lcores, 0)
-		local gk_lcores = staticlib.convert_numa_table_to_array(gk_lcores_tbl)
-		local sol_lcore = staticlib.alloc_an_lcore(aux_numa_table)
-		local ggu_lcore = staticlib.alloc_an_lcore(aux_numa_table)
+				n_gk_lcores, n_sol_lcores_per_socket)
+		local gk_lcores = staticlib.convert_numa_table_to_array(
+			staticlib.alloc_lcores_evenly_from_all_numa_nodes(lcores_table,
+				n_gk_lcores, 0))
+		local sol_lcores = staticlib.convert_numa_table_to_array(lcores_table)
+		local gk_sol_map = staticlib.gk_sol_map(gk_lcores, sol_lcores)
 
 		local solf = require("sol")
-		local sol_conf = solf(net_conf, sol_lcore)
+		local sol_conf = solf(net_conf, sol_lcores)
 
 		local gkf = require("gk")
-		gk_conf = gkf(net_conf, lls_conf, sol_conf, gk_lcores)
+		gk_conf = gkf(net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 
 		local gguf = require("ggu")
+		local ggu_lcore = staticlib.alloc_an_lcore(aux_numa_table)
 		local ggu_conf = gguf(net_conf, gk_conf, ggu_lcore)
 	else
 		local gtf = require("gt")

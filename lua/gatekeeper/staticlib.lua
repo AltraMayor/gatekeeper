@@ -124,6 +124,48 @@ function convert_numa_table_to_array (numa_table)
 	return res
 end
 
+function gk_sol_map (gk_lcores, sol_lcores)
+	local m = {}
+	local sol_allocated = {}
+
+	if #gk_lcores % #sol_lcores ~= 0 then
+		print("Warning: uneven GK-to-SOL blocks assignment");
+	end
+
+	for i, v in ipairs(sol_lcores) do
+		sol_allocated[i] = 0
+	end
+
+	for i1, v1 in ipairs(gk_lcores) do
+		local idx
+		local socket_id = rte_lcore_to_socket_id(v1)
+
+		for i2, v2 in ipairs(sol_lcores) do
+			if rte_lcore_to_socket_id(v2) == socket_id and
+					(idx == nil or sol_allocated[i2] <
+						sol_allocated[idx]) then
+				idx = i2
+			end
+		end
+
+		if idx == nil then
+			error("No SOL block allocated at NUMA node " .. socket_id)
+		end
+
+		m[i1] = idx
+		sol_allocated[idx] = sol_allocated[idx] + 1
+	end
+
+	for i, v in ipairs(sol_allocated) do
+		if v == 0 then
+			print("Warning: SOL block at lcore " .. sol_lcores[i] ..
+				" has zero GK block allocated to it");
+		end
+	end
+
+	return m
+end
+
 function print_lcore_array (array)
 	io.write("Array: ")
 	for i, v in ipairs(array) do
@@ -356,7 +398,6 @@ struct dynamic_config {
 };
 
 struct sol_config {
-	unsigned int lcore_id;
 	unsigned int pri_req_max_len;
 	double       req_bw_rate;
 	unsigned int enq_burst_size;
@@ -425,7 +466,7 @@ int run_dynamic_config(struct net_config *net_conf,
 	const char *dynamic_config_file, struct dynamic_config *dy_conf,
 	int mode);
 
-struct sol_config *alloc_sol_conf(unsigned int lcore);
+struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 
 ]]

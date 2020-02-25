@@ -135,6 +135,76 @@ l_gk_assign_lcores(lua_State *l)
 	return 0;
 }
 
+static int
+protected_gk_assign_sol_map(lua_State *l)
+{
+	uint32_t ctypeid;
+	struct gk_config *gk_conf;
+	lua_Integer i, n;
+	unsigned int *gk_sol_map;
+
+	gk_conf = *(struct gk_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	n = lua_objlen(l, 2);
+	gk_sol_map = *(unsigned int **)lua_touserdata(l, 3);
+
+	for (i = 1; i <= n; i++) {
+		lua_pushinteger(l, i);	/* Push i. */
+		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+
+		/* Check that t[i] is a number. */
+		if (!lua_isnumber(l, -1))
+			luaL_error(l, "Index %i is not a number", i);
+		gk_sol_map[i - 1] = lua_tointeger(l, -1) - 1;
+
+		lua_pop(l, 1);		/* Pop t[i]. */
+	}
+
+	gk_conf->gk_sol_map = gk_sol_map;
+	return 0; /* No results. */
+}
+
+static int
+l_gk_assign_sol_map(lua_State *l)
+{
+	uint32_t ctypeid;
+	lua_Integer n;
+	unsigned int *gk_sol_map, **ud;
+	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GK_CONFIG_PTR);
+
+	/* Second argument must be a table. */
+	luaL_checktype(l, 2, LUA_TTABLE);
+
+	n = lua_objlen(l, 2); /* Get size of the table. */
+	if (n <= 0)
+		return 0; /* No results. */
+
+	ud = lua_newuserdata(l, sizeof(gk_sol_map));
+
+	lua_pushcfunction(l, protected_gk_assign_sol_map);
+	lua_insert(l, 1);
+
+	gk_sol_map = rte_malloc("gk_conf.gk_sol_map",
+		n * sizeof(*gk_sol_map), 0);
+	if (gk_sol_map == NULL)
+		luaL_error(l, "DPDK has run out memory");
+	*ud = gk_sol_map;
+
+	/* lua_pcall() is used here to avoid leaking @gk_sol_map. */
+	if (lua_pcall(l, 3, 0, 0)) {
+		rte_free(gk_sol_map);
+		lua_error(l);
+	}
+	return 0;
+}
+
 #define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
 
 static int
@@ -207,11 +277,85 @@ l_gt_assign_lcores(lua_State *l)
 	return 0;
 }
 
+#define CTYPE_STRUCT_SOL_CONFIG_PTR "struct sol_config *"
+
+static int
+protected_sol_assign_lcores(lua_State *l)
+{
+	uint32_t ctypeid;
+	struct sol_config *sol_conf;
+	lua_Integer i, n;
+	unsigned int *lcores;
+
+	sol_conf = *(struct sol_config **)
+		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
+	n = lua_objlen(l, 2);
+	lcores = *(unsigned int **)lua_touserdata(l, 3);
+
+	for (i = 1; i <= n; i++) {
+		lua_pushinteger(l, i);	/* Push i. */
+		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+
+		/* Check that t[i] is a number. */
+		if (!lua_isnumber(l, -1))
+			luaL_error(l, "Index %i is not a number", i);
+		lcores[i - 1] = lua_tointeger(l, -1);
+
+		lua_pop(l, 1);		/* Pop t[i]. */
+	}
+
+	sol_conf->lcores = lcores;
+	sol_conf->num_lcores = n;
+	return 0; /* No results. */
+}
+
+static int
+l_sol_assign_lcores(lua_State *l)
+{
+	uint32_t ctypeid;
+	lua_Integer n;
+	unsigned int *lcores, **ud;
+	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_SOL_CONFIG_PTR);
+
+	/* First argument must be of type CTYPE_STRUCT_SOL_CONFIG_PTR. */
+	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_SOL_CONFIG_PTR);
+
+	/* Second argument must be a table. */
+	luaL_checktype(l, 2, LUA_TTABLE);
+
+	n = lua_objlen(l, 2); /* Get size of the table. */
+	if (n <= 0)
+		return 0; /* No results. */
+
+	ud = lua_newuserdata(l, sizeof(lcores));
+
+	lua_pushcfunction(l, protected_sol_assign_lcores);
+	lua_insert(l, 1);
+
+	lcores = rte_malloc("sol_conf.lcores", n * sizeof(*lcores), 0);
+	if (lcores == NULL)
+		luaL_error(l, "DPDK has run out memory");
+	*ud = lcores;
+
+	/* lua_pcall() is used here to avoid leaking @lcores. */
+	if (lua_pcall(l, 3, 0, 0)) {
+		rte_free(lcores);
+		lua_error(l);
+	}
+	return 0;
+}
+
 static const struct luaL_reg staticlib [] = {
 	{"list_lcores",			l_list_lcores},
 	{"rte_lcore_to_socket_id",	l_rte_lcore_to_socket_id},
 	{"gk_assign_lcores",		l_gk_assign_lcores},
+	{"gk_assign_sol_map",		l_gk_assign_sol_map},
 	{"gt_assign_lcores",		l_gt_assign_lcores},
+	{"sol_assign_lcores",		l_sol_assign_lcores},
 	{NULL,				NULL}	/* Sentinel. */
 };
 
