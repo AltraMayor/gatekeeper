@@ -145,7 +145,7 @@ struct sol_config {
 	struct net_config  *net;
 };
 
-struct sol_config *alloc_sol_conf(void);
+struct sol_config *alloc_sol_conf(unsigned int lcore);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 int gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
 	struct rte_mbuf **pkts, uint16_t num_pkts);

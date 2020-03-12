@@ -773,6 +773,7 @@ int
 lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 	uint32_t key_len)
 {
+	unsigned int socket_id = rte_lcore_to_socket_id(lls_conf->lcore_id);
 	struct rte_hash_parameters lls_cache_params = {
 		.name = cache->name,
 		.entries = lls_conf->max_num_cache_records,
@@ -780,7 +781,7 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 		.key_len = key_len,
 		.hash_func = DEFAULT_HASH_FUNC,
 		.hash_func_init_val = 0,
-		.socket_id = rte_lcore_to_socket_id(lls_conf->lcore_id),
+		.socket_id = socket_id,
 		/*
 		 * Enable concurrency control for race conditions
 		 * between writers (LLS) and readers (Dynamic Config).
@@ -788,8 +789,9 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 		.extra_flag = RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY,
 	};
 
-	cache->records = rte_calloc("lls_records",
-		lls_conf->max_num_cache_records, sizeof(*cache->records), 0);
+	cache->records = rte_calloc_socket("lls_records",
+		lls_conf->max_num_cache_records, sizeof(*cache->records), 0,
+		socket_id);
 	if (cache->records == NULL) {
 		LLS_LOG(ERR, "Could not allocate %s cache records\n",
 			cache->name);

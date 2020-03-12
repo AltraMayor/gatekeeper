@@ -579,6 +579,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		.key_len = sizeof(struct ip_flow),
 		.hash_func = rss_ip_flow_hf,
 		.hash_func_init_val = 0,
+		.socket_id = socket_id,
 	};
 
 	ret = snprintf(ht_name, sizeof(ht_name), "ip_flow_hash_%u", block_idx);
@@ -586,7 +587,6 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 
 	/* Setup the flow hash table for GK block @block_idx. */
 	ip_flow_hash_params.name = ht_name;
-	ip_flow_hash_params.socket_id = socket_id;
 	instance->ip_flow_hash_table = rte_hash_create(&ip_flow_hash_params);
 	if (instance->ip_flow_hash_table == NULL) {
 		GK_LOG(ERR,
@@ -600,8 +600,8 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	rte_hash_set_cmp_func(instance->ip_flow_hash_table, ip_flow_cmp_eq);
 
 	/* Setup the flow entry table for GK block @block_idx. */
-	instance->ip_flow_entry_table = (struct flow_entry *)rte_calloc(NULL,
-		gk_conf->flow_ht_size, sizeof(struct flow_entry), 0);
+	instance->ip_flow_entry_table = rte_calloc_socket(
+		NULL, gk_conf->flow_ht_size, sizeof(struct flow_entry), 0, socket_id);
 	if (instance->ip_flow_entry_table == NULL) {
 		GK_LOG(ERR,
 			"The GK block can't create flow entry table at lcore %u\n",
@@ -2371,14 +2371,15 @@ gk_stage1(void *arg)
 	int num_rx_queues = gk_conf->net->front.num_rx_queues;
 	int ret, i;
 	unsigned int num_mbuf;
+	unsigned int socket_id = rte_lcore_to_socket_id(gk_conf->lcores[0]);
 
-	gk_conf->instances = rte_calloc(__func__, gk_conf->num_lcores,
-		sizeof(struct gk_instance), 0);
+	gk_conf->instances = rte_calloc_socket(__func__, gk_conf->num_lcores,
+		sizeof(struct gk_instance), 0, socket_id);
 	if (gk_conf->instances == NULL)
 		goto cleanup;
 
-	gk_conf->queue_id_to_instance = rte_malloc(__func__,
-		num_rx_queues * sizeof(*gk_conf->queue_id_to_instance), 0);
+	gk_conf->queue_id_to_instance = rte_malloc_socket(__func__,
+		num_rx_queues * sizeof(*gk_conf->queue_id_to_instance), 0, socket_id);
 	if (gk_conf->queue_id_to_instance == NULL)
 		goto cleanup;
 
@@ -2389,8 +2390,7 @@ gk_stage1(void *arg)
 	 * Set up the GK LPM table. We assume that
 	 * all the GK instances are running on the same socket.
 	 */
-	ret = setup_gk_lpm(gk_conf,
-		rte_lcore_to_socket_id(gk_conf->lcores[0]));
+	ret = setup_gk_lpm(gk_conf, socket_id);
 	if (ret < 0)
 		goto cleanup;
 

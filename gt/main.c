@@ -1862,8 +1862,9 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	}
 
 	instance->num_ggu_pkts = 0;
-	instance->ggu_pkts = rte_calloc(__func__, gt_conf->max_ggu_notify_pkts,
-		sizeof(struct ggu_notify_pkt), 0);
+	instance->ggu_pkts = rte_calloc_socket(__func__,
+		gt_conf->max_ggu_notify_pkts, sizeof(struct ggu_notify_pkt), 0,
+		rte_lcore_to_socket_id(lcore_id));
 	if (instance->ggu_pkts == NULL) {
 		GT_LOG(ERR,
 			"Failed to allocate fixed array of Gatekeeper notification packets on lcore %u\n",
@@ -1974,8 +1975,9 @@ gt_stage1(void *arg)
 	int ret;
 	struct gt_config *gt_conf = arg;
 
-	gt_conf->instances = rte_calloc(__func__, gt_conf->num_lcores,
-		sizeof(struct gt_instance), 0);
+	gt_conf->instances = rte_calloc_socket(__func__, gt_conf->num_lcores,
+		sizeof(struct gt_instance), 0,
+		rte_lcore_to_socket_id(gt_conf->lcores[0]));
 	if (gt_conf->instances == NULL) {
 		ret = -1;
 		goto out;
