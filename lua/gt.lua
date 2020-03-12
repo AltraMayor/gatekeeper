@@ -79,8 +79,9 @@ return function (net_conf, lls_conf, numa_table)
 		math.max(lls_conf.mailbox_max_pkt_sub,
 		gt_conf.max_pkt_burst)
 
-	local gt_lcores = staticlib.alloc_lcores_from_same_numa(numa_table,
-		n_lcores)
+	local gt_lcores = staticlib.convert_numa_table_to_array(
+		staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
+			n_lcores, 0))
 	staticlib.gt_assign_lcores(gt_conf, gt_lcores)
 
 	local ret = staticlib.c.run_gt(net_conf, gt_conf,

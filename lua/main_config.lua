@@ -23,6 +23,10 @@ function gatekeeper_init()
 
 	local numa_table = staticlib.get_numa_table(net_conf)
 
+	local n_fixed_lcores = gatekeeper_server and 5 or 3
+	local aux_numa_table =
+		staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
+			n_fixed_lcores, 0)
 	-- LLS should be the first block initialized, since it should have
 	-- queue IDs of 0 so that when ARP filters are not supported ARP
 	-- packets are steered to the LLS block by the NIC. This occurs because
@@ -30,19 +34,19 @@ function gatekeeper_init()
 	-- when running Gatekeeper on Amazon, since the ENA distributes non-IP
 	-- packets to the first queue configured for RSS.
 	local llsf = require("lls")
-	local lls_conf = llsf(net_conf, numa_table)
+	local lls_conf = llsf(net_conf, aux_numa_table)
 
 	local gk_conf
 	local gt_conf
 
 	if gatekeeper_server == true then
-		-- n_lcores + 2 on same NUMA: for GK-GT Unit and Solicitor.
 		local n_lcores = 2
-		local gk_lcores =
-			staticlib.alloc_lcores_from_same_numa(numa_table,
-				n_lcores + 2)
-		local sol_lcore = table.remove(gk_lcores)
-		local ggu_lcore = table.remove(gk_lcores)
+		local gk_lcores_tbl =
+			staticlib.alloc_lcores_evenly_from_all_numa_nodes(numa_table,
+				n_lcores, 0)
+		local gk_lcores = staticlib.convert_numa_table_to_array(gk_lcores_tbl)
+		local sol_lcore = staticlib.alloc_an_lcore(aux_numa_table)
+		local ggu_lcore = staticlib.alloc_an_lcore(aux_numa_table)
 
 		local solf = require("sol")
 		local sol_conf = solf(net_conf, sol_lcore)
@@ -60,10 +64,10 @@ function gatekeeper_init()
 	-- Allocate CPS after to increase the change that the LLS block is
 	-- allocated in the same NUMA node as the GK/GT/GK-GT-unit blocks.
 	local cpsf = require("cps")
-	local cps_conf = cpsf(net_conf, gk_conf, gt_conf, lls_conf, numa_table)
+	local cps_conf = cpsf(net_conf, gk_conf, gt_conf, lls_conf, aux_numa_table)
 
 	local dyf = require("dyn_cfg")
-	local dy_conf = dyf(net_conf, gk_conf, gt_conf, numa_table)
+	local dy_conf = dyf(net_conf, gk_conf, gt_conf, aux_numa_table)
 
 	return 0
 end
