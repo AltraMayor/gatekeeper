@@ -117,6 +117,7 @@ struct gk_instance {
 	 * The memory pool used for packet buffers in this instance.
 	 */
 	struct rte_mempool *mp;
+	struct sol_instance *sol_inst;
 } __rte_cache_aligned;
 
 #define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)
@@ -214,6 +215,9 @@ struct gk_config {
 
 	/* The lcore ids at which each instance runs. */
 	unsigned int       *lcores;
+
+	/* Mapping the GK instances to the SOL instances. */
+	unsigned int       *gk_sol_map;
 
 	/* The number of lcore ids in @lcores. */
 	int                num_lcores;

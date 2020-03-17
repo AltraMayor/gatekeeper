@@ -188,9 +188,10 @@ drop:
  * a request to be initialized.
  */
 static void
-enqueue_req(struct sol_config *sol_conf, struct rte_mbuf *req)
+enqueue_req(struct sol_config *sol_conf, struct sol_instance *instance,
+	struct rte_mbuf *req)
 {
-	struct req_queue *req_queue = &sol_conf->req_queue;
+	struct req_queue *req_queue = &instance->req_queue;
 	uint8_t priority = req->udata64;
 
 	if (unlikely(priority > GK_MAX_REQ_PRIORITY)) {
@@ -223,14 +224,14 @@ enqueue_req(struct sol_config *sol_conf, struct rte_mbuf *req)
 }
 
 static void
-enqueue_reqs(struct sol_config *sol_conf)
+enqueue_reqs(struct sol_config *sol_conf, struct sol_instance *instance)
 {
 	struct rte_mbuf *reqs[sol_conf->enq_burst_size];
-	int num_reqs = rte_ring_sc_dequeue_burst(sol_conf->ring,
+	int num_reqs = rte_ring_sc_dequeue_burst(instance->ring,
 		(void **)reqs, sol_conf->enq_burst_size, NULL);
 	int i;
 	for (i = 0; i < num_reqs; i++)
-		enqueue_req(sol_conf, reqs[i]);
+		enqueue_req(sol_conf, instance, reqs[i]);
 }
 
 static inline void
@@ -294,9 +295,10 @@ credits_check(struct req_queue *req_queue, struct rte_mbuf *pkt)
 		pos = n, n = list_next_entry_m(n))
 
 static void
-dequeue_reqs(struct sol_config *sol_conf, uint8_t tx_port)
+dequeue_reqs(struct sol_config *sol_conf,
+	struct sol_instance *instance, uint8_t tx_port)
 {
-	struct req_queue *req_queue = &sol_conf->req_queue;
+	struct req_queue *req_queue = &instance->req_queue;
 	struct rte_mbuf *entry, *next;
 
 	struct rte_mbuf *pkts_out[sol_conf->deq_burst_size];
@@ -340,7 +342,7 @@ out:
 	/* We cannot drop the packets, so re-send. */
 	while (nb_pkts_out > 0) {
 		uint16_t sent = rte_eth_tx_burst(tx_port,
-			sol_conf->tx_queue_back,
+			instance->tx_queue_back,
 			pkts_out + total_sent, nb_pkts_out);
 		total_sent += sent;
 		nb_pkts_out -= sent;
@@ -389,16 +391,13 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 static int
 req_queue_init(struct sol_config *sol_conf)
 {
-	struct req_queue *req_queue = &sol_conf->req_queue;
 	uint64_t link_speed_bytes;
 	double max_credit_bytes_precise;
 	double cycles_per_byte_precise;
+	uint64_t cycles_per_byte_floor;
+	uint64_t now;
 	uint32_t a, b;
-	int ret;
-
-	req_queue->len = 0;
-	req_queue->highest_priority = 0;
-	req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
+	int ret, i;
 
 	/* Find link speed in bytes, even for a bonded interface. */
 	ret = iface_speed_bytes(&sol_conf->net->back, &link_speed_bytes);
@@ -419,10 +418,7 @@ req_queue_init(struct sol_config *sol_conf)
 			mbits_to_bytes(sol_conf->req_channel_bw_mbps);
 	}
 
-
-	/* Initialize token bucket as full. */
-	req_queue->tb_max_credit_bytes = round(max_credit_bytes_precise);
-	req_queue->tb_credit_bytes = req_queue->tb_max_credit_bytes;
+	max_credit_bytes_precise /= sol_conf->num_lcores;
 
 	/*
 	 * Compute the number of cycles needed to credit the request queue
@@ -435,47 +431,91 @@ req_queue_init(struct sol_config *sol_conf)
 	 * the integer number of cycles per byte to the numerator.
 	 */
 	cycles_per_byte_precise = cycles_per_sec / max_credit_bytes_precise;
-	req_queue->cycles_per_byte_floor = cycles_per_byte_precise;
+	cycles_per_byte_floor = cycles_per_byte_precise;
 	ret = rte_approx(
-		cycles_per_byte_precise - req_queue->cycles_per_byte_floor,
+		cycles_per_byte_precise - cycles_per_byte_floor,
 		sol_conf->tb_rate_approx_err, &a, &b);
 	if (ret < 0) {
 		SOL_LOG(ERR, "Could not approximate the request queue's allocated bandwidth\n");
 		return ret;
 	}
-	req_queue->cycles_per_byte_a = a;
-	req_queue->cycles_per_byte_b = b;
 
 	/* Add integer number of cycles per byte to numerator. */
-	req_queue->cycles_per_byte_a +=
-		req_queue->cycles_per_byte_floor * req_queue->cycles_per_byte_b;
+	a += cycles_per_byte_floor * b;
 
-	SOL_LOG(NOTICE, "Cycles per byte (%f) represented as a rational: %"PRIu64" / %"PRIu64"\n",
-		cycles_per_byte_precise,
-		req_queue->cycles_per_byte_a, req_queue->cycles_per_byte_b);
+	SOL_LOG(NOTICE, "Cycles per byte (%f) represented as a rational: %u / %u\n",
+		cycles_per_byte_precise, a, b);
 
-	req_queue->time_cpu_cycles = rte_rdtsc();
+	now = rte_rdtsc();
+
+	for (i = 0; i < sol_conf->num_lcores; i++) {
+		struct req_queue *req_queue = &sol_conf->instances[i].req_queue;
+
+		INIT_LIST_HEAD(&req_queue->head);
+
+		req_queue->len = 0;
+		req_queue->highest_priority = 0;
+		req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
+
+		/* Initialize token bucket as full. */
+		req_queue->tb_max_credit_bytes = round(max_credit_bytes_precise);
+		req_queue->tb_credit_bytes = req_queue->tb_max_credit_bytes;
+
+		/*
+		 * Initialize the number of cycles needed to credit
+		 * the request queue with bytes.
+		 */
+		req_queue->cycles_per_byte_floor = cycles_per_byte_floor;
+		req_queue->cycles_per_byte_a = a;
+		req_queue->cycles_per_byte_b = b;
+
+		req_queue->time_cpu_cycles = now;
+	}
+
 	return 0;
 }
 
 static int
 cleanup_sol(struct sol_config *sol_conf)
 {
-	struct req_queue *req_queue = &sol_conf->req_queue;
-	struct rte_mbuf *entry, *next;
+	int i;
 
-	list_for_each_entry_safe_m(entry, next, &req_queue->head) {
-		list_del(mbuf_to_list(entry));
-		rte_pktmbuf_free(entry);
-		req_queue->len--;
+	if (sol_conf->instances == NULL)
+		goto free_sol_conf;
+
+	for (i = 0; i < sol_conf->num_lcores; i++) {
+		struct req_queue *req_queue = &sol_conf->instances[i].req_queue;
+		struct rte_mbuf *entry, *next;
+
+		list_for_each_entry_safe_m(entry, next, &req_queue->head) {
+			list_del(mbuf_to_list(entry));
+			rte_pktmbuf_free(entry);
+			req_queue->len--;
+		}
+
+		if (req_queue->len > 0)
+			SOL_LOG(NOTICE, "Bug: removing all requests from the priority queue on cleanup leaves the queue length at %"PRIu32" at lcore %u\n",
+				req_queue->len, sol_conf->lcores[i]);
+
+		rte_ring_free(sol_conf->instances[i].ring);
 	}
 
-	if (req_queue->len > 0)
-		SOL_LOG(NOTICE, "Bug: removing all requests from the priority queue on cleanup leaves the queue length at %"PRIu32"\n",
-			req_queue->len);
+	rte_free(sol_conf->instances);
 
-	rte_ring_free(sol_conf->ring);
+free_sol_conf:
 	rte_free(sol_conf);
+	return 0;
+}
+
+static int
+get_block_idx(struct sol_config *sol_conf, unsigned int lcore_id)
+{
+	int i;
+	for (i = 0; i < sol_conf->num_lcores; i++)
+		if (sol_conf->lcores[i] == lcore_id)
+			return i;
+	rte_panic("Unexpected condition: lcore %u is not running a sol block\n",
+		lcore_id);
 	return 0;
 }
 
@@ -483,15 +523,17 @@ static int
 sol_proc(void *arg)
 {
 	struct sol_config *sol_conf = (struct sol_config *)arg;
-	unsigned int lcore = sol_conf->lcore_id;
+	unsigned int lcore = rte_lcore_id();
+	unsigned int block_idx = get_block_idx(sol_conf, lcore);
+	struct sol_instance *instance = &sol_conf->instances[block_idx];
 	uint8_t tx_port_back = sol_conf->net->back.id;
 
 	SOL_LOG(NOTICE,
 		"The Solicitor block is running at lcore = %u\n", lcore);
 
 	while (likely(!exiting)) {
-		enqueue_reqs(sol_conf);
-		dequeue_reqs(sol_conf, tx_port_back);
+		enqueue_reqs(sol_conf, instance);
+		dequeue_reqs(sol_conf, instance, tx_port_back);
 	}
 
 	SOL_LOG(NOTICE,
@@ -504,14 +546,47 @@ static int
 sol_stage1(void *arg)
 {
 	struct sol_config *sol_conf = arg;
-	int ret = get_queue_id(&sol_conf->net->back, QUEUE_TYPE_TX,
-		sol_conf->lcore_id, NULL);
-	if (ret < 0) {
-		SOL_LOG(ERR, "Cannot assign a TX queue for the back interface for lcore %u\n",
-			sol_conf->lcore_id);
+	int i;
+
+	sol_conf->instances = rte_calloc_socket(__func__, sol_conf->num_lcores,
+		sizeof(struct sol_instance), 0,
+		rte_lcore_to_socket_id(sol_conf->lcores[0]));
+	if (sol_conf->instances == NULL)
 		goto cleanup;
+
+	for (i = 0; i < sol_conf->num_lcores; i++) {
+		unsigned int lcore = sol_conf->lcores[i];
+		struct sol_instance *inst_ptr = &sol_conf->instances[i];
+		char ring_name[64];
+
+		int ret = snprintf(ring_name, sizeof(ring_name),
+			"sol_reqs_ring_%u", i);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(ring_name));
+
+		inst_ptr->ring = rte_ring_create(ring_name,
+			rte_align32pow2(sol_conf->pri_req_max_len),
+			rte_lcore_to_socket_id(lcore), RING_F_SC_DEQ);
+		if (inst_ptr->ring == NULL) {
+			G_LOG(ERR,
+				"sol: can't create ring sol_reqs_ring at lcore %u\n",
+				lcore);
+			goto cleanup;
+		}
+
+		ret = get_queue_id(&sol_conf->net->back, QUEUE_TYPE_TX,
+			lcore, NULL);
+		if (ret < 0) {
+			SOL_LOG(ERR, "Cannot assign a TX queue for the back interface for lcore %u\n",
+				lcore);
+			goto cleanup;
+		}
+		inst_ptr->tx_queue_back = ret;
+
+		/*
+		 * @inst_ptr->req_queue is initialized at
+		 * sol_stage2()/req_queue_init().
+		 */
 	}
-	sol_conf->tx_queue_back = ret;
 
 	return 0;
 
@@ -538,7 +613,7 @@ cleanup:
 int
 run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 {
-	int ret;
+	int ret, i;
 	uint16_t front_inc;
 
 	if (net_conf == NULL || sol_conf == NULL) {
@@ -558,9 +633,11 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	}
 	sol_conf->log_type = sol_logtype;
 
-	log_ratelimit_state_init(sol_conf->lcore_id,
-		sol_conf->log_ratelimit_interval_ms,
-		sol_conf->log_ratelimit_burst);
+	for (i = 0; i < sol_conf->num_lcores; i++) {
+		log_ratelimit_state_init(sol_conf->lcores[i],
+			sol_conf->log_ratelimit_interval_ms,
+			sol_conf->log_ratelimit_burst);
+	}
 
 	if (!net_conf->back_iface_enabled) {
 		SOL_LOG(ERR, "Back interface is required\n");
@@ -604,6 +681,9 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 		goto out;
 	}
 
+	if (sol_conf->num_lcores <= 0)
+		goto out;
+
 	/*
 	 * Need to account for the packets in the following scenarios:
 	 *
@@ -617,31 +697,26 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	 * Although the packets are going to the back interface,
 	 * they are allocated at the front interface.
 	 */
-	front_inc = 2 * sol_conf->pri_req_max_len + sol_conf->enq_burst_size;
+	front_inc = (2 * sol_conf->pri_req_max_len +
+		sol_conf->enq_burst_size) * sol_conf->num_lcores;
 	net_conf->front.total_pkt_burst += front_inc;
-
-	sol_conf->ring = rte_ring_create("sol_reqs_ring",
-		rte_align32pow2(sol_conf->pri_req_max_len),
-		rte_lcore_to_socket_id(sol_conf->lcore_id), RING_F_SC_DEQ);
-	if (sol_conf->ring == NULL) {
-		G_LOG(ERR,
-			"mailbox: can't create ring sol_reqs_ring at lcore %u\n",
-			sol_conf->lcore_id);
-		ret = -1;
-		goto burst;
-	}
 
 	ret = net_launch_at_stage1(net_conf, 0, 0, 0, 1, sol_stage1, sol_conf);
 	if (ret < 0)
-		goto ring;
+		goto burst;
 
 	ret = launch_at_stage2(sol_stage2, sol_conf);
 	if (ret < 0)
 		goto stage1;
 
-	ret = launch_at_stage3("sol", sol_proc, sol_conf, sol_conf->lcore_id);
-	if (ret < 0)
-		goto stage2;
+	for (i = 0; i < sol_conf->num_lcores; i++) {
+		unsigned int lcore = sol_conf->lcores[i];
+		ret = launch_at_stage3("sol", sol_proc, sol_conf, lcore);
+		if (ret < 0) {
+			pop_n_at_stage3(i);
+			goto stage2;
+		}
+	}
 
 	sol_conf->net = net_conf;
 
@@ -652,8 +727,6 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
-ring:
-	rte_ring_free(sol_conf->ring);
 burst:
 	net_conf->front.total_pkt_burst -= front_inc;
 out:
@@ -669,7 +742,7 @@ out:
  * during initialization.
  */
 struct sol_config *
-alloc_sol_conf(unsigned int lcore)
+alloc_sol_conf(void)
 {
 	struct sol_config *sol_conf;
 	static rte_atomic16_t num_sol_conf_alloc = RTE_ATOMIC16_INIT(0);
@@ -677,23 +750,20 @@ alloc_sol_conf(unsigned int lcore)
 		SOL_LOG(ERR, "Trying to allocate the second instance of struct sol_config\n");
 		return NULL;
 	}
-	sol_conf = rte_calloc_socket("sol_config", 1,
-		sizeof(struct sol_config), 0, rte_lcore_to_socket_id(lcore));
+	sol_conf = rte_calloc("sol_config", 1, sizeof(struct sol_config), 0);
 	if (sol_conf == NULL) {
 		rte_atomic16_clear(&num_sol_conf_alloc);
 		SOL_LOG(ERR, "Failed to allocate the first instance of struct sol_config\n");
 		return NULL;
 	}
-	sol_conf->lcore_id = lcore;
-	INIT_LIST_HEAD(&sol_conf->req_queue.head);
 	return sol_conf;
 }
 
 int
-gk_solicitor_enqueue_bulk(struct sol_config *sol_conf,
+gk_solicitor_enqueue_bulk(struct sol_instance *instance,
 	struct rte_mbuf **pkts, uint16_t num_pkts)
 {
-	unsigned int num_enqueued = rte_ring_mp_enqueue_bulk(sol_conf->ring,
+	unsigned int num_enqueued = rte_ring_mp_enqueue_bulk(instance->ring,
 		(void **)pkts, num_pkts, NULL);
 	if (unlikely(num_enqueued < num_pkts)) {
 		SOL_LOG(ERR, "Failed to enqueue a bulk of %hu requests - only %u requests are enqueued\n",

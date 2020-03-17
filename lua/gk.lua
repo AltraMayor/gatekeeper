@@ -1,4 +1,4 @@
-return function (net_conf, lls_conf, sol_conf, gk_lcores)
+return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 
 	--
 	-- Configure the variables below for the GK block.
@@ -56,6 +56,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores)
 	
 	local num_lcores = #gk_lcores
 	staticlib.gk_assign_lcores(gk_conf, gk_lcores)
+	staticlib.gk_assign_sol_map(gk_conf, gk_sol_map)
 
 	gk_conf.log_level = log_level
 

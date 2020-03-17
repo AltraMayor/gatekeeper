@@ -1,4 +1,4 @@
-return function (net_conf, lcore)
+return function (net_conf, sol_lcores)
 
 	--
 	-- Configure the variables below for the SOL block.
@@ -10,7 +10,7 @@ return function (net_conf, lcore)
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
-	local pri_req_max_len = 1024
+	local pri_req_max_len = 512
 	local req_bw_rate = 0.05
 	local enq_burst_size = 32
 	local deq_burst_size = 32
@@ -23,10 +23,12 @@ return function (net_conf, lcore)
 	-- End configuration of SOL block.
 	--
 
-	local sol_conf = staticlib.c.alloc_sol_conf(lcore)
+	local sol_conf = staticlib.c.alloc_sol_conf()
 	if sol_conf == nil then
 		error("Failed to allocate sol_conf")
 	end
+
+	staticlib.sol_assign_lcores(sol_conf, sol_lcores)
 
 	sol_conf.log_level = log_level
 
