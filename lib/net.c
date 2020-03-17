@@ -896,7 +896,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 {
 	unsigned int i;
 
-	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF|GATEKEEPER_IPV6_RSS_HF) !=
+	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF | GATEKEEPER_IPV6_RSS_HF) !=
 		ETH_RSS_IP);
 
 	/*
