@@ -639,6 +639,8 @@ ggu_proc(void *arg)
 						ggu_conf);
 				}
 			}
+			mb_free_entry_bulk(&ggu_conf->mailbox,
+				(void * const *)reqs, num_reqs);
 		}
 	}
 
