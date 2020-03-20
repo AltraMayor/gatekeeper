@@ -726,7 +726,8 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 	struct rte_ipv6_hdr *notify_ipv6 = NULL;
 	struct rte_udp_hdr *notify_udp;
 	struct ggu_common_hdr *notify_ggu;
-	size_t l2_len = gt_conf->net->front.l2_len_out;
+	struct gatekeeper_if *iface = &gt_conf->net->front;
+	size_t l2_len = iface->l2_len_out;
 
 	if (ethertype == RTE_ETHER_TYPE_IPV4) {
 		notify_eth = (struct rte_ether_hdr *)rte_pktmbuf_append(
@@ -754,7 +755,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 	notify_ggu->version = GGU_PD_VER;
 
 	/* Fill up the link-layer header. */
-	fill_eth_hdr_reverse(&gt_conf->net->front, notify_eth, pkt_info);
+	fill_eth_hdr_reverse(iface, notify_eth, pkt_info);
 	notify_pkt->l2_len = l2_len;
 
 	/* Fill up the IP header. */
@@ -780,9 +781,9 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		 * in order to offload the checksum calculation.
 		 */
 		notify_ipv4->hdr_checksum = 0;
-
-		notify_pkt->ol_flags |= (PKT_TX_IPV4 |
-			PKT_TX_IP_CKSUM | PKT_TX_UDP_CKSUM);
+		notify_pkt->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
+		if (likely(iface->ipv4_hw_udp_cksum))
+			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 		notify_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
 	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *ipv6_hdr =
@@ -791,15 +792,16 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		notify_ipv6->vtc_flow =
 			rte_cpu_to_be_32(IPv6_DEFAULT_VTC_FLOW);
 		notify_ipv6->proto = IPPROTO_UDP; 
-		notify_ipv6->hop_limits =
-			gt_conf->net->front.ipv6_default_hop_limits;
+		notify_ipv6->hop_limits = iface->ipv6_default_hop_limits;
 
 		rte_memcpy(notify_ipv6->src_addr, ipv6_hdr->dst_addr,
 			sizeof(notify_ipv6->src_addr));
 		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
 			sizeof(notify_ipv6->dst_addr));
 
-		notify_pkt->ol_flags |= (PKT_TX_IPV6 | PKT_TX_UDP_CKSUM);
+		notify_pkt->ol_flags |= PKT_TX_IPV6;
+		if (likely(iface->ipv6_hw_udp_cksum))
+			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
 	}
 
@@ -917,13 +919,23 @@ find_notify_pkt(struct gt_config *gt_conf, struct gt_packet_headers *pkt_info,
 }
 
 static void
-prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt)
+prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * Complete the packet fields that can only be done
 	 * when the packet is ready to be transmitted.
 	 */
 	struct rte_udp_hdr *notify_udp;
+
+	/*
+	 * Datagram length needs to be set before calling
+	 * rte_ipv*_udptcp_cksum(). Although it doesn't
+	 * need to be set for rte_ipv*_phdr_cksum(), do
+	 * it here to avoid calculating it in multiple places.
+	 */
+	uint16_t dgram_len_be =
+		rte_cpu_to_be_16((uint16_t)(ggu_pkt->buf->data_len -
+			ggu_pkt->buf->l2_len - ggu_pkt->buf->l3_len));
 
 	if (ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV4) {
 		struct rte_ipv4_hdr *notify_ipv4 =
@@ -933,11 +945,19 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt)
 		notify_ipv4->total_length = rte_cpu_to_be_16(
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len);
 
-		/* Offload the UDP checksum. */
 		notify_udp = (struct rte_udp_hdr *)&notify_ipv4[1];
-		notify_udp->dgram_cksum =
-			rte_ipv4_phdr_cksum(notify_ipv4,
-				ggu_pkt->buf->ol_flags);
+		notify_udp->dgram_len = dgram_len_be;
+		if (likely(iface->ipv4_hw_udp_cksum)) {
+			/* Offload the UDP checksum. */
+			notify_udp->dgram_cksum =
+				rte_ipv4_phdr_cksum(notify_ipv4,
+					ggu_pkt->buf->ol_flags);
+		} else {
+			notify_udp->dgram_cksum = 0;
+			notify_udp->dgram_cksum =
+				rte_ipv4_udptcp_cksum(notify_ipv4,
+					notify_udp);
+		}
 	} else if (likely(ggu_pkt->ipaddr.proto == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *notify_ipv6 =
 			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
@@ -946,26 +966,30 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt)
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len -
 			sizeof(struct rte_ipv6_hdr));
 
-		/* Offload the UDP checksum. */
 		notify_udp = (struct rte_udp_hdr *)&notify_ipv6[1];
-		notify_udp->dgram_cksum =
-			rte_ipv6_phdr_cksum(notify_ipv6,
-				ggu_pkt->buf->ol_flags);
+		notify_udp->dgram_len = dgram_len_be;
+		if (likely(iface->ipv6_hw_udp_cksum)) {
+			/* Offload the UDP checksum. */
+			notify_udp->dgram_cksum =
+				rte_ipv6_phdr_cksum(notify_ipv6,
+					ggu_pkt->buf->ol_flags);
+		} else {
+			notify_udp->dgram_cksum = 0;
+			notify_udp->dgram_cksum =
+				rte_ipv6_udptcp_cksum(notify_ipv6,
+					notify_udp);
+		}
 	} else {
 		rte_panic("Unexpected condition: gt at lcore %u sending notification packet to Gatekeeper server with unknown IP version %hu\n",
 			rte_lcore_id(), ggu_pkt->ipaddr.proto);
 	}
-
-	notify_udp->dgram_len =
-		rte_cpu_to_be_16((uint16_t)(ggu_pkt->buf->data_len -
-			ggu_pkt->buf->l2_len - ggu_pkt->buf->l3_len));
 }
 
 static void
 send_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 	struct ggu_notify_pkt *ggu_pkt)
 {
-	prep_notify_pkt(ggu_pkt);
+	prep_notify_pkt(ggu_pkt, &gt_conf->net->front);
 
 	if (rte_eth_tx_burst(gt_conf->net->front.id,
 			instance->tx_queue, &ggu_pkt->buf, 1) != 1) {
@@ -997,7 +1021,7 @@ flush_notify_pkts(struct gt_config *gt_conf, struct gt_instance *instance)
 		if (ggu_pkt->buf == NULL)
 			continue;
 
-		prep_notify_pkt(ggu_pkt);
+		prep_notify_pkt(ggu_pkt, &gt_conf->net->front);
 		bufs[num_to_send++] = ggu_pkt->buf;
 	}
 
