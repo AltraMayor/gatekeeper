@@ -487,13 +487,13 @@ get_ip_type(const char *ip_addr)
 	hint.ai_flags = AI_NUMERICHOST;
 
 	ret = getaddrinfo(ip_addr, NULL, &hint, &res);
-    	if (ret) {
+	if (ret) {
 		G_LOG(ERR, "net: invalid ip address %s; %s\n",
 			ip_addr, gai_strerror(ret));
 		return AF_UNSPEC;
-    	}
+	}
 
-    	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
+	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
 		G_LOG(ERR, "net: %s is an is unknown address format %d\n",
 			ip_addr, res->ai_family);
 

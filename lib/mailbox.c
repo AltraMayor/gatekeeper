@@ -41,7 +41,7 @@ init_mailbox(const char *tag, int mailbox_max_entries_exp,
 	mb->ring = (struct rte_ring *)rte_ring_create(
 		ring_name, 1 << mailbox_max_entries_exp,
 		socket_id, RING_F_SC_DEQ);
-    	if (mb->ring == NULL) {
+	if (mb->ring == NULL) {
 		G_LOG(ERR,
 			"mailbox: can't create ring %s (len = %d) at lcore %u\n",
 			ring_name, ret, lcore_id);
@@ -112,7 +112,7 @@ destroy_mailbox(struct mailbox *mb)
 {
 	if (mb) {
 		if (mb->ring)
-    			rte_ring_free(mb->ring);
+			rte_ring_free(mb->ring);
 		if (mb->pool)
 			rte_mempool_free(mb->pool);
 	}

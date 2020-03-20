@@ -122,11 +122,11 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		outer_ipv6_hdr = (struct rte_ipv6_hdr *)info->outer_l3_hdr;
 		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
 			pkt->data_len - parsed_len, &encapsulated_proto);
-                if (outer_ipv6_hdr_len < 0) {
-                        GT_LOG(ERR,
-                                "Failed to parse the packet's outer IPv6 extension headers\n");
+		if (outer_ipv6_hdr_len < 0) {
+			GT_LOG(ERR,
+				"Failed to parse the packet's outer IPv6 extension headers\n");
 			return -1;
-                }
+		}
 
 		if (encapsulated_proto != IPPROTO_IPV6)
 			return -1;
@@ -177,11 +177,11 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		inner_ipv6_hdr = (struct rte_ipv6_hdr *)info->inner_l3_hdr;
 		inner_ipv6_len = ipv6_skip_exthdr(inner_ipv6_hdr,
 			pkt->data_len - parsed_len, &info->l4_proto);
-                if (inner_ipv6_len < 0) {
-                        GT_LOG(ERR,
-                                "Failed to parse the packet's inner IPv6 extension headers\n");
+		if (inner_ipv6_len < 0) {
+			GT_LOG(ERR,
+				"Failed to parse the packet's inner IPv6 extension headers\n");
 			return -1;
-                }
+		}
 
 		info->inner_ip_ver = RTE_ETHER_TYPE_IPV6;
 		info->l4_hdr = (uint8_t *)inner_ipv6_hdr + inner_ipv6_len;
@@ -1101,7 +1101,7 @@ find_cookie_len_4by(struct gk_bpf_cookie *cookie, unsigned int cookie_len)
 
 	n = cookie_len / 4;
 	if (unlikely(cookie_len % 4 != 0))
-	       n++;
+		n++;
 
 	for (i = n - 1; i >= 0; i--)
 		if (p[i] != 0)

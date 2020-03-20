@@ -559,7 +559,7 @@ run_dynamic_config(struct net_config *net_conf,
 	}
 
 	/* Init the server socket. */
-    	dy_conf->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	dy_conf->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (dy_conf->sock_fd < 0) {
 		DYC_LOG(ERR, "Failed to initialize the server socket - (%s)\n",
 			strerror(errno));
@@ -568,8 +568,8 @@ run_dynamic_config(struct net_config *net_conf,
 	}
 
 	/* Name the socket. */
-    	memset(&server_addr, 0, sizeof(server_addr));
-    	server_addr.sun_family = AF_UNIX;
+	memset(&server_addr, 0, sizeof(server_addr));
+	server_addr.sun_family = AF_UNIX;
 
 	if (sizeof(server_addr.sun_path) <= strlen(dy_conf->server_path)) {
 		DYC_LOG(ERR,
@@ -579,9 +579,9 @@ run_dynamic_config(struct net_config *net_conf,
 		goto free_sock;
 	}
 
-    	strcpy(server_addr.sun_path, dy_conf->server_path);
+	strcpy(server_addr.sun_path, dy_conf->server_path);
 
-    	ret = bind(dy_conf->sock_fd,
+	ret = bind(dy_conf->sock_fd,
 		(struct sockaddr *)&server_addr, sizeof(server_addr));
 	if (ret < 0) {
 		DYC_LOG(ERR, "Failed to bind the server socket - (%s)\n",
@@ -594,7 +594,7 @@ run_dynamic_config(struct net_config *net_conf,
 	 * The Dynamic config component listens to a Unix socket
 	 * for request from the local host.
 	 */
-    	ret = listen(dy_conf->sock_fd, 10);
+	ret = listen(dy_conf->sock_fd, 10);
 	if (ret < 0) {
 		DYC_LOG(ERR, "Failed to listen on the server socket - (%s)\n",
 			strerror(errno));

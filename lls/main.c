@@ -214,7 +214,7 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 }
 
 #define ND_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-        sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts)
+	sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
 submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
@@ -803,8 +803,9 @@ lls_proc(void *arg)
 		if (net_conf->back_iface_enabled &&
 				hw_filter_eth_available(back)) {
 			num_tx = process_pkts(lls_conf, back,
-			    lls_conf->rx_queue_back, lls_conf->tx_queue_back,
-			    lls_conf->back_max_pkt_burst);
+				lls_conf->rx_queue_back,
+				lls_conf->tx_queue_back,
+				lls_conf->back_max_pkt_burst);
 			if ((num_tx > 0) && lacp_enabled(net_conf, back)) {
 				if (lacp_timer_reset(lls_conf, back) < 0)
 					LLS_LOG(NOTICE, "Can't reset back LACP timer to skip cycle\n");
