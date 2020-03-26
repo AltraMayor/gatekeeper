@@ -200,6 +200,9 @@ struct gatekeeper_if {
 	 */
 	bool            ipv6_hw_udp_cksum;
 
+	/* Whether IPv4 (L3) checksums should be enabled in hardware. */
+	bool		ipv4_hw_cksum;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -495,6 +498,29 @@ static inline bool
 hw_filter_eth_available(const struct gatekeeper_if *iface)
 {
 	return iface->hw_filter_eth && iface->rss;
+}
+
+/*
+ * Compute the IPv4 checksum, either in hardware or software, depending
+ * on the capabilities of the NIC and the configuration.
+ *
+ * The pkt->l2_len and pkt->l3_len must be set before calling this function,
+ * although this is strictly only needed for hardware checksums.
+ */
+static inline void
+set_ipv4_checksum(struct gatekeeper_if *iface, struct rte_mbuf *pkt,
+	struct rte_ipv4_hdr *ipv4)
+{
+	/*
+	 * The IP header checksum field must be set to 0 before
+	 * computing the checksum (in hardware or software).
+	 */
+	ipv4->hdr_checksum = 0;
+	pkt->ol_flags |= PKT_TX_IPV4;
+	if (likely(iface->ipv4_hw_cksum))
+		pkt->ol_flags |=  PKT_TX_IP_CKSUM;
+	else
+		ipv4->hdr_checksum = rte_ipv4_cksum(ipv4);
 }
 
 static inline int

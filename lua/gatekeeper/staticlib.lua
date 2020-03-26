@@ -266,6 +266,7 @@ struct gatekeeper_if {
 	uint16_t num_tx_desc;
 	bool     ipv4_hw_udp_cksum;
 	bool     ipv6_hw_udp_cksum;
+	bool     ipv4_hw_cksum;
 	/* This struct has hidden fields. */
 };
 
