@@ -83,9 +83,9 @@ cleanup_cps(void)
 	destroy_mailbox(&cps_conf.mailbox);
 	rm_kni();
 	if (cps_conf.nd_mp)
-	    rte_mempool_free(cps_conf.nd_mp);
+		rte_mempool_free(cps_conf.nd_mp);
 	if (cps_conf.arp_mp)
-	    rte_mempool_free(cps_conf.arp_mp);
+		rte_mempool_free(cps_conf.arp_mp);
 	return 0;
 }
 

@@ -187,6 +187,20 @@ struct gatekeeper_if {
 	uint16_t        num_tx_desc;
 
 	/*
+	 * Whether IPv4 UDP checksums should be enabled in hardware.
+	 * Technically, this only affects the front interface, since
+	 * only the GT block (on Grantor servers) uses UDP checksums.
+	 */
+	bool            ipv4_hw_udp_cksum;
+
+	/*
+	 * Whether IPv6 UDP checksums should be enabled in hardware.
+	 * Technically, this only affects the front interface, since
+	 * only the GT block (on Grantor servers) uses UDP checksums.
+	 */
+	bool            ipv6_hw_udp_cksum;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */

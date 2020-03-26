@@ -487,13 +487,13 @@ get_ip_type(const char *ip_addr)
 	hint.ai_flags = AI_NUMERICHOST;
 
 	ret = getaddrinfo(ip_addr, NULL, &hint, &res);
-    	if (ret) {
+	if (ret) {
 		G_LOG(ERR, "net: invalid ip address %s; %s\n",
 			ip_addr, gai_strerror(ret));
 		return AF_UNSPEC;
-    	}
+	}
 
-    	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
+	if (res->ai_family != AF_INET && res->ai_family != AF_INET6)
 		G_LOG(ERR, "net: %s is an is unknown address format %d\n",
 			ip_addr, res->ai_family);
 
@@ -880,11 +880,12 @@ check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
 	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_UDP_CKSUM) &&
 			!(dev_info->tx_offload_capa &
 			DEV_TX_OFFLOAD_UDP_CKSUM)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading UDP checksumming\n",
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading UDP checksumming; will use software UDP checksums\n",
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
 			iface->name);
 		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_UDP_CKSUM;
-		return -1;
+		iface->ipv4_hw_udp_cksum = false;
+		iface->ipv6_hw_udp_cksum = false;
 	}
 
 	return 0;
@@ -943,11 +944,13 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 * If IPv4 is supported, both Grantor and Gatekeeper
 	 * need to support IPv4 checksumming in hardware.
 	 *
-	 * Grantor needs to support UDP checksumming.
+	 * Grantor uses UDP checksumming if available. Assume
+	 * UDP checksumming is supported until shown otherwise.
 	 */
 	if (ipv4_if_configured(iface))
 		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
-	if (!config.back_iface_enabled)
+	if (!config.back_iface_enabled &&
+			(iface->ipv4_hw_udp_cksum || iface->ipv6_hw_udp_cksum))
 		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_UDP_CKSUM;
 
 	for (i = 0; i < iface->num_ports; i++) {

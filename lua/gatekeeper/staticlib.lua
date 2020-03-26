@@ -264,6 +264,8 @@ struct gatekeeper_if {
 	uint8_t  ipv6_default_hop_limits;
 	uint16_t num_rx_desc;
 	uint16_t num_tx_desc;
+	bool     ipv4_hw_udp_cksum;
+	bool     ipv6_hw_udp_cksum;
 	/* This struct has hidden fields. */
 };
 

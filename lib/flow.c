@@ -80,7 +80,7 @@ gk_softrss_be(const uint32_t *input_tuple, uint32_t input_len,
 uint32_t
 rss_ip_flow_hf(const void *data,
 	__attribute__((unused)) uint32_t data_len,
-        __attribute__((unused)) uint32_t init_val)
+	__attribute__((unused)) uint32_t init_val)
 {
 	const struct ip_flow *flow = (const struct ip_flow *)data;
 

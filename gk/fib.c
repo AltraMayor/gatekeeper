@@ -380,7 +380,7 @@ custom_ipv4_hash_func(const void *key,
 	__attribute__((unused)) uint32_t length,
 	__attribute__((unused)) uint32_t initval)
 {
-        return ntohl(*(const uint32_t *)key);
+	return ntohl(*(const uint32_t *)key);
 }
 
 int

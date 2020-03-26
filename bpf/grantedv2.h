@@ -133,7 +133,7 @@ grantedv2_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 		int64_t epochs = cycles / cycles_per_sec;
 
 		state->budget_renew_at = ctx->now + cycles_per_sec -
-		       (cycles % cycles_per_sec);
+			(cycles % cycles_per_sec);
 		state->budget1_byte += max_budget1 * (epochs + 1);
 		if (state->budget1_byte > max_budget1)
 			state->budget1_byte = max_budget1;

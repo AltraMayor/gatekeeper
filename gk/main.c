@@ -57,9 +57,9 @@ static inline uint8_t
 integer_log_base_2(uint64_t delta_time)
 {
 #if __WORDSIZE == 64
-    return (8 * sizeof(uint64_t) - 1) - __builtin_clzl(delta_time);
+	return (8 * sizeof(uint64_t) - 1) - __builtin_clzl(delta_time);
 #else
-    return (8 * sizeof(uint64_t) - 1) - __builtin_clzll(delta_time);
+	return (8 * sizeof(uint64_t) - 1) - __builtin_clzll(delta_time);
 #endif
 }
 
@@ -614,7 +614,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	ret = init_mailbox("gk", gk_conf->mailbox_max_entries_exp,
 		sizeof(struct gk_cmd_entry), gk_conf->mailbox_mem_cache_size,
 		lcore_id, &instance->mb);
-    	if (ret < 0)
+	if (ret < 0)
 		goto flow_entry;
 
 	tb_ratelimit_state_init(&instance->front_icmp_rs,
@@ -628,8 +628,8 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 	goto out;
 
 flow_entry:
-    	rte_free(instance->ip_flow_entry_table);
-    	instance->ip_flow_entry_table = NULL;
+	rte_free(instance->ip_flow_entry_table);
+	instance->ip_flow_entry_table = NULL;
 flow_hash:
 	rte_hash_free(instance->ip_flow_hash_table);
 	instance->ip_flow_hash_table = NULL;
@@ -1204,7 +1204,8 @@ static void
 send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
 		struct gk_fib *fib, struct rte_mbuf **req_bufs,
 		uint16_t *num_reqs, struct gk_instance *instance,
-		struct gk_config *gk_conf) {
+		struct gk_config *gk_conf)
+{
 	int ret;
 	struct flow_entry temp_fe;
 
@@ -1302,7 +1303,8 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 		struct rte_mbuf **req_bufs, uint16_t *num_reqs,
 		struct gatekeeper_if *front, struct gatekeeper_if *back,
-		struct gk_instance *instance, struct gk_config *gk_conf) {
+		struct gk_instance *instance, struct gk_config *gk_conf)
+{
 	struct rte_mbuf *pkt = packet->pkt;
 	struct ether_cache *eth_cache;
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
@@ -1606,15 +1608,15 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 
 	stats->tot_pkts_num += num_rx;
 
-       /*
-        * This prefetch is enough to load Ethernet header (14 bytes),
-        * optional Ethernet VLAN header (8 bytes), and either
-        * an IPv4 header without options (20 bytes), or
-        * an IPv6 header without options (40 bytes).
-        * IPv4: 14 + 8 + 20 = 42
-        * IPv6: 14 + 8 + 40 = 62
-        */
-       for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++)
+	/*
+	 * This prefetch is enough to load Ethernet header (14 bytes),
+	 * optional Ethernet VLAN header (8 bytes), and either
+	 * an IPv4 header without options (20 bytes), or
+	 * an IPv6 header without options (40 bytes).
+	 * IPv4: 14 + 8 + 20 = 42
+	 * IPv6: 14 + 8 + 40 = 62
+	 */
+	for (i = 0; i < PREFETCH_OFFSET && i < num_rx; i++)
 		rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
 
 	/* Extract packet and flow information. */
@@ -1752,7 +1754,8 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 		struct acl_search *acl4, struct acl_search *acl6,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 		struct gatekeeper_if *front, struct gatekeeper_if *back,
-		struct gk_instance *instance) {
+		struct gk_instance *instance)
+{
 	struct rte_mbuf *pkt = packet->pkt;
 	struct ether_cache *eth_cache;
 
@@ -1894,16 +1897,16 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 	if (unlikely(num_rx == 0))
 		return;
 
-       /*
-        * This prefetch is enough to load Ethernet header (14 bytes),
-        * optional Ethernet VLAN header (8 bytes), and either
-        * an IPv4 header without options (20 bytes), or
-        * an IPv6 header without options (40 bytes).
-        * IPv4: 14 + 8 + 20 = 42
-        * IPv6: 14 + 8 + 40 = 62
-        */
-       for (i = 0; i < num_rx; i++)
-               rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
+	/*
+	 * This prefetch is enough to load Ethernet header (14 bytes),
+	 * optional Ethernet VLAN header (8 bytes), and either
+	 * an IPv4 header without options (20 bytes), or
+	 * an IPv6 header without options (40 bytes).
+	 * IPv4: 14 + 8 + 20 = 42
+	 * IPv6: 14 + 8 + 40 = 62
+	 */
+	for (i = 0; i < num_rx; i++)
+		rte_prefetch0(rte_pktmbuf_mtod_offset(rx_bufs[i], void *, 0));
 
 	for (i = 0; i < num_rx; i++) {
 		struct ipacket *packet = &pkt_arr[num_ip_flows];
@@ -2147,10 +2150,10 @@ process_cmds_from_mailbox(
 	struct gk_add_policy *policies[mailbox_burst_size];
 
 	/* Load a set of commands from its mailbox ring. */
-        num_cmd = mb_dequeue_burst(&instance->mb,
+	num_cmd = mb_dequeue_burst(&instance->mb,
 		(void **)gk_cmds, mailbox_burst_size);
 
-        for (i = 0; i < num_cmd; i++)
+	for (i = 0; i < num_cmd; i++)
 		process_gk_cmd(gk_cmds[i], policies, &num_policies, instance);
 
 	if (num_policies > 0)

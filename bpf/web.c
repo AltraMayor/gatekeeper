@@ -85,7 +85,7 @@ web_pkt(struct gk_bpf_pkt_ctx *ctx)
 		return GK_BPF_PKT_RET_DECLINE;
 	}
 	tcp_hdr = rte_pktmbuf_mtod_offset(pkt, struct tcphdr *,
-	       pkt->l2_len + pkt->l3_len);
+		pkt->l2_len + pkt->l3_len);
 
 	/*
 	 * For information on active and passive modes of FTP,

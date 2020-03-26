@@ -15,6 +15,8 @@ return function (gatekeeper_server)
 	local front_vlan_tag = 0x123
 	local front_vlan_insert = true
 	local front_mtu = 1500
+	local front_ipv4_hw_udp_cksum = true
+	local front_ipv6_hw_udp_cksum = true
 
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
@@ -22,6 +24,8 @@ return function (gatekeeper_server)
 	local back_vlan_tag = 0x456
 	local back_vlan_insert = true
 	local back_mtu = 2048
+	local back_ipv4_hw_udp_cksum = true
+	local back_ipv6_hw_udp_cksum = true
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local front_arp_cache_timeout_sec = 7200 -- (2 hours)
@@ -66,6 +70,8 @@ return function (gatekeeper_server)
 	front_iface.ipv6_default_hop_limits = front_ipv6_default_hop_limits
 	front_iface.num_rx_desc = front_num_rx_desc
 	front_iface.num_tx_desc = front_num_tx_desc
+	front_iface.ipv4_hw_udp_cksum = front_ipv4_hw_udp_cksum
+	front_iface.ipv6_hw_udp_cksum = front_ipv6_hw_udp_cksum
 	local ret = staticlib.init_iface(front_iface, "front",
 		front_ports, front_ips, front_vlan_tag)
 	if ret < 0 then
@@ -84,6 +90,8 @@ return function (gatekeeper_server)
 			back_ipv6_default_hop_limits
 		back_iface.num_rx_desc = back_num_rx_desc
 		back_iface.num_tx_desc = back_num_tx_desc
+		back_iface.ipv4_hw_udp_cksum = back_ipv4_hw_udp_cksum
+		back_iface.ipv6_hw_udp_cksum = back_ipv6_hw_udp_cksum
 		ret = staticlib.init_iface(back_iface, "back",
 			back_ports, back_ips, back_vlan_tag)
 		if ret < 0 then
