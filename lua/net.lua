@@ -15,8 +15,6 @@ return function (gatekeeper_server)
 	local front_vlan_tag = 0x123
 	local front_vlan_insert = true
 	local front_mtu = 1500
-	local front_ipv4_hw_udp_cksum = true
-	local front_ipv6_hw_udp_cksum = true
 
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
@@ -24,8 +22,6 @@ return function (gatekeeper_server)
 	local back_vlan_tag = 0x456
 	local back_vlan_insert = true
 	local back_mtu = 2048
-	local back_ipv4_hw_udp_cksum = true
-	local back_ipv6_hw_udp_cksum = true
 
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local front_arp_cache_timeout_sec = 7200 -- (2 hours)
@@ -44,6 +40,10 @@ return function (gatekeeper_server)
 	local front_ipv6_default_hop_limits = 255
 	local back_ipv6_default_hop_limits = 255
 	local rotate_log_interval_sec = 60 * 60  -- (1 hour)
+	local front_ipv4_hw_udp_cksum = true
+	local front_ipv6_hw_udp_cksum = true
+	local back_ipv4_hw_udp_cksum = true
+	local back_ipv6_hw_udp_cksum = true
 	local front_ipv4_hw_cksum = true
 	local back_ipv4_hw_cksum = true
 
