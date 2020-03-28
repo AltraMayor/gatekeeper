@@ -589,7 +589,7 @@ lacp_timer_reset(struct lls_config *lls_conf, struct gatekeeper_if *iface)
 {
 	return rte_timer_reset(&iface->lacp_timer,
 		(uint64_t)((LLS_LACP_ANNOUNCE_INTERVAL_MS / 1000.0) *
-			rte_get_timer_hz()), PERIODICAL,
+		rte_get_timer_hz()), PERIODICAL,
 		lls_conf->lcore_id, lls_lacp_announce, iface);
 }
 
