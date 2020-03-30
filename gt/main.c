@@ -1158,7 +1158,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 	int cookie_len_4by = 0;
 
 	if (unlikely(policy->flow.proto != RTE_ETHER_TYPE_IPV4
-		&& policy->flow.proto != RTE_ETHER_TYPE_IPV6)) {
+			&& policy->flow.proto != RTE_ETHER_TYPE_IPV6)) {
 		GT_LOG(ERR, "Policy decision with unknown protocol %u\n",
 			policy->flow.proto);
 		return;
