@@ -779,9 +779,6 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		notify_pkt->ol_flags |= PKT_TX_IPV4;
 
 		/* IPv4 checksum set in prep_notify_pkt(). */
-
-		if (likely(iface->ipv4_hw_udp_cksum))
-			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *ipv6_hdr =
 			(struct rte_ipv6_hdr *)pkt_info->outer_l3_hdr;
@@ -798,9 +795,6 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 
 		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
 		notify_pkt->ol_flags |= PKT_TX_IPV6;
-
-		if (likely(iface->ipv6_hw_udp_cksum))
-			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
 	}
 
 	/* Fill up the UDP header. */
@@ -945,10 +939,13 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 
 		set_ipv4_checksum(iface, ggu_pkt->buf, notify_ipv4);
 
-		notify_udp = (struct rte_udp_hdr *)&notify_ipv4[1];
+		notify_udp = rte_pktmbuf_mtod_offset(ggu_pkt->buf,
+			struct rte_udp_hdr *,
+			ggu_pkt->buf->l2_len + ggu_pkt->buf->l3_len);
 		notify_udp->dgram_len = dgram_len_be;
 		if (likely(iface->ipv4_hw_udp_cksum)) {
 			/* Offload the UDP checksum. */
+			ggu_pkt->buf->ol_flags |= PKT_TX_UDP_CKSUM;
 			notify_udp->dgram_cksum =
 				rte_ipv4_phdr_cksum(notify_ipv4,
 					ggu_pkt->buf->ol_flags);
@@ -962,14 +959,22 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 		struct rte_ipv6_hdr *notify_ipv6 =
 			rte_pktmbuf_mtod_offset(ggu_pkt->buf,
 				struct rte_ipv6_hdr *, ggu_pkt->buf->l2_len);
+		/*
+		 * Distinct from @dgram_len_be because the IPv6
+		 * payload field could in theory include the length
+		 * of any extension headers.
+		 */
 		notify_ipv6->payload_len = rte_cpu_to_be_16(
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len -
 			sizeof(struct rte_ipv6_hdr));
 
-		notify_udp = (struct rte_udp_hdr *)&notify_ipv6[1];
+		notify_udp = rte_pktmbuf_mtod_offset(ggu_pkt->buf,
+			struct rte_udp_hdr *,
+			ggu_pkt->buf->l2_len + ggu_pkt->buf->l3_len);
 		notify_udp->dgram_len = dgram_len_be;
 		if (likely(iface->ipv6_hw_udp_cksum)) {
 			/* Offload the UDP checksum. */
+			ggu_pkt->buf->ol_flags |= PKT_TX_UDP_CKSUM;
 			notify_udp->dgram_cksum =
 				rte_ipv6_phdr_cksum(notify_ipv6,
 					ggu_pkt->buf->ol_flags);
