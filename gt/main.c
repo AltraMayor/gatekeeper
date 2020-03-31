@@ -639,9 +639,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 				IPTOS_ECN_CE) &&
 				(pkt_info->outer_ecn == IPTOS_ECN_CE)) {
 			inner_ipv4_hdr->type_of_service |= IPTOS_ECN_CE;
-			inner_ipv4_hdr->hdr_checksum = 0;
 			m->l3_len = ipv4_hdr_len(inner_ipv4_hdr);
-			m->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
+			set_ipv4_checksum(&gt_conf->net->front, m, inner_ipv4_hdr);
 		}
 
 		neigh = &instance->neigh;
@@ -776,15 +775,13 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		 */
 		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
 
-		/*
-		 * The IP header checksum filed must be set to 0
-		 * in order to offload the checksum calculation.
-		 */
-		notify_ipv4->hdr_checksum = 0;
-		notify_pkt->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
+		notify_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
+		notify_pkt->ol_flags |= PKT_TX_IPV4;
+
+		/* IPv4 checksum set in prep_notify_pkt(). */
+
 		if (likely(iface->ipv4_hw_udp_cksum))
 			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
-		notify_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
 	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *ipv6_hdr =
 			(struct rte_ipv6_hdr *)pkt_info->outer_l3_hdr;
@@ -799,10 +796,11 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		rte_memcpy(notify_ipv6->dst_addr, ipv6_hdr->src_addr,
 			sizeof(notify_ipv6->dst_addr));
 
+		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
 		notify_pkt->ol_flags |= PKT_TX_IPV6;
+
 		if (likely(iface->ipv6_hw_udp_cksum))
 			notify_pkt->ol_flags |= PKT_TX_UDP_CKSUM;
-		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
 	}
 
 	/* Fill up the UDP header. */
@@ -944,6 +942,8 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 				ggu_pkt->buf->l2_len);
 		notify_ipv4->total_length = rte_cpu_to_be_16(
 			ggu_pkt->buf->data_len - ggu_pkt->buf->l2_len);
+
+		set_ipv4_checksum(iface, ggu_pkt->buf, notify_ipv4);
 
 		notify_udp = (struct rte_udp_hdr *)&notify_ipv4[1];
 		notify_udp->dgram_len = dgram_len_be;

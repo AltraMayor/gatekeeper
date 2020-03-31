@@ -371,14 +371,9 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
 	icmp_ipv4->dst_addr = ip_addr_tmp;
 
-	/*
-	 * The IP header checksum filed must be set to 0
-	 * in order to offload the checksum calculation.
-	 */
-	icmp_ipv4->hdr_checksum = 0;
 	pkt->l2_len = iface->l2_len_out;
 	pkt->l3_len = ipv4_hdr_len(icmp_ipv4);
-	pkt->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
+	set_ipv4_checksum(iface, pkt, icmp_ipv4);
 
 	if (icmp_ipv4->next_proto_id != IPPROTO_ICMP)
 		return -1;

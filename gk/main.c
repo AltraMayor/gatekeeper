@@ -1050,14 +1050,10 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	icmp_ipv4->dst_addr = packet->flow.f.v4.src.s_addr;
 	icmp_ipv4->total_length = rte_cpu_to_be_16(pkt->data_len -
 		iface->l2_len_out);
-	/*
-	 * The IP header checksum filed must be set to 0
-	 * in order to offload the checksum calculation.
-	 */
-	icmp_ipv4->hdr_checksum = 0;
+
 	pkt->l2_len = iface->l2_len_out;
 	pkt->l3_len = sizeof(struct rte_ipv4_hdr);
-	pkt->ol_flags |= PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
+	set_ipv4_checksum(iface, pkt, icmp_ipv4);
 
 	icmph = (struct rte_icmp_hdr *)&icmp_ipv4[1];
 	icmph->icmp_type = ICMP_TIME_EXCEEDED;

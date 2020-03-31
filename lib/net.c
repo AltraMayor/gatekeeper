@@ -870,11 +870,11 @@ check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
 	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_IPV4_CKSUM) &&
 			!(dev_info->tx_offload_capa &
 			DEV_TX_OFFLOAD_IPV4_CKSUM)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading IPv4 checksumming\n",
+		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading IPv4 checksumming; will use software IPv4 checksums\n",
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
 			iface->name);
 		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_IPV4_CKSUM;
-		return -1;
+		iface->ipv4_hw_cksum = false;
 	}
 
 	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_UDP_CKSUM) &&
@@ -941,13 +941,24 @@ check_port_offloads(struct gatekeeper_if *iface,
 	/*
 	 * Set up checksumming.
 	 *
-	 * If IPv4 is supported, both Grantor and Gatekeeper
-	 * need to support IPv4 checksumming in hardware.
+	 * Gatekeeper and Grantor do IPv4 checksumming in hardware,
+	 * if available.
 	 *
-	 * Grantor uses UDP checksumming if available. Assume
-	 * UDP checksumming is supported until shown otherwise.
+	 * Grantor also does UDP checksumming in hardware, if available.
+	 *
+	 * In both cases, we set up the devices to assume that
+	 * IPv4 and UDP checksumming are supported unless querying
+	 * the device in check_port_cksum() shows otherwise.
+	 *
+	 * Note that the IPv4 checksum field is only computed over
+	 * the IPv4 header and the UDP checksum is computed over an IPv4
+	 * pseudoheader (i.e. not the direct bytes of the IPv4 header).
+	 * Therefore, even though offloading checksum computations can cause
+	 * checksum fields to be set to 0 or an intermediate value during
+	 * processing, the IPv4 and UDP checksum operations do not overlap,
+	 * and can be configured as hardware or software independently.
 	 */
-	if (ipv4_if_configured(iface))
+	if (ipv4_if_configured(iface) && iface->ipv4_hw_cksum)
 		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
 	if (!config.back_iface_enabled &&
 			(iface->ipv4_hw_udp_cksum || iface->ipv6_hw_udp_cksum))

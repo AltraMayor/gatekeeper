@@ -79,15 +79,8 @@ encapsulate(struct rte_mbuf *pkt, uint8_t priority,
 		outer_ip4hdr->total_length =
 			rte_cpu_to_be_16(pkt->pkt_len - iface->l2_len_out);
 
-		/*
-		 * The IP header checksum filed must be set to 0
-		 * in order to offload the checksum calculation.
-		 */
-		outer_ip4hdr->hdr_checksum = 0;
-
 		pkt->l3_len = sizeof(struct rte_ipv4_hdr);
-		/* Offload checksum computation for the outer IPv4 header. */
-		pkt->ol_flags |= (PKT_TX_IPV4 | PKT_TX_IP_CKSUM);
+		set_ipv4_checksum(iface, pkt, outer_ip4hdr);
 	} else if (likely(gt_addr->proto == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *inner_ip6hdr;
 
