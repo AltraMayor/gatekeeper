@@ -37,14 +37,16 @@ page.
 
 Once the packages are downloaded, they can be installed with the commands below:
 
+    $ tar -zxvf gatekeeper-ubuntu-18.04-packages.tar.gz
+    $ cd gatekeeper-ubuntu-18.04-packages
     $ sudo dpkg -i libgkrte-*.deb \
-        libgkdpdk-dev_19.08.0-0_amd64.deb \
-        gatekeeper-dpdk_19.08.0-0_amd64.deb \
-        gatekeeper-dpdk-dev_19.08.0-0_amd64.deb \
-        gatekeeper-dpdk-igb-uio-dkms_19.08.0-0_amd64.deb \
-        gatekeeper-dpdk-rte-kni-dkms_19.08.0-0_amd64.deb \
-        gatekeeper-bird_2.0.4-0_amd64.deb \
-        gatekeeper-1.0.0-0_amd64.deb
+        libgkdpdk-dev_*_amd64.deb \
+        gatekeeper-dpdk_*_amd64.deb \
+        gatekeeper-dpdk-dev_*_amd64.deb \
+        gatekeeper-dpdk-igb-uio-dkms_*_amd64.deb \
+        gatekeeper-dpdk-rte-kni-dkms_*_amd64.deb \
+        gatekeeper-bird_*_amd64.deb \
+        gatekeeper_*_amd64.deb
 
 The `gatekeeper-dpdk-dev` package is a dependency of the DKMS packages, which
 build their respective kernel modules during package installation and kernel
