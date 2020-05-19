@@ -196,6 +196,40 @@ l_lpm_lookup(lua_State *l)
 	return 1;
 }
 
+static int
+l_ip_mask_addr(lua_State *l)
+{
+	uint32_t masked_ip;
+	struct in_addr mask;
+	char buf[INET_ADDRSTRLEN];
+
+	/*
+	 * First argument must be a Lua number.
+	 * @ip must be in network order.
+	 */
+	uint32_t ip = luaL_checknumber(l, 1);
+
+	/* Second argument must be a Lua number. */
+	uint8_t depth = luaL_checknumber(l, 2);
+	if ((depth == 0) || (depth > RTE_LPM_MAX_DEPTH))
+		luaL_error(l, "Expected a depth value between 1 and 32, however it is %hhu",
+			depth);
+
+	if (lua_gettop(l) != 2)
+		luaL_error(l, "Expected two arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	ip4_prefix_mask(depth, &mask);
+	masked_ip = htonl(ntohl(ip) & rte_be_to_cpu_32(mask.s_addr));
+
+	if (inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf)) == NULL)
+		luaL_error(l, "%s: failed to convert a number to an IPv4 address (%s)\n",
+			__func__, strerror(errno));
+
+	lua_pushstring(l, buf);
+	return 1;
+}
+
 #define LUA_LPM6_TNAME "gt_lpm6"
 
 static int
@@ -337,6 +371,7 @@ static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 	{"lpm_add",        l_lpm_add},
 	{"lpm_del",        l_lpm_del},
 	{"lpm_lookup",     l_lpm_lookup},
+	{"ip_mask_addr",   l_ip_mask_addr},
 	{"str_to_prefix6", l_str_to_prefix6},
 	{"new_lpm6",       l_new_lpm6},
 	{"lpm6_add",       l_lpm6_add},

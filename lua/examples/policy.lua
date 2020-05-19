@@ -129,10 +129,32 @@ end
 
 -- The following defines the LPM policies.
 
+local scaling_factor_rules = 2
+local scaling_factor_tbl8s = 2
+
+-- Estimate the number of rules and number of tbl8s in DPDK LPM library.
+local function lpm_para_estimate(ipv4_file)
+	local num_rules = 0
+	local num_tbl8s = 0
+	local prefixes = {}
+
+	for line in io.lines(ipv4_file) do
+		local ip_addr, prefix_len = lpmlib.str_to_prefix(line)
+		num_rules = num_rules + 1
+		num_tbl8s = num_tbl8s +
+			lpmlib.lpm_add_tbl8s(ip_addr, prefix_len, prefixes)
+	end
+
+	return num_rules, num_tbl8s
+end
+
 -- This file only contains an example set of Bogons IPv4 lists
 -- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv4.txt
 local bogons_ipv4_file = "lua/examples/bogons-ipv4.txt"
-local lpm = lpmlib.new_lpm(1024, 256)
+local num_ipv4_rules, num_ipv4_tbl8s = lpm_para_estimate(bogons_ipv4_file)
+num_ipv4_rules = math.max(1, scaling_factor_rules * num_ipv4_rules)
+num_ipv4_tbl8s = math.max(1, scaling_factor_tbl8s * num_ipv4_tbl8s)
+local lpm = lpmlib.new_lpm(num_ipv4_rules, num_ipv4_tbl8s)
 
 -- This file only contains an example set of Bogons IPv6 lists
 -- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv6.txt
