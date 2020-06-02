@@ -2178,7 +2178,7 @@ l_update_gt_lua_states(lua_State *l)
 		lua_State *lua_state = alloc_and_setup_lua_state(gt_conf,
 			lcore_id);
 		if (lua_state == NULL) {
-			luaL_error(l, "gt: failed to allocate new lua state to GT block %u at lcore %u\n",
+			luaL_error(l, "gt: failed to allocate new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;
@@ -2188,7 +2188,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (entry == NULL) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
+			luaL_error(l, "gt: failed to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;
@@ -2201,7 +2201,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (ret != 0) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to send new lua state to GT block %u at lcore %u\n",
+			luaL_error(l, "gt: failed to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 		}
 	}
@@ -2246,7 +2246,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 		char *lua_bytecode_buff = rte_malloc_socket("lua_bytecode",
 			len, 0, rte_lcore_to_socket_id(lcore_id));
 		if (lua_bytecode_buff == NULL) {
-			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %u at lcore %u due to failure of allocating memory\n",
+			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
 				i, lcore_id);
 			continue;
 		}
@@ -2255,7 +2255,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 		if (entry == NULL) {
 			rte_free(lua_bytecode_buff);
 
-			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %u at lcore %u\n",
+			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
 				i, lcore_id);
 			continue;
 		}
@@ -2269,7 +2269,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 		if (ret != 0) {
 			rte_free(lua_bytecode_buff);
 
-			luaL_error(l, "gt: failed to send new lua update chunk to GT block %u at lcore %u\n",
+			luaL_error(l, "gt: failed to send new lua update chunk to GT block %d at lcore %d\n",
 				i, lcore_id);
 		}
 	}

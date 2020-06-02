@@ -142,7 +142,7 @@ l_lpm_add(lua_State *l)
 
 	ret = rte_lpm_add(lpm, ntohl(ip), depth, label);
 	if (ret < 0) {
-		luaL_error(l, "lpm: failed to add network policy [ip: %u, depth: %%hhu, label: %u] to the lpm table at %s",
+		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s",
 			ip, depth, label, __func__);
 	}
 
@@ -212,7 +212,7 @@ l_ip_mask_addr(lua_State *l)
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
 	if ((depth == 0) || (depth > RTE_LPM_MAX_DEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 32, however it is %hhu",
+		luaL_error(l, "Expected a depth value between 1 and 32, however it is %d",
 			depth);
 
 	if (lua_gettop(l) != 2)
@@ -408,7 +408,7 @@ l_ip6_mask_addr(lua_State *l)
 	/* Second argument must be a Lua number. */
 	depth = luaL_checknumber(l, 2);
 	if ((depth == 0) || (depth > RTE_LPM6_MAX_DEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 128, however it is %hhu",
+		luaL_error(l, "Expected a depth value between 1 and 128, however it is %d",
 			depth);
 
 	if (lua_gettop(l) != 2)
