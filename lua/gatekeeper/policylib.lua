@@ -1,5 +1,7 @@
 module(..., package.seeall)
 
+require "gatekeeper/lpmlib"
+
 --
 -- C functions exported through FFI
 --

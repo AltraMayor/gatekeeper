@@ -196,6 +196,40 @@ l_lpm_lookup(lua_State *l)
 	return 1;
 }
 
+static int
+l_ip_mask_addr(lua_State *l)
+{
+	uint32_t masked_ip;
+	struct in_addr mask;
+	char buf[INET_ADDRSTRLEN];
+
+	/*
+	 * First argument must be a Lua number.
+	 * @ip must be in network order.
+	 */
+	uint32_t ip = luaL_checknumber(l, 1);
+
+	/* Second argument must be a Lua number. */
+	uint8_t depth = luaL_checknumber(l, 2);
+	if ((depth == 0) || (depth > RTE_LPM_MAX_DEPTH))
+		luaL_error(l, "Expected a depth value between 1 and 32, however it is %hhu",
+			depth);
+
+	if (lua_gettop(l) != 2)
+		luaL_error(l, "Expected two arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	ip4_prefix_mask(depth, &mask);
+	masked_ip = htonl(ntohl(ip) & rte_be_to_cpu_32(mask.s_addr));
+
+	if (inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf)) == NULL)
+		luaL_error(l, "%s: failed to convert a number to an IPv4 address (%s)\n",
+			__func__, strerror(errno));
+
+	lua_pushstring(l, buf);
+	return 1;
+}
+
 #define LUA_LPM6_TNAME "gt_lpm6"
 
 static int
@@ -331,17 +365,80 @@ l_lpm6_lookup(lua_State *l)
 	return 1;
 }
 
+/*
+ * Takes an array of uint8_t (IPv6 address) and masks it using the depth.
+ */
+static void
+ip6_mask_addr(uint8_t *ip, uint8_t depth)
+{
+	struct in6_addr mask;
+	uint64_t *paddr = (uint64_t *)ip;
+	const uint64_t *pmask = (const uint64_t *)mask.s6_addr;
+
+	ip6_prefix_mask(depth, &mask);
+
+	paddr[0] &= pmask[0];
+	paddr[1] &= pmask[1];
+}
+
+/* Copy ipv6 address. */
+static inline void
+ip6_copy_addr(uint8_t *dst, const uint8_t *src)
+{
+	rte_memcpy(dst, src, RTE_LPM6_IPV6_ADDR_SIZE);
+}
+
+static int
+l_ip6_mask_addr(lua_State *l)
+{
+	uint8_t depth;
+	uint32_t ctypeid;
+	uint8_t masked_ip[RTE_LPM6_IPV6_ADDR_SIZE];
+	char buf[INET6_ADDRSTRLEN];
+
+	uint32_t correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_IN6_ADDR_REF);
+	/* First argument must be of type CTYPE_STRUCT_IN6_ADDR_REF. */
+	struct in6_addr *ipv6_addr = luaL_checkcdata(l, 1, &ctypeid,
+		CTYPE_STRUCT_IN6_ADDR_REF);
+	if (ctypeid != correct_ctypeid_in6_addr)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_IN6_ADDR_REF);
+
+	/* Second argument must be a Lua number. */
+	depth = luaL_checknumber(l, 2);
+	if ((depth == 0) || (depth > RTE_LPM6_MAX_DEPTH))
+		luaL_error(l, "Expected a depth value between 1 and 128, however it is %hhu",
+			depth);
+
+	if (lua_gettop(l) != 2)
+		luaL_error(l, "Expected two arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	ip6_copy_addr(masked_ip, ipv6_addr->s6_addr);
+	ip6_mask_addr(masked_ip, depth);
+
+	if (inet_ntop(AF_INET6, masked_ip, buf, sizeof(buf)) == NULL)
+		luaL_error(l, "net: %s: failed to convert a number to an IPv6 address (%s)\n",
+			__func__, strerror(errno));
+
+	lua_pushstring(l, buf);
+	return 1;
+}
+
 static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 	{"str_to_prefix",  l_str_to_prefix},
 	{"new_lpm",        l_new_lpm},
 	{"lpm_add",        l_lpm_add},
 	{"lpm_del",        l_lpm_del},
 	{"lpm_lookup",     l_lpm_lookup},
+	{"ip_mask_addr",   l_ip_mask_addr},
 	{"str_to_prefix6", l_str_to_prefix6},
 	{"new_lpm6",       l_new_lpm6},
 	{"lpm6_add",       l_lpm6_add},
 	{"lpm6_del",       l_lpm6_del},
 	{"lpm6_lookup",    l_lpm6_lookup},
+	{"ip6_mask_addr",  l_ip6_mask_addr},
 	{NULL,             NULL}	/* Sentinel. */
 };
 
