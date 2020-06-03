@@ -57,7 +57,7 @@ l_rte_lcore_to_socket_id(lua_State *l)
 	/* First (and only argument) must be the lcore id. */
 	lua_Integer lcore_id = luaL_checkinteger(l, 1);
 	if (lcore_id < 0 || lcore_id >= RTE_MAX_LCORE)
-		luaL_error(l, "The first argument of rte_lcore_to_socket_id() must be between %i and %i, inclusive\n",
+		luaL_error(l, "The first argument of rte_lcore_to_socket_id() must be between %d and %d, inclusive\n",
 			0, RTE_MAX_LCORE - 1);
 	lua_pushinteger(l, rte_lcore_to_socket_id(lcore_id));
 	return 1;
@@ -84,7 +84,7 @@ protected_gk_assign_lcores(lua_State *l)
 
 		/* Check that t[i] is a number. */
 		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %i is not a number", i);
+			luaL_error(l, "Index %d is not a number", i);
 		lcores[i - 1] = lua_tointeger(l, -1);
 
 		lua_pop(l, 1);		/* Pop t[i]. */
@@ -154,7 +154,7 @@ protected_gk_assign_sol_map(lua_State *l)
 
 		/* Check that t[i] is a number. */
 		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %i is not a number", i);
+			luaL_error(l, "Index %d is not a number", i);
 		gk_sol_map[i - 1] = lua_tointeger(l, -1) - 1;
 
 		lua_pop(l, 1);		/* Pop t[i]. */
@@ -226,7 +226,7 @@ protected_gt_assign_lcores(lua_State *l)
 
 		/* Check that t[i] is a number. */
 		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %i is not a number", i);
+			luaL_error(l, "Index %d is not a number", i);
 		lcores[i - 1] = lua_tointeger(l, -1);
 
 		lua_pop(l, 1);		/* Pop t[i]. */
@@ -298,7 +298,7 @@ protected_sol_assign_lcores(lua_State *l)
 
 		/* Check that t[i] is a number. */
 		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %i is not a number", i);
+			luaL_error(l, "Index %d is not a number", i);
 		lcores[i - 1] = lua_tointeger(l, -1);
 
 		lua_pop(l, 1);		/* Pop t[i]. */
