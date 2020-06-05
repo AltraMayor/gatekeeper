@@ -51,6 +51,7 @@ l_str_to_prefix(lua_State *l)
 }
 
 #define CTYPE_STRUCT_IN6_ADDR_REF "struct in6_addr &"
+#define CTYPE_STRUCT_IN6_ADDR "struct in6_addr"
 
 static int
 l_str_to_prefix6(lua_State *l)
@@ -72,7 +73,7 @@ l_str_to_prefix6(lua_State *l)
 		luaL_error(l, "gk: failed to parse an IPv6 prefix");
 
 	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_IN6_ADDR_REF);
+		CTYPE_STRUCT_IN6_ADDR);
 	cdata = luaL_pushcdata(l, correct_ctypeid_in6_addr,
 		sizeof(struct in6_addr));
 	*cdata = ip_addr.ip.v6;

@@ -283,3 +283,17 @@ function decision_web(policy, tx_rate_kib_sec, cap_expire_sec,
 		policy, tx_rate_kib_sec, tx_rate_kib_sec * 0.05, -- 5%
 		cap_expire_sec, next_renewal_ms, renewal_step_ms, false)
 end
+
+-- There is no -> operator in Lua. The . operator works
+-- equivalently for accessing members of a struct AND
+-- accessing members of a struct through a reference.
+-- Therefore, the arguments to this function can be of type
+-- struct in6_addr or struct in6_addr &.
+function ipv6_addrs_equal(addr1, addr2)
+	for i=0,15 do
+		if addr1.s6_addr[i] ~= addr2.s6_addr[i] then
+			return false
+		end
+	end
+	return true
+end
