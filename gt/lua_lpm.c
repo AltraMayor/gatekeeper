@@ -230,6 +230,22 @@ l_ip_mask_addr(lua_State *l)
 	return 1;
 }
 
+static int
+l_lpm_get_paras(lua_State *l)
+{
+	/* First argument must be of type struct rte_lpm **. */
+	struct rte_lpm *lpm =
+		*(struct rte_lpm **)luaL_checkudata(l, 1, LUA_LPM_TNAME);
+
+	if (lua_gettop(l) != 1)
+		luaL_error(l, "Expected one argument, however it got %d arguments",
+			lua_gettop(l));
+
+	lua_pushinteger(l, lpm->max_rules);
+	lua_pushinteger(l, lpm->number_tbl8s);
+	return 2;
+}
+
 #define LUA_LPM6_TNAME "gt_lpm6"
 
 static int
@@ -426,6 +442,22 @@ l_ip6_mask_addr(lua_State *l)
 	return 1;
 }
 
+static int
+l_lpm6_get_paras(lua_State *l)
+{
+	/* First argument must be of type struct rte_lpm6 **. */
+	struct rte_lpm6 *lpm6 =
+		*(struct rte_lpm6 **)luaL_checkudata(l, 1, LUA_LPM6_TNAME);
+
+	if (lua_gettop(l) != 1)
+		luaL_error(l, "Expected one argument, however it got %d arguments",
+			lua_gettop(l));
+
+	lua_pushinteger(l, rte_lpm6_get_max_rules(lpm6));
+	lua_pushinteger(l, rte_lpm6_get_num_tbl8s(lpm6));
+	return 2;
+}
+
 static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 	{"str_to_prefix",  l_str_to_prefix},
 	{"new_lpm",        l_new_lpm},
@@ -433,12 +465,14 @@ static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 	{"lpm_del",        l_lpm_del},
 	{"lpm_lookup",     l_lpm_lookup},
 	{"ip_mask_addr",   l_ip_mask_addr},
+	{"lpm_get_paras",  l_lpm_get_paras},
 	{"str_to_prefix6", l_str_to_prefix6},
 	{"new_lpm6",       l_new_lpm6},
 	{"lpm6_add",       l_lpm6_add},
 	{"lpm6_del",       l_lpm6_del},
 	{"lpm6_lookup",    l_lpm6_lookup},
 	{"ip6_mask_addr",  l_ip6_mask_addr},
+	{"lpm6_get_paras", l_lpm6_get_paras},
 	{NULL,             NULL}	/* Sentinel. */
 };
 
