@@ -156,9 +156,10 @@ local function lpm6_para_estimate(ipv6_file)
 
 	for line in io.lines(ipv6_file) do
 		local ip6_addr, prefix_len = lpmlib.str_to_prefix6(line)
+		local ip6_addr_ref = ffi.cast("struct in6_addr &", ip6_addr)
 		num_rules = num_rules + 1
 		num_tbl8s = num_tbl8s +
-			lpmlib.lpm6_add_tbl8s(ip6_addr, prefix_len, prefixes)
+			lpmlib.lpm6_add_tbl8s(ip6_addr_ref, prefix_len, prefixes)
 	end
 
 	return num_rules, num_tbl8s
@@ -187,14 +188,24 @@ end
 
 for line in io.lines(bogons_ipv6_file) do
 	local ip_addr, prefix_len = lpmlib.str_to_prefix6(line)
-	lpmlib.lpm6_add(lpm6, ip_addr, prefix_len, 253)
+	local ip_addr_ref = ffi.cast("struct in6_addr &", ip_addr)
+	lpmlib.lpm6_add(lpm6, ip_addr_ref, prefix_len, 253)
 end
+
+-- Example global IP addresses for special cases in policy.
+ipv6_addr_ex, _ = lpmlib.str_to_prefix6("2001:219::1/128")
+ipv4_addr_ex, _ = lpmlib.str_to_prefix("41.78.176.1/32")
 
 local function lookup_lpm_policy(pkt_info)
 
 	if pkt_info.inner_ip_ver == policylib.c.IPV4 then
 		local ipv4_hdr = ffi.cast("struct rte_ipv4_hdr *",
 			pkt_info.inner_l3_hdr)
+
+		if ipv4_hdr.dst_addr == ipv4_addr_ex then
+			return nil
+		end
+
 		local policy_id = lpmlib.lpm_lookup(lpm, ipv4_hdr.src_addr)
 		if policy_id < 0 then
 			return nil
@@ -206,6 +217,13 @@ local function lookup_lpm_policy(pkt_info)
 	if pkt_info.inner_ip_ver == policylib.c.IPV6 then
 		local ipv6_hdr = ffi.cast("struct rte_ipv6_hdr *",
 			pkt_info.inner_l3_hdr)
+
+		local dst_addr = ffi.cast("struct in6_addr &",
+			ipv6_hdr.dst_addr)
+		if policylib.ipv6_addrs_equal(dst_addr, ipv6_addr_ex) then
+			return nil
+		end
+
 		local src_addr = ffi.cast("struct in6_addr &",
 			ipv6_hdr.src_addr)
 		local policy_id = lpmlib.lpm6_lookup(lpm6, src_addr)
