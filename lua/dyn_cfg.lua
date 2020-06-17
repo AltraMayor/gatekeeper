@@ -10,6 +10,9 @@ return function (net_conf, gk_conf, gt_conf, numa_table)
 	-- XXX #155 These parameters should only be changed for performance reasons.
 	local log_ratelimit_interval_ms = 5000
 	local log_ratelimit_burst = 10
+	local mailbox_max_entries_exp = 7
+	local mailbox_mem_cache_size = 0
+	local mailbox_burst_size = 32
 
 	-- These variables are unlikely to need to be changed.
 	local server_path = "/var/run/gatekeeper/dyn_cfg.socket"
@@ -34,6 +37,9 @@ return function (net_conf, gk_conf, gt_conf, numa_table)
 
 	dy_conf.log_ratelimit_interval_ms = log_ratelimit_interval_ms
 	dy_conf.log_ratelimit_burst = log_ratelimit_burst
+	dy_conf.mailbox_max_entries_exp = mailbox_max_entries_exp
+	dy_conf.mailbox_mem_cache_size = mailbox_mem_cache_size
+	dy_conf.mailbox_burst_size = mailbox_burst_size
 
 	staticlib.c.set_dyc_timeout(rcv_timeout_sec,
 		rcv_timeout_usec, dy_conf)

@@ -397,6 +397,9 @@ struct dynamic_config {
 	int              log_type;
 	uint32_t         log_ratelimit_interval_ms;
 	uint32_t         log_ratelimit_burst;
+	unsigned int     mailbox_max_entries_exp;
+	unsigned int     mailbox_mem_cache_size;
+	unsigned int     mailbox_burst_size;
 	/* This struct has hidden fields. */
 };
 

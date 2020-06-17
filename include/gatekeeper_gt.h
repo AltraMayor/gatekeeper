@@ -30,6 +30,8 @@
 #include "gatekeeper_fib.h"
 #include "gatekeeper_config.h"
 
+#define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
+
 struct gt_packet_headers {
 	uint16_t outer_ethertype;
 	uint16_t inner_ip_ver;
@@ -215,6 +217,7 @@ struct gt_cmd_entry {
 		struct {
 			size_t len;
 			char *lua_bytecode;
+			int is_returned;
 		} bc;
 	} u;
 };
@@ -224,7 +227,6 @@ int gt_conf_put(struct gt_config *gt_conf);
 int run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	const char *lua_base_directory, const char *lua_policy_file);
 int l_update_gt_lua_states(lua_State *l);
-int l_update_gt_lua_states_incrementally(lua_State *l);
 
 static inline void
 gt_conf_hold(struct gt_config *gt_conf)

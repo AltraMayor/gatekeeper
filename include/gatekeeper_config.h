@@ -18,6 +18,7 @@
 
 #include <lua.h>
 #include <sys/time.h>
+#include <rte_atomic.h>
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
@@ -25,7 +26,7 @@
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
 
-extern const uint16_t LUA_MSG_MAX_LEN;
+#define RETURN_MSG_MAX_LEN 256
 
 /* Configuration for the Dynamic Config functional block. */
 struct dynamic_config {
@@ -48,6 +49,11 @@ struct dynamic_config {
 	/* Log ratelimit burst size for Dynamic Configuration block. */
 	uint32_t         log_ratelimit_burst;
 
+	/* Parameters to setup the mailbox instance. */
+	unsigned int     mailbox_max_entries_exp;
+	unsigned int     mailbox_mem_cache_size;
+	unsigned int     mailbox_burst_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
@@ -67,6 +73,33 @@ struct dynamic_config {
 
 	/* The Lua file for initializing dynamic configuration. */
 	char             *dynamic_config_file;
+
+	struct mailbox   mb;
+	/*
+	 * The callee that finished processing the return message
+	 * needs to increment this counter, so that the Dynamic config block
+	 * can finish its operation.
+	 */
+	rte_atomic16_t   num_returned_instances;
+};
+
+/* Define the possible command operations for Dynamic config block. */
+enum dy_cmd_op {
+	GT_UPDATE_POLICY_RETURN,
+};
+
+/* Currently, the GT blocks are the only writers of Dynamic config mailbox. */
+struct dy_cmd_entry {
+	enum dy_cmd_op  op;
+
+	union {
+		/* GT_UPDATE_POLICY_RETURN */
+		struct {
+			unsigned int gt_lcore;
+			unsigned int length;
+			char return_msg[RETURN_MSG_MAX_LEN];
+		} gt;
+	} u;
 };
 
 int config_gatekeeper(const char *lua_base_dir,
