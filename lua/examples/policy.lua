@@ -171,7 +171,9 @@ local bogons_ipv4_file = "lua/examples/bogons-ipv4.txt"
 local num_ipv4_rules, num_ipv4_tbl8s = lpm_para_estimate(bogons_ipv4_file)
 num_ipv4_rules = math.max(1, scaling_factor_rules * num_ipv4_rules)
 num_ipv4_tbl8s = math.max(1, scaling_factor_tbl8s * num_ipv4_tbl8s)
-local lpm = lpmlib.new_lpm(num_ipv4_rules, num_ipv4_tbl8s)
+-- This variable is made global, so that the example() function in
+-- lua/examples/example_gt_lpm_params_request.lua can access it.
+lpm = lpmlib.new_lpm(num_ipv4_rules, num_ipv4_tbl8s)
 
 -- This file only contains an example set of Bogons IPv6 lists
 -- downloaded from http://www.team-cymru.org/Services/Bogons/fullbogons-ipv6.txt

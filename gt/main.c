@@ -2267,6 +2267,8 @@ uint32_t gt_cpu_to_be_32(uint32_t x);
 uint16_t gt_be_to_cpu_16(uint16_t x);
 uint32_t gt_be_to_cpu_32(uint32_t x);
 
+unsigned int gt_lcore_id(void);
+
 /*
  * This function is only meant to be used in Lua policies.
  * If you need it in Gatekeeper's C code, use rte_cpu_to_be_16()
@@ -2305,4 +2307,14 @@ uint32_t
 gt_be_to_cpu_32(uint32_t x)
 {
 	return rte_be_to_cpu_32(x);
+}
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_lcore_id()
+ */
+unsigned int
+gt_lcore_id(void)
+{
+	return rte_lcore_id();
 }
