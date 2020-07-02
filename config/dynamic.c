@@ -37,6 +37,7 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_log_ratelimit.h"
+#include "luajit-ffi-cdata.h"
 
 /*
  * The cast "(uint16_t)" is needed because of
@@ -291,6 +292,180 @@ cleanup_dy(struct dynamic_config *dy_conf)
 		rte_free(dy_conf->server_path);
 		dy_conf->server_path = NULL;
 	}
+
+	destroy_mailbox(&dy_conf->mb);
+}
+
+static void
+process_return_message(lua_State *l, struct dynamic_config *dy_conf,
+	int num_succ_sent_inst)
+{
+	int num_gt_messages = 0;
+	size_t reply_len = 0;
+	char reply_msg[MSG_MAX_LEN];
+
+	/* Wait for all GT instances to synchronize. */
+	while (rte_atomic16_read(&dy_conf->num_returned_instances)
+			< num_succ_sent_inst)
+		rte_pause();
+
+	while (num_gt_messages < num_succ_sent_inst) {
+		int i;
+		struct dy_cmd_entry *dy_cmds[dy_conf->mailbox_burst_size];
+		/* Load a set of commands from its mailbox ring. */
+		int num_cmd = mb_dequeue_burst(&dy_conf->mb,
+			(void **)dy_cmds, dy_conf->mailbox_burst_size);
+		/*
+		 * This condition check deals with the possibility that
+		 * the GT blocks incremented dy_conf->num_returned_instances
+		 * without sending a message due to not having enough memory
+		 * to send the message.
+		 */
+		if (num_cmd == 0)
+			break;
+
+		for (i = 0; i < num_cmd; i++) {
+			struct dy_cmd_entry *entry = dy_cmds[i];
+			switch (entry->op) {
+				case GT_UPDATE_POLICY_RETURN: {
+
+					if (dy_conf->gt == NULL) {
+						DYC_LOG(ERR, "The command operation %u requires that the server runs as Grantor\n",
+							entry->op);
+						break;
+					}
+
+					if (unlikely(entry->u.gt.length > RETURN_MSG_MAX_LEN))
+						DYC_LOG(ERR, "The return message from GT block is too long\n");
+					else if (unlikely(reply_len + entry->u.gt.length >
+							MSG_MAX_LEN))
+						DYC_LOG(ERR, "The aggregated return message from GT blocks is too long\n");
+					else {
+						rte_memcpy(reply_msg + reply_len,
+							entry->u.gt.return_msg,
+							entry->u.gt.length);
+						reply_len += entry->u.gt.length;
+					}
+
+					num_gt_messages++;
+					break;
+				}
+				default:
+					DYC_LOG(ERR, "Unknown command operation %u\n",
+						entry->op);
+					break;
+			}
+
+			mb_free_entry(&dy_conf->mb, entry);
+		}
+	}
+
+	if (dy_conf->gt != NULL && num_gt_messages != dy_conf->gt->num_lcores) {
+		DYC_LOG(WARNING,
+			"%s(): successfully collected only %d/%d instances\n",
+			__func__, num_gt_messages, dy_conf->gt->num_lcores);
+	}
+
+	lua_pushlstring(l, reply_msg, reply_len);
+}
+
+static int
+l_update_gt_lua_states_incrementally(lua_State *l)
+{
+	int i;
+	uint32_t ctypeid;
+	struct gt_config *gt_conf;
+	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GT_CONFIG_PTR);
+	size_t len;
+	const char *lua_bytecode;
+	int is_returned;
+	int num_succ_sent_inst = 0;
+	struct dynamic_config *dy_conf = get_dy_conf();
+
+	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
+	void *cdata = luaL_checkcdata(l, 1,
+		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gt_config)
+		luaL_error(l, "Expected `%s' as first argument",
+			CTYPE_STRUCT_GT_CONFIG_PTR);
+
+	gt_conf = *(struct gt_config **)cdata;
+
+	/* Second argument must be a Lua bytecode. */
+	lua_bytecode = lua_tolstring(l, 2, &len);
+	if (lua_bytecode == NULL || len == 0)
+		luaL_error(l, "gt: invalid lua bytecode\n");
+
+	/* Third argument should be a boolean. */
+	is_returned = lua_toboolean(l, 3);
+
+	if (lua_gettop(l) != 3)
+		luaL_error(l, "Expected three arguments, however it got %d arguments",
+			lua_gettop(l));
+
+	if (is_returned)
+		rte_atomic16_init(&dy_conf->num_returned_instances);
+
+	for (i = 0; i < gt_conf->num_lcores; i++) {
+		int ret;
+		struct gt_instance *instance = &gt_conf->instances[i];
+		unsigned int lcore_id = gt_conf->lcores[i];
+		struct gt_cmd_entry *entry;
+		char *lua_bytecode_buff = rte_malloc_socket("lua_bytecode",
+			len, 0, rte_lcore_to_socket_id(lcore_id));
+		if (lua_bytecode_buff == NULL) {
+			if (num_succ_sent_inst > 0) {
+				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
+					i, lcore_id);
+				continue;
+			} else {
+				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
+					i, lcore_id);
+			}
+		}
+
+		entry = mb_alloc_entry(&instance->mb);
+		if (entry == NULL) {
+			rte_free(lua_bytecode_buff);
+
+			if (num_succ_sent_inst > 0) {
+				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+					i, lcore_id);
+				continue;
+			} else {
+				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+					i, lcore_id);
+			}
+		}
+
+		entry->op = GT_UPDATE_POLICY_INCREMENTALLY;
+		entry->u.bc.len = len;
+		entry->u.bc.lua_bytecode = lua_bytecode_buff;
+		rte_memcpy(lua_bytecode_buff, lua_bytecode, len);
+		entry->u.bc.is_returned = is_returned;
+
+		ret = mb_send_entry(&instance->mb, entry);
+		if (ret != 0) {
+			rte_free(lua_bytecode_buff);
+
+			if (num_succ_sent_inst > 0) {
+				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+					i, lcore_id);
+				continue;
+			} else {
+				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+					i, lcore_id);
+			}
+		}
+
+		num_succ_sent_inst++;
+	}
+
+	if (is_returned)
+		process_return_message(l, dy_conf, num_succ_sent_inst);
+
+	return !!is_returned;
 }
 
 const struct luaL_reg dylib_lua_c_funcs [] = {
@@ -416,6 +591,43 @@ close_fd:
 	}
 }
 
+static void
+process_dy_cmd(struct dy_cmd_entry *entry)
+{
+	switch (entry->op) {
+		case GT_UPDATE_POLICY_RETURN:
+			DYC_LOG(WARNING,
+				"Synchronization timeout: the return message (%s) with command operation %u from GT instance running at lcore %u did not get aggregated\n",
+				entry->u.gt.return_msg, entry->op, entry->u.gt.gt_lcore);
+			break;
+		default:
+			DYC_LOG(ERR, "Unknown command operation %u\n",
+				entry->op);
+			break;
+	}
+}
+
+static void
+clear_mailbox(struct dynamic_config *dy_conf)
+{
+	while (true) {
+		int i;
+		int num_cmd;
+		struct dy_cmd_entry *dy_cmds[dy_conf->mailbox_burst_size];
+
+		/* Load a set of commands from its mailbox ring. */
+		num_cmd = mb_dequeue_burst(&dy_conf->mb,
+			(void **)dy_cmds, dy_conf->mailbox_burst_size);
+		if (num_cmd == 0)
+			break;
+
+		for (i = 0; i < num_cmd; i++) {
+			process_dy_cmd(dy_cmds[i]);
+			mb_free_entry(&dy_conf->mb, dy_cmds[i]);
+		}
+	}
+}
+
 static int
 dyn_cfg_proc(void *arg)
 {
@@ -429,10 +641,12 @@ dyn_cfg_proc(void *arg)
 	while (likely(!exiting)) {
 		fd_set fds;
 		struct timeval stv;
- 
+
+		clear_mailbox(dy_conf);
+
 		FD_ZERO(&fds);
 		FD_SET(dy_conf->sock_fd, &fds);
- 
+
 		/*
 		 * 10000 usecs' timeout for the select() function.
 		 * This parameter can prevent the select() function
@@ -525,12 +739,18 @@ run_dynamic_config(struct net_config *net_conf,
 		dy_conf->log_ratelimit_interval_ms,
 		dy_conf->log_ratelimit_burst);
 
+	ret = init_mailbox("dy_conf", dy_conf->mailbox_max_entries_exp,
+		sizeof(struct dy_cmd_entry), dy_conf->mailbox_mem_cache_size,
+		dy_conf->lcore_id, &dy_conf->mb);
+	if (ret < 0)
+		goto out;
+
 	dy_conf->sock_fd = -1;
 
 	dy_conf->server_path = rte_strdup("server_path", server_path);
 	if (dy_conf->server_path == NULL) {
 		ret = -1;
-		goto out;
+		goto free_mb;
 	}
 
 	/*
@@ -654,6 +874,8 @@ free_dy_lua_base_dir:
 free_server_path:
 	rte_free(dy_conf->server_path);
 	dy_conf->server_path = NULL;
+free_mb:
+	destroy_mailbox(&dy_conf->mb);
 
 out:
 	return ret;

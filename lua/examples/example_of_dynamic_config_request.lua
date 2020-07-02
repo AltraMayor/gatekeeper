@@ -11,7 +11,7 @@ if dyc.gt ~= nil then
 	end
 
 	dylib.update_gt_lua_states(dyc.gt)
-	dylib.update_gt_lua_states_incrementally(dyc.gt, example)
+	dylib.update_gt_lua_states_incrementally(dyc.gt, example, false)
 	return "gt: successfully updated the lua states\n"
 end
 

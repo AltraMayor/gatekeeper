@@ -1410,6 +1410,51 @@ gt_process_unparsed_incoming_pkt(struct acl_search *acl4,
 }
 
 static void
+return_message(struct gt_instance *instance)
+{
+	int ret;
+	unsigned lcore_id = rte_lcore_id();
+	size_t reply_len;
+	struct dynamic_config *dy_conf = get_dy_conf();
+	struct dy_cmd_entry *entry;
+	const char *reply_msg = lua_tolstring(instance->lua_state, -1, &reply_len);
+	if (reply_msg == NULL) {
+		GT_LOG(WARNING, "gt: new lua update returned a NULL message at lcore %u\n",
+			lcore_id);
+		goto out;
+	}
+
+	entry = mb_alloc_entry(&dy_conf->mb);
+	if (entry == NULL) {
+		GT_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+			dy_conf->lcore_id);
+		goto out;
+	}
+
+	if (unlikely(reply_len > RETURN_MSG_MAX_LEN)) {
+		GT_LOG(WARNING,
+			"gt: the return message length (%lu) exceeds the limit (%d) at lcore %u\n",
+			reply_len, RETURN_MSG_MAX_LEN, lcore_id);
+
+		reply_len = RETURN_MSG_MAX_LEN;
+	}
+
+	entry->op = GT_UPDATE_POLICY_RETURN;
+	entry->u.gt.gt_lcore = lcore_id;
+	entry->u.gt.length = reply_len;
+	rte_memcpy(entry->u.gt.return_msg, reply_msg, reply_len);
+
+	ret = mb_send_entry(&dy_conf->mb, entry);
+	if (ret != 0) {
+		GT_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+			dy_conf->lcore_id);
+	}
+
+out:
+	rte_atomic16_inc(&dy_conf->num_returned_instances);
+}
+
+static void
 process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 {
 	switch (entry->op) {
@@ -1427,7 +1472,8 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 		if ((luaL_loadbuffer(instance->lua_state,
 				entry->u.bc.lua_bytecode, entry->u.bc.len,
 				"incremental_update_of_gt_lua_state") != 0) ||
-				(lua_pcall(instance->lua_state, 0, 0, 0) != 0)) {
+				(lua_pcall(instance->lua_state, 0,
+					!!entry->u.bc.is_returned, 0) != 0)) {
 			GT_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
 				rte_lcore_id(),
 				luaL_checkstring(instance->lua_state, -1));
@@ -1435,6 +1481,11 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 			GT_LOG(NOTICE,
 				"Successfully updated the lua state incrementally at lcore %u\n",
 				rte_lcore_id());
+		}
+
+		if (entry->u.bc.is_returned) {
+			return_message(instance);
+			lua_pop(instance->lua_state, 1);
 		}
 
 		rte_free(entry->u.bc.lua_bytecode);
@@ -2150,8 +2201,6 @@ out:
 	return ret;
 }
 
-#define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
-
 int
 l_update_gt_lua_states(lua_State *l)
 {
@@ -2209,74 +2258,6 @@ l_update_gt_lua_states(lua_State *l)
 	return 0;
 }
 
-int
-l_update_gt_lua_states_incrementally(lua_State *l)
-{
-	int i;
-	uint32_t ctypeid;
-	struct gt_config *gt_conf;
-	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_GT_CONFIG_PTR);
-	size_t len;
-	const char *lua_bytecode;
-
-	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
-	void *cdata = luaL_checkcdata(l, 1,
-		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
-	if (ctypeid != correct_ctypeid_gt_config)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_GT_CONFIG_PTR);
-
-	gt_conf = *(struct gt_config **)cdata;
-
-	/* Second argument must be a Lua bytecode. */
-	lua_bytecode = lua_tolstring(l, 2, &len);
-	if (lua_bytecode == NULL || len == 0)
-		luaL_error(l, "gt: invalid lua bytecode\n");
-
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
-
-	for (i = 0; i < gt_conf->num_lcores; i++) {
-		int ret;
-		struct gt_instance *instance = &gt_conf->instances[i];
-		unsigned int lcore_id = gt_conf->lcores[i];
-		struct gt_cmd_entry *entry;
-		char *lua_bytecode_buff = rte_malloc_socket("lua_bytecode",
-			len, 0, rte_lcore_to_socket_id(lcore_id));
-		if (lua_bytecode_buff == NULL) {
-			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
-				i, lcore_id);
-			continue;
-		}
-
-		entry = mb_alloc_entry(&instance->mb);
-		if (entry == NULL) {
-			rte_free(lua_bytecode_buff);
-
-			luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
-				i, lcore_id);
-			continue;
-		}
-
-		entry->op = GT_UPDATE_POLICY_INCREMENTALLY;
-		entry->u.bc.len = len;
-		entry->u.bc.lua_bytecode = lua_bytecode_buff;
-		rte_memcpy(lua_bytecode_buff, lua_bytecode, len);
-
-		ret = mb_send_entry(&instance->mb, entry);
-		if (ret != 0) {
-			rte_free(lua_bytecode_buff);
-
-			luaL_error(l, "gt: failed to send new lua update chunk to GT block %d at lcore %d\n",
-				i, lcore_id);
-		}
-	}
-
-	return 0;
-}
-
 /*
  * The prototype is needed, otherwise there will be a compilation error:
  * no previous prototype for 'gt_cpu_to_be_16' [-Werror=missing-prototypes]
@@ -2285,6 +2266,8 @@ uint16_t gt_cpu_to_be_16(uint16_t x);
 uint32_t gt_cpu_to_be_32(uint32_t x);
 uint16_t gt_be_to_cpu_16(uint16_t x);
 uint32_t gt_be_to_cpu_32(uint32_t x);
+
+unsigned int gt_lcore_id(void);
 
 /*
  * This function is only meant to be used in Lua policies.
@@ -2324,4 +2307,14 @@ uint32_t
 gt_be_to_cpu_32(uint32_t x)
 {
 	return rte_be_to_cpu_32(x);
+}
+
+/*
+ * This function is only meant to be used in Lua policies.
+ * If you need it in Gatekeeper's C code, use rte_lcore_id()
+ */
+unsigned int
+gt_lcore_id(void)
+{
+	return rte_lcore_id();
 }
