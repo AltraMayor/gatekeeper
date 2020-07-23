@@ -771,7 +771,9 @@ lls_cache_init(struct lls_config *lls_conf, struct lls_cache *cache,
 	unsigned int socket_id = rte_lcore_to_socket_id(lls_conf->lcore_id);
 	struct rte_hash_parameters lls_cache_params = {
 		.name = cache->name,
-		.entries = lls_conf->max_num_cache_records,
+		.entries = lls_conf->max_num_cache_records < HASH_TBL_MIN_SIZE
+			? HASH_TBL_MIN_SIZE
+			: lls_conf->max_num_cache_records,
 		.reserved = 0,
 		.key_len = key_len,
 		.hash_func = DEFAULT_HASH_FUNC,
