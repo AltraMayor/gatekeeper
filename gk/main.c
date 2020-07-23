@@ -575,7 +575,9 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 
 	struct gk_instance *instance = &gk_conf->instances[block_idx];
 	struct rte_hash_parameters ip_flow_hash_params = {
-		.entries = gk_conf->flow_ht_size,
+		.entries = gk_conf->flow_ht_size < HASH_TBL_MIN_SIZE
+			? HASH_TBL_MIN_SIZE
+			: gk_conf->flow_ht_size,
 		.key_len = sizeof(struct ip_flow),
 		.hash_func = rss_ip_flow_hf,
 		.hash_func_init_val = 0,

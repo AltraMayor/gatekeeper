@@ -26,6 +26,9 @@
 #ifndef _GATEKEEPER_CONFIG_H_
 #define _GATEKEEPER_CONFIG_H_
 
+/* DPDK restricts hash tables to be at least of size 8. */
+#define HASH_TBL_MIN_SIZE 8
+
 #define RETURN_MSG_MAX_LEN 256
 
 /* Configuration for the Dynamic Config functional block. */

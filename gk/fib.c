@@ -394,7 +394,9 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 		sizeof(struct in_addr) : sizeof(struct in6_addr);
 
 	struct rte_hash_parameters neigh_hash_params = {
-		.entries = ht_size,
+		.entries = ht_size < HASH_TBL_MIN_SIZE
+			? HASH_TBL_MIN_SIZE
+			: ht_size,
 		.key_len = key_len,
 		.hash_func = hash_func,
 		.hash_func_init_val = 0,
