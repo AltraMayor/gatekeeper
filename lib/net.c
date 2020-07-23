@@ -605,6 +605,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		char *end;
 		long prefix_len;
 		int gk_type;
+		int max_prefix;
 
 		strncpy(ip_cidr_copy, ip_cidrs[i], ip_cidr_len + 1);
 
@@ -644,10 +645,12 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 				prefix_len_str);
 			goto pci_addrs;
 		}
-		if (prefix_len < 0 || prefix_len > max_prefix_len(gk_type)) {
+
+		max_prefix = max_prefix_len(gk_type) - 2;
+		if (prefix_len < 0 || prefix_len > max_prefix) {
 			G_LOG(ERR,
-				"net: prefix length \"%s\" is out of range\n",
-				prefix_len_str);
+				"net: invalid prefix length \"%s\" on %s; must be in range [0, %d] to provide enough addresses for a valid deployment\n",
+				prefix_len_str, ip_addr, max_prefix);
 			goto pci_addrs;
 		}
 
