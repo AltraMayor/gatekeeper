@@ -535,45 +535,9 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 	uint16_t inner_ip_ver, void *ip_dst, struct gatekeeper_if *iface)
 {
 	int ret;
-	char ip[128];
 	struct ether_cache *eth_cache = lookup_ether_cache(neigh, ip_dst);
 	if (eth_cache != NULL)
 		return eth_cache;
-
-	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
-		if (!ip4_same_subnet(iface->ip4_addr.s_addr,
-				*(uint32_t *)ip_dst, iface->ip4_mask.s_addr)) {
-			if (inet_ntop(AF_INET, ip_dst,
-					ip, sizeof(ip)) == NULL) {
-				GT_LOG(ERR,
-					"%s: failed to convert a number to an IPv4 address (%s)\n",
-					__func__, strerror(errno));
-				return NULL;
-			}
-
-			GT_LOG(WARNING,
-				"%s: receiving an IPv4 packet with destination IP address %s, which is not on the same subnet as the GT server\n",
-				__func__, ip);
-			return NULL;
-		}
-	} else if (likely(inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
-		if (!ip6_same_subnet(&iface->ip6_addr, ip_dst,
-				&iface->ip6_mask)) {
-			if (inet_ntop(AF_INET6, ip_dst,
-					ip, sizeof(ip)) == NULL) {
-				GT_LOG(ERR,
-					"%s: failed to convert a number to an IPv6 address (%s)\n",
-					__func__, strerror(errno));
-				return NULL;
-			}
-
-			GT_LOG(WARNING,
-				"%s: receiving an IPv6 packet with destination IP address %s, which is not on the same subnet as the GT server\n",
-				__func__, ip);
-			return NULL;
-		}
-	} else
-		return NULL;
 
 	eth_cache = get_new_ether_cache(neigh);
 	if (eth_cache == NULL) {
@@ -623,7 +587,9 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	struct neighbor_hash_table *neigh;
 	struct ether_cache *eth_cache;
 	void *ip_dst;
+	bool is_neighbor;
 	int bytes_to_add;
+	struct gatekeeper_if *iface = &gt_conf->net->front;
 
 	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
 		/*
@@ -640,11 +606,14 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 				(pkt_info->outer_ecn == IPTOS_ECN_CE)) {
 			inner_ipv4_hdr->type_of_service |= IPTOS_ECN_CE;
 			m->l3_len = ipv4_hdr_len(inner_ipv4_hdr);
-			set_ipv4_checksum(&gt_conf->net->front, m, inner_ipv4_hdr);
+			set_ipv4_checksum(iface, m, inner_ipv4_hdr);
 		}
 
 		neigh = &instance->neigh;
 		ip_dst = &inner_ipv4_hdr->dst_addr;
+
+		is_neighbor = ip4_same_subnet(iface->ip4_addr.s_addr,
+			*(uint32_t *)ip_dst, iface->ip4_mask.s_addr);
 	} else if (likely(pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		/*
 		 * Since there's no checksum in the IPv6 header, skip the
@@ -658,6 +627,9 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 
 		neigh = &instance->neigh6;
 		ip_dst = inner_ipv6_hdr->dst_addr;
+
+		is_neighbor = ip6_same_subnet(&iface->ip6_addr, ip_dst,
+			&iface->ip6_mask);
 	} else
 		return -1;
 
@@ -665,17 +637,36 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		? -sizeof(struct rte_ipv4_hdr)
 		: -sizeof(struct rte_ipv6_hdr);
 
-	if (adjust_pkt_len(m, &gt_conf->net->front,
-			bytes_to_add) == NULL) {
+	if (adjust_pkt_len(m, iface, bytes_to_add) == NULL) {
 		GT_LOG(ERR, "Could not adjust packet length\n");
 		return -1;
+	}
+
+	if (!is_neighbor) {
+		struct rte_ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+		struct rte_ether_hdr *raw_eth = pkt_info->l2_hdr;
+
+		rte_ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
+		m->l2_len = iface->l2_len_out;
+
+		if (iface->vlan_insert) {
+			fill_vlan_hdr(eth_hdr, iface->vlan_tag_be,
+				pkt_info->inner_ip_ver);
+		} else {
+			eth_hdr->ether_type =
+				rte_cpu_to_be_16(pkt_info->inner_ip_ver);
+		}
+
+		return 0;
 	}
 
 	/*
 	 * The destination MAC address comes from LLS block.
 	 */
 	eth_cache = gt_neigh_get_ether_cache(neigh,
-		pkt_info->inner_ip_ver, ip_dst, &gt_conf->net->front);
+		pkt_info->inner_ip_ver, ip_dst, iface);
 	if (eth_cache == NULL) {
 		/*
 		 * Note: the first packet to each new destination
@@ -685,8 +676,7 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		return -1;
 	}
 
-	if (pkt_copy_cached_eth_header(m, eth_cache,
-			gt_conf->net->front.l2_len_out))
+	if (pkt_copy_cached_eth_header(m, eth_cache, iface->l2_len_out))
 		return -1;
 
 	return 0;
