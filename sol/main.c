@@ -701,7 +701,8 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 		sol_conf->enq_burst_size) * sol_conf->num_lcores;
 	net_conf->front.total_pkt_burst += front_inc;
 
-	ret = net_launch_at_stage1(net_conf, 0, 0, 0, 1, sol_stage1, sol_conf);
+	ret = net_launch_at_stage1(net_conf, 0, 0, 0, sol_conf->num_lcores,
+		sol_stage1, sol_conf);
 	if (ret < 0)
 		goto burst;
 
