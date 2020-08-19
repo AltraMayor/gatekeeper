@@ -984,8 +984,10 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	if (neighbor_fib == NULL) {
 		neighbor_fib = find_fib_entry_for_neighbor_locked(
 			&addr, action, gk_conf);
-		if (neighbor_fib == NULL)
+		if (neighbor_fib == NULL) {
+			GK_LOG(ERR, "Could not find neighbor FIB to release Ethernet header entry\n");
 			return -1;
+		}
 	}
 
 	if (addr.proto == RTE_ETHER_TYPE_IPV4) {
@@ -1160,8 +1162,10 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	/* Find the neighbor FIB entry for this gateway. */
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		gw_addr, action, gk_conf);
-	if (neigh_fib == NULL)
+	if (neigh_fib == NULL) {
+		GK_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
 		return NULL;
+	}
 
 	/* Find the Ethernet cached header entry for this gateway. */
 	neigh_ht = &neigh_fib->u.neigh;
@@ -1228,8 +1232,10 @@ init_grantor_fib_locked(
 	/* Find the neighbor FIB entry for this gateway. */
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		gw_addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
-	if (neigh_fib == NULL)
+	if (neigh_fib == NULL) {
+		GK_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
 		return NULL;
+	}
 
 	/* Find the Ethernet cached header entry for this gateway. */
 	neigh_ht = &neigh_fib->u.neigh;
@@ -1566,13 +1572,23 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	 */
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		&prefix_info->addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
-	if (neigh_fib != NULL)
+	if (neigh_fib != NULL) {
+		GK_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on front interface\n");
 		return -1;
+	} else {
+		/* Clarify LPM lookup miss that will occur in log. */
+		GK_LOG(NOTICE, "Prefix lookup did not find existing neighbor FIB on front interface, as expected\n");
+	}
 
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		&prefix_info->addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
-	if (neigh_fib != NULL)
+	if (neigh_fib != NULL) {
+		GK_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on back interface\n");
 		return -1;
+	} else {
+		/* Clarify LPM lookup miss that will occur in log. */
+		GK_LOG(NOTICE, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
+	}
 
 	if (gw_addr != NULL) {
 		/*

@@ -466,8 +466,14 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		if (update->rt_type != RTN_BLACKHOLE) {
 			ret = lpm_lookup_ipv4(ltbl->lpm,
 				update->gw.v4.s_addr);
-			if (ret < 0)
+			if (ret < 0) {
+				if (ret == -ENOENT) {
+					CPS_LOG(WARNING,
+						"%s: IPv4 route sent by routing daemon has no entry in LPM table",
+						__func__);
+				}
 				return ret;
+			}
 			gw_fib = &ltbl->fib_tbl[ret];
 		}
 
@@ -483,8 +489,14 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 
 		if (update->rt_type != RTN_BLACKHOLE) {
 			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.v6);
-			if (ret < 0)
+			if (ret < 0) {
+				if (ret == -ENOENT) {
+					CPS_LOG(WARNING,
+						"%s: IPv6 route sent by routing daemon has no entry in LPM table",
+						__func__);
+				}
 				return ret;
+			}
 			gw_fib = &ltbl->fib_tbl6[ret];
 		}
 

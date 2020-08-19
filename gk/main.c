@@ -89,21 +89,33 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 }
 
 static struct gk_fib *
-look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow)
+__look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow, const char *calledby)
 {
 	int fib_id;
 
 	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
 		fib_id = lpm_lookup_ipv4(ltbl->lpm, flow->f.v4.dst.s_addr);
-		if (fib_id < 0)
+		if (fib_id < 0) {
+			if (fib_id == -ENOENT) {
+				GK_LOG(DEBUG,
+					"%s could not find FIB entry when processing incoming IPv4 flow\n",
+					calledby);
+			}
 			return NULL;
+		}
 		return &ltbl->fib_tbl[fib_id];
 	}
 
 	if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
 		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &flow->f.v6.dst);
-		if (fib_id < 0)
+		if (fib_id < 0) {
+			if (fib_id == -ENOENT) {
+				GK_LOG(DEBUG,
+					"%s could not find FIB entry when processing incoming IPv6 flow\n",
+					calledby);
+			}
 			return NULL;
+		}
 		return &ltbl->fib_tbl6[fib_id];
 	}
 
@@ -1216,8 +1228,8 @@ send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
 }
 
 static void
-lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
-	int num_flows, struct gk_fib *fibs[])
+__lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
+	int num_flows, struct gk_fib *fibs[], const char *calledby)
 {
 	int i;
 	/* The batch size for IPv4 LPM table lookup. */
@@ -1258,11 +1270,14 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	RTE_VERIFY(i == k);
 
 	for (; i < num_flows; i++) {
-		fibs[i] = look_up_fib(ltbl, flows[i]);
+		fibs[i] = __look_up_fib(ltbl, flows[i], calledby);
 		if (fibs[i])
 			rte_prefetch0(fibs[i]);
 	}
 }
+
+#define lookup_fib_bulk(ltbl, flows, num_flows, fibs)	\
+	__lookup_fib_bulk(ltbl, flows, num_flows, fibs, __func__)
 
 static void
 lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
