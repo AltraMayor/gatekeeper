@@ -437,6 +437,7 @@ config_gatekeeper(const char *lua_base_dir, const char *gatekeeper_config_file)
 	if (ret != 1)
 		G_LOG(ERR, "config: gatekeeper_init() return value is %d\n",
 			ret);
+	lua_pop(lua_state, 1);
 
 out:
 	lua_close(lua_state);

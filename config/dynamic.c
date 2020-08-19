@@ -148,6 +148,7 @@ process_client_message(int conn_fd,
 
 		DYC_LOG(ERR,
 			"The client request script returns a NULL string\n");
+		lua_pop(lua_state, 1);
 		return reply_client_message(conn_fd,
 			CLIENT_PROC_ERROR, strlen(CLIENT_PROC_ERROR));
 	}
@@ -159,7 +160,9 @@ process_client_message(int conn_fd,
 		reply_len = MSG_MAX_LEN;
 	}
 
-	return reply_client_message(conn_fd, reply_msg, reply_len);
+	ret = reply_client_message(conn_fd, reply_msg, reply_len);
+	lua_pop(lua_state, 1);
+	return ret;
 }
 
 /*
