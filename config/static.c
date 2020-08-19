@@ -433,8 +433,8 @@ config_gatekeeper(const char *lua_base_dir, const char *gatekeeper_config_file)
 		goto out;
 	}
 
-	ret = luaL_checkinteger(lua_state, -1);
-	if (ret < 0)
+	ret = lua_tointeger(lua_state, -1);
+	if (ret != 1)
 		G_LOG(ERR, "config: gatekeeper_init() return value is %d\n",
 			ret);
 

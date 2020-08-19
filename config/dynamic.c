@@ -137,29 +137,15 @@ process_client_message(int conn_fd,
 	/* Load the client's Lua chunk, and run it. */
 	ret = luaL_loadbuffer(lua_state, msg, msg_len, "message")
 		|| lua_pcall(lua_state, 0, 1, 0);
-	if (ret != 0) {
-		reply_msg = luaL_checklstring(lua_state, -1, &reply_len);
 
-		if (reply_len > MSG_MAX_LEN) {
-			char truncated_reply_msg[MSG_MAX_LEN];
-			strncpy(truncated_reply_msg, reply_msg, MSG_MAX_LEN);
-			truncated_reply_msg[MSG_MAX_LEN - 1] = '\0';
-
-			DYC_LOG(ERR, "%s\n", truncated_reply_msg);
-
-			DYC_LOG(WARNING,
-				"The error message length (%lu) exceeds the limit\n",
-				reply_len);
-
-			reply_len = MSG_MAX_LEN;
-		} else
-			DYC_LOG(ERR, "%s\n", reply_msg);
-
-		return reply_client_message(conn_fd, reply_msg, reply_len);
-	}
-
-	reply_msg = luaL_checklstring(lua_state, -1, &reply_len);
+	reply_msg = lua_tolstring(lua_state, -1, &reply_len);
 	if (reply_msg == NULL) {
+		/*
+		 * luaL_loadbuffer() and lua_pcall() must have
+		 * pushed an error string if they failed.
+		 */
+		RTE_VERIFY(ret == 0);
+
 		DYC_LOG(ERR,
 			"The client request script returns a NULL string\n");
 		return reply_client_message(conn_fd,
