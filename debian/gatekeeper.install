@@ -6,6 +6,7 @@ lua/examples/*.lua usr/share/doc/gatekeeper/examples
 build/gatekeeper usr/sbin/
 generate_if_map usr/sbin/
 gkctl/gkctl usr/sbin/
+gkctl/scripts/* usr/share/gatekeeper
 
 debian/devbind.sh usr/share/gatekeeper/
 debian/envvars etc/gatekeeper/

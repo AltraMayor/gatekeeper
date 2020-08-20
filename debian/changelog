@@ -1,3 +1,9 @@
+gatekeeper (1.0.0~rc2-0) bionic; urgency=medium
+
+  * Rebuild for 1.0.0-rc2
+
+ -- Andre Nathan <andre@digirati.com.br>  Thu, 20 Aug 2020 10:03:55 -0300
+
 gatekeeper (1.0.0~rc1-0) bionic; urgency=medium
 
   * First build
