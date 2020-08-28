@@ -80,5 +80,6 @@ function gatekeeper_init()
 	local dyf = require("dyn_cfg")
 	local dy_conf = dyf(net_conf, gk_conf, gt_conf, aux_numa_table)
 
-	return 0
+	-- A return value of 1 is required for success.
+	return 1
 end

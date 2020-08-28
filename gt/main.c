@@ -1466,7 +1466,7 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 					!!entry->u.bc.is_returned, 0) != 0)) {
 			GT_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
 				rte_lcore_id(),
-				luaL_checkstring(instance->lua_state, -1));
+				lua_tostring(instance->lua_state, -1));
 		} else {
 			GT_LOG(NOTICE,
 				"Successfully updated the lua state incrementally at lcore %u\n",
