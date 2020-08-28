@@ -151,6 +151,34 @@ pkt_ctx_to_pkt(struct gk_bpf_pkt_ctx *ctx)
 	return frame->packet->pkt;
 }
 
+/*
+ * One's complement sum.
+ *
+ * Notice that if @a and @b are little-endian, the result is also
+ * little-endian. The same is true for big-endian. In order words,
+ * this function preserves endianness.
+ *
+ * The endianness preservation is independent of the endianness of the host.
+ */
+static inline uint16_t
+onec_add(uint16_t a, uint16_t b)
+{
+	uint16_t res = a + b;
+	return res + (res < b);
+}
+
+/*
+ * The result has the same endianness of the inputs as long as
+ * all inputs have the same endianness.
+ * The endianness preservation is independent of the endianness of the host.
+ */
+static inline uint16_t
+new_ip_csum(uint16_t old_csum, uint16_t old16, uint16_t new16)
+{
+	/* According to RFC1624 [Eqn. 3]. */
+	return ~onec_add(onec_add(~old_csum, ~old16), new16);
+}
+
 static int
 update_pkt_priority(struct ipacket *packet, int priority,
 	struct gatekeeper_if *iface)
@@ -167,7 +195,7 @@ update_pkt_priority(struct ipacket *packet, int priority,
 
 	if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
 		struct rte_ipv4_hdr *ip4hdr = packet->l3_hdr;
-		uint16_t old_val = ntohs(*(uint16_t *)ip4hdr);
+		uint16_t old_val = *(uint16_t *)ip4hdr;
 		uint16_t new_val;
 
 		mask = (1 << 2) - 1;
@@ -175,11 +203,11 @@ update_pkt_priority(struct ipacket *packet, int priority,
 		ip4hdr->type_of_service = (priority << 2) |
 			(ip4hdr->type_of_service & mask);
 
-		new_val = ntohs(*(uint16_t *)ip4hdr);
+		new_val = *(uint16_t *)ip4hdr;
 
 		/* According to RFC1624 [Eqn. 4]. */
-		ip4hdr->hdr_checksum = htons(ntohs(ip4hdr->hdr_checksum) -
-			~old_val - new_val);
+		ip4hdr->hdr_checksum = new_ip_csum(ip4hdr->hdr_checksum,
+			old_val, new_val);
 	} else if (likely(packet->flow.proto == RTE_ETHER_TYPE_IPV6)) {
 		struct rte_ipv6_hdr *ip6hdr = packet->l3_hdr;
 
