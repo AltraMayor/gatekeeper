@@ -17,6 +17,7 @@
  */
 
 #include <arpa/inet.h>
+#include <string.h>
 
 #include <rte_log.h>
 #include <rte_debug.h>
@@ -48,7 +49,12 @@ init_ipv4_lpm(const char *tag,
 	return lpm;
 }
 
-/* @ip should be in network order. */
+/*
+ * Notes:
+ *  - @ip should be in network order.
+ *  - Callers should check for -ENOENT and log
+ *    a context-specific message.
+ */
 int
 lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 {
@@ -58,16 +64,43 @@ lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 	ret = rte_lpm_lookup(lpm, ntohl(ip), &next_hop);
 	if (ret == -EINVAL) {
 		G_LOG(ERR, "lpm: incorrect arguments for IPv4 lookup\n");
-		goto out;
+		return ret;
 	} else if (ret == -ENOENT) {
-		G_LOG(WARNING, "lpm: IPv4 lookup miss\n");
-		goto out;
+		/*
+		 * Failing to find an LPM entry can mean many different
+		 * things, depending on the caller. In some cases,
+		 * failing to find an entry is used as a validation of
+		 * the table, and is therefore not even an error.
+		 *
+		 * Failing to find an entry can also occur frequently
+		 * on the hot path when under attack.
+		 *
+		 * For these reasons, we are careful about how we log the
+		 * fact that the lookup failed to find an entry. We use the
+		 * DEBUG level and guess whether the entry will actually be
+		 * logged. Callers are encouraged to check for -ENOENT and
+		 * make their own log entries as needed.
+		 */
+		char buf[INET_ADDRSTRLEN];
+
+		if (likely(!G_LOG_CHECK(DEBUG)))
+			return ret;
+
+		if (likely(inet_ntop(AF_INET, &ip,
+				buf, sizeof(buf)) != NULL)) {
+			G_LOG(DEBUG,
+				"lpm: IPv4 lookup miss for %s\n", buf);
+			return ret;
+		}
+
+		G_LOG(DEBUG,
+			"lpm: IPv4 lookup miss; can't convert IP to string: %s\n",
+			strerror(errno));
+		return ret;
 	}
 
-	ret = next_hop;
-
-out:
-	return ret;
+	RTE_VERIFY(ret == 0);
+	return next_hop;
 }
 
 struct rte_lpm6 *
@@ -94,6 +127,11 @@ init_ipv6_lpm(const char *tag,
 	return lpm;
 }
 
+/*
+ * Note:
+ *  - Callers should check for -ENOENT and log
+ *    a context-specific message.
+ */
 int
 lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip)
 {
@@ -103,14 +141,27 @@ lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip)
 	ret = rte_lpm6_lookup(lpm, (uint8_t *)ip, &next_hop);
 	if (ret == -EINVAL) {
 		G_LOG(ERR, "lpm: incorrect arguments for IPv6 lookup\n");
-		goto out;
+		return ret;
 	} else if (ret == -ENOENT) {
-		G_LOG(WARNING, "lpm: IPv6 lookup miss\n");
-		goto out;
+		/* See comment for -ENOENT case in lpm_lookup_ipv4(). */
+		char buf[INET6_ADDRSTRLEN];
+
+		if (likely(!G_LOG_CHECK(DEBUG)))
+			return ret;
+
+		if (likely(inet_ntop(AF_INET6, &ip->s6_addr,
+				buf, sizeof(buf)) != NULL)) {
+			G_LOG(DEBUG,
+				"lpm: IPv6 lookup miss for %s\n", buf);
+			return ret;
+		}
+
+		G_LOG(DEBUG,
+			"lpm: IPv6 lookup miss; can't convert IP to string: %s\n",
+			strerror(errno));
+		return ret;
 	}
 
-	ret = next_hop;
-
-out:
-	return ret;
+	RTE_VERIFY(ret == 0);
+	return next_hop;
 }

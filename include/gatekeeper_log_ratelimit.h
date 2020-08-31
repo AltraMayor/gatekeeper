@@ -19,7 +19,24 @@
 #ifndef _GATEKEEPER_LOG_RATELIMIT_H_
 #define _GATEKEEPER_LOG_RATELIMIT_H_
 
+#include <stdbool.h>
 #include <stdint.h>
+
+/*
+ * Check whether a log entry will be permitted, according to the level
+ * of the log entry and the configured level of the system's log.
+ * Note that even when this test passes, log entries may not occur
+ * due to the rate limiting system.
+ */
+static inline bool
+check_log_allowed(uint32_t level, uint32_t logtype)
+{
+	int sys_level = rte_log_get_level(logtype);
+	if (unlikely(sys_level < 0))
+		false;
+
+	return level <= (typeof(level))sys_level;
+}
 
  /*
   * @lcore_id: initialize the log_ratelimit_state data for @lcore_id.

@@ -41,6 +41,9 @@ extern int gatekeeper_logtype;
 	rte_log_ratelimit(RTE_LOG_ ## level,	\
 	gatekeeper_logtype, "GATEKEEPER: " __VA_ARGS__)
 
+#define G_LOG_CHECK(level)	\
+	check_log_allowed(RTE_LOG_ ## level, gatekeeper_logtype)
+
 extern volatile int exiting;
 
 extern uint64_t cycles_per_sec;
