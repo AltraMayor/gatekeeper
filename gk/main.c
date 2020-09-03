@@ -569,9 +569,12 @@ gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
 	if (likely(ret >= 0))
 		memset(fe, 0, sizeof(*fe));
 	else {
-		GK_LOG(ERR,
+		char err_msg[256];
+		int ret2 = snprintf(err_msg, sizeof(err_msg),
 			"The GK block failed to delete a key from hash table at %s: %s\n",
 			__func__, strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
 	}
 
 	return ret;
@@ -2254,7 +2257,7 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		if (fe != NULL) {
+		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at) {
 			gk_del_flow_entry_from_hash(
 				instance->ip_flow_hash_table, fe);
 
