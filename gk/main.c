@@ -756,8 +756,8 @@ flush_flow_table(struct ip_prefix *src,
 			}
 		}
 
-		if (matched) {
-			gk_del_flow_entry_from_hash(instance, fe);
+		if (matched && (gk_del_flow_entry_from_hash(
+				instance, fe) >= 0)) {
 			num_flushed_flows++;
 		}
 
