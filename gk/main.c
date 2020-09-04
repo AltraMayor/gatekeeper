@@ -563,15 +563,22 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 }
 
 static int
-gk_del_flow_entry_from_hash(struct rte_hash *h, struct flow_entry *fe)
+gk_del_flow_entry_from_hash(struct gk_instance *instance,
+	struct flow_entry *fe)
 {
+	struct rte_hash *h = instance->ip_flow_hash_table;
 	int ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
-	if (likely(ret >= 0))
+	if (likely(ret >= 0)) {
 		memset(fe, 0, sizeof(*fe));
-	else {
-		GK_LOG(ERR,
+		if (instance->num_scan_del > 0)
+			instance->num_scan_del--;
+	} else {
+		char err_msg[256];
+		int ret2 = snprintf(err_msg, sizeof(err_msg),
 			"The GK block failed to delete a key from hash table at %s: %s\n",
 			__func__, strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
 	}
 
 	return ret;
@@ -749,9 +756,8 @@ flush_flow_table(struct ip_prefix *src,
 			}
 		}
 
-		if (matched) {
-			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
+		if (matched && (gk_del_flow_entry_from_hash(
+				instance, fe) >= 0)) {
 			num_flushed_flows++;
 		}
 
@@ -892,10 +898,8 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 		while (index >= 0) {
 			struct flow_entry *fe =
 				&instance->ip_flow_entry_table[index];
-			if (fe->grantor_fib == fib) {
-				gk_del_flow_entry_from_hash(
-					instance->ip_flow_hash_table, fe);
-			}
+			if (fe->grantor_fib == fib)
+				gk_del_flow_entry_from_hash(instance, fe);
 
 			index = rte_hash_iterate(instance->ip_flow_hash_table,
 				(void *)&key, &data, &next);
@@ -2254,13 +2258,8 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		if (fe != NULL) {
-			gk_del_flow_entry_from_hash(
-				instance->ip_flow_hash_table, fe);
-
-			if (instance->num_scan_del > 0)
-				instance->num_scan_del--;
-		}
+		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at)
+			gk_del_flow_entry_from_hash(instance, fe);
 
 		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {
