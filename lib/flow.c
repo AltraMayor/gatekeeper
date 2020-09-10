@@ -147,9 +147,12 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 				__func__, strerror(errno));
 			return;
 		}
-	} else
-		rte_panic("Unexpected condition at %s: unknown flow type %hu\n",
-			__func__, flow->proto);
+	} else {
+		G_LOG(ERR,
+			"flow: %s; while trying to show flow data, an unknown flow type %hu was found\n",
+			err_msg, flow->proto);
+		return;
+	}
 
 	G_LOG(ERR,
 		"flow: %s for the flow with IP source address %s, and destination address %s\n",
