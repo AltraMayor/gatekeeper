@@ -1113,7 +1113,7 @@ gatekeeper_get_rss_config(uint16_t port_id,
 		rss_conf->reta_conf, rss_conf->reta_size);
 	if (ret == -ENOTSUP) {
 		G_LOG(ERR,
-			"net: ailed to query RSS configuration at port %hhu hardware doesn't support\n",
+			"net: failed to query RSS configuration at port %hhu hardware doesn't support\n",
 			port_id);
 		ret = -1;
 	} else if (ret == -EINVAL) {
