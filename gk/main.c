@@ -2061,10 +2061,7 @@ update_flow_table(struct gk_fib *fib, struct ggu_policy *policy,
 		return;
 
 	fe = &instance->ip_flow_entry_table[ret];
-	rte_memcpy(&fe->flow, &policy->flow, sizeof(fe->flow));
-	fe->in_use = true;
-	fe->grantor_fib = fib;
-
+	initialize_flow_entry(fe, &policy->flow, rss_hash_val, fib);
 	update_flow_entry(fe, policy);
 }
 
