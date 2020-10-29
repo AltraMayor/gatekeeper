@@ -382,24 +382,24 @@ match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	return 0;
 }
 
-#define PING_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_ping_req) + sizeof(struct rte_mbuf *) * num_pkts)
+#define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_icmp_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
-submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
+submit_icmp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_ping_req *ping_req;
+	struct lls_icmp_req *icmp_req;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
-	ping_req = alloca(PING_REQ_SIZE(num_pkts));
-	ping_req->num_pkts = num_pkts;
-	ping_req->iface = iface;
-	rte_memcpy(ping_req->pkts, pkts, sizeof(*ping_req->pkts) * num_pkts);
+	icmp_req = alloca(ICMP_REQ_SIZE(num_pkts));
+	icmp_req->num_pkts = num_pkts;
+	icmp_req->iface = iface;
+	rte_memcpy(icmp_req->pkts, pkts, sizeof(*icmp_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_PING, ping_req);
+	ret = lls_req(LLS_REQ_ICMP, icmp_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -411,19 +411,17 @@ submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's an IPv4 ping packet, then respond to the ICMPv4 ping.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_icmp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	const uint16_t BE_ETHER_TYPE_IPv4 =
 		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	struct rte_ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	struct rte_ipv4_hdr *ip4hdr;
-	struct rte_icmp_hdr *icmphdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
@@ -445,15 +443,10 @@ match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 
 	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
 		LLS_LOG(WARNING,
-			"Received fragmented ping packets destined to this server at %s\n",
+			"Received fragmented ICMP packets destined to this server at %s\n",
 			__func__);
 		return -ENOENT;
 	}
-
-	icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
-	if (icmphdr->icmp_type != ICMP_ECHO_REQUEST_TYPE ||
-			icmphdr->icmp_code != ICMP_ECHO_REQUEST_CODE)
-		return -ENOENT;
 
 	return 0;
 }
@@ -920,7 +913,7 @@ register_nd_neigh_acl_rules(struct gatekeeper_if *iface)
 }
 
 static void
-fill_ping_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
+fill_icmp_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
 {
 	rule->data.category_mask = 0x1;
 	rule->data.priority = 1;
@@ -932,31 +925,22 @@ fill_ping_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
 	rule->field[DST_FIELD_IPV4].value.u32 =
 		rte_be_to_cpu_32(addr->s_addr);
 	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
-
-	/*
-	 * The reason to have 0xFFFF0000 is to test
-	 * both type and code at the same time.
-	 */
-	rule->field[TYPE_FIELD_ICMP].value.u32 =
-		((ICMP_ECHO_REQUEST_TYPE << 24) |
-		(ICMP_ECHO_REQUEST_CODE << 16)) & 0xFFFF0000;
-	rule->field[TYPE_FIELD_ICMP].mask_range.u32 = 0xFFFF0000;
 }
 
 static int
-register_ping_acl_rules(struct gatekeeper_if *iface)
+register_icmp_acl_rules(struct gatekeeper_if *iface)
 {
 	struct ipv4_acl_rule ipv4_rules[1];
 	int ret;
 
 	memset(ipv4_rules, 0, sizeof(ipv4_rules));
 
-	fill_ping_rule(&ipv4_rules[0], &iface->ip4_addr);
+	fill_icmp_rule(&ipv4_rules[0], &iface->ip4_addr);
 
 	ret = register_ipv4_acl(ipv4_rules, RTE_DIM(ipv4_rules),
-		submit_ping, match_ping, iface);
+		submit_icmp, match_icmp, iface);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ping IPv4 ACL on %s iface\n",
+		LLS_LOG(ERR, "Could not register ICMP ACL on %s iface\n",
 			iface->name);
 		return ret;
 	}
@@ -1151,7 +1135,7 @@ lls_stage1(void *arg)
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
 		RTE_MAX(ARP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
 		RTE_MAX(ND_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-		RTE_MAX(PING_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
+		RTE_MAX(ICMP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
 			PING6_REQ_SIZE(lls_conf->mailbox_max_pkt_sub)))));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
@@ -1204,8 +1188,8 @@ lls_stage2(void *arg)
 			return -1;
 		}
 
-		/* Receive ping packets using IPv4 ACL filters. */
-		ret = register_ping_acl_rules(&net_conf->front);
+		/* Receive ICMP packets using IPv4 ACL filters. */
+		ret = register_icmp_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
 	}
@@ -1222,8 +1206,8 @@ lls_stage2(void *arg)
 			return -1;
 		}
 
-		/* Receive ping packets using IPv4 ACL filters. */
-		ret = register_ping_acl_rules(&net_conf->back);
+		/* Receive ICMP packets using IPv4 ACL filters. */
+		ret = register_icmp_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}

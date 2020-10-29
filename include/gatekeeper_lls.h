@@ -48,8 +48,8 @@ enum lls_req_ty {
 	LLS_REQ_ARP,
 	/* Request to handle ND packets received from another block. */
 	LLS_REQ_ND,
-	/* Request to handle ICMP ping packets received from another block. */
-	LLS_REQ_PING,
+	/* Request to handle ICMP packets received from another block. */
+	LLS_REQ_ICMP,
 	/* Request to handle ICMPv6 ping packets received from another block. */
 	LLS_REQ_PING6,
 };
@@ -370,10 +370,10 @@ struct nd_opt_lladdr {
 	sizeof(struct nd_opt_lladdr))
 
 /*
- * Minimum size of an IPv4 ping packet.
+ * Minimum size of an IPv4 ICMP packet.
  *
- * Note that, according to RFC pages 13 and 14,
- * both the ICMP Echo request header and Echo reply header require 8 bytes.
+ * Note that the minimum ICMP header size is 8 bytes (RFC 792),
+ * but DPDK's struct rte_icmp_hdr includes other fields.
  */
 #define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv4_hdr) + 8)
 
@@ -390,15 +390,20 @@ struct nd_opt_lladdr {
 #define LLS_ND_NA_OVERRIDE  0x20000000
 
 /*
- * Supported IPv4 ping packets via the type and code fields
- * in struct icmp_hdr.
+ * ICMP message types.
  */
+
+/* ICMP Echo Request. */
 #define ICMP_ECHO_REQUEST_TYPE (8)
 #define ICMP_ECHO_REQUEST_CODE (0)
 
-/* ICMP type and code fields for echo reply messages. */
+/* ICMP Echo Reply. */
 #define ICMP_ECHO_REPLY_TYPE (0)
 #define ICMP_ECHO_REPLY_CODE (0)
+
+/* ICMP Destination Unreachable, Fragmentation required, and DF flag set. */
+#define ICMP_DEST_UNREACHABLE_TYPE (3)
+#define ICMP_FRAG_REQ_DF_CODE (4)
 
 /*
  * Supported IPv6 ping packets via the type and code fields
