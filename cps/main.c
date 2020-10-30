@@ -206,8 +206,8 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 
 	/* Set-up ICMPv6 header. */
 	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
-	icmpv6_hdr->type = ND_NEIGHBOR_ADVERTISEMENT;
-	icmpv6_hdr->code = 0;
+	icmpv6_hdr->type = ND_NEIGHBOR_ADVERTISEMENT_TYPE;
+	icmpv6_hdr->code = ND_NEIGHBOR_ADVERTISEMENT_CODE;
 	icmpv6_hdr->cksum = 0; /* Calculated below. */
 
 	/* Set up ND Advertisement header with target LL addr option. */
@@ -375,8 +375,8 @@ kni_tx:
 }
 
 static int
-pkt_is_nd(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
-	uint16_t pkt_len)
+cps_pkt_is_nd_neighbor(struct gatekeeper_if *iface,
+	struct rte_ether_hdr *eth_hdr, uint16_t pkt_len)
 {
 	struct rte_ipv6_hdr *ipv6_hdr;
 	struct icmpv6_hdr *icmpv6_hdr;
@@ -392,11 +392,10 @@ pkt_is_nd(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	/*
 	 * Make sure this is an ND neighbor message and that it was
 	 * sent by us (our global address, link-local address, or
-	 * either of the solicited-node multicast addresses.
+	 * either of the solicited-node multicast addresses).
 	 */
 	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
-	return (icmpv6_hdr->type == ND_NEIGHBOR_SOLICITATION ||
-			icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) &&
+	return pkt_is_nd_neighbor(icmpv6_hdr->type, icmpv6_hdr->code) &&
 		(ipv6_addrs_equal(ipv6_hdr->src_addr,
 			iface->ll_ip6_addr.s6_addr) ||
 		ipv6_addrs_equal(ipv6_hdr->src_addr,
@@ -432,7 +431,7 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			break;
 		case RTE_ETHER_TYPE_IPV6: {
 			uint16_t pkt_len = rte_pktmbuf_data_len(bufs[i]);
-			if (pkt_is_nd(iface, eth_hdr, pkt_len)) {
+			if (cps_pkt_is_nd_neighbor(iface, eth_hdr, pkt_len)) {
 				/* Intercept ND packet and handle it. */
 				kni_process_nd(cps_conf, iface,
 					bufs[i], eth_hdr, pkt_len);

@@ -81,15 +81,15 @@ struct lls_icmp_req {
 	struct rte_mbuf      *pkts[0];
 };
 
-/* Information needed to submit ICMPv6 ping packets to the LLS block. */
-struct lls_ping6_req {
+/* Information needed to submit ICMPv6 packets to the LLS block. */
+struct lls_icmp6_req {
 	/* Number of packets stored in @pkts. */
 	int                  num_pkts;
 
 	/* Interface that received @pkt. */
 	struct gatekeeper_if *iface;
 
-	/* ICMPv6 ping packets. */
+	/* ICMPv6 packets. */
 	struct rte_mbuf      *pkts[0];
 };
 
@@ -131,12 +131,10 @@ struct lls_request {
 		struct lls_put_req   put;
 		/* If @ty is LLS_REQ_ARP, use @arp. */
 		struct lls_arp_req   arp;
-		/* If @ty is LLS_REQ_ND, use @nd. */
-		struct lls_nd_req    nd;
 		/* If @ty is LLS_REQ_ICMP, use @icmp. */
 		struct lls_icmp_req  icmp;
-		/* If @ty is LLS_REQ_PING6, use @ping6. */
-		struct lls_ping6_req ping6;
+		/* If @ty is LLS_REQ_ICMP6, use @icmp6. */
+		struct lls_icmp6_req icmp6;
 	} u;
 };
 

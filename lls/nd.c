@@ -201,8 +201,8 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	/* Set-up ICMPv6 header. */
 	icmpv6_hdr = (struct icmpv6_hdr *)&ipv6_hdr[1];
-	icmpv6_hdr->type = ND_NEIGHBOR_SOLICITATION;
-	icmpv6_hdr->code = 0;
+	icmpv6_hdr->type = ND_NEIGHBOR_SOLICITATION_TYPE;
+	icmpv6_hdr->code = ND_NEIGHBOR_SOLICITATION_CODE;
 	icmpv6_hdr->cksum = 0; /* Calculated below. */
 
 	/* Set-up ND header with options. */
@@ -446,7 +446,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 			sizeof(ipv6_hdr->src_addr));
 
 		/* Set-up ICMPv6 header. */
-		icmpv6_hdr->type = ND_NEIGHBOR_ADVERTISEMENT;
+		icmpv6_hdr->type = ND_NEIGHBOR_ADVERTISEMENT_TYPE;
+		icmpv6_hdr->code = ND_NEIGHBOR_ADVERTISEMENT_CODE;
 		icmpv6_hdr->cksum = 0; /* Calculated below. */
 
 		/* Set up ND Advertisement header with target LL addr option. */
@@ -690,16 +691,21 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 
 	eth_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
 	switch (icmpv6_hdr->type) {
-	case ND_NEIGHBOR_SOLICITATION:
+	case ND_NEIGHBOR_SOLICITATION_TYPE:
+		if (icmpv6_hdr->code != ND_NEIGHBOR_SOLICITATION_CODE)
+			goto log;
 		return process_nd_neigh_solicitation(lls_conf, buf, eth_hdr,
 			ipv6_hdr, icmpv6_hdr, pkt_len, l2_len, icmpv6_len,
 			iface, tx_queue);
-	case ND_NEIGHBOR_ADVERTISEMENT:
+	case ND_NEIGHBOR_ADVERTISEMENT_CODE:
+		if (icmpv6_hdr->code != ND_NEIGHBOR_ADVERTISEMENT_CODE)
+			goto log;
 		return process_nd_neigh_advertisement(lls_conf,
 			ipv6_hdr, icmpv6_hdr, icmpv6_len, iface);
 	default:
-		LLS_LOG(NOTICE, "%s received an ICMPv6 packet that's not a Neighbor Solicitation or Neighbor Advertisement (%hhu)\n",
-			__func__, icmpv6_hdr->type);
+log:
+		LLS_LOG(NOTICE, "%s received an ICMPv6 packet that's not a Neighbor Solicitation or Neighbor Advertisement (type=%hhu, code=%hhu)\n",
+			__func__, icmpv6_hdr->type, icmpv6_hdr->code);
 		return -1;
 	}
 
