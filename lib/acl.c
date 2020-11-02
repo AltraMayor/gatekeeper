@@ -209,15 +209,6 @@ struct rte_acl_field_def ipv4_defs[NUM_FIELDS_IPV4] = {
 		.input_index = PORTS_INPUT_IPV4,
 		.offset = sizeof(struct rte_ipv4_hdr) + sizeof(uint16_t),
 	},
-	{
-		/* Enforce grouping into four bytes. */
-		.type = RTE_ACL_FIELD_TYPE_BITMASK,
-		.size = sizeof(uint32_t),
-		.field_index = TYPE_FIELD_ICMP,
-		.input_index = TYPE_INPUT_ICMP,
-		.offset = sizeof(struct rte_ipv4_hdr) +
-			offsetof(struct rte_icmp_hdr, icmp_type),
-	},
 };
 
 /*

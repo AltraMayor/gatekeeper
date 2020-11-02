@@ -50,14 +50,6 @@
  * link partner does not have LACP configured).
  */
 
-/* The IPv6 all nodes multicast address. */
-static const struct in6_addr ip6_allnodes_mc_addr = {
-	.s6_addr = {
-		0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-	}
-};
-
 int lls_logtype;
 
 static struct lls_config lls_conf = {
@@ -213,24 +205,24 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	}
 }
 
-#define ND_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_nd_req) + sizeof(struct rte_mbuf *) * num_pkts)
+#define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_icmp_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
-submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
+submit_icmp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_nd_req *nd_req;
+	struct lls_icmp_req *icmp_req;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
-	nd_req = alloca(ND_REQ_SIZE(num_pkts));
-	nd_req->num_pkts = num_pkts;
-	nd_req->iface = iface;
-	rte_memcpy(nd_req->pkts, pkts, sizeof(*nd_req->pkts) * num_pkts);
+	icmp_req = alloca(ICMP_REQ_SIZE(num_pkts));
+	icmp_req->num_pkts = num_pkts;
+	icmp_req->iface = iface;
+	rte_memcpy(icmp_req->pkts, pkts, sizeof(*icmp_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_ND, nd_req);
+	ret = lls_req(LLS_REQ_ICMP, icmp_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -242,188 +234,17 @@ submit_nd_neigh(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's an ND Neighbor packet, then submit it to the LLS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_nd_neigh(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
-{
-	/*
-	 * The ND header offset in terms of the
-	 * beginning of the IPv6 header.
-	 */
-	int nd_offset;
-	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 =
-		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
-	struct rte_ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
-	struct rte_ipv6_hdr *ip6hdr;
-	struct icmpv6_hdr *nd_hdr;
-	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
-	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-
-	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
-		return -ENOENT;
-
-	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len))
-		return -ENOENT;
-
-	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
-			sizeof(iface->ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
-			sizeof(iface->ll_ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ip6_mc_addr,
-			sizeof(iface->ip6_mc_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr,
-			&iface->ll_ip6_mc_addr,
-			sizeof(iface->ll_ip6_mc_addr)) != 0))
-		return -ENOENT;
-
-	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-		LLS_LOG(WARNING,
-			"Received fragmented ND packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
-	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
-		&nexthdr);
-	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
-		return -ENOENT;
-
-	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
-			nd_offset - sizeof(*ip6hdr)))
-		return -ENOENT;
-
-	nd_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + nd_offset);
-	if (nd_hdr->type != ND_NEIGHBOR_SOLICITATION &&
-			nd_hdr->type != ND_NEIGHBOR_ADVERTISEMENT)
-		return -ENOENT;
-
-	return 0;
-}
-
-static int
-drop_nd_router(struct rte_mbuf **pkts, unsigned int num_pkts,
-	__attribute__((unused)) struct gatekeeper_if *iface)
-{
-	unsigned int i;
-	for (i = 0; i < num_pkts; i++)
-		rte_pktmbuf_free(pkts[i]);
-	return 0;
-}
-
-/*
- * Match the packet if it fails to be classifed by ACL rules.
- * If it's a router solicitation or advertisement packet, then drop it.
- *
- * Return values: 0 for successful match, and -ENOENT for no matching.
- */
-static int
-match_nd_router(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
-{
-	/*
-	 * The ND header offset in terms of the
-	 * beginning of the IPv6 header.
-	 */
-	int nd_offset;
-	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 =
-		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
-	struct rte_ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
-	struct rte_ipv6_hdr *ip6hdr;
-	struct icmpv6_hdr *nd_hdr;
-	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
-	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-
-	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
-		return -ENOENT;
-
-	if (pkt->data_len < ND_NEIGH_PKT_MIN_LEN(l2_len))
-		return -ENOENT;
-
-	if ((memcmp(ip6hdr->dst_addr, &ip6_allnodes_mc_addr,
-			sizeof(ip6_allnodes_mc_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
-			sizeof(iface->ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
-			sizeof(iface->ll_ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ip6_mc_addr,
-			sizeof(iface->ip6_mc_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr,
-			&iface->ll_ip6_mc_addr,
-			sizeof(iface->ll_ip6_mc_addr)) != 0))
-		return -ENOENT;
-
-	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-		LLS_LOG(WARNING,
-			"Received fragmented ND packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
-	nd_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
-		&nexthdr);
-	if (nd_offset < 0 || nexthdr != IPPROTO_ICMPV6)
-		return -ENOENT;
-
-	if (pkt->data_len < (ND_NEIGH_PKT_MIN_LEN(l2_len) +
-			nd_offset - sizeof(*ip6hdr)))
-		return -ENOENT;
-
-	nd_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + nd_offset);
-	if (nd_hdr->type != ND_ROUTER_SOLICITATION &&
-			nd_hdr->type != ND_ROUTER_ADVERTISEMENT)
-		return -ENOENT;
-
-	return 0;
-}
-
-#define PING_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_ping_req) + sizeof(struct rte_mbuf *) * num_pkts)
-
-static int
-submit_ping(struct rte_mbuf **pkts, unsigned int num_pkts,
-	struct gatekeeper_if *iface)
-{
-	struct lls_ping_req *ping_req;
-	int ret;
-
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
-
-	ping_req = alloca(PING_REQ_SIZE(num_pkts));
-	ping_req->num_pkts = num_pkts;
-	ping_req->iface = iface;
-	rte_memcpy(ping_req->pkts, pkts, sizeof(*ping_req->pkts) * num_pkts);
-
-	ret = lls_req(LLS_REQ_PING, ping_req);
-	if (unlikely(ret < 0)) {
-		unsigned int i;
-		for (i = 0; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
-		return ret;
-	}
-	return 0;
-}
-
-/*
- * Match the packet if it fails to be classifed by ACL rules.
- * If it's an IPv4 ping packet, then respond to the ICMPv4 ping.
- *
- * Return values: 0 for successful match, and -ENOENT for no matching.
- */
-static int
-match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_icmp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	const uint16_t BE_ETHER_TYPE_IPv4 =
 		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	struct rte_ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	struct rte_ipv4_hdr *ip4hdr;
-	struct rte_icmp_hdr *icmphdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
@@ -445,37 +266,32 @@ match_ping(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 
 	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
 		LLS_LOG(WARNING,
-			"Received fragmented ping packets destined to this server at %s\n",
+			"Received fragmented ICMP packets destined to this server at %s\n",
 			__func__);
 		return -ENOENT;
 	}
 
-	icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
-	if (icmphdr->icmp_type != ICMP_ECHO_REQUEST_TYPE ||
-			icmphdr->icmp_code != ICMP_ECHO_REQUEST_CODE)
-		return -ENOENT;
-
 	return 0;
 }
 
-#define PING6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_ping6_req) + sizeof(struct rte_mbuf *) * num_pkts)
+#define ICMP6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_icmp6_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
-submit_ping6(struct rte_mbuf **pkts, unsigned int num_pkts,
+submit_icmp6(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_ping6_req *ping6_req;
+	struct lls_icmp6_req *icmp6_req;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
 
-	ping6_req = alloca(PING6_REQ_SIZE(num_pkts));
-	ping6_req->num_pkts = num_pkts;
-	ping6_req->iface = iface;
-	rte_memcpy(ping6_req->pkts, pkts, sizeof(*ping6_req->pkts) * num_pkts);
+	icmp6_req = alloca(ICMP6_REQ_SIZE(num_pkts));
+	icmp6_req->num_pkts = num_pkts;
+	icmp6_req->iface = iface;
+	rte_memcpy(icmp6_req->pkts, pkts, sizeof(*icmp6_req->pkts) * num_pkts);
 
-	ret = lls_req(LLS_REQ_PING6, ping6_req);
+	ret = lls_req(LLS_REQ_ICMP6, icmp6_req);
 	if (unlikely(ret < 0)) {
 		unsigned int i;
 		for (i = 0; i < num_pkts; i++)
@@ -487,15 +303,14 @@ submit_ping6(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's an IPv6 ping packet, then respond to the ICMPv6 ping.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_icmp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
-	 * The icmpv6 header offset in terms of the
+	 * The ICMPv6 header offset in terms of the
 	 * beginning of the IPv6 header.
 	 */
 	int icmpv6_offset;
@@ -505,7 +320,6 @@ match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	struct rte_ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	struct rte_ipv6_hdr *ip6hdr;
-	struct icmpv6_hdr *icmp6_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
 
@@ -523,12 +337,14 @@ match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			sizeof(iface->ip6_mc_addr)) != 0) &&
 			(memcmp(ip6hdr->dst_addr,
 			&iface->ll_ip6_mc_addr,
-			sizeof(iface->ll_ip6_mc_addr)) != 0))
+			sizeof(iface->ll_ip6_mc_addr)) != 0) &&
+			(memcmp(ip6hdr->dst_addr, &ip6_allnodes_mc_addr,
+			sizeof(ip6_allnodes_mc_addr)) != 0))
 		return -ENOENT;
 
 	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
 		LLS_LOG(WARNING,
-			"Received fragmented ping6 packets destined to this server at %s\n",
+			"Received fragmented ICMPv6 packets destined to this server at %s\n",
 			__func__);
 		return -ENOENT;
 	}
@@ -540,11 +356,6 @@ match_ping6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 
 	if (pkt->data_len < (ICMPV6_PKT_MIN_LEN(l2_len) +
 			icmpv6_offset - sizeof(*ip6hdr)))
-		return -ENOENT;
-
-	icmp6_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr + icmpv6_offset);
-	if (icmp6_hdr->type != ICMPV6_ECHO_REQUEST_TYPE ||
-			icmp6_hdr->code != ICMPV6_ECHO_REQUEST_CODE)
 		return -ENOENT;
 
 	return 0;
@@ -854,73 +665,7 @@ lls_proc(void *arg)
 }
 
 static void
-fill_nd_rule(struct ipv6_acl_rule *rule, const struct in6_addr *addr,
-	int nd_type)
-{
-	const uint32_t *ptr32 = (const uint32_t *)addr;
-	int i;
-
-	RTE_VERIFY(nd_type == ND_ROUTER_SOLICITATION ||
-		nd_type == ND_ROUTER_ADVERTISEMENT ||
-		nd_type == ND_NEIGHBOR_SOLICITATION ||
-		nd_type == ND_NEIGHBOR_ADVERTISEMENT);
-
-	rule->data.category_mask = 0x1;
-	rule->data.priority = 1;
-	/* Userdata is filled in in register_ipv6_acl(). */
-
-	rule->field[PROTO_FIELD_IPV6].value.u8 = IPPROTO_ICMPV6;
-	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
-
-	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
-		rule->field[i].value.u32 = rte_be_to_cpu_32(*ptr32);
-		rule->field[i].mask_range.u32 = 32;
-		ptr32++;
-	}
-
-	rule->field[TYPE_FIELD_ICMPV6].value.u32 = (nd_type << 24) & 0xFF000000;
-	rule->field[TYPE_FIELD_ICMPV6].mask_range.u32 = 0xFF000000;
-}
-
-static int
-register_nd_neigh_acl_rules(struct gatekeeper_if *iface)
-{
-	struct ipv6_acl_rule ipv6_rules[8];
-	int ret;
-
-	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
-
-	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
-		ND_NEIGHBOR_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[1], &iface->ll_ip6_addr,
-		ND_NEIGHBOR_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[2], &iface->ip6_mc_addr,
-		ND_NEIGHBOR_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
-		ND_NEIGHBOR_SOLICITATION);
-
-	fill_nd_rule(&ipv6_rules[4], &iface->ip6_addr,
-		ND_NEIGHBOR_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[5], &iface->ll_ip6_addr,
-		ND_NEIGHBOR_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[6], &iface->ip6_mc_addr,
-		ND_NEIGHBOR_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[7], &iface->ll_ip6_mc_addr,
-		ND_NEIGHBOR_ADVERTISEMENT);
-
-	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		submit_nd_neigh, match_nd_neigh, iface);
-	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ND IPv6 ACL on %s iface\n",
-			iface->name);
-		return ret;
-	}
-
-	return 0;
-}
-
-static void
-fill_ping_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
+fill_icmp_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
 {
 	rule->data.category_mask = 0x1;
 	rule->data.priority = 1;
@@ -932,31 +677,22 @@ fill_ping_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
 	rule->field[DST_FIELD_IPV4].value.u32 =
 		rte_be_to_cpu_32(addr->s_addr);
 	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
-
-	/*
-	 * The reason to have 0xFFFF0000 is to test
-	 * both type and code at the same time.
-	 */
-	rule->field[TYPE_FIELD_ICMP].value.u32 =
-		((ICMP_ECHO_REQUEST_TYPE << 24) |
-		(ICMP_ECHO_REQUEST_CODE << 16)) & 0xFFFF0000;
-	rule->field[TYPE_FIELD_ICMP].mask_range.u32 = 0xFFFF0000;
 }
 
 static int
-register_ping_acl_rules(struct gatekeeper_if *iface)
+register_icmp_acl_rules(struct gatekeeper_if *iface)
 {
 	struct ipv4_acl_rule ipv4_rules[1];
 	int ret;
 
 	memset(ipv4_rules, 0, sizeof(ipv4_rules));
 
-	fill_ping_rule(&ipv4_rules[0], &iface->ip4_addr);
+	fill_icmp_rule(&ipv4_rules[0], &iface->ip4_addr);
 
 	ret = register_ipv4_acl(ipv4_rules, RTE_DIM(ipv4_rules),
-		submit_ping, match_ping, iface);
+		submit_icmp, match_icmp, iface);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ping IPv4 ACL on %s iface\n",
+		LLS_LOG(ERR, "Could not register ICMP ACL on %s iface\n",
 			iface->name);
 		return ret;
 	}
@@ -965,9 +701,9 @@ register_ping_acl_rules(struct gatekeeper_if *iface)
 }
 
 static void
-fill_ping6_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr)
+fill_icmp6_rule(struct ipv6_acl_rule *rule, const struct in6_addr *addr)
 {
-	uint32_t *ptr32 = (uint32_t *)addr;
+	const uint32_t *ptr32 = (const uint32_t *)addr;
 	int i;
 
 	rule->data.category_mask = 0x1;
@@ -982,79 +718,32 @@ fill_ping6_rule(struct ipv6_acl_rule *rule, struct in6_addr *addr)
 		rule->field[i].mask_range.u32 = 32;
 		ptr32++;
 	}
-
-	/*
-	 * The reason to have 0xFFFF0000 is to test
-	 * both type and code at the same time.
-	 */
-	rule->field[TYPE_FIELD_ICMPV6].value.u32 =
-		((ICMPV6_ECHO_REQUEST_TYPE << 24) |
-		(ICMPV6_ECHO_REQUEST_CODE << 16)) & 0xFFFF0000;
-	rule->field[TYPE_FIELD_ICMPV6].mask_range.u32 = 0xFFFF0000;
 }
 
 static int
-register_ping6_acl_rules(struct gatekeeper_if *iface)
+register_icmp6_acl_rules(struct gatekeeper_if *iface)
 {
-	struct ipv6_acl_rule ipv6_rules[4];
+	struct ipv6_acl_rule ipv6_rules[5];
 	int ret;
 
 	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
 
+	/* All of the IPv6 addresses that a Gatekeeper interface supports. */
+	fill_icmp6_rule(&ipv6_rules[0], &iface->ip6_addr);
+	fill_icmp6_rule(&ipv6_rules[1], &iface->ll_ip6_addr);
+	fill_icmp6_rule(&ipv6_rules[2], &iface->ip6_mc_addr);
+	fill_icmp6_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr);
 	/*
-	 * According to RFC 4443 section 4.1, the Destination Address of an
-	 * ICMPv6 Echo Request message can be any legal IPv6 address.
+	 * The all nodes multicast address is only used to ignore
+	 * router solitication/advertisement messages so that they
+	 * do not clutter the Gatekeeper log.
 	 */
-	fill_ping6_rule(&ipv6_rules[0], &iface->ip6_addr);
-	fill_ping6_rule(&ipv6_rules[1], &iface->ll_ip6_addr);
-	fill_ping6_rule(&ipv6_rules[2], &iface->ip6_mc_addr);
-	fill_ping6_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr);
+	fill_icmp6_rule(&ipv6_rules[4], &ip6_allnodes_mc_addr);
 
 	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		submit_ping6, match_ping6, iface);
+		submit_icmp6, match_icmp6, iface);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ping IPv6 ACL on %s iface\n",
-			iface->name);
-		return ret;
-	}
-
-	return 0;
-}
-
-static int
-register_nd_router_acl_rules(struct gatekeeper_if *iface)
-{
-	struct ipv6_acl_rule ipv6_rules[10];
-	int ret;
-
-	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
-
-	fill_nd_rule(&ipv6_rules[0], &iface->ip6_addr,
-		ND_ROUTER_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[1], &iface->ll_ip6_addr,
-		ND_ROUTER_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[2], &iface->ip6_mc_addr,
-		ND_ROUTER_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr,
-		ND_ROUTER_SOLICITATION);
-	fill_nd_rule(&ipv6_rules[4], &ip6_allnodes_mc_addr,
-		ND_ROUTER_SOLICITATION);
-
-	fill_nd_rule(&ipv6_rules[5], &iface->ip6_addr,
-		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[6], &iface->ll_ip6_addr,
-		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[7], &iface->ip6_mc_addr,
-		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[8], &iface->ll_ip6_mc_addr,
-		ND_ROUTER_ADVERTISEMENT);
-	fill_nd_rule(&ipv6_rules[9], &ip6_allnodes_mc_addr,
-		ND_ROUTER_ADVERTISEMENT);
-
-	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		 drop_nd_router, match_nd_router, iface);
-	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ND Router Solicitation or Advertisement IPv6 ACL on %s iface\n",
+		LLS_LOG(ERR, "Could not register ICMPv6 ACL on %s iface\n",
 			iface->name);
 		return ret;
 	}
@@ -1150,9 +839,8 @@ lls_stage1(void *arg)
 	struct lls_config *lls_conf = arg;
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
 		RTE_MAX(ARP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-		RTE_MAX(ND_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-		RTE_MAX(PING_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-			PING6_REQ_SIZE(lls_conf->mailbox_max_pkt_sub)))));
+		RTE_MAX(ICMP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
+			ICMP6_REQ_SIZE(lls_conf->mailbox_max_pkt_sub))));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
 		return ret;
@@ -1204,8 +892,8 @@ lls_stage2(void *arg)
 			return -1;
 		}
 
-		/* Receive ping packets using IPv4 ACL filters. */
-		ret = register_ping_acl_rules(&net_conf->front);
+		/* Receive ICMP packets using IPv4 ACL filters. */
+		ret = register_icmp_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
 	}
@@ -1222,8 +910,8 @@ lls_stage2(void *arg)
 			return -1;
 		}
 
-		/* Receive ping packets using IPv4 ACL filters. */
-		ret = register_ping_acl_rules(&net_conf->back);
+		/* Receive ICMP packets using IPv4 ACL filters. */
+		ret = register_icmp_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}
@@ -1231,25 +919,13 @@ lls_stage2(void *arg)
 	/* Receive ND packets using IPv6 ACL filters. */
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = register_nd_neigh_acl_rules(&net_conf->front);
-		if (ret < 0)
-			return ret;
-		ret = register_nd_router_acl_rules(&net_conf->front);
-		if (ret < 0)
-			return ret;
-		ret = register_ping6_acl_rules(&net_conf->front);
+		ret = register_icmp6_acl_rules(&net_conf->front);
 		if (ret < 0)
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = register_nd_neigh_acl_rules(&net_conf->back);
-		if (ret < 0)
-			return ret;
-		ret = register_nd_router_acl_rules(&net_conf->back);
-		if (ret < 0)
-			return ret;
-		ret = register_ping6_acl_rules(&net_conf->back);
+		ret = register_icmp6_acl_rules(&net_conf->back);
 		if (ret < 0)
 			return ret;
 	}

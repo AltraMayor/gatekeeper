@@ -2155,7 +2155,8 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 
 	icmpv6_hdr = rte_pktmbuf_mtod_offset(buf, struct icmpv6_hdr *,
 		sizeof(*eth_hdr) + sizeof(struct rte_ipv6_hdr));
-	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT) {
+	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT_TYPE &&
+			icmpv6_hdr->code == ND_NEIGHBOR_ADVERTISEMENT_CODE) {
 		CPS_LOG(NOTICE, "ND Advertisement packet received from KNI attached to %s iface\n",
 			iface->name);
 		goto out;

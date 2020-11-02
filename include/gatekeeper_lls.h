@@ -46,12 +46,10 @@ enum lls_req_ty {
 	LLS_REQ_PUT,
 	/* Request to handle ARP packets received from another block. */
 	LLS_REQ_ARP,
-	/* Request to handle ND packets received from another block. */
-	LLS_REQ_ND,
-	/* Request to handle ICMP ping packets received from another block. */
-	LLS_REQ_PING,
-	/* Request to handle ICMPv6 ping packets received from another block. */
-	LLS_REQ_PING6,
+	/* Request to handle ICMP packets received from another block. */
+	LLS_REQ_ICMP,
+	/* Request to handle ICMPv6 packets received from another block. */
+	LLS_REQ_ICMP6,
 };
 
 /* Replies that come from the LLS block. */
@@ -370,52 +368,99 @@ struct nd_opt_lladdr {
 	sizeof(struct nd_opt_lladdr))
 
 /*
- * Minimum size of an IPv4 ping packet.
+ * Minimum size of an IPv4 ICMP packet.
  *
- * Note that, according to RFC pages 13 and 14,
- * both the ICMP Echo request header and Echo reply header require 8 bytes.
+ * Note that the minimum ICMP header size is 8 bytes (RFC 792),
+ * but DPDK's struct rte_icmp_hdr includes other fields.
  */
 #define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv4_hdr) + 8)
 
 /*
- * Minimum size of an IPv6 ping packet.
+ * Minimum size of an ICMPv6 packet.
  *
- * Note that, according to RFC 4443 section 4.1 and section 4.2,
- * both the ICMPv6 Echo request header and Echo reply header require 8 bytes.
+ * Note that the minimum ICMPv6 header size is the four bytes
+ * defined in struct icmpv6_hdr (RFC 4443).
  */
-#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv6_hdr) + 8)
+#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv6_hdr) + \
+	sizeof(struct icmpv6_hdr))
 
 /* Flags for Neighbor Advertisements. */
 #define LLS_ND_NA_SOLICITED 0x40000000
 #define LLS_ND_NA_OVERRIDE  0x20000000
 
+/* The IPv6 all nodes multicast address. */
+static const struct in6_addr ip6_allnodes_mc_addr = {
+	.s6_addr = {
+		0xFF, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+	}
+};
+
 /*
- * Supported IPv4 ping packets via the type and code fields
- * in struct icmp_hdr.
+ * ICMP message types.
  */
+
+/* ICMP Echo Request. */
 #define ICMP_ECHO_REQUEST_TYPE (8)
 #define ICMP_ECHO_REQUEST_CODE (0)
 
-/* ICMP type and code fields for echo reply messages. */
+/* ICMP Echo Reply. */
 #define ICMP_ECHO_REPLY_TYPE (0)
 #define ICMP_ECHO_REPLY_CODE (0)
 
+/* ICMP Destination Unreachable, Fragmentation required, and DF flag set. */
+#define ICMP_DEST_UNREACHABLE_TYPE (3)
+#define ICMP_FRAG_REQ_DF_CODE (4)
+
 /*
- * Supported IPv6 ping packets via the type and code fields
- * in struct icmpv6_hdr.
+ * ICMPv6 message types.
  */
+
+/* ICMPv6 Echo Request. */
 #define ICMPV6_ECHO_REQUEST_TYPE (128)
 #define ICMPV6_ECHO_REQUEST_CODE (0)
 
-/* ICMPv6 type and code fields for echo reply messages. */
+/* ICMPv6 Echo Reply. */
 #define ICMPV6_ECHO_REPLY_TYPE (129)
 #define ICMPV6_ECHO_REPLY_CODE (0)
 
-/* Supported IPv6 ND packets via the type field in struct icmpv6_hdr. */
-#define ND_ROUTER_SOLICITATION (133)
-#define ND_ROUTER_ADVERTISEMENT (134)
-#define ND_NEIGHBOR_SOLICITATION (135)
-#define ND_NEIGHBOR_ADVERTISEMENT (136)
+/* ICMPv6 Packet Too Big. */
+#define ICMPV6_PACKET_TOO_BIG_TYPE (2)
+#define ICMPV6_PACKET_TOO_BIG_CODE (0)
+
+/* ICMPv6 Neighbor Discovery Router Solicitation. */
+#define ND_ROUTER_SOLICITATION_TYPE (133)
+#define ND_ROUTER_SOLICITATION_CODE (0)
+
+/* ICMPv6 Neighbor Discovery Router Advertisement. */
+#define ND_ROUTER_ADVERTISEMENT_TYPE (134)
+#define ND_ROUTER_ADVERTISEMENT_CODE (0)
+
+/* ICMPv6 Neighbor Discovery Neighbor Solicitation. */
+#define ND_NEIGHBOR_SOLICITATION_TYPE (135)
+#define ND_NEIGHBOR_SOLICITATION_CODE (0)
+
+/* ICMPv6 Neighbor Discovery Neighbor Advertisement. */
+#define ND_NEIGHBOR_ADVERTISEMENT_TYPE (136)
+#define ND_NEIGHBOR_ADVERTISEMENT_CODE (0)
+
+static inline int
+pkt_is_nd_router(uint8_t type, uint8_t code)
+{
+	return (type == ND_ROUTER_SOLICITATION_TYPE &&
+		code == ND_ROUTER_SOLICITATION_CODE) ||
+		(type == ND_ROUTER_ADVERTISEMENT_TYPE &&
+		code == ND_ROUTER_ADVERTISEMENT_CODE);
+}
+
+static inline int
+pkt_is_nd_neighbor(uint8_t type, uint8_t code)
+{
+	return (type == ND_NEIGHBOR_SOLICITATION_TYPE &&
+		code == ND_NEIGHBOR_SOLICITATION_CODE) ||
+		(type == ND_NEIGHBOR_ADVERTISEMENT_TYPE &&
+		code == ND_NEIGHBOR_ADVERTISEMENT_CODE);
+}
 
 static inline int
 arp_enabled(struct lls_config *lls_conf)

@@ -17,6 +17,7 @@
  */
 
 #include <stdbool.h>
+#include <arpa/inet.h>
 
 #include <rte_hash.h>
 #include <rte_icmp.h>
@@ -332,8 +333,8 @@ icmp_cksum(void *buf, unsigned int size)
 	return (unsigned short)(~cksum);
 }
 
-static int
-xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
+static void
+xmit_icmp_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 {
 	struct rte_ether_addr eth_addr_tmp;
 	struct rte_ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt,
@@ -359,13 +360,6 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 */
 	icmp_ipv4 = (struct rte_ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
 
-	if (rte_ipv4_frag_pkt_is_fragmented(icmp_ipv4)) {
-		LLS_LOG(WARNING,
-			"Received fragmented ping packets destined to this server at %s\n",
-			__func__);
-		return -1;
-	}
-
 	icmp_ipv4->time_to_live = IP_DEFTTL;
 	ip_addr_tmp = icmp_ipv4->src_addr;
 	icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
@@ -374,9 +368,6 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	pkt->l2_len = iface->l2_len_out;
 	pkt->l3_len = ipv4_hdr_len(icmp_ipv4);
 	set_ipv4_checksum(iface, pkt, icmp_ipv4);
-
-	if (icmp_ipv4->next_proto_id != IPPROTO_ICMP)
-		return -1;
 
 	/*
 	 * According to RFC 792 page 14:
@@ -395,15 +386,118 @@ xmit_icmp_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	icmph->icmp_code = ICMP_ECHO_REPLY_CODE;
 	icmph->icmp_cksum = 0;
 	icmph->icmp_cksum = icmp_cksum(icmph, sizeof(*icmph));
-
-	return 0;
 }
 
-static int
-xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
+static void
+process_ping_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct lls_config *lls_conf, struct gatekeeper_if *iface,
+	void (*xmit_reply_fn)(struct gatekeeper_if *, struct rte_mbuf *))
+{
+	uint16_t tx_queue;
+	struct token_bucket_ratelimit_state *rs;
+	unsigned int i;
+	unsigned int num_granted_pkts;
+
+	if (iface == &lls_conf->net->front) {
+		tx_queue = lls_conf->tx_queue_front;
+		rs = &lls_conf->front_icmp_rs;
+	} else {
+		tx_queue = lls_conf->tx_queue_back;
+		rs = &lls_conf->back_icmp_rs;
+	}
+
+	num_granted_pkts = tb_ratelimit_allow_n(num_pkts, rs);
+
+	for (i = 0; i < num_granted_pkts; i++)
+		(*xmit_reply_fn)(iface, pkts[i]);
+	send_pkts(iface->id, tx_queue, num_granted_pkts, pkts);
+
+	/* XXX #435: Adopt rte_pktmbuf_free_bulk() when DPDK is updated. */
+	for (i = num_granted_pkts; i < num_pkts; i++)
+		rte_pktmbuf_free(pkts[i]);
+}
+
+static void
+process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
+{
+	struct rte_mbuf *ping_pkts[icmp->num_pkts];
+	unsigned int num_ping_pkts = 0;
+	int i;
+
+	for (i = 0; i < icmp->num_pkts; i++) {
+		struct rte_mbuf *pkt = icmp->pkts[i];
+		struct rte_ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+		struct rte_ipv4_hdr *ip4hdr;
+		struct rte_icmp_hdr *icmphdr;
+		size_t l2_len = pkt_in_l2_hdr_len(pkt);
+		char src_ip_buf[INET_ADDRSTRLEN];
+		const char *src_ip_or_err;
+
+		pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
+		if (unlikely(pkt->data_len < (ICMP_PKT_MIN_LEN(l2_len) +
+				ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr)))) {
+			rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		/*
+		 * We must check whether the packet is fragmented here because
+		 * although match_icmp() checks for it, the ACL rule does not.
+		 */
+		if (unlikely(rte_ipv4_frag_pkt_is_fragmented(ip4hdr))) {
+			src_ip_or_err = inet_ntop(AF_INET, &ip4hdr->src_addr,
+				src_ip_buf, sizeof(src_ip_buf));
+			if (unlikely(!src_ip_or_err))
+				src_ip_or_err = "(could not convert IP to string)";
+
+			LLS_LOG(WARNING,
+				"Received fragmented ICMP packets destined to this server on the %s interface from source IP %s\n",
+				icmp->iface->name, src_ip_or_err);
+			rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		/*
+		 * We don't need to make sure the next header is ICMP
+		 * because both match_icmp() and the ACL rule already check.
+		 */
+
+		icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
+
+		if (icmphdr->icmp_type == ICMP_ECHO_REQUEST_TYPE &&
+				icmphdr->icmp_code == ICMP_ECHO_REQUEST_CODE) {
+			ping_pkts[num_ping_pkts++] = pkt;
+			continue;
+		}
+
+		src_ip_or_err = inet_ntop(AF_INET, &ip4hdr->src_addr,
+			src_ip_buf, sizeof(src_ip_buf));
+		if (unlikely(!src_ip_or_err))
+			src_ip_or_err = "(could not convert IP to string)";
+
+		if (icmphdr->icmp_type == ICMP_DEST_UNREACHABLE_TYPE &&
+				icmphdr->icmp_code == ICMP_FRAG_REQ_DF_CODE) {
+			LLS_LOG(ERR, "Received \"Fragmentation required, and DF flag set\" ICMP packet on the %s interface from source IP %s; check MTU along path\n",
+				icmp->iface->name, src_ip_or_err);
+		} else {
+			LLS_LOG(INFO, "Received ICMP packet with type %hhu and code %hhu on the %s interface from source IP %s\n",
+				icmphdr->icmp_type, icmphdr->icmp_code,
+				icmp->iface->name, src_ip_or_err);
+		}
+		rte_pktmbuf_free(pkt);
+	}
+
+	if (num_ping_pkts > 0)
+		process_ping_pkts(ping_pkts, num_ping_pkts,
+			lls_conf, icmp->iface, xmit_icmp_ping_reply);
+}
+
+static void
+xmit_icmp6_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 {
 	/*
-	 * The icmpv6 header offset in terms of the
+	 * The ICMPv6 header offset in terms of the
 	 * beginning of the IPv6 header.
 	 */
 	int icmpv6_offset;
@@ -425,13 +519,6 @@ xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 
 	/* Set-up IPv6 header. */
 	icmp_ipv6 = (struct rte_ipv6_hdr *)pkt_out_skip_l2(iface, icmp_eth);
-
-	if (rte_ipv6_frag_get_ipv6_fragment_header(icmp_ipv6) != NULL) {
-		LLS_LOG(WARNING,
-			"Received fragmented ping6 packets destined to this server at %s\n",
-			__func__);
-		return -1;
-	}
 
 	/*
 	 * The IP Hop Limit field must be 255 as required by
@@ -455,14 +542,18 @@ xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	rte_memcpy(icmp_ipv6->src_addr, iface->ip6_addr.s6_addr,
 		sizeof(icmp_ipv6->src_addr));
 
-	/* Set-up ICMPv6 header. */
+	/*
+	 * Set-up ICMPv6 header.
+	 *
+	 * We don't need to make sure the next header is ICMPv6
+	 * or verify the format of the extension headers. See
+	 * process_icmpv6_pkts() and match_icmp6().
+	 */
 	icmpv6_offset = ipv6_skip_exthdr(icmp_ipv6, pkt->data_len - l2_len,
 		&nexthdr);
-	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)
-		return -1;
-
-	icmpv6_hdr =
-		(struct icmpv6_hdr *)((uint8_t *)icmp_ipv6 + icmpv6_offset);
+	RTE_VERIFY(icmpv6_offset >= 0);
+	icmpv6_hdr = (struct icmpv6_hdr *)((uint8_t *)icmp_ipv6 +
+		icmpv6_offset);
 
 	icmpv6_hdr->type = ICMPV6_ECHO_REPLY_TYPE;
 	icmpv6_hdr->code = ICMPV6_ECHO_REPLY_CODE;
@@ -477,8 +568,111 @@ xmit_icmpv6_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 */
 
 	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(icmp_ipv6, icmpv6_hdr);
+}
 
-	return 0;
+static void
+process_icmp6_pkts(struct lls_config *lls_conf, struct lls_icmp6_req *icmp6)
+{
+	struct rte_mbuf *ping6_pkts[icmp6->num_pkts];
+	unsigned int num_ping6_pkts = 0;
+	int i;
+
+	for (i = 0; i < icmp6->num_pkts; i++) {
+		struct rte_mbuf *pkt = icmp6->pkts[i];
+		/*
+		 * The ICMPv6 header offset in terms of the
+		 * beginning of the IPv6 header.
+		 */
+		int icmpv6_offset;
+		uint8_t nexthdr;
+		struct rte_ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+		struct rte_ipv6_hdr *ip6hdr;
+		struct icmpv6_hdr *icmp6_hdr;
+		size_t l2_len = pkt_in_l2_hdr_len(pkt);
+		char src_ip_buf[INET6_ADDRSTRLEN];
+		const char *src_ip_or_err;
+
+		pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
+
+		/*
+		 * We must check whether the packet is fragmented here because
+		 * although match_icmp6() checks for it, the ACL rule does not.
+		 */
+		if (unlikely(rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) !=
+				NULL)) {
+			src_ip_or_err = inet_ntop(AF_INET6, &ip6hdr->src_addr,
+				src_ip_buf, sizeof(src_ip_buf));
+			if (unlikely(!src_ip_or_err))
+				src_ip_or_err = "(could not convert IP to string)";
+
+			LLS_LOG(WARNING,
+				"Received fragmented ICMPv6 packets destined to this server on the %s interface from source IP %s\n",
+				icmp6->iface->name, src_ip_or_err);
+			rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		/*
+		 * We don't need to make sure the next header is ICMPv6
+		 * because both match_icmp6() and the ACL rule already check.
+		 * We also don't need to verify that the header extensions
+		 * were not malformed, since if there were extension headers
+		 * then match_icmp6() would have already verified them. But
+		 * we can at least add an assertion to catch bugs.
+		 */
+
+		icmpv6_offset = ipv6_skip_exthdr(ip6hdr,
+			pkt->data_len - l2_len, &nexthdr);
+		RTE_VERIFY(icmpv6_offset >= 0);
+		icmp6_hdr = (struct icmpv6_hdr *)((uint8_t *)ip6hdr +
+			icmpv6_offset);
+
+		/* Silently drop ND Router messages to avoid cluttering log. */
+		if (pkt_is_nd_router(icmp6_hdr->type, icmp6_hdr->code)) {
+			rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		/* No other types should have the all nodes multicast addr. */
+		if (memcmp(ip6hdr->dst_addr, &ip6_allnodes_mc_addr,
+				sizeof(ip6_allnodes_mc_addr)) == 0) {
+			rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		if (icmp6_hdr->type == ICMPV6_ECHO_REQUEST_TYPE &&
+				icmp6_hdr->code == ICMPV6_ECHO_REQUEST_CODE) {
+			ping6_pkts[num_ping6_pkts++] = pkt;
+			continue;
+		}
+
+		if (pkt_is_nd_neighbor(icmp6_hdr->type, icmp6_hdr->code)) {
+			if (process_nd(lls_conf, icmp6->iface, pkt) == -1)
+				rte_pktmbuf_free(pkt);
+			continue;
+		}
+
+		src_ip_or_err = inet_ntop(AF_INET6, &ip6hdr->src_addr,
+			src_ip_buf, sizeof(src_ip_buf));
+		if (unlikely(!src_ip_or_err))
+			src_ip_or_err = "(could not convert IP to string)";
+
+		if (icmp6_hdr->type == ICMPV6_PACKET_TOO_BIG_TYPE &&
+				icmp6_hdr->code == ICMPV6_PACKET_TOO_BIG_CODE) {
+			LLS_LOG(ERR, "Received \"Packet Too Big\" ICMPv6 packet on %s interface from source IP %s; check MTU along path\n",
+				icmp6->iface->name, src_ip_or_err);
+		} else {
+			LLS_LOG(INFO, "Received ICMPv6 packet with type %hhu and code %hhu on %s interface from source IP %s\n",
+				icmp6_hdr->type, icmp6_hdr->code,
+				icmp6->iface->name, src_ip_or_err);
+		}
+		rte_pktmbuf_free(pkt);
+	}
+
+	if (num_ping6_pkts > 0)
+		process_ping_pkts(ping6_pkts, num_ping6_pkts,
+			lls_conf, icmp6->iface, xmit_icmp6_ping_reply);
 }
 
 unsigned int
@@ -521,84 +715,12 @@ lls_process_reqs(struct lls_config *lls_conf)
 			}
 			break;
 		}
-		case LLS_REQ_ND: {
-			struct lls_nd_req *nd = &reqs[i]->u.nd;
-			int i;
-			for (i = 0; i < nd->num_pkts; i++) {
-				if (process_nd(lls_conf, nd->iface,
-						nd->pkts[i]) == -1)
-					rte_pktmbuf_free(nd->pkts[i]);
-			}
+		case LLS_REQ_ICMP:
+			process_icmp_pkts(lls_conf, &reqs[i]->u.icmp);
 			break;
-		}
-		case LLS_REQ_PING: {
-			struct lls_ping_req *ping = &reqs[i]->u.ping;
-			uint16_t tx_queue;
-			struct token_bucket_ratelimit_state *rs;
-			int num_granted_pkts;
-			int i;
-			int num_reply = 0;
-
-			if (ping->iface == &lls_conf->net->front) {
-				tx_queue = lls_conf->tx_queue_front;
-				rs = &lls_conf->front_icmp_rs;
-			} else {
-				tx_queue = lls_conf->tx_queue_back;
-				rs = &lls_conf->back_icmp_rs;
-			}
-
-			num_granted_pkts =
-				tb_ratelimit_allow_n(ping->num_pkts, rs);
-
-			for (i = 0; i < ping->num_pkts; i++) {
-				if (num_reply >= num_granted_pkts ||
-						xmit_icmp_reply(ping->iface,
-						ping->pkts[i]) != 0) {
-					rte_pktmbuf_free(ping->pkts[i]);
-					continue;
-				}
-				ping->pkts[num_reply++] = ping->pkts[i];
-			}
-
-			send_pkts(ping->iface->id, tx_queue,
-				num_reply, ping->pkts);
-
+		case LLS_REQ_ICMP6:
+			process_icmp6_pkts(lls_conf, &reqs[i]->u.icmp6);
 			break;
-		}
-		case LLS_REQ_PING6: {
-			struct lls_ping6_req *ping6 = &reqs[i]->u.ping6;
-			uint16_t tx_queue;
-			struct token_bucket_ratelimit_state *rs;
-			int num_granted_pkts;
-			int i;
-			int num_reply = 0;
-
-			if (ping6->iface == &lls_conf->net->front) {
-				tx_queue = lls_conf->tx_queue_front;
-				rs = &lls_conf->front_icmp_rs;
-			} else {
-				tx_queue = lls_conf->tx_queue_back;
-				rs = &lls_conf->back_icmp_rs;
-			}
-
-			num_granted_pkts =
-				tb_ratelimit_allow_n(ping6->num_pkts, rs);
-
-			for (i = 0; i < ping6->num_pkts; i++) {
-				if (num_reply >= num_granted_pkts ||
-						xmit_icmpv6_reply(ping6->iface,
-						ping6->pkts[i]) != 0) {
-					rte_pktmbuf_free(ping6->pkts[i]);
-					continue;
-				}
-				ping6->pkts[num_reply++] = ping6->pkts[i];
-			}
-
-			send_pkts(ping6->iface->id, tx_queue,
-				num_reply, ping6->pkts);
-
-			break;
-		}
 		default:
 			LLS_LOG(ERR, "Unrecognized request type (%d)\n",
 				reqs[i]->ty);
@@ -638,27 +760,20 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 			sizeof(arp_req->pkts[0]) * arp_req->num_pkts);
 		break;
 	}
-	case LLS_REQ_ND: {
-		struct lls_nd_req *nd_req = (struct lls_nd_req *)req_arg;
-		req->u.nd = *nd_req;
-		rte_memcpy(req->u.nd.pkts, nd_req->pkts,
-			sizeof(nd_req->pkts[0]) * nd_req->num_pkts);
+	case LLS_REQ_ICMP: {
+		struct lls_icmp_req *icmp_req =
+			(struct lls_icmp_req *)req_arg;
+		req->u.icmp = *icmp_req;
+		rte_memcpy(req->u.icmp.pkts, icmp_req->pkts,
+			sizeof(icmp_req->pkts[0]) * icmp_req->num_pkts);
 		break;
 	}
-	case LLS_REQ_PING: {
-		struct lls_ping_req *ping_req =
-			(struct lls_ping_req *)req_arg;
-		req->u.ping = *ping_req;
-		rte_memcpy(req->u.ping.pkts, ping_req->pkts,
-			sizeof(ping_req->pkts[0]) * ping_req->num_pkts);
-		break;
-	}
-	case LLS_REQ_PING6: {
-		struct lls_ping6_req *ping6_req =
-			(struct lls_ping6_req *)req_arg;
-		req->u.ping6 = *ping6_req;
-		rte_memcpy(req->u.ping6.pkts, ping6_req->pkts,
-			sizeof(ping6_req->pkts[0]) * ping6_req->num_pkts);
+	case LLS_REQ_ICMP6: {
+		struct lls_icmp6_req *icmp6_req =
+			(struct lls_icmp6_req *)req_arg;
+		req->u.icmp6 = *icmp6_req;
+		rte_memcpy(req->u.icmp6.pkts, icmp6_req->pkts,
+			sizeof(icmp6_req->pkts[0]) * icmp6_req->num_pkts);
 		break;
 	}
 	default:
