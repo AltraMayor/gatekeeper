@@ -328,8 +328,8 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	uint64_t now = rte_rdtsc();
 	uint8_t priority = priority_from_delta_time(now,
 			fe->u.request.last_packet_seen_at);
-	struct gk_fib *fib = fe->grantor_fib;
 	struct ether_cache *eth_cache;
+	struct grantor_entry *grantor;
 
 	fe->u.request.last_packet_seen_at = now;
 
@@ -359,13 +359,15 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 
 	/* The assigned priority is @priority. */
 
+	grantor = choose_grantor_per_flow(fe);
+
 	/* Encapsulate the packet as a request. */
 	ret = encapsulate(packet->pkt, priority,
-		&sol_conf->net->back, &fib->u.grantor.gt_addr);
+		&sol_conf->net->back, &grantor->gt_addr);
 	if (ret < 0)
 		return ret;
 
-	eth_cache = fib->u.grantor.eth_cache;
+	eth_cache = grantor->eth_cache;
 	RTE_VERIFY(eth_cache != NULL);
 	/* If needed, packet header space was adjusted by encapsulate(). */
 	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
@@ -398,8 +400,8 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 	uint8_t priority = PRIORITY_GRANTED;
 	uint64_t now = rte_rdtsc();
 	struct rte_mbuf *pkt = packet->pkt;
-	struct gk_fib *fib = fe->grantor_fib;
 	struct ether_cache *eth_cache;
+	struct grantor_entry *grantor;
 	uint32_t pkt_len;
 
 	if (now >= fe->expire_at) {
@@ -429,17 +431,19 @@ gk_process_granted(struct flow_entry *fe, struct ipacket *packet,
 		priority = PRIORITY_RENEW_CAP;
 	}
 
+	grantor = choose_grantor_per_flow(fe);
+
 	/*
 	 * Encapsulate packet as a granted packet,
 	 * mark it as a capability renewal request if @renew_cap is true,
 	 * enter destination according to @fe->grantor_fib.
 	 */
 	ret = encapsulate(packet->pkt, priority,
-		&sol_conf->net->back, &fib->u.grantor.gt_addr);
+		&sol_conf->net->back, &grantor->gt_addr);
 	if (ret < 0)
 		return ret;
 
-	eth_cache = fib->u.grantor.eth_cache;
+	eth_cache = grantor->eth_cache;
 	RTE_VERIFY(eth_cache != NULL);
 	/* If needed, packet header space was adjusted by encapsulate(). */
 	if (pkt_copy_cached_eth_header(packet->pkt, eth_cache,
@@ -512,7 +516,7 @@ gk_process_bpf(struct flow_entry *fe, struct ipacket *packet,
 	switch (bpf_ret) {
 	case GK_BPF_PKT_RET_FORWARD: {
 		struct ether_cache *eth_cache =
-			fe->grantor_fib->u.grantor.eth_cache;
+			choose_grantor_per_flow(fe)->eth_cache;
 		RTE_VERIFY(eth_cache != NULL);
 		/*
 		 * If needed, encapsulate() already adjusted
@@ -792,7 +796,7 @@ print_flow_state(struct flow_entry *fe)
 		goto out;
 	}
 
-	ret = convert_ip_to_str(&fe->grantor_fib->u.grantor.gt_addr,
+	ret = convert_ip_to_str(&choose_grantor_per_flow(fe)->gt_addr,
 		ip, sizeof(ip));
 	if (ret < 0) {
 		ret = snprintf(state_msg, sizeof(state_msg),

@@ -122,6 +122,22 @@ struct neighbor_hash_table {
 	struct ether_cache *cache_tbl;
 };
 
+struct grantor_entry {
+	/* The Grantor IP address. */
+	struct ipaddr gt_addr;
+	/* The cached Ethernet header of the next hop. */
+	struct ether_cache *eth_cache;
+};
+
+struct grantor_set {
+	/* Protocol of the Grantor IPs. */
+	uint8_t proto;
+	/* Number of structs grantor_entry that start at @entries. */
+	uint16_t num_entries;
+	/* List of Grantors and their next hops' cached Ethernet headers. */
+	struct grantor_entry entries[0];
+};
+
 /* The gk forward information base (fib). */
 struct gk_fib {
 
@@ -154,13 +170,10 @@ struct gk_fib {
 
 		struct {
 			/*
-		 	 * When the action is GK_FWD_GRANTOR, we need
-			 * the Grantor IP address.
-		 	 */
-			struct ipaddr gt_addr;
-
-			/* The cached Ethernet header. */
-			struct ether_cache *eth_cache;
+			 * Set of Grantors that packets to this
+			 * destination should be load balanced to.
+			 */
+			struct grantor_set *set;
 		} grantor;
 
 		/*

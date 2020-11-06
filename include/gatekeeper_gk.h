@@ -405,4 +405,12 @@ gk_conf_hold(struct gk_config *gk_conf)
 int gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 	struct gk_bpf_cookie *cookie);
 
+static inline struct grantor_entry *
+choose_grantor_per_flow(struct flow_entry *fe)
+{
+	return &fe->grantor_fib->u.grantor.set->entries[
+		fe->flow_hash_val % fe->grantor_fib->u.grantor.set->num_entries
+	];
+}
+
 #endif /* _GATEKEEPER_GK_H_ */

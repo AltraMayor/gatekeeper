@@ -912,7 +912,11 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
 		rm->rtm_protocol = RTPROT_STATIC;
 		rm->rtm_type = RTN_UNICAST;
-		*gw_addr = &fib->u.grantor.eth_cache->ip_addr;
+		/*
+		 * Gateway will be filled in by the caller, since Grantor
+		 * entries can have multiple corresponding Grantors, each
+		 * with their own gateway.
+		 */
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
@@ -1021,8 +1025,16 @@ rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		/* Add address. */
 		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
 
-		/* Only report gateway for main routes. */
-		if (gw_addr != NULL) {
+		if (fib->action == GK_FWD_GRANTOR) {
+			unsigned int i;
+			for (i = 0; i < fib->u.grantor.set->num_entries; i++) {
+				gw_addr = &fib->u.grantor.set->entries[i]
+					.eth_cache->ip_addr;
+				mnl_attr_put_u32(reply, RTA_GATEWAY,
+					gw_addr->ip.v4.s_addr);
+			}
+		} else if (gw_addr != NULL) {
+			/* Only report gateway for main routes. */
 			mnl_attr_put_u32(reply, RTA_GATEWAY,
 				gw_addr->ip.v4.s_addr);
 		}
@@ -1069,8 +1081,17 @@ rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		mnl_attr_put(reply, RTA_DST,
 			sizeof(struct in6_addr), re6.ip);
 
-		/* Only report gateway for main routes. */
-		if (gw_addr != NULL) {
+		if (fib->action == GK_FWD_GRANTOR) {
+			unsigned int i;
+			for (i = 0; i < fib->u.grantor.set->num_entries; i++) {
+				gw_addr = &fib->u.grantor.set->entries[i]
+					.eth_cache->ip_addr;
+				mnl_attr_put(reply, RTA_GATEWAY,
+					sizeof(struct in6_addr),
+					&gw_addr->ip.v6);
+			}
+		} else if (gw_addr != NULL) {
+			/* Only report gateway for main routes. */
 			mnl_attr_put(reply, RTA_GATEWAY,
 				sizeof(struct in6_addr), &gw_addr->ip.v6);
 		}

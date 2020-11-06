@@ -1075,10 +1075,15 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 	switch (ip_prefix_fib->action) {
 	case GK_FWD_GRANTOR: {
-		ret = del_gateway_from_neigh_table_locked(
-			ip_prefix, GK_FWD_GATEWAY_BACK_NET,
-			ip_prefix_fib->u.grantor.eth_cache, gk_conf);
-
+		unsigned int i;
+		for (i = 0; i < ip_prefix_fib->u.grantor.set->num_entries;
+				i++) {
+			ret = del_gateway_from_neigh_table_locked(
+				ip_prefix, GK_FWD_GATEWAY_BACK_NET,
+				ip_prefix_fib->u.grantor.set->entries[i].eth_cache,
+				gk_conf);
+		}
+		rte_free(ip_prefix_fib->u.grantor.set);
 		break;
 	}
 
@@ -1254,19 +1259,29 @@ init_grantor_fib_locked(
 		gt_fib = &ltbl->fib_tbl6[fib_id];
 
 	gt_fib->action = GK_FWD_GRANTOR;
-	rte_memcpy(&gt_fib->u.grantor.gt_addr,
-		gt_addr, sizeof(gt_fib->u.grantor.gt_addr));
-	gt_fib->u.grantor.eth_cache = eth_cache;
+	gt_fib->u.grantor.set = rte_malloc_socket("gk_fib.grantor.set",
+		sizeof(*(gt_fib->u.grantor.set)) +
+			sizeof(*(gt_fib->u.grantor.set->entries)), 0,
+		rte_lcore_to_socket_id(gk_conf->lcores[0]));
+	if (unlikely(gt_fib->u.grantor.set == NULL)) {
+		GK_LOG(ERR, "Could not allocate set of Grantor entries\n");
+		goto init_fib;
+	}
+	gt_fib->u.grantor.set->proto = ip_prefix->addr.proto;
+	gt_fib->u.grantor.set->num_entries = 1;
+	gt_fib->u.grantor.set->entries[0].gt_addr = *gt_addr;
+	gt_fib->u.grantor.set->entries[0].eth_cache = eth_cache;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0)
-		goto init_fib;
+		goto free_set;
 
 	return gt_fib;
 
+free_set:
+	rte_free(gt_fib->u.grantor.set);
 init_fib:
 	initialize_fib_entry(gt_fib);
-
 put_ether_cache:
 	ether_cache_put(neigh_fib,
 		GK_FWD_GATEWAY_BACK_NET, eth_cache, gk_conf);
@@ -1748,10 +1763,11 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 	dentry->action = fib->action;
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
-		rte_memcpy(&dentry->grantor_ip, &fib->u.grantor.gt_addr,
+		/* For now, only dump the first Grantor. */
+		rte_memcpy(&dentry->grantor_ip, &fib->u.grantor.set->entries[0].gt_addr,
 			sizeof(dentry->grantor_ip));
 		fillup_gk_fib_dump_entry_ether(dentry,
-			fib->u.grantor.eth_cache);
+			fib->u.grantor.set->entries[0].eth_cache);
 		break;
 
 	case GK_FWD_GATEWAY_FRONT_NET:
