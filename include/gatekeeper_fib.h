@@ -227,26 +227,54 @@ struct ip_prefix {
 	int           len;
 };
 
-struct gk_fib_dump_entry {
+/*
+ * Since GK_FWD_GRANTOR entries can have mulitple Grantor IPs
+ * for load balancing (and therefore multiple next hops),
+ * we group together this information into an address set.
+ */
+struct fib_dump_addr_set {
+	/*
+	 * The Grantor IP address. Only applicable for
+	 * FIB entries of type GK_FWD_GRANTOR.
+	 */
+	struct ipaddr grantor_ip;
+	/* The next hop (gateway) IP address. */
+	struct ipaddr nexthop_ip;
+	/* The MAC address of @nexthop_ip. */
+	struct rte_ether_addr d_addr;
+	/* Whether the resolution for @nexthop_ip to @d_addr is invalid. */
+	bool          stale;
+};
 
+struct gk_fib_dump_entry {
 	/* The IP prefix. */
 	struct ipaddr addr;
 
+	/* The prefix length of @addr. */
 	int           prefix_len;
 
-	/* The Grantor IP address. */
-	struct ipaddr grantor_ip;
-
-	bool          stale;
-
-	/* The IP address of the nexthop. */
-	struct ipaddr nexthop_ip;
-
-	/* The the MAC address of nexthop_ip. */
-	struct rte_ether_addr d_addr;
-
-	/* The fib action. */
+	/* The FIB action. */
 	enum gk_fib_action action;
+
+	/*
+	 * The number of entries starting at @addr_sets.
+	 * For all @action values except GK_FWD_GRANTOR,
+	 * this field should be 1.
+	 */
+	unsigned int  num_addr_sets;
+
+	/*
+	 * Address sets.
+	 *
+	 * When @action is GK_FWD_GRANTOR, all addresses
+	 * are valid (Grantor IP, next hop IP, next hop MAC, stale),
+	 * and there can be multiple address sets.
+	 *
+	 * When @action is anything else, only the fields related
+	 * to the next hop are valid (next hop IP, next hop MAC, stale),
+	 * and there should only be one address set.
+	 */
+	struct fib_dump_addr_set addr_sets[0];
 };
 
 struct gk_neighbor_dump_entry {

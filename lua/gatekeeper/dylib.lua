@@ -41,14 +41,19 @@ struct ipaddr {
 	} ip;
 };
 
+struct fib_dump_addr_set {
+	struct ipaddr grantor_ip;
+	struct ipaddr nexthop_ip;
+	struct rte_ether_addr d_addr;
+	bool          stale;
+};
+
 struct gk_fib_dump_entry {
 	struct ipaddr addr;
 	int           prefix_len;
-	struct ipaddr grantor_ip;
-	bool          stale;
-	struct ipaddr nexthop_ip;
-	struct rte_ether_addr d_addr;
 	enum gk_fib_action action;
+	unsigned int  num_addr_sets;
+	struct fib_dump_addr_set addr_sets[0];
 };
 
 struct gk_neighbor_dump_entry {
@@ -124,18 +129,22 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 		"/" .. fib_dump_entry.prefix_len .. " with action " ..
 		fib_action_to_str(fib_dump_entry.action)
 
-	if fib_dump_entry.action == c.GK_FWD_GRANTOR then
-		ip_addr_str = dylib.ip_format_addr(fib_dump_entry.grantor_ip)
-		acc = acc .. "\n\tGrantor IP address: " .. ip_addr_str
+	for i = 0,fib_dump_entry.num_addr_sets - 1,1 do
+		if fib_dump_entry.action == c.GK_FWD_GRANTOR then
+			ip_addr_str = dylib.ip_format_addr(
+				fib_dump_entry.addr_sets[i].grantor_ip)
+			acc = acc .. "\n\tGrantor IP address: " .. ip_addr_str
+		end
+		acc = acc .. "\n\tEthernet cache entry:"
+		d_buf = dylib.ether_format_addr(
+			fib_dump_entry.addr_sets[i].d_addr)
+		stale = fib_dump_entry.addr_sets[i].stale
+			and "stale" or "fresh"
+		ip_addr_str = dylib.ip_format_addr(
+			fib_dump_entry.addr_sets[i].nexthop_ip)
+		acc = acc .. " [state: " .. stale .. ", nexthop ip: " ..
+			ip_addr_str .. ", d_addr: " .. d_buf .. "]"
 	end
-
-	acc = acc .. "\n\tEthernet cache entry:"
-
-	d_buf = dylib.ether_format_addr(fib_dump_entry.d_addr)
-	stale = fib_dump_entry.stale and "stale" or "fresh"
-	ip_addr_str = dylib.ip_format_addr(fib_dump_entry.nexthop_ip)
-	acc = acc .. " [state: " .. stale .. ", nexthop ip: " ..
-		ip_addr_str .. ", d_addr: " .. d_buf .. "]"
 
 	return acc .. "\n"
 end
