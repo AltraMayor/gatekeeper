@@ -1205,6 +1205,12 @@ put_ether_cache:
 	return NULL;
 }
 
+/* #450 Replace this definition with one from DPDK library. */
+#define RTE_SIZEOF_FIELD(type, field) (sizeof(((type *)0)->field))
+
+#define MAX_NUM_GRANTORS_PER_ENTRY \
+	((1 << (RTE_SIZEOF_FIELD(struct gk_fib, u.grantor.set->num_entries) * 8)) - 1)
+
 /*
  * Initialize a Grantor FIB entry.
  *
@@ -1216,38 +1222,49 @@ put_ether_cache:
  * and the prefix have the same IP version.
  */
 static struct gk_fib *
-init_grantor_fib_locked(
-	struct ip_prefix *ip_prefix, struct ipaddr *gt_addr,
-	struct ipaddr *gw_addr, struct gk_config *gk_conf)
+init_grantor_fib_locked(struct ip_prefix *ip_prefix,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, struct gk_config *gk_conf)
 {
 	int ret, fib_id;
 	struct gk_fib *gt_fib;
-	struct ether_cache *eth_cache;
-	struct neighbor_hash_table *neigh_ht = NULL;
+	struct gk_fib *neigh_fibs[num_addrs];
+	struct ether_cache *eth_caches[num_addrs];
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-	struct gk_fib *neigh_fib;
+	unsigned int i, num_cache_holds = 0;
 
-	if (gt_addr->proto != ip_prefix->addr.proto) {
-		GK_LOG(ERR,
-			"Failed to initialize a fib entry for grantor, since the grantor and its responsible IP prefix have different IP versions\n");
+	if (num_addrs > MAX_NUM_GRANTORS_PER_ENTRY) {
+		GK_LOG(ERR, "Number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
+			num_addrs, MAX_NUM_GRANTORS_PER_ENTRY);
 		return NULL;
 	}
 
-	/* Find the neighbor FIB entry for this gateway. */
-	neigh_fib = find_fib_entry_for_neighbor_locked(
-		gw_addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
-	if (neigh_fib == NULL) {
-		GK_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
-		return NULL;
-	}
+	for (i = 0; i < num_addrs; i++) {
+		struct neighbor_hash_table *neigh_ht;
 
-	/* Find the Ethernet cached header entry for this gateway. */
-	neigh_ht = &neigh_fib->u.neigh;
-	eth_cache = neigh_get_ether_cache_locked(
-		neigh_ht, gw_addr, iface, gk_conf->lcores[0]);
-	if (eth_cache == NULL)
-		return NULL;
+		if (gt_addrs[i].proto != ip_prefix->addr.proto) {
+			GK_LOG(ERR,
+				"Failed to initialize a Grantor FIB entry, since the Grantor IP and the given IP prefix have different IP versions\n");
+			goto put_ether_cache;
+		}
+
+		/* Find the neighbor FIB entry for this gateway. */
+		neigh_fibs[i] = find_fib_entry_for_neighbor_locked(
+			&gw_addrs[i], GK_FWD_GATEWAY_BACK_NET, gk_conf);
+		if (neigh_fibs[i]== NULL) {
+			GK_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
+			goto put_ether_cache;
+		}
+
+		/* Find the Ethernet cached header entry for this gateway. */
+		neigh_ht = &neigh_fibs[i]->u.neigh;
+		eth_caches[i] = neigh_get_ether_cache_locked(
+			neigh_ht, &gw_addrs[i], iface, gk_conf->lcores[0]);
+		if (eth_caches[i] == NULL)
+			goto put_ether_cache;
+		num_cache_holds++;
+	}
 
 	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
 	if (fib_id < 0)
@@ -1261,16 +1278,18 @@ init_grantor_fib_locked(
 	gt_fib->action = GK_FWD_GRANTOR;
 	gt_fib->u.grantor.set = rte_malloc_socket("gk_fib.grantor.set",
 		sizeof(*(gt_fib->u.grantor.set)) +
-			sizeof(*(gt_fib->u.grantor.set->entries)), 0,
-		rte_lcore_to_socket_id(gk_conf->lcores[0]));
+			num_addrs * sizeof(*(gt_fib->u.grantor.set->entries)),
+		0, rte_lcore_to_socket_id(gk_conf->lcores[0]));
 	if (unlikely(gt_fib->u.grantor.set == NULL)) {
 		GK_LOG(ERR, "Could not allocate set of Grantor entries\n");
 		goto init_fib;
 	}
 	gt_fib->u.grantor.set->proto = ip_prefix->addr.proto;
-	gt_fib->u.grantor.set->num_entries = 1;
-	gt_fib->u.grantor.set->entries[0].gt_addr = *gt_addr;
-	gt_fib->u.grantor.set->entries[0].eth_cache = eth_cache;
+	gt_fib->u.grantor.set->num_entries = num_addrs;
+	for (i = 0; i < num_addrs; i++) {
+		gt_fib->u.grantor.set->entries[i].gt_addr = gt_addrs[i];
+		gt_fib->u.grantor.set->entries[i].eth_cache = eth_caches[i];
+	}
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0)
@@ -1283,9 +1302,10 @@ free_set:
 init_fib:
 	initialize_fib_entry(gt_fib);
 put_ether_cache:
-	ether_cache_put(neigh_fib,
-		GK_FWD_GATEWAY_BACK_NET, eth_cache, gk_conf);
-
+	for (i = 0; i < num_cache_holds; i++) {
+		ether_cache_put(neigh_fibs[i], GK_FWD_GATEWAY_BACK_NET,
+			eth_caches[i], gk_conf);
+	}
 	return NULL;
 }
 
@@ -1324,19 +1344,19 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 
 static int
 add_fib_entry_locked(struct ip_prefix *prefix,
-	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, uint8_t rt_proto,
-	struct gk_config *gk_conf)
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	uint8_t rt_proto, struct gk_config *gk_conf)
 {
 	switch (action) {
 	case GK_FWD_GRANTOR: {
 		struct gk_fib *gt_fib;
 
- 		if (gt_addr == NULL || gw_addr == NULL)
+		if (num_addrs < 1 || gt_addrs == NULL || gw_addrs == NULL)
 			return -1;
 
-		gt_fib = init_grantor_fib_locked(
-			prefix, gt_addr, gw_addr, gk_conf);
+		gt_fib = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
+			num_addrs, gk_conf);
 		if (gt_fib == NULL)
 			return -1;
 
@@ -1348,11 +1368,11 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_FWD_GATEWAY_BACK_NET: {
 		struct gk_fib *gw_fib;
 
- 		if (gt_addr != NULL || gw_addr == NULL)
+		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL)
 			return -1;
 
 		gw_fib = init_gateway_fib_locked(
-			prefix, action, rt_proto, gw_addr, gk_conf);
+			prefix, action, rt_proto, &gw_addrs[0], gk_conf);
 		if (gw_fib == NULL)
 			return -1;
 
@@ -1362,7 +1382,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_DROP: {
 		struct gk_fib *ip_prefix_fib;
 
-		if (gt_addr != NULL || gw_addr != NULL)
+		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL)
 			return -1;
 
 		ip_prefix_fib = init_drop_fib_locked(
@@ -1603,14 +1623,27 @@ check_prefix_locked(struct ip_prefix *prefix, enum gk_fib_action action,
 	return check_prefix_security_hole_locked(prefix, action, gk_conf);
 }
 
+/*
+ * Add FIB entry for binary IP address prefix.
+ *
+ * @num_addrs represents the number of Grantor and gateawy
+ * pairs for the FIB entry.
+ *
+ * Only GK_FWD_GRANTOR entries use @gt_addrs, and can have
+ * any number of pairs.
+ *
+ * All other types only use @gw_addrs, and should only
+ * have one address.
+ */
 int
 add_fib_entry_numerical(struct ip_prefix *prefix_info,
-	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, uint8_t rt_proto,
-	struct gk_config *gk_conf)
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	uint8_t rt_proto, struct gk_config *gk_conf)
 {
 	int ret;
 	struct gk_fib *neigh_fib;
+	unsigned int i;
 
 	if (prefix_info->len < 0)
 		return -1;
@@ -1651,12 +1684,12 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		GK_LOG(NOTICE, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
 	}
 
-	if (gw_addr != NULL) {
+	for (i = 0; i < num_addrs; i++) {
 		/*
-		 * Verify that the IP addresses of gateways FIB entries
-		 * are not included in their prefixes.
+		 * Verify that the IP addresses of gateway FIB entries
+		 * are not included in the prefix.
 		 */
-		ret = check_gateway_prefix(prefix_info, gw_addr);
+		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
 		if (ret < 0) {
 			GK_LOG(ERR, "Gateway address is not in prefix, or error occurred\n");
 			return -1;
@@ -1664,9 +1697,9 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	/*
-	 * Only a drop or another grantor entry must be able to be longer than
-	 * a grantor or a drop prefix. This way we protect network operators of
-	 * accidentally create a security hole.
+	 * Only a drop or another Grantor entry can be able to be longer than
+	 * a Grantor or a drop prefix. This way we protect network operators
+	 * from accidentally creating a security hole.
 	 */
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	ret = check_prefix_locked(prefix_info, action, gk_conf);
@@ -1675,8 +1708,8 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		return -1;
 	}
 
-	ret = add_fib_entry_locked(
-		prefix_info, gt_addr, gw_addr, action, rt_proto, gk_conf);
+	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
+		action, rt_proto, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1709,7 +1742,9 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
 
 	return add_fib_entry_numerical(&prefix_info,
-		gt_para, gw_para, action, RTPROT_STATIC, gk_conf);
+		gt_para, gw_para,
+		gt_ip != NULL || gw_ip != NULL ? 1 : 0,
+		action, RTPROT_STATIC, gk_conf);
 }
 
 int
@@ -1744,6 +1779,133 @@ del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf)
 	prefix_info.len = parse_ip_prefix(ip_prefix, &prefix_info.addr);
 
 	return del_fib_entry_numerical(&prefix_info, gk_conf);
+}
+
+/*
+ * Stack when function starts:
+ *
+ * 5 |  gw_addrs  | (passed as parameter)
+ * 4 |  gt_addrs  | (passed as parameter)
+ * 3 |   gk_conf  | (unused in this function)
+ * 2 |    table   |
+ * 1 | prefix_str | (unused in this function)
+ *   |____________|
+ */
+static void
+read_grantor_lb_entries(lua_State *l, lua_Integer tbl_size,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs)
+{
+	lua_Integer i;
+
+	/* Iterate over a table of tables. */
+	for (i = 1; i <= tbl_size; i++) {
+		const char *gt_ip, *gw_ip;
+		int ret;
+
+		/* Get the table at index i. */
+		lua_rawgeti(l, 2, i);
+
+		/*
+		 * Make sure that the item inside
+		 * the table is a table itself.
+		 */
+		if (!lua_istable(l, 6))
+			luaL_error(l, "Grantor entry %ld is not a table\n", i);
+
+		lua_getfield(l, 6, "gt_ip");
+		lua_getfield(l, 6, "gw_ip");
+
+		gt_ip = luaL_checkstring(l, 7);
+		gw_ip = luaL_checkstring(l, 8);
+
+		ret = convert_str_to_ip(gt_ip, &gt_addrs[i - 1]);
+		if (ret < 0) {
+			luaL_error(l,
+				"Cannot convert Grantor IP %s to bytes\n",
+				gt_ip);
+		}
+
+		ret = convert_str_to_ip(gw_ip, &gw_addrs[i - 1]);
+		if (ret < 0) {
+			luaL_error(
+				l,
+				"Cannot convert gateway IP %s to bytes\n",
+				gw_ip);
+		}
+
+		/* Pop the Grantor/gateway and their table from Lua stack. */
+		lua_pop(l, 3);
+	}
+}
+
+static void
+add_grantor_entry_lb_verify_params(lua_State *l, const char **prefix,
+	lua_Integer *tbl_size, struct gk_config **gk_conf)
+{
+	uint32_t ctypeid;
+	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GK_CONFIG_PTR);
+	void *cdata;
+	size_t len;
+
+	if (lua_gettop(l) != 3) {
+		luaL_error(l,
+			"%s expected three arguments, however it received %d arguments\n",
+		      __func__, lua_gettop(l));
+	}
+
+	/* First argument must be a prefix string. */
+	*prefix = lua_tolstring(l, 1, &len);
+	if (*prefix == NULL || len == 0)
+		luaL_error(l, "Could not read prefix for adding load balanced Grantor set\n");
+
+	/* Second argument must be a table. */
+	luaL_checktype(l, 2, LUA_TTABLE);
+	*tbl_size = lua_objlen(l, 2);
+	if (*tbl_size <= 0)
+		luaL_error(l, "Table must have a positive number of Grantor entries\n");
+
+	/* Third argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
+	cdata = luaL_checkcdata(l, 3,
+		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	if (ctypeid != correct_ctypeid_gk_config) {
+		luaL_error(l, "%s expected '%s' as the third argument\n",
+			__func__, CTYPE_STRUCT_GK_CONFIG_PTR);
+	}
+	*gk_conf = *(struct gk_config **)cdata;
+}
+
+int
+l_add_grantor_entry_lb(lua_State *l)
+{
+	const char *prefix;
+	struct ip_prefix prefix_info;
+	lua_Integer tbl_size;
+	struct gk_config *gk_conf;
+	struct ipaddr *gt_addrs;
+	struct ipaddr *gw_addrs;
+	int ret;
+
+	/* Verify presence and types of parameters and read them in. */
+	add_grantor_entry_lb_verify_params(l, &prefix,
+		&tbl_size, &gk_conf);
+
+	gt_addrs = lua_newuserdata(l, tbl_size * sizeof(*gt_addrs));
+	gw_addrs = lua_newuserdata(l, tbl_size * sizeof(*gw_addrs));
+
+	read_grantor_lb_entries(l, tbl_size, gt_addrs, gw_addrs);
+
+	/* Set up prefix info. */
+	prefix_info.str = prefix;
+	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
+
+	ret = add_fib_entry_numerical(&prefix_info,
+		gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
+		RTPROT_STATIC, gk_conf);
+	if (ret < 0)
+		luaL_error(l, "Could not add FIB entry; check Gatekeeper log");
+
+	return 0;
 }
 
 static void

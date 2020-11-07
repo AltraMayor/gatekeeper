@@ -305,9 +305,9 @@ void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
 
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
-	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, uint8_t protocol,
-	struct gk_config *gk_conf);
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	uint8_t protocol, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(
@@ -320,6 +320,9 @@ int l_list_gk_neighbors4(lua_State *l);
 int l_list_gk_neighbors6(lua_State *l);
 int l_ether_format_addr(lua_State *l);
 int l_ip_format_addr(lua_State *l);
+int l_add_grantor_entry_lb(lua_State *l);
+
+#define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 
 static inline struct ether_cache *
 lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)

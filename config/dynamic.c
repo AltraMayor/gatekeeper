@@ -469,6 +469,7 @@ const struct luaL_reg dylib_lua_c_funcs [] = {
 	{"list_lls_nd",          l_list_lls_nd},
 	{"ether_format_addr",    l_ether_format_addr},
 	{"ip_format_addr",       l_ip_format_addr},
+	{"add_grantor_entry_lb", l_add_grantor_entry_lb},
 	{NULL,                   NULL}	/* Sentinel. */
 };
 

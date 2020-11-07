@@ -521,7 +521,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	prefix_info.len = update->prefix_len;
 
 	if (update->rt_type == RTN_BLACKHOLE) {
-		return add_fib_entry_numerical(&prefix_info, NULL, NULL,
+		return add_fib_entry_numerical(&prefix_info, NULL, NULL, 0,
 			GK_DROP, update->rt_proto, cps_conf->gk);
 	}
 
@@ -540,7 +540,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			}
 		}
 
-		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
+		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr, 1,
 			GK_FWD_GATEWAY_FRONT_NET, update->rt_proto,
 			cps_conf->gk);
 	}
@@ -555,7 +555,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			}
 		}
 
-		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr,
+		return add_fib_entry_numerical(&prefix_info, NULL, &gw_addr, 1,
 			GK_FWD_GATEWAY_BACK_NET, update->rt_proto,
 			cps_conf->gk);
 	}
