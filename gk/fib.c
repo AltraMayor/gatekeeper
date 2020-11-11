@@ -1408,19 +1408,19 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 }
 
 /*
- * This function makes sure that only a drop or another grantor entry
- * can have a longer prefix than a grantor or a drop entry.
+ * This function makes sure that only a drop or another Grantor entry
+ * can have a longer prefix than a drop or Grantor entry.
  *
  * The importance of this sanity check is illustrated in the following example:
  * assume that the prefix 10.1.1.0/24 forwards to a gateway and
- * the prefix 10.1/16 being added forwards to a grantor.
- * Although the prefix 10.1/16 is intended to protect every host in that
- * destination, the prefix 10.1.1.0/24 leaves some of those hosts unprotected.
- * Without this sanity check, variations of this example could go unnoticed
- * in deployments of Gatekeeper until it is too late.
+ * the prefix 10.1.0.0/16 being added forwards to a Grantor.
+ * Although the prefix 10.1.0.0/16 is intended to protect every host in that
+ * destination, the prefix 10.1.1.0/24 is a longer match and leaves some of
+ * those hosts unprotected. Without this sanity check, variations of this
+ * example could go unnoticed until it is too late.
  */
 static int
-check_prefix_locked(struct ip_prefix *prefix,
+check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
 	uint8_t i;
@@ -1540,6 +1540,42 @@ check_prefix_locked(struct ip_prefix *prefix,
 	}
 
 	return 0;
+}
+
+static int
+check_prefix_locked(struct ip_prefix *prefix, enum gk_fib_action action,
+	struct gk_config *gk_conf)
+{
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	int ip_prefix_present;
+	uint32_t fib_id;
+
+	/* Make sure an entry doesn't already exist for this prefix. */
+	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
+		ip_prefix_present = rte_lpm_is_rule_present(ltbl->lpm,
+			ntohl(prefix->addr.ip.v4.s_addr),
+			prefix->len, &fib_id);
+		if (ip_prefix_present != 0) {
+			GK_LOG(ERR, "Prefix already exists in the FIB table (or can't be checked)\n");
+			return -1;
+		}
+	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+		ip_prefix_present = rte_lpm6_is_rule_present(ltbl->lpm6,
+			prefix->addr.ip.v6.s6_addr,
+			prefix->len, &fib_id);
+		if (ip_prefix_present != 0) {
+			GK_LOG(ERR, "Prefix already exists in the FIB table (or can't be checked)\n");
+			return -1;
+		}
+	} else {
+		GK_LOG(WARNING,
+			"Unknown IP type %hu with prefix %s and action %u\n",
+			prefix->addr.proto, prefix->str, action);
+		return -1;
+	}
+
+	/* Make sure this prefix wouldn't create a security hole. */
+	return check_prefix_security_hole_locked(prefix, action, gk_conf);
 }
 
 int
