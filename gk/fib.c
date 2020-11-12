@@ -1587,40 +1587,32 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	return 0;
 }
 
+/*
+ * Returns:
+ *   1 if the prefix already exists
+ *   0 if the prefix does not exist
+ *  <0 if an error occurred
+ */
 static int
-check_prefix_locked(struct ip_prefix *prefix, enum gk_fib_action action,
-	struct gk_config *gk_conf)
+check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-	int ip_prefix_present;
 	uint32_t fib_id;
 
-	/* Make sure an entry doesn't already exist for this prefix. */
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ip_prefix_present = rte_lpm_is_rule_present(ltbl->lpm,
+		return rte_lpm_is_rule_present(ltbl->lpm,
 			ntohl(prefix->addr.ip.v4.s_addr),
 			prefix->len, &fib_id);
-		if (ip_prefix_present != 0) {
-			GK_LOG(ERR, "Prefix already exists in the FIB table (or can't be checked)\n");
-			return -1;
-		}
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ip_prefix_present = rte_lpm6_is_rule_present(ltbl->lpm6,
+		return rte_lpm6_is_rule_present(ltbl->lpm6,
 			prefix->addr.ip.v6.s6_addr,
 			prefix->len, &fib_id);
-		if (ip_prefix_present != 0) {
-			GK_LOG(ERR, "Prefix already exists in the FIB table (or can't be checked)\n");
-			return -1;
-		}
 	} else {
 		GK_LOG(WARNING,
-			"Unknown IP type %hu with prefix %s and action %u\n",
-			prefix->addr.proto, prefix->str, action);
+			"Unknown IP type %hu with prefix %s\n",
+			prefix->addr.proto, prefix->str);
 		return -1;
 	}
-
-	/* Make sure this prefix wouldn't create a security hole. */
-	return check_prefix_security_hole_locked(prefix, action, gk_conf);
 }
 
 /*
@@ -1696,13 +1688,15 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		}
 	}
 
-	/*
-	 * Only a drop or another Grantor entry can be able to be longer than
-	 * a Grantor or a drop prefix. This way we protect network operators
-	 * from accidentally creating a security hole.
-	 */
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = check_prefix_locked(prefix_info, action, gk_conf);
+	ret = check_prefix_exists_locked(prefix_info, gk_conf);
+	if (ret != 0) {
+		GK_LOG(ERR, "Prefix already exists or error occurred\n");
+		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+		return -1;
+	}
+
+	ret = check_prefix_security_hole_locked(prefix_info, action, gk_conf);
 	if (ret < 0) {
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 		return -1;
