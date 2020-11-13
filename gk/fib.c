@@ -1138,7 +1138,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
  * add_fib_entry_numerical() already ensured that the gateway
  * and the prefix have the same IP version.
  */
-static struct gk_fib *
+static int
 init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	uint8_t rt_proto, struct ipaddr *gw_addr, struct gk_config *gk_conf)
 {
@@ -1157,7 +1157,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 		GK_LOG(ERR,
 			"Failed to initialize a fib entry for gateway, since it has invalid action %d\n",
 			action);
-		return NULL;
+		return -1;
 	}
 
 	/* Find the neighbor FIB entry for this gateway. */
@@ -1165,7 +1165,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 		gw_addr, action, gk_conf);
 	if (neigh_fib == NULL) {
 		GK_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
-		return NULL;
+		return -1;
 	}
 
 	/* Find the Ethernet cached header entry for this gateway. */
@@ -1173,7 +1173,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	eth_cache = neigh_get_ether_cache_locked(
 		neigh_ht, gw_addr, iface, gk_conf->lcores[0]);
 	if (eth_cache == NULL)
-		return NULL;
+		return -1;
 
 	/* Find an empty FIB entry for the Gateway. */
 	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
@@ -1194,15 +1194,13 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	if (ret < 0)
 		goto init_fib;
 
-	return gw_fib;
+	return 0;
 
 init_fib:
 	initialize_fib_entry(gw_fib);
-
 put_ether_cache:
 	ether_cache_put(neigh_fib, action, eth_cache, gk_conf);
-
-	return NULL;
+	return -1;
 }
 
 /* #450 Replace this definition with one from DPDK library. */
@@ -1221,7 +1219,7 @@ put_ether_cache:
  * add_fib_entry_numerical() already ensured that the gateway
  * and the prefix have the same IP version.
  */
-static struct gk_fib *
+static int
 init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, struct gk_config *gk_conf)
@@ -1237,7 +1235,7 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 	if (num_addrs > MAX_NUM_GRANTORS_PER_ENTRY) {
 		GK_LOG(ERR, "Number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
 			num_addrs, MAX_NUM_GRANTORS_PER_ENTRY);
-		return NULL;
+		return -1;
 	}
 
 	for (i = 0; i < num_addrs; i++) {
@@ -1295,7 +1293,7 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 	if (ret < 0)
 		goto free_set;
 
-	return gt_fib;
+	return 0;
 
 free_set:
 	rte_free(gt_fib->u.grantor.set);
@@ -1306,10 +1304,10 @@ put_ether_cache:
 		ether_cache_put(neigh_fibs[i], GK_FWD_GATEWAY_BACK_NET,
 			eth_caches[i], gk_conf);
 	}
-	return NULL;
+	return -1;
 }
 
-static struct gk_fib *
+static int
 init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 	struct gk_config *gk_conf)
 {
@@ -1320,7 +1318,7 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 	/* Initialize the fib entry for the IP prefix. */
 	int fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
 	if (fib_id < 0)
-		return NULL;
+		return -1;
 
 	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
@@ -1336,10 +1334,10 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0) {
 		initialize_fib_entry(ip_prefix_fib);
-		return NULL;
+		return -1;
 	}
 
-	return ip_prefix_fib;
+	return 0;
 }
 
 static int
@@ -1348,51 +1346,41 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	unsigned int num_addrs, enum gk_fib_action action,
 	uint8_t rt_proto, struct gk_config *gk_conf)
 {
-	switch (action) {
-	case GK_FWD_GRANTOR: {
-		struct gk_fib *gt_fib;
+	int ret;
 
+	switch (action) {
+	case GK_FWD_GRANTOR:
 		if (num_addrs < 1 || gt_addrs == NULL || gw_addrs == NULL)
 			return -1;
 
-		gt_fib = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
+		ret = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
 			num_addrs, gk_conf);
-		if (gt_fib == NULL)
+		if (ret < 0)
 			return -1;
 
 		break;
-	}
-
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
-	case GK_FWD_GATEWAY_BACK_NET: {
-		struct gk_fib *gw_fib;
-
+	case GK_FWD_GATEWAY_BACK_NET:
 		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL)
 			return -1;
 
-		gw_fib = init_gateway_fib_locked(
+		ret = init_gateway_fib_locked(
 			prefix, action, rt_proto, &gw_addrs[0], gk_conf);
-		if (gw_fib == NULL)
+		if (ret < 0)
 			return -1;
 
 		break;
-	}
-
-	case GK_DROP: {
-		struct gk_fib *ip_prefix_fib;
-
+	case GK_DROP:
 		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL)
 			return -1;
 
-		ip_prefix_fib = init_drop_fib_locked(
+		ret = init_drop_fib_locked(
 			prefix, rt_proto, gk_conf);
-		if (ip_prefix_fib == NULL)
+		if (ret < 0)
 			return -1;
 
 		break;
-	}
-
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
@@ -1400,7 +1388,6 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	default:
 		GK_LOG(ERR, "Invalid FIB action %u at %s\n", action, __func__);
 		return -1;
-		break;
 	}
 
 	return 0;
