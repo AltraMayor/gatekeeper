@@ -321,6 +321,7 @@ int l_list_gk_neighbors6(lua_State *l);
 int l_ether_format_addr(lua_State *l);
 int l_ip_format_addr(lua_State *l);
 int l_add_grantor_entry_lb(lua_State *l);
+int l_update_grantor_entry_lb(lua_State *l);
 
 #define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 

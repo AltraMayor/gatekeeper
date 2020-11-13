@@ -351,6 +351,11 @@ struct gk_add_policy {
 	uint32_t flow_hash_val;
 };
 
+struct gk_synch_request {
+	struct gk_fib *fib;
+	int update_only;
+};
+
 struct gk_flush_request {
 	struct ip_prefix src;
 	struct ip_prefix dst;
@@ -373,7 +378,7 @@ struct gk_cmd_entry {
 		/* GGU policy to be added with GK_ADD_POLICY_DECISION op. */
 		struct gk_add_policy ggu;
 		/* FIB entry to synchronize with GK_SYNCH_WITH_LPM op. */
-		struct gk_fib *fib;
+		struct gk_synch_request synch;
 		/* Flow table flush request with GK_FLUSH_FLOW_TABLE op. */
 		struct gk_flush_request flush;
 		/* Flow state logging request with GK_LOG_FLOW_STATE op. */

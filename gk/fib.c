@@ -734,7 +734,8 @@ out:
 }
 
 static int
-notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance)
+notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
+	int update_only)
 {
 	int ret;
 	struct mailbox *mb = &instance->mb;
@@ -747,7 +748,8 @@ notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance)
 	}
 
 	entry->op = GK_SYNCH_WITH_LPM;
-	entry->u.fib = fib;
+	entry->u.synch.fib = fib;
+	entry->u.synch.update_only = update_only;
 
 	ret = mb_send_entry(mb, entry);
 	if (ret < 0) {
@@ -766,7 +768,8 @@ notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance)
  * to postpone that until we have a better case to bring RCU to Gatekeeper.
  */
 static void
-synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf)
+synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf,
+	int update_only)
 {
 	int i, loop;
 	int num_succ_notified_inst = 0;
@@ -784,7 +787,8 @@ synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf)
 		for (i = 0; i < gk_conf->num_lcores; i++) {
 			if (!is_succ_notified[i]) {
 				int ret = notify_gk_instance(fib,
-					&gk_conf->instances[i]);
+					&gk_conf->instances[i],
+					update_only);
 				if (ret == 0) {
 					is_succ_notified[i] = true;
 					num_succ_notified_inst++;
@@ -1048,6 +1052,26 @@ del_gateway_from_neigh_table_locked(
 	return 0;
 }
 
+static int
+clear_grantor_set(struct ip_prefix *ip_prefix, struct grantor_set *set,
+	struct gk_config *gk_conf)
+{
+	bool failed_one = false;
+	unsigned int i;
+
+	for (i = 0; i < set->num_entries; i++) {
+		int ret = del_gateway_from_neigh_table_locked(ip_prefix,
+			GK_FWD_GATEWAY_BACK_NET,
+			set->entries[i].eth_cache, gk_conf);
+		if (ret < 0)
+			failed_one = true;
+	}
+
+	rte_free(set);
+
+	return failed_one ? -1 : 0;
+}
+
 /*
  * For removing FIB entries, it needs to notify the GK instances
  * about the removal of the FIB entry.
@@ -1066,7 +1090,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 * We need to notify the GK blocks whenever we remove
 	 * a FIB entry that is accessible through a prefix.
 	 */
-	synchronize_gk_instances(ip_prefix_fib, gk_conf);
+	synchronize_gk_instances(ip_prefix_fib, gk_conf, false);
 
 	/*
 	 * From now on, GK blocks must not have a reference
@@ -1074,18 +1098,10 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 */
 
 	switch (ip_prefix_fib->action) {
-	case GK_FWD_GRANTOR: {
-		unsigned int i;
-		for (i = 0; i < ip_prefix_fib->u.grantor.set->num_entries;
-				i++) {
-			ret = del_gateway_from_neigh_table_locked(
-				ip_prefix, GK_FWD_GATEWAY_BACK_NET,
-				ip_prefix_fib->u.grantor.set->entries[i].eth_cache,
-				gk_conf);
-		}
-		rte_free(ip_prefix_fib->u.grantor.set);
+	case GK_FWD_GRANTOR:
+		ret = clear_grantor_set(ip_prefix,
+			ip_prefix_fib->u.grantor.set, gk_conf);
 		break;
-	}
 
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
@@ -1222,15 +1238,18 @@ put_ether_cache:
 static int
 init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
-	unsigned int num_addrs, struct gk_config *gk_conf)
+	unsigned int num_addrs, struct gk_config *gk_conf,
+	int64_t fib_id)
 {
-	int ret, fib_id;
+	int ret;
 	struct gk_fib *gt_fib;
 	struct gk_fib *neigh_fibs[num_addrs];
 	struct ether_cache *eth_caches[num_addrs];
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	struct grantor_set *new_set;
 	unsigned int i, num_cache_holds = 0;
+	bool prefix_exists = fib_id >= 0;
 
 	if (num_addrs > MAX_NUM_GRANTORS_PER_ENTRY) {
 		GK_LOG(ERR, "Number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
@@ -1264,41 +1283,52 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 		num_cache_holds++;
 	}
 
-	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
-	if (fib_id < 0)
-		goto put_ether_cache;
+	if (!prefix_exists) {
+		fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
+		if (fib_id < 0)
+			goto put_ether_cache;
+	}
 
 	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		gt_fib = &ltbl->fib_tbl[fib_id];
 	else
 		gt_fib = &ltbl->fib_tbl6[fib_id];
 
-	gt_fib->action = GK_FWD_GRANTOR;
-	gt_fib->u.grantor.set = rte_malloc_socket("gk_fib.grantor.set",
-		sizeof(*(gt_fib->u.grantor.set)) +
-			num_addrs * sizeof(*(gt_fib->u.grantor.set->entries)),
+	new_set = rte_malloc_socket("gk_fib.grantor.set",
+		sizeof(*new_set) + num_addrs * sizeof(*(new_set->entries)),
 		0, rte_lcore_to_socket_id(gk_conf->lcores[0]));
-	if (unlikely(gt_fib->u.grantor.set == NULL)) {
+	if (unlikely(new_set == NULL)) {
 		GK_LOG(ERR, "Could not allocate set of Grantor entries\n");
-		goto init_fib;
+		goto put_ether_cache;
 	}
-	gt_fib->u.grantor.set->proto = ip_prefix->addr.proto;
-	gt_fib->u.grantor.set->num_entries = num_addrs;
+	new_set->proto = ip_prefix->addr.proto;
+	new_set->num_entries = num_addrs;
 	for (i = 0; i < num_addrs; i++) {
-		gt_fib->u.grantor.set->entries[i].gt_addr = gt_addrs[i];
-		gt_fib->u.grantor.set->entries[i].eth_cache = eth_caches[i];
+		new_set->entries[i].gt_addr = gt_addrs[i];
+		new_set->entries[i].eth_cache = eth_caches[i];
 	}
 
-	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
-	if (ret < 0)
-		goto free_set;
+	if (prefix_exists) {
+		/* Replace old set of Grantors in existing entry. */
+		struct grantor_set *old_set = gt_fib->u.grantor.set;
+		gt_fib->u.grantor.set = new_set;
+		synchronize_gk_instances(gt_fib, gk_conf, true);
+		clear_grantor_set(ip_prefix, old_set, gk_conf);
+	} else {
+		/* Add new entry. */
+		gt_fib->action = GK_FWD_GRANTOR;
+		gt_fib->u.grantor.set = new_set;
+		ret = lpm_add_route(&ip_prefix->addr,
+			ip_prefix->len, fib_id, ltbl);
+		if (ret < 0)
+			goto init_fib;
+	}
 
 	return 0;
 
-free_set:
-	rte_free(gt_fib->u.grantor.set);
 init_fib:
 	initialize_fib_entry(gt_fib);
+	rte_free(new_set);
 put_ether_cache:
 	for (i = 0; i < num_cache_holds; i++) {
 		ether_cache_put(neigh_fibs[i], GK_FWD_GATEWAY_BACK_NET,
@@ -1340,11 +1370,17 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 	return 0;
 }
 
+/*
+ * If a FIB entry already exists for @prefix, then
+ * @fib_id contains its index in the FIB table.
+ * Otherwise, @fib_id is <0.
+ */
 static int
 add_fib_entry_locked(struct ip_prefix *prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
-	uint8_t rt_proto, struct gk_config *gk_conf)
+	uint8_t rt_proto, struct gk_config *gk_conf,
+	int64_t fib_id)
 {
 	int ret;
 
@@ -1354,7 +1390,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 			return -1;
 
 		ret = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
-			num_addrs, gk_conf);
+			num_addrs, gk_conf, fib_id);
 		if (ret < 0)
 			return -1;
 
@@ -1362,7 +1398,8 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET:
-		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL)
+		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL ||
+				fib_id >= 0)
 			return -1;
 
 		ret = init_gateway_fib_locked(
@@ -1372,7 +1409,8 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 
 		break;
 	case GK_DROP:
-		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL)
+		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL ||
+				fib_id >= 0)
 			return -1;
 
 		ret = init_drop_fib_locked(
@@ -1581,17 +1619,19 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
  *  <0 if an error occurred
  */
 static int
-check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf)
+check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
+	uint32_t *fibp)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	uint32_t fib_id;
+	int ret;
 
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		return rte_lpm_is_rule_present(ltbl->lpm,
+		ret = rte_lpm_is_rule_present(ltbl->lpm,
 			ntohl(prefix->addr.ip.v4.s_addr),
 			prefix->len, &fib_id);
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		return rte_lpm6_is_rule_present(ltbl->lpm6,
+		ret = rte_lpm6_is_rule_present(ltbl->lpm6,
 			prefix->addr.ip.v6.s6_addr,
 			prefix->len, &fib_id);
 	} else {
@@ -1600,6 +1640,10 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf)
 			prefix->addr.proto, prefix->str);
 		return -1;
 	}
+
+	if (ret == 1 && fibp != NULL)
+		*fibp = fib_id;
+	return ret;
 }
 
 /*
@@ -1676,7 +1720,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = check_prefix_exists_locked(prefix_info, gk_conf);
+	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
 	if (ret != 0) {
 		GK_LOG(ERR, "Prefix already exists or error occurred\n");
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
@@ -1690,7 +1734,52 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, rt_proto, gk_conf);
+		action, rt_proto, gk_conf, -1);
+	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+
+	return ret;
+}
+
+static int
+update_fib_entry_numerical(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	uint8_t rt_proto, struct gk_config *gk_conf)
+{
+	int ret;
+	uint32_t fib_id = 0;
+	unsigned int i;
+
+	if (prefix_info->len < 0)
+		return -1;
+
+	if (prefix_info->len == 0) {
+		GK_LOG(WARNING,
+			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
+			prefix_info->str, __func__);
+		return -1;
+	}
+
+	for (i = 0; i < num_addrs; i++) {
+		/*
+		 * Verify that the IP addresses of gateway FIB entries
+		 * are not included in the prefix.
+		 */
+		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
+		if (ret < 0)
+			return -1;
+	}
+
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	ret = check_prefix_exists_locked(prefix_info, gk_conf, &fib_id);
+	if (ret != 1) {
+		GK_LOG(ERR, "Cannot update set of Grantors; prefix does not already exist or error occurred\n");
+		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
+		return -1;
+	}
+
+	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
+		action, rt_proto, gk_conf, fib_id);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1856,8 +1945,8 @@ add_grantor_entry_lb_verify_params(lua_State *l, const char **prefix,
 	*gk_conf = *(struct gk_config **)cdata;
 }
 
-int
-l_add_grantor_entry_lb(lua_State *l)
+static int
+__add_grantor_entry_lb(lua_State *l, int overwrite)
 {
 	const char *prefix;
 	struct ip_prefix prefix_info;
@@ -1880,13 +1969,31 @@ l_add_grantor_entry_lb(lua_State *l)
 	prefix_info.str = prefix;
 	prefix_info.len = parse_ip_prefix(prefix, &prefix_info.addr);
 
-	ret = add_fib_entry_numerical(&prefix_info,
-		gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
-		RTPROT_STATIC, gk_conf);
+	if (overwrite) {
+		ret = update_fib_entry_numerical(&prefix_info,
+			gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
+			RTPROT_STATIC, gk_conf);
+	} else {
+		ret = add_fib_entry_numerical(&prefix_info,
+			gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
+			RTPROT_STATIC, gk_conf);
+	}
 	if (ret < 0)
-		luaL_error(l, "Could not add FIB entry; check Gatekeeper log");
+		luaL_error(l, "Could not add or update FIB entry; check Gatekeeper log");
 
 	return 0;
+}
+
+int
+l_add_grantor_entry_lb(lua_State *l)
+{
+	return __add_grantor_entry_lb(l, false);
+}
+
+int
+l_update_grantor_entry_lb(lua_State *l)
+{
+	return __add_grantor_entry_lb(l, true);
 }
 
 static void

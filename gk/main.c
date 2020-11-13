@@ -886,8 +886,12 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 }
 
 static void
-gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
+gk_synchronize(struct gk_fib *fib, struct gk_instance *instance,
+	bool update_only)
 {
+	if (update_only)
+		goto done;
+
 	switch (fib->action) {
 	case GK_FWD_GRANTOR: {
 		/* Flush the grantor @fib in the flow table. */
@@ -936,6 +940,7 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance)
 		break;
 	}
 
+done:
 	rte_atomic16_inc(&fib->num_updated_instances);
 }
 
@@ -949,7 +954,8 @@ process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
 		break;
 
 	case GK_SYNCH_WITH_LPM:
-		gk_synchronize(entry->u.fib, instance);
+		gk_synchronize(entry->u.synch.fib, instance,
+			!!entry->u.synch.update_only);
 		break;
 
 	case GK_FLUSH_FLOW_TABLE:
