@@ -429,8 +429,8 @@ int rte_log_set_level(uint32_t type, uint32_t level);
 int rte_log_get_level(uint32_t type);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag);
+	const char **pci_addrs, uint8_t num_pci_addrs, const char **ip_cidrs,
+	uint8_t num_ip_cidrs, uint16_t ipv4_vlan_tag, uint16_t ipv6_vlan_tag);
 
 bool ipv4_configured(struct net_config *net_conf);
 bool ipv6_configured(struct net_config *net_conf);
@@ -505,7 +505,7 @@ function check_ifaces(front_ports, back_ports)
 	end
 end
 
-function init_iface(iface, name, ports, cidrs, vlan_tag)
+function init_iface(iface, name, ports, cidrs, ipv4_vlan_tag, ipv6_vlan_tag)
 	local pci_strs = ffi.new("const char *[" .. #ports .. "]")
 	for i, v in ipairs(ports) do
 		local pci_addr = ifaces[v]
@@ -528,7 +528,7 @@ function init_iface(iface, name, ports, cidrs, vlan_tag)
 	end
 
 	local ret = c.lua_init_iface(iface, name, pci_strs, #ports,
-		ip_cidrs, #cidrs, vlan_tag)
+		ip_cidrs, #cidrs, ipv4_vlan_tag, ipv6_vlan_tag)
 	if ret < 0 then
 		error("Failed to initilialize " .. name .. " interface")
 	end

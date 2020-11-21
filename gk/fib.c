@@ -130,8 +130,9 @@ get_new_ether_cache_locked(struct neighbor_hash_table *neigh,
 	eth_cache->stale = true;
 	rte_memcpy(&eth_cache->ip_addr, addr, sizeof(eth_cache->ip_addr));
 	if (iface->vlan_insert) {
-		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr, iface->vlan_tag_be,
-			addr->proto);
+		uint16_t vlan_tag_be = addr->proto == RTE_ETHER_TYPE_IPV4 ?
+			iface->ipv4_vlan_tag_be : iface->ipv6_vlan_tag_be;
+		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr, vlan_tag_be, addr->proto);
 	} else {
 		eth_cache->l2_hdr.eth_hdr.ether_type =
 			rte_cpu_to_be_16(addr->proto);

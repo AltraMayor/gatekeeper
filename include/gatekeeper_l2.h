@@ -120,6 +120,6 @@ struct rte_ether_hdr *adjust_pkt_len(struct rte_mbuf *pkt,
 	struct gatekeeper_if *iface, int bytes_to_add);
 
 int verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
-	uint32_t l2_type, const char *proto_name);
+	uint32_t l2_type, const char *proto_name, uint16_t vlan_tag_be);
 
 #endif /* _GATEKEEPER_L2_H_ */

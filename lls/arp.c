@@ -72,7 +72,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
-		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, RTE_ETHER_TYPE_ARP);
+		fill_vlan_hdr(eth_hdr, iface->ipv4_vlan_tag_be, RTE_ETHER_TYPE_ARP);
 	else
 		eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP);
 
@@ -122,7 +122,8 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return -1;
 	}
 
-	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ARP");
+	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ARP",
+		iface->ipv4_vlan_tag_be);
 	if (ret < 0)
 		return ret;
 

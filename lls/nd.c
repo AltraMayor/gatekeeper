@@ -172,7 +172,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
-		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be, RTE_ETHER_TYPE_IPV6);
+		fill_vlan_hdr(eth_hdr, iface->ipv6_vlan_tag_be, RTE_ETHER_TYPE_IPV6);
 	else
 		eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 
@@ -395,7 +395,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		}
 	}
 
-	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ND");
+	ret = verify_l2_hdr(iface, eth_hdr, buf->l2_type, "ND",
+		iface->ipv6_vlan_tag_be);
 	if (ret < 0)
 		return ret;
 

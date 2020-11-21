@@ -424,22 +424,24 @@ gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
 {
 	int ret;
 	unsigned lcore_id = rte_lcore_id();
+	uint16_t vlan_tag_be;
 
 	eth_cache->stale = true;
 	eth_cache->ip_addr.proto = inner_ip_ver;
 
 	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
+		vlan_tag_be = iface->ipv4_vlan_tag_be;
 		rte_memcpy(&eth_cache->ip_addr.ip.v4,
 			ip_dst, sizeof(eth_cache->ip_addr.ip.v4));
 	} else {
+		vlan_tag_be = iface->ipv6_vlan_tag_be;
 		rte_memcpy(&eth_cache->ip_addr.ip.v6,
 			ip_dst, sizeof(eth_cache->ip_addr.ip.v6));
 	}
 
-	if (iface->vlan_insert) {
-		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr,
-			iface->vlan_tag_be, inner_ip_ver);
-	} else {
+	if (iface->vlan_insert)
+		fill_vlan_hdr(&eth_cache->l2_hdr.eth_hdr, vlan_tag_be, inner_ip_ver);
+	else {
 		eth_cache->l2_hdr.eth_hdr.ether_type =
 			rte_cpu_to_be_16(inner_ip_ver);
 	}
@@ -584,6 +586,7 @@ static int
 decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 	struct gt_packet_headers *pkt_info, struct gt_instance *instance)
 {
+	uint16_t vlan_tag_be;
 	struct neighbor_hash_table *neigh;
 	struct ether_cache *eth_cache;
 	void *ip_dst;
@@ -614,6 +617,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 
 		is_neighbor = ip4_same_subnet(iface->ip4_addr.s_addr,
 			*(uint32_t *)ip_dst, iface->ip4_mask.s_addr);
+
+		vlan_tag_be = iface->ipv4_vlan_tag_be;
 	} else if (likely(pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV6)) {
 		/*
 		 * Since there's no checksum in the IPv6 header, skip the
@@ -630,6 +635,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 
 		is_neighbor = ip6_same_subnet(&iface->ip6_addr, ip_dst,
 			&iface->ip6_mask);
+
+		vlan_tag_be = iface->ipv6_vlan_tag_be;
 	} else
 		return -1;
 
@@ -651,10 +658,9 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
 		m->l2_len = iface->l2_len_out;
 
-		if (iface->vlan_insert) {
-			fill_vlan_hdr(eth_hdr, iface->vlan_tag_be,
-				pkt_info->inner_ip_ver);
-		} else {
+		if (iface->vlan_insert)
+			fill_vlan_hdr(eth_hdr, vlan_tag_be, pkt_info->inner_ip_ver);
+		else {
 			eth_hdr->ether_type =
 				rte_cpu_to_be_16(pkt_info->inner_ip_ver);
 		}
@@ -691,9 +697,11 @@ fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 	rte_ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
 	rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
 	if (iface->vlan_insert) {
-		fill_vlan_hdr(eth_hdr, iface->vlan_tag_be,
-			pkt_info->outer_ethertype);
-	} else {
+		uint16_t vlan_tag_be =
+			pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV4 ?
+			iface->ipv4_vlan_tag_be : iface->ipv6_vlan_tag_be;
+		fill_vlan_hdr(eth_hdr, vlan_tag_be, pkt_info->outer_ethertype);
+    } else {
 		eth_hdr->ether_type =
 			rte_cpu_to_be_16(pkt_info->outer_ethertype);
 	}

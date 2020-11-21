@@ -347,7 +347,7 @@ xmit_icmp_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
 	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
 	if (iface->vlan_insert) {
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+		fill_vlan_hdr(icmp_eth, iface->ipv4_vlan_tag_be,
 			RTE_ETHER_TYPE_IPV4);
 	}
 
@@ -513,7 +513,7 @@ xmit_icmp6_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
 	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
 	if (iface->vlan_insert) {
-		fill_vlan_hdr(icmp_eth, iface->vlan_tag_be,
+		fill_vlan_hdr(icmp_eth, iface->ipv6_vlan_tag_be,
 			RTE_ETHER_TYPE_IPV6);
 	}
 
