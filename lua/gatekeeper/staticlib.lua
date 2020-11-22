@@ -288,8 +288,6 @@ struct gk_config {
 	unsigned int max_num_ipv6_rules;
 	unsigned int num_ipv6_tbl8s;
 	unsigned int max_num_ipv6_neighbors;
-	unsigned int max_num_ipv4_fib_entries;
-	unsigned int max_num_ipv6_fib_entries;
 	unsigned int flow_table_scan_iter;
 	unsigned int scan_del_thresh;
 	uint16_t     front_max_pkt_burst;

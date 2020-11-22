@@ -32,8 +32,6 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	local max_num_ipv6_rules = 1024
 	local num_ipv6_tbl8s = 65536
 	local max_num_ipv6_neighbors = 65536
-	local max_num_ipv4_fib_entries = 256
-	local max_num_ipv6_fib_entries = 65536
 
 	local basic_measurement_logging_ms = 60 * 1000 -- (1 minute)
 
@@ -72,18 +70,6 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	gk_conf.max_num_ipv6_rules = max_num_ipv6_rules
 	gk_conf.num_ipv6_tbl8s = num_ipv6_tbl8s
 	gk_conf.max_num_ipv6_neighbors = max_num_ipv6_neighbors
-
-	if staticlib.c.ipv4_configured(net_conf) then
-		gk_conf.max_num_ipv4_fib_entries = max_num_ipv4_fib_entries
-	else
-		gk_conf.max_num_ipv4_fib_entries = 0
-	end
-
-	if staticlib.c.ipv6_configured(net_conf) then
-		gk_conf.max_num_ipv6_fib_entries = max_num_ipv6_fib_entries
-	else
-		gk_conf.max_num_ipv6_fib_entries = 0
-	end
 
 	gk_conf.flow_table_scan_iter = flow_table_scan_iter
 	gk_conf.basic_measurement_logging_ms = basic_measurement_logging_ms

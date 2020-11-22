@@ -145,7 +145,8 @@ struct gk_config {
 	 * (2) tbl8 is a table with 2^8 entries.
 	 *
 	 * To configure an LPM component instance, one needs to specify:
-	 * @max_rules: the maximum number of rules to support.
+	 * @max_rules: the maximum number of rules to support. Note that the maximum
+	 * number of LPM FIF entries should be equal to the maximum number of rules.
 	 * @number_tbl8s: the number of tbl8 tables.
 	 *
 	 * Here, it supports both IPv4 and IPv6 configuration.
@@ -157,13 +158,6 @@ struct gk_config {
 
 	/* The maximum number of neighbor entries for the LPM FIB. */
 	unsigned int       max_num_ipv6_neighbors;
-
-	/*
-	 * The IPv4 LPM reserves 24 bits for the next-hop field,
-	 * whereas IPv6 LPM reserves 21 bits.
-	 */
-	unsigned int       max_num_ipv4_fib_entries;
-	unsigned int       max_num_ipv6_fib_entries;
 
 	/*
 	 * Number of iterations of the GK block's main loop
