@@ -221,7 +221,7 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 	if (ip_prefix == NULL)
 		return -1;
 
-	strncpy(ip_prefix_copy, ip_prefix, ip_prefix_len + 1);
+	strcpy(ip_prefix_copy, ip_prefix);
 
 	ip_addr = strtok_r(ip_prefix_copy, "/", &saveptr);
 	if (ip_addr == NULL) {

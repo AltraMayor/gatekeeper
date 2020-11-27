@@ -607,7 +607,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		int gk_type;
 		int max_prefix;
 
-		strncpy(ip_cidr_copy, ip_cidrs[i], ip_cidr_len + 1);
+		strcpy(ip_cidr_copy, ip_cidrs[i]);
 
 		ip_addr = strtok_r(ip_cidr_copy, "/", &saveptr);
 		if (ip_addr == NULL)
