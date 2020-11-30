@@ -85,7 +85,7 @@ adjust_pkt_len(struct rte_mbuf *pkt, struct gatekeeper_if *iface,
  */
 int
 verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
-	uint32_t l2_type, const char *proto_name)
+	uint32_t l2_type, const char *proto_name, uint16_t vlan_tag_be)
 {
 	if (iface->vlan_insert) {
 		struct rte_vlan_hdr *vlan_hdr;
@@ -106,13 +106,13 @@ verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 		 * the VLAN tag in case we reuse this packet.
 		 */
 		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
-		if (unlikely(vlan_hdr->vlan_tci != iface->vlan_tag_be)) {
+		if (unlikely(vlan_hdr->vlan_tci != vlan_tag_be)) {
 			G_LOG(WARNING,
 				"l2: %s interface received an %s packet with an incorrect VLAN tag (0x%02x but should be 0x%02x)\n",
 				iface->name, proto_name,
 				rte_be_to_cpu_16(vlan_hdr->vlan_tci),
-				rte_be_to_cpu_16(iface->vlan_tag_be));
-			vlan_hdr->vlan_tci = iface->vlan_tag_be;
+				rte_be_to_cpu_16(vlan_tag_be));
+			vlan_hdr->vlan_tci = vlan_tag_be;
 		}
 	} else if (unlikely(l2_type != RTE_PTYPE_UNKNOWN)) {
 		/*

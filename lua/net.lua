@@ -12,14 +12,16 @@ return function (gatekeeper_server)
 	local front_ports = {"enp133s0f0"}
 	local front_ips  = {"10.0.1.1/24", "2001:db8:1::1/48"}
 	local front_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
-	local front_vlan_tag = 0x123
+	local front_ipv4_vlan_tag = 0x123
+	local front_ipv6_vlan_tag = front_ipv4_vlan_tag
 	local front_vlan_insert = true
 	local front_mtu = 1500
 
 	local back_ports = {"enp133s0f1"}
 	local back_ips  = {"10.0.2.1/24", "2001:db8:2::1/48"}
 	local back_bonding_mode = staticlib.c.BONDING_MODE_ROUND_ROBIN
-	local back_vlan_tag = 0x456
+	local back_ipv4_vlan_tag = 0x456
+	local back_ipv6_vlan_tag = back_ipv4_vlan_tag
 	local back_vlan_insert = true
 	local back_mtu = 2048
 
@@ -76,7 +78,7 @@ return function (gatekeeper_server)
 	front_iface.ipv6_hw_udp_cksum = front_ipv6_hw_udp_cksum
 	front_iface.ipv4_hw_cksum = front_ipv4_hw_cksum
 	local ret = staticlib.init_iface(front_iface, "front",
-		front_ports, front_ips, front_vlan_tag)
+		front_ports, front_ips, front_ipv4_vlan_tag, front_ipv6_vlan_tag)
 	if ret < 0 then
 		error("Failed to initialize the front interface")
 	end
@@ -97,7 +99,7 @@ return function (gatekeeper_server)
 		back_iface.ipv6_hw_udp_cksum = back_ipv6_hw_udp_cksum
 		back_iface.ipv4_hw_cksum = back_ipv4_hw_cksum
 		ret = staticlib.init_iface(back_iface, "back",
-			back_ports, back_ips, back_vlan_tag)
+			back_ports, back_ips, back_ipv4_vlan_tag, back_ipv6_vlan_tag)
 		if ret < 0 then
 			error("Failed to initialize the back interface")
 		end

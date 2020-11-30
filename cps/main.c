@@ -424,7 +424,8 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 		/* Packets sent by the KNI do not have VLAN headers. */
 		struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(bufs[i],
 			struct rte_ether_hdr *);
-		switch (rte_be_to_cpu_16(eth_hdr->ether_type)) {
+		uint16_t ether_type = rte_be_to_cpu_16(eth_hdr->ether_type);
+		switch (ether_type) {
 		case RTE_ETHER_TYPE_ARP:
 			/* Intercept ARP packet and handle it. */
 			kni_process_arp(cps_conf, iface, bufs[i], eth_hdr);
@@ -445,6 +446,7 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			 * adding a VLAN header if necessary.
 			 */
 			struct rte_ether_hdr *new_eth_hdr;
+			uint16_t vlan_tag_be;
 
 			if (!iface->vlan_insert)
 				goto to_eth;
@@ -460,8 +462,9 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 			}
 
 			memmove(new_eth_hdr, eth_hdr, sizeof(*new_eth_hdr));
-			fill_vlan_hdr(new_eth_hdr, iface->vlan_tag_be,
-				rte_be_to_cpu_16(eth_hdr->ether_type));
+			vlan_tag_be = ether_type == RTE_ETHER_TYPE_IPV4 ?
+				iface->ipv4_vlan_tag_be : iface->ipv6_vlan_tag_be;
+			fill_vlan_hdr(new_eth_hdr, vlan_tag_be, ether_type);
 to_eth:
 			forward_bufs[num_forward++] = bufs[i];
 			break;

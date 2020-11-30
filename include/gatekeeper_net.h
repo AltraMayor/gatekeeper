@@ -138,7 +138,10 @@ struct gatekeeper_if {
 	/* The type of bonding used for this interface, if needed. */
 	uint32_t        bonding_mode;
 
-	/* Whether @vlan_tag should be applied to egress traffic. */
+	/*
+	 * Whether @ipv4_vlan_tag/@ipv6_vlan_tag should be applied to egress
+	 * traffic.
+	 */
 	int             vlan_insert;
 
 	/*
@@ -211,8 +214,11 @@ struct gatekeeper_if {
 	/* Link layer header length for egress packets from this interface. */
 	size_t          l2_len_out;
 
-	/* VLAN tag to be applied to all outbound packets, in network order. */
-	uint16_t        vlan_tag_be;
+	/* VLAN tag to be applied to all outbound IPv4 packets, in network order. */
+	uint16_t        ipv4_vlan_tag_be;
+
+	/* VLAN tag to be applied to all outbound IPv6 packets, in network order. */
+	uint16_t        ipv6_vlan_tag_be;
 
 	/* Ethernet address of this interface. */
 	struct rte_ether_addr eth_addr;
@@ -428,8 +434,8 @@ lacp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 }
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
-	const char **pci_addrs, uint8_t num_pci_addrs,
-	const char **ip_cidrs, uint8_t num_ip_cidrs, uint16_t vlan_tag);
+	const char **pci_addrs, uint8_t num_pci_addrs, const char **ip_cidrs,
+	uint8_t num_ip_cidrs, uint16_t ipv4_vlan_tag, uint16_t ipv6_vlan_tag);
 
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
