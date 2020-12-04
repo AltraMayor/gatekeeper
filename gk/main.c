@@ -905,6 +905,12 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 	print_flow_state(fe);
 }
 
+static bool
+test_fib(void *arg, struct flow_entry *fe)
+{
+	return fe->grantor_fib == arg;
+}
+
 static void
 gk_synchronize(struct gk_fib *fib, struct gk_instance *instance,
 	bool update_only)
@@ -913,31 +919,10 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance,
 		goto done;
 
 	switch (fib->action) {
-	case GK_FWD_GRANTOR: {
+	case GK_FWD_GRANTOR:
 		/* Flush the grantor @fib in the flow table. */
-
-		uint32_t next = 0;
-		int32_t index;
-		const struct ip_flow *key;
-		void *data;
-
-		index = rte_hash_iterate(instance->ip_flow_hash_table,
-			(void *)&key, &data, &next);
-		while (index >= 0) {
-			struct flow_entry *fe =
-				&instance->ip_flow_entry_table[index];
-			if (fe->grantor_fib == fib)
-				gk_del_flow_entry_from_hash(instance, fe);
-
-			index = rte_hash_iterate(instance->ip_flow_hash_table,
-				(void *)&key, &data, &next);
-		}
-
-		GK_LOG(NOTICE, "Finished flushing flow table at lcore %u\n",
-			rte_lcore_id());
-
+		flush_flow_table(instance, test_fib, fib, __func__);
 		break;
-	}
 
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
