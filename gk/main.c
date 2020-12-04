@@ -684,96 +684,116 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	return ret;
 }
 
+typedef bool (*test_flow_entry_t)(void *arg, struct flow_entry *fe);
+
 static void
-flush_flow_table(struct ip_prefix *src,
-	struct ip_prefix *dst, struct gk_instance *instance)
+flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
+	void *arg, const char *context)
 {
-	uint16_t proto;
+	uint64_t num_flushed_flows = 0;
 	uint32_t next = 0;
 	int32_t index;
-	uint64_t num_flushed_flows = 0;
-	const struct ip_flow *key;
+	const void *key;
 	void *data;
+
+	index = rte_hash_iterate(instance->ip_flow_hash_table,
+		&key, &data, &next);
+	while (index >= 0) {
+		struct flow_entry *fe =
+			&instance->ip_flow_entry_table[index];
+
+		if (test(arg, fe) &&
+			(gk_del_flow_entry_from_hash(instance, fe) >= 0)) {
+			num_flushed_flows++;
+		}
+
+		index = rte_hash_iterate(instance->ip_flow_hash_table,
+			&key, &data, &next);
+	}
+
+	GK_LOG(NOTICE,
+		"The GK block at lcore %u flushed %" PRIu64
+		" flows of the flow table due to %s\n",
+		rte_lcore_id(), num_flushed_flows, context);
+}
+
+struct flush_net_prefixes {
+	uint16_t proto;
+	struct ip_prefix *src;
+	struct ip_prefix *dst;
 	struct in_addr ip4_src_mask;
 	struct in_addr ip4_dst_mask;
 	struct in6_addr ip6_src_mask;
 	struct in6_addr ip6_dst_mask;
+};
+
+static bool
+test_net_prefixes(void *arg, struct flow_entry *fe)
+{
+	struct flush_net_prefixes *info = arg;
+	bool matched = true;
+
+	if (info->proto != fe->flow.proto)
+		return false;
+
+	if (info->proto == RTE_ETHER_TYPE_IPV4) {
+		if (info->src->len != 0) {
+			matched = ip4_same_subnet(
+				info->src->addr.ip.v4.s_addr,
+				fe->flow.f.v4.src.s_addr,
+				info->ip4_src_mask.s_addr);
+		}
+
+		if (matched && info->dst->len != 0) {
+			matched = ip4_same_subnet(
+				info->dst->addr.ip.v4.s_addr,
+				fe->flow.f.v4.dst.s_addr,
+				info->ip4_dst_mask.s_addr);
+		}
+
+		return matched;
+	}
+
+	if (info->src->len != 0) {
+		matched = ip6_same_subnet(&info->src->addr.ip.v6,
+			&fe->flow.f.v6.src, &info->ip6_src_mask);
+	}
+
+	if (matched && info->dst->len != 0) {
+		matched = ip6_same_subnet(&info->dst->addr.ip.v6,
+			&fe->flow.f.v6.dst, &info->ip6_dst_mask);
+	}
+
+	return matched;
+}
+
+static void
+flush_net_prefixes(struct ip_prefix *src,
+	struct ip_prefix *dst, struct gk_instance *instance)
+{
+	struct flush_net_prefixes arg;
 
 	RTE_VERIFY(src->addr.proto == dst->addr.proto);
+	arg.proto = src->addr.proto;
+	arg.src = src;
+	arg.dst = dst;
 
-	if (src->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ip4_prefix_mask(src->len, &ip4_src_mask);
-		ip4_prefix_mask(dst->len, &ip4_dst_mask);
+	if (arg.proto == RTE_ETHER_TYPE_IPV4) {
+		ip4_prefix_mask(src->len, &arg.ip4_src_mask);
+		ip4_prefix_mask(dst->len, &arg.ip4_dst_mask);
 
-		memset(&ip6_src_mask, 0, sizeof(ip6_src_mask));
-		memset(&ip6_dst_mask, 0, sizeof(ip6_dst_mask));
+		memset(&arg.ip6_src_mask, 0, sizeof(arg.ip6_src_mask));
+		memset(&arg.ip6_dst_mask, 0, sizeof(arg.ip6_dst_mask));
+	} else if (likely(arg.proto == RTE_ETHER_TYPE_IPV6)) {
+		memset(&arg.ip4_src_mask, 0, sizeof(arg.ip4_src_mask));
+		memset(&arg.ip4_dst_mask, 0, sizeof(arg.ip4_dst_mask));
 
-		proto = RTE_ETHER_TYPE_IPV4;
-	} else if (likely(src->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		memset(&ip4_src_mask, 0, sizeof(ip4_src_mask));
-		memset(&ip4_dst_mask, 0, sizeof(ip4_dst_mask));
-
-		ip6_prefix_mask(src->len, &ip6_src_mask);
-		ip6_prefix_mask(dst->len, &ip6_dst_mask);
-
-		proto = RTE_ETHER_TYPE_IPV6;
+		ip6_prefix_mask(src->len, &arg.ip6_src_mask);
+		ip6_prefix_mask(dst->len, &arg.ip6_dst_mask);
 	} else
 		rte_panic("Unexpected protocol: %i\n", src->addr.proto);
 
-	index = rte_hash_iterate(instance->ip_flow_hash_table,
-		(void *)&key, &data, &next);
-	while (index >= 0) {
-		bool matched = true;
-		struct flow_entry *fe =
-			&instance->ip_flow_entry_table[index];
-
-		if (proto != fe->flow.proto)
-			goto next;
-
-		if (proto == RTE_ETHER_TYPE_IPV4) {
-			if (src->len != 0) {
-				matched = ip4_same_subnet(
-					src->addr.ip.v4.s_addr,
-					fe->flow.f.v4.src.s_addr,
-					ip4_src_mask.s_addr);
-			}
-
-			if (matched && dst->len != 0) {
-				matched = ip4_same_subnet(
-					dst->addr.ip.v4.s_addr,
-					fe->flow.f.v4.dst.s_addr,
-					ip4_dst_mask.s_addr);
-			}
-		} else {
-			if (src->len != 0) {
-				matched = ip6_same_subnet(
-					&src->addr.ip.v6,
-					&fe->flow.f.v6.src,
-					&ip6_src_mask);
-			}
-
-			if (matched && dst->len != 0) {
-				matched = ip6_same_subnet(
-					&dst->addr.ip.v6,
-					&fe->flow.f.v6.dst,
-					&ip6_dst_mask);
-			}
-		}
-
-		if (matched && (gk_del_flow_entry_from_hash(
-				instance, fe) >= 0)) {
-			num_flushed_flows++;
-		}
-
-next:
-		index = rte_hash_iterate(instance->ip_flow_hash_table,
-			(void *)&key, &data, &next);
-	}
-
-	GK_LOG(NOTICE,
-		"The GK block finished flushing %" PRIu64
-		" flows in the flow table at %s with lcore %u\n",
-		num_flushed_flows, __func__, rte_lcore_id());
+	flush_flow_table(instance, test_net_prefixes, &arg, __func__);
 }
 
 static void
@@ -959,7 +979,7 @@ process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
 		break;
 
 	case GK_FLUSH_FLOW_TABLE:
-		flush_flow_table(&entry->u.flush.src,
+		flush_net_prefixes(&entry->u.flush.src,
 			&entry->u.flush.dst, instance);
 		break;
 
