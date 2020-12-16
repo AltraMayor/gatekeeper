@@ -146,7 +146,7 @@ struct gk_config {
 	 *
 	 * To configure an LPM component instance, one needs to specify:
 	 * @max_rules: the maximum number of rules to support. Note that the maximum
-	 * number of LPM FIF entries should be equal to the maximum number of rules.
+	 * number of LPM FIB entries should be equal to the maximum number of rules.
 	 * @number_tbl8s: the number of tbl8 tables.
 	 *
 	 * Here, it supports both IPv4 and IPv6 configuration.
