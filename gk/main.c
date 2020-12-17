@@ -2368,6 +2368,8 @@ cleanup_gk(struct gk_config *gk_conf)
 	rte_free(gk_conf->queue_id_to_instance);
 	rte_free(gk_conf->instances);
 	rte_free(gk_conf->lcores);
+	sol_conf_put(gk_conf->sol_conf);
+	gk_conf->sol_conf = NULL;
 	rte_free(gk_conf);
 
 	return 0;
@@ -2560,6 +2562,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	}
 
 	gk_conf->net = net_conf;
+	sol_conf_hold(sol_conf);
 	gk_conf->sol_conf = sol_conf;
 
 	if (gk_conf->num_lcores <= 0)
@@ -2569,7 +2572,7 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 		net_conf, gk_conf->num_lcores, gk_conf->num_lcores,
 		gk_conf->num_lcores, gk_conf->num_lcores, gk_stage1, gk_conf);
 	if (ret < 0)
-		goto out;
+		goto put_sol;
 
 	ret = launch_at_stage2(gk_stage2, gk_conf);
 	if (ret < 0)
@@ -2590,6 +2593,9 @@ stage2:
 	pop_n_at_stage2(1);
 stage1:
 	pop_n_at_stage1(1);
+put_sol:
+	gk_conf->sol_conf = NULL;
+	sol_conf_put(sol_conf);
 out:
 	return ret;
 

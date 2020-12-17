@@ -509,6 +509,19 @@ free_sol_conf:
 	return 0;
 }
 
+int
+sol_conf_put(struct sol_config *sol_conf)
+{
+	/*
+	 * Atomically decrements the atomic counter by one and returns true
+	 * if the result is 0, or false in all other cases.
+	 */
+	if (rte_atomic32_dec_and_test(&sol_conf->ref_cnt))
+		return cleanup_sol(sol_conf);
+
+	return 0;
+}
+
 static int
 get_block_idx(struct sol_config *sol_conf, unsigned int lcore_id)
 {
@@ -533,6 +546,8 @@ sol_proc(void *arg)
 	SOL_LOG(NOTICE,
 		"The Solicitor block is running at lcore = %u\n", lcore);
 
+	sol_conf_hold(sol_conf);
+
 	while (likely(!exiting)) {
 		enqueue_reqs(sol_conf, instance);
 		dequeue_reqs(sol_conf, instance, tx_port_back);
@@ -541,7 +556,7 @@ sol_proc(void *arg)
 	SOL_LOG(NOTICE,
 		"The Solicitor block at lcore = %u is exiting\n", lcore);
 
-	return cleanup_sol(sol_conf);
+	return sol_conf_put(sol_conf);
 }
 
 static int
@@ -684,7 +699,7 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	}
 
 	if (sol_conf->num_lcores <= 0)
-		goto out;
+		goto success;
 
 	/*
 	 * Need to account for the packets in the following scenarios:
@@ -723,8 +738,7 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 
 	sol_conf->net = net_conf;
 
-	ret = 0;
-	goto out;
+	goto success;
 
 stage2:
 	pop_n_at_stage2(1);
@@ -734,6 +748,10 @@ burst:
 	net_conf->front.total_pkt_burst -= front_inc;
 out:
 	return ret;
+
+success:
+	rte_atomic32_init(&sol_conf->ref_cnt);
+	return 0;
 }
 
 /*
