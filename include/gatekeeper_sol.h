@@ -19,11 +19,10 @@
 #ifndef _GATEKEEPER_SOL_H_
 #define _GATEKEEPER_SOL_H_
 
-#include <rte_approx.h>
-#include <rte_cycles.h>
-#include <rte_reciprocal.h>
+#include <stdint.h>
 
-#include "gatekeeper_log_ratelimit.h"
+#include <rte_atomic.h>
+
 #include "list.h"
 
 /*

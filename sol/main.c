@@ -18,10 +18,12 @@
 
 #include <math.h>
 
+#include <rte_approx.h>
 #include <rte_sched.h>
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_launch.h"
+#include "gatekeeper_log_ratelimit.h"
 #include "gatekeeper_sol.h"
 
 int sol_logtype;
