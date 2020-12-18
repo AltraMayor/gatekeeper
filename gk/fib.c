@@ -1126,9 +1126,12 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 /*
  * Initialize a gateway FIB entry.
- * @gateway the gateway address informaiton.
- * @ip_prefix the IP prefix,
- * for which the gateway is responsible.
+ *
+ * @gw_addr the gateway address information.
+ * @ip_prefix the IP prefix for which the gateway is responsible.
+ *
+ * add_fib_entry_numerical() already ensured that the gateway
+ * and the prefix have the same IP version.
  */
 static struct gk_fib *
 init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
@@ -1140,12 +1143,6 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	struct ether_cache *eth_cache;
 	struct neighbor_hash_table *neigh_ht;
 	struct gatekeeper_if *iface;
-
-	if (gw_addr->proto != ip_prefix->addr.proto) {
-		GK_LOG(ERR,
-			"Failed to initialize a fib entry for gateway, since the gateway and its responsible IP prefix have different IP versions\n");
-		return NULL;
-	}
 
 	if (action == GK_FWD_GATEWAY_FRONT_NET)
 		iface = &gk_conf->net->front;
@@ -1203,6 +1200,16 @@ put_ether_cache:
 	return NULL;
 }
 
+/*
+ * Initialize a Grantor FIB entry.
+ *
+ * @gt_addr the Grantor address information.
+ * @gw_addr the gateway address information.
+ * @ip_prefix the IP prefix for which the gateway is responsible.
+ *
+ * add_fib_entry_numerical() already ensured that the gateway
+ * and the prefix have the same IP version.
+ */
 static struct gk_fib *
 init_grantor_fib_locked(
 	struct ip_prefix *ip_prefix, struct ipaddr *gt_addr,
@@ -1219,12 +1226,6 @@ init_grantor_fib_locked(
 	if (gt_addr->proto != ip_prefix->addr.proto) {
 		GK_LOG(ERR,
 			"Failed to initialize a fib entry for grantor, since the grantor and its responsible IP prefix have different IP versions\n");
-		return NULL;
-	}
-
-	if (gw_addr->proto != ip_prefix->addr.proto) {
-		GK_LOG(ERR,
-			"Failed to initialize a fib entry for grantor, since the gateway and its responsible IP prefix have different IP versions\n");
 		return NULL;
 	}
 
@@ -1370,10 +1371,19 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	return 0;
 }
 
-/* Return 0 when @gw_addr is not included in @prefix; otherwise return -1. */
+/*
+ * Return 0 when @gw_addr is not included in @prefix.
+ * If not, or if there is an error, return -1.
+ */
 static int
 check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 {
+	if (unlikely(prefix->addr.proto != gw_addr->proto)) {
+		GK_LOG(ERR, "IP prefix protocol (%hu) does not match the gateway address protocol (%hu) for prefix string %s\n",
+			prefix->addr.proto, gw_addr->proto, prefix->str);
+		return -1;
+	}
+
 	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		uint32_t ip4_mask =
 			rte_cpu_to_be_32(~0ULL << (32 - prefix->len));
@@ -1399,9 +1409,10 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 					((pf[1] ^ gw[1]) & ip6_mask))
 				return 0;
 		}
-	} else
-		rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
-			__func__, gw_addr->proto);
+	} else {
+		GK_LOG(ERR, "Unexpected condition at %s: unknown IP type %hu for prefix string %s\n",
+			__func__, gw_addr->proto, prefix->str);
+	}
 
 	return -1;
 }
@@ -1631,8 +1642,10 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		 * are not included in their prefixes.
 		 */
 		ret = check_gateway_prefix(prefix_info, gw_addr);
-		if (ret < 0)
+		if (ret < 0) {
+			GK_LOG(ERR, "Gateway address is not in prefix, or error occurred\n");
 			return -1;
+		}
 	}
 
 	/*
