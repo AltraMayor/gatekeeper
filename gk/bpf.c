@@ -241,7 +241,7 @@ gk_bpf_prep_for_tx(struct gk_bpf_pkt_ctx *ctx, int priority,
 			&frame->gk_conf->net->back)
 		: encapsulate(frame->packet->pkt, priority,
 			&frame->gk_conf->net->back,
-			&frame->fe->grantor_fib->u.grantor.gt_addr);
+			&choose_grantor_per_flow(frame->fe)->gt_addr);
 
 	frame->ready_to_tx = ret == 0;
 	return ret;

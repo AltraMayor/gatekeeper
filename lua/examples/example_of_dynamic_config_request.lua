@@ -21,6 +21,25 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
+ret = dylib.c.del_fib_entry("198.51.100.0/24", dyc.gk)
+if ret < 0 then
+	return "gk: failed to delete an FIB entry\n"
+end
+
+-- Load balancing to multiple Grantor servers,
+-- where one Grantor is weighted twice as much.
+addrs = {
+	{ gt_ip = '203.0.113.2', gw_ip = '10.0.2.252' },
+	{ gt_ip = '203.0.113.3', gw_ip = '10.0.2.251' },
+	{ gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' },
+	{ gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' }
+}
+dylib.add_grantor_entry_lb("198.51.100.0/24", addrs, dyc.gk)
+
+-- Update to make one Grantor weighted 3x as much as the other.
+addrs[1] = { gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' }
+dylib.update_grantor_entry_lb("198.51.100.0/24", addrs, dyc.gk)
+
 -- Examples of temporarily changing global and block log levels.
 local old_log_level = staticlib.c.rte_log_get_global_level()
 staticlib.c.rte_log_set_global_level(staticlib.c.RTE_LOG_ERR)

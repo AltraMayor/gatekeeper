@@ -122,6 +122,22 @@ struct neighbor_hash_table {
 	struct ether_cache *cache_tbl;
 };
 
+struct grantor_entry {
+	/* The Grantor IP address. */
+	struct ipaddr gt_addr;
+	/* The cached Ethernet header of the next hop. */
+	struct ether_cache *eth_cache;
+};
+
+struct grantor_set {
+	/* Protocol of the Grantor IPs. */
+	uint8_t proto;
+	/* Number of structs grantor_entry that start at @entries. */
+	uint16_t num_entries;
+	/* List of Grantors and their next hops' cached Ethernet headers. */
+	struct grantor_entry entries[0];
+};
+
 /* The gk forward information base (fib). */
 struct gk_fib {
 
@@ -154,13 +170,10 @@ struct gk_fib {
 
 		struct {
 			/*
-		 	 * When the action is GK_FWD_GRANTOR, we need
-			 * the Grantor IP address.
-		 	 */
-			struct ipaddr gt_addr;
-
-			/* The cached Ethernet header. */
-			struct ether_cache *eth_cache;
+			 * Set of Grantors that packets to this
+			 * destination should be load balanced to.
+			 */
+			struct grantor_set *set;
 		} grantor;
 
 		/*
@@ -214,26 +227,54 @@ struct ip_prefix {
 	int           len;
 };
 
-struct gk_fib_dump_entry {
+/*
+ * Since GK_FWD_GRANTOR entries can have mulitple Grantor IPs
+ * for load balancing (and therefore multiple next hops),
+ * we group together this information into an address set.
+ */
+struct fib_dump_addr_set {
+	/*
+	 * The Grantor IP address. Only applicable for
+	 * FIB entries of type GK_FWD_GRANTOR.
+	 */
+	struct ipaddr grantor_ip;
+	/* The next hop (gateway) IP address. */
+	struct ipaddr nexthop_ip;
+	/* The MAC address of @nexthop_ip. */
+	struct rte_ether_addr d_addr;
+	/* Whether the resolution for @nexthop_ip to @d_addr is invalid. */
+	bool          stale;
+};
 
+struct gk_fib_dump_entry {
 	/* The IP prefix. */
 	struct ipaddr addr;
 
+	/* The prefix length of @addr. */
 	int           prefix_len;
 
-	/* The Grantor IP address. */
-	struct ipaddr grantor_ip;
-
-	bool          stale;
-
-	/* The IP address of the nexthop. */
-	struct ipaddr nexthop_ip;
-
-	/* The the MAC address of nexthop_ip. */
-	struct rte_ether_addr d_addr;
-
-	/* The fib action. */
+	/* The FIB action. */
 	enum gk_fib_action action;
+
+	/*
+	 * The number of entries starting at @addr_sets.
+	 * For all @action values except GK_FWD_GRANTOR,
+	 * this field should be 1.
+	 */
+	unsigned int  num_addr_sets;
+
+	/*
+	 * Address sets.
+	 *
+	 * When @action is GK_FWD_GRANTOR, all addresses
+	 * are valid (Grantor IP, next hop IP, next hop MAC, stale),
+	 * and there can be multiple address sets.
+	 *
+	 * When @action is anything else, only the fields related
+	 * to the next hop are valid (next hop IP, next hop MAC, stale),
+	 * and there should only be one address set.
+	 */
+	struct fib_dump_addr_set addr_sets[0];
 };
 
 struct gk_neighbor_dump_entry {
@@ -264,9 +305,9 @@ void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
 
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
-	struct ipaddr *gt_addr, struct ipaddr *gw_addr,
-	enum gk_fib_action action, uint8_t protocol,
-	struct gk_config *gk_conf);
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	uint8_t protocol, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(
@@ -279,6 +320,10 @@ int l_list_gk_neighbors4(lua_State *l);
 int l_list_gk_neighbors6(lua_State *l);
 int l_ether_format_addr(lua_State *l);
 int l_ip_format_addr(lua_State *l);
+int l_add_grantor_entry_lb(lua_State *l);
+int l_update_grantor_entry_lb(lua_State *l);
+
+#define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 
 static inline struct ether_cache *
 lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)

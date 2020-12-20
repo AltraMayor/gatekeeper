@@ -351,6 +351,11 @@ struct gk_add_policy {
 	uint32_t flow_hash_val;
 };
 
+struct gk_synch_request {
+	struct gk_fib *fib;
+	int update_only;
+};
+
 struct gk_flush_request {
 	struct ip_prefix src;
 	struct ip_prefix dst;
@@ -373,7 +378,7 @@ struct gk_cmd_entry {
 		/* GGU policy to be added with GK_ADD_POLICY_DECISION op. */
 		struct gk_add_policy ggu;
 		/* FIB entry to synchronize with GK_SYNCH_WITH_LPM op. */
-		struct gk_fib *fib;
+		struct gk_synch_request synch;
 		/* Flow table flush request with GK_FLUSH_FLOW_TABLE op. */
 		struct gk_flush_request flush;
 		/* Flow state logging request with GK_LOG_FLOW_STATE op. */
@@ -404,5 +409,13 @@ gk_conf_hold(struct gk_config *gk_conf)
 
 int gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 	struct gk_bpf_cookie *cookie);
+
+static inline struct grantor_entry *
+choose_grantor_per_flow(struct flow_entry *fe)
+{
+	return &fe->grantor_fib->u.grantor.set->entries[
+		fe->flow_hash_val % fe->grantor_fib->u.grantor.set->num_entries
+	];
+}
 
 #endif /* _GATEKEEPER_GK_H_ */

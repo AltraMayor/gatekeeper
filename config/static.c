@@ -63,8 +63,6 @@ l_rte_lcore_to_socket_id(lua_State *l)
 	return 1;
 }
 
-#define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
-
 static int
 protected_gk_assign_lcores(lua_State *l)
 {
