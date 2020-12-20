@@ -288,6 +288,13 @@ __get_empty_fib_id(struct gk_fib *fib_tbl,
 	RTE_VERIFY(fib_tbl == gk_conf->lpm_tbl.fib_tbl ||
 		fib_tbl == gk_conf->lpm_tbl.fib_tbl6);
 
+	/*
+	 * @gk_conf->lpm_tbl.fib_tbl or @gk_conf->lpm_tbl.fib_tbl6 is NULL
+	 * when IPv4 or IPv6 is disabled, respectively.
+	 * But @fib_tbl must not be NULL if the code reached here.
+	 */
+	RTE_VERIFY(fib_tbl != NULL);
+
 	for (i = 0; i < num_fib_entries; i++) {
 		if (fib_tbl[i].action == GK_FIB_MAX)
 			return i; 
@@ -573,14 +580,20 @@ init_fib_tbl(struct gk_config *gk_conf)
 
 	rte_spinlock_init(&ltbl->lock);
 
-	for (i = 0; i < gk_conf->max_num_ipv4_rules; i++) {
-		ltbl->fib_tbl[i].action = GK_FIB_MAX;
-		rte_atomic16_init(&ltbl->fib_tbl[i].num_updated_instances);
+	if (ltbl->fib_tbl != NULL) {
+		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++) {
+			struct gk_fib *fib = &ltbl->fib_tbl[i];
+			fib->action = GK_FIB_MAX;
+			rte_atomic16_init(&fib->num_updated_instances);
+		}
 	}
 
-	for (i = 0; i < gk_conf->max_num_ipv6_rules; i++) {
-		ltbl->fib_tbl6[i].action = GK_FIB_MAX;
-		rte_atomic16_init(&ltbl->fib_tbl6[i].num_updated_instances);
+	if (ltbl->fib_tbl6 != NULL) {
+		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++) {
+			struct gk_fib *fib = &ltbl->fib_tbl6[i];
+			fib->action = GK_FIB_MAX;
+			rte_atomic16_init(&fib->num_updated_instances);
+		}
 	}
 
 	/* Set up the FIB entry for the front network prefixes. */
@@ -665,6 +678,10 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -1;
 			goto free_lpm;
 		}
+	} else if (gk_conf->max_num_ipv4_rules != 0 ||
+			gk_conf->num_ipv4_tbl8s != 0) {
+		GK_LOG(WARNING, "IPv4 is not configured, but the parameters max_num_ipv4_rules=%u and num_ipv4_tbl8s=%u are not both zero\n",
+			gk_conf->max_num_ipv4_rules, gk_conf->num_ipv4_tbl8s);
 	}
 
 	if (ipv6_configured(gk_conf->net)) {
@@ -695,6 +712,10 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -1;
 			goto free_lpm6;
 		}
+	} else if (gk_conf->max_num_ipv6_rules != 0 ||
+			gk_conf->num_ipv6_tbl8s != 0) {
+		GK_LOG(WARNING, "IPv6 is not configured, but the parameters max_num_ipv6_rules=%u and num_ipv6_tbl8s=%u are not both zero\n",
+			gk_conf->max_num_ipv6_rules, gk_conf->num_ipv6_tbl8s);
 	}
 
 	ret = init_fib_tbl(gk_conf);
