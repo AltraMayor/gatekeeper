@@ -912,16 +912,15 @@ test_fib(void *arg, struct flow_entry *fe)
 }
 
 static void
-gk_synchronize(struct gk_fib *fib, struct gk_instance *instance,
-	bool update_only)
+gk_synchronize(struct gk_synch_request *req, struct gk_instance *instance)
 {
-	if (update_only)
+	if (req->update_only)
 		goto done;
 
-	switch (fib->action) {
+	switch (req->fib->action) {
 	case GK_FWD_GRANTOR:
 		/* Flush the grantor @fib in the flow table. */
-		flush_flow_table(instance, test_fib, fib, __func__);
+		flush_flow_table(instance, test_fib, req->fib, __func__);
 		break;
 
 	case GK_FWD_GATEWAY_FRONT_NET:
@@ -940,13 +939,13 @@ gk_synchronize(struct gk_fib *fib, struct gk_instance *instance,
 		break;
 
 	default:
-		rte_panic("Invalid FIB action (%u) at %s with lcore %u\n",
-			fib->action, __func__, rte_lcore_id());
+		rte_panic("Invalid FIB action (%u) at %s() with lcore %u\n",
+			req->fib->action, __func__, rte_lcore_id());
 		break;
 	}
 
 done:
-	rte_atomic16_inc(&fib->num_updated_instances);
+	rte_atomic32_inc(req->done_counter);
 }
 
 static void
@@ -959,8 +958,7 @@ process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
 		break;
 
 	case GK_SYNCH_WITH_LPM:
-		gk_synchronize(entry->u.synch.fib, instance,
-			!!entry->u.synch.update_only);
+		gk_synchronize(&entry->u.synch, instance);
 		break;
 
 	case GK_FLUSH_FLOW_TABLE:

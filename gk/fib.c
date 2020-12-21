@@ -460,7 +460,6 @@ initialize_fib_entry(struct gk_fib *fib)
 {
 	/* Reset the fields of the deleted FIB entry. */
 	fib->action = GK_FIB_MAX;
-	rte_atomic16_init(&fib->num_updated_instances);
 	memset(&fib->u, 0, sizeof(fib->u));
 }
 
@@ -581,19 +580,13 @@ init_fib_tbl(struct gk_config *gk_conf)
 	rte_spinlock_init(&ltbl->lock);
 
 	if (ltbl->fib_tbl != NULL) {
-		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++) {
-			struct gk_fib *fib = &ltbl->fib_tbl[i];
-			fib->action = GK_FIB_MAX;
-			rte_atomic16_init(&fib->num_updated_instances);
-		}
+		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++)
+			ltbl->fib_tbl[i].action = GK_FIB_MAX;
 	}
 
 	if (ltbl->fib_tbl6 != NULL) {
-		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++) {
-			struct gk_fib *fib = &ltbl->fib_tbl6[i];
-			fib->action = GK_FIB_MAX;
-			rte_atomic16_init(&fib->num_updated_instances);
-		}
+		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++)
+			ltbl->fib_tbl6[i].action = GK_FIB_MAX;
 	}
 
 	/* Set up the FIB entry for the front network prefixes. */
@@ -756,7 +749,7 @@ out:
 
 static int
 notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
-	int update_only)
+	bool update_only, rte_atomic32_t *done_counter)
 {
 	int ret;
 	struct mailbox *mb = &instance->mb;
@@ -771,6 +764,7 @@ notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
 	entry->op = GK_SYNCH_WITH_LPM;
 	entry->u.synch.fib = fib;
 	entry->u.synch.update_only = update_only;
+	entry->u.synch.done_counter = done_counter;
 
 	ret = mb_send_entry(mb, entry);
 	if (ret < 0) {
@@ -790,16 +784,15 @@ notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
  */
 static void
 synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf,
-	int update_only)
+	bool update_only)
 {
 	int i, loop;
 	int num_succ_notified_inst = 0;
 	bool is_succ_notified[gk_conf->num_lcores];
+	rte_atomic32_t done_counter = RTE_ATOMIC32_INIT(0);
 
 	/* The maximum number of times to try to notify the GK instances. */
 	const int MAX_NUM_NOTIFY_TRY = 3;
-
-	rte_atomic16_init(&fib->num_updated_instances);
 
 	memset(is_succ_notified, false, sizeof(is_succ_notified));
 
@@ -809,7 +802,7 @@ synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf,
 			if (!is_succ_notified[i]) {
 				int ret = notify_gk_instance(fib,
 					&gk_conf->instances[i],
-					update_only);
+					update_only, &done_counter);
 				if (ret == 0) {
 					is_succ_notified[i] = true;
 					num_succ_notified_inst++;
@@ -830,8 +823,7 @@ finish_notify:
 	}
 
 	/* Wait for all GK instances to synchronize. */
-	while (rte_atomic16_read(&fib->num_updated_instances)
-			< num_succ_notified_inst)
+	while (rte_atomic32_read(&done_counter) < num_succ_notified_inst)
 		rte_pause();
 }
 

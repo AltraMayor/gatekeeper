@@ -361,8 +361,9 @@ struct gk_add_policy {
 };
 
 struct gk_synch_request {
-	struct gk_fib *fib;
-	int update_only;
+	struct gk_fib  *fib;
+	bool           update_only;
+	rte_atomic32_t *done_counter;
 };
 
 struct gk_flush_request {
