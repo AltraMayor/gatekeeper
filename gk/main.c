@@ -2377,7 +2377,7 @@ int
 gk_conf_put(struct gk_config *gk_conf)
 {
 	/*
-	 * Atomically decrements the atomic counter (v) by one and returns true 
+	 * Atomically decrements the atomic counter by one and returns true
 	 * if the result is 0, or false in all other cases.
 	 */
 	if (rte_atomic32_dec_and_test(&gk_conf->ref_cnt))
