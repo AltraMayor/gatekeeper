@@ -428,4 +428,10 @@ choose_grantor_per_flow(struct flow_entry *fe)
 	];
 }
 
+typedef void (*fill_in_gk_cmd_entry_t)(struct gk_cmd_entry *entry,
+	rte_atomic32_t *done_counter, void *arg);
+
+void synchronize_gk_instances(struct gk_config *gk_conf,
+	fill_in_gk_cmd_entry_t fill_f, void *arg);
+
 #endif /* _GATEKEEPER_GK_H_ */

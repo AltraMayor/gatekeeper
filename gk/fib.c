@@ -747,84 +747,26 @@ out:
 	return ret;
 }
 
-static int
-notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
-	bool update_only, rte_atomic32_t *done_counter)
+static void
+fill_in_cmd_entry(struct gk_cmd_entry *entry, rte_atomic32_t *done_counter,
+	void *arg)
 {
-	int ret;
-	struct mailbox *mb = &instance->mb;
-	struct gk_cmd_entry *entry = mb_alloc_entry(mb);
-	if (entry == NULL) {
-		GK_LOG(ERR,
-			"Failed to allocate a `struct gk_cmd_entry` entry at %s\n",
-			__func__);
-		return -1;
-	}
-
+	struct gk_synch_request *req_template = arg;
 	entry->op = GK_SYNCH_WITH_LPM;
-	entry->u.synch.fib = fib;
-	entry->u.synch.update_only = update_only;
+	entry->u.synch = *req_template;
 	entry->u.synch.done_counter = done_counter;
-
-	ret = mb_send_entry(mb, entry);
-	if (ret < 0) {
-		GK_LOG(ERR,
-			"Failed to send a `struct gk_cmd_entry` entry at %s\n",
-			__func__);
-		return -1;
-	}
-
-	return 0;
 }
 
-/*
- * XXX #70 What we are doing here is analogous to RCU's synchronize_rcu(),
- * what suggests that we may be able to profit from RCU. But we are going
- * to postpone that until we have a better case to bring RCU to Gatekeeper.
- */
 static void
-synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf,
-	bool update_only)
+synchronize_gk_instances_with_fib(struct gk_config *gk_conf,
+	struct gk_fib *fib, bool update_only)
 {
-	int i, loop;
-	int num_succ_notified_inst = 0;
-	bool is_succ_notified[gk_conf->num_lcores];
-	rte_atomic32_t done_counter = RTE_ATOMIC32_INIT(0);
-
-	/* The maximum number of times to try to notify the GK instances. */
-	const int MAX_NUM_NOTIFY_TRY = 3;
-
-	memset(is_succ_notified, false, sizeof(is_succ_notified));
-
-	for (loop = 0; loop < MAX_NUM_NOTIFY_TRY; loop++) {
-		/* Send the FIB entry to the GK mailboxes. */
-		for (i = 0; i < gk_conf->num_lcores; i++) {
-			if (!is_succ_notified[i]) {
-				int ret = notify_gk_instance(fib,
-					&gk_conf->instances[i],
-					update_only, &done_counter);
-				if (ret == 0) {
-					is_succ_notified[i] = true;
-					num_succ_notified_inst++;
-					if (num_succ_notified_inst >=
-							gk_conf->num_lcores)
-						goto finish_notify;
-				}
-			}
-		}
-	}
-
-finish_notify:
-
-	if (num_succ_notified_inst != gk_conf->num_lcores) {
-		GK_LOG(WARNING,
-			"%s successfully notifies only %d/%d instances\n",
-			__func__, num_succ_notified_inst, gk_conf->num_lcores);
-	}
-
-	/* Wait for all GK instances to synchronize. */
-	while (rte_atomic32_read(&done_counter) < num_succ_notified_inst)
-		rte_pause();
+	struct gk_synch_request req_template = {
+		.fib = fib,
+		.update_only = update_only,
+		.done_counter = NULL,
+	};
+	synchronize_gk_instances(gk_conf, fill_in_cmd_entry, &req_template);
 }
 
 /*
@@ -1103,7 +1045,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 * We need to notify the GK blocks whenever we remove
 	 * a FIB entry that is accessible through a prefix.
 	 */
-	synchronize_gk_instances(ip_prefix_fib, gk_conf, false);
+	synchronize_gk_instances_with_fib(gk_conf, ip_prefix_fib, false);
 
 	/*
 	 * From now on, GK blocks must not have a reference
@@ -1325,7 +1267,7 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 		/* Replace old set of Grantors in existing entry. */
 		struct grantor_set *old_set = gt_fib->u.grantor.set;
 		gt_fib->u.grantor.set = new_set;
-		synchronize_gk_instances(gt_fib, gk_conf, true);
+		synchronize_gk_instances_with_fib(gk_conf, gt_fib, true);
 		clear_grantor_set(ip_prefix, old_set, gk_conf);
 	} else {
 		/* Add new entry. */
