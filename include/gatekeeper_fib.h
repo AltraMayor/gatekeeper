@@ -258,17 +258,22 @@ struct gk_fib_dump_entry {
 
 	/*
 	 * The number of entries starting at @addr_sets.
-	 * For all @action values except GK_FWD_GRANTOR,
-	 * this field should be 1.
+	 *
+	 *  - For GK_GWD_GRANTOR, this value is the number
+	 *    of (Grantor, gateway) pairs.
+	 *  - For GK_DROP, this is 0.
+	 *  - For all other @action values, this is 1.
 	 */
 	unsigned int  num_addr_sets;
 
 	/*
 	 * Address sets.
 	 *
-	 * When @action is GK_FWD_GRANTOR, all addresses
+	 * When @action is GK_FWD_GRANTOR, all fields
 	 * are valid (Grantor IP, next hop IP, next hop MAC, stale),
 	 * and there can be multiple address sets.
+	 *
+	 * When @action is GK_DROP, there are no address sets.
 	 *
 	 * When @action is anything else, only the fields related
 	 * to the next hop are valid (next hop IP, next hop MAC, stale),
