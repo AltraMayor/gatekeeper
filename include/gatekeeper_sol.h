@@ -19,11 +19,10 @@
 #ifndef _GATEKEEPER_SOL_H_
 #define _GATEKEEPER_SOL_H_
 
-#include <rte_approx.h>
-#include <rte_cycles.h>
-#include <rte_reciprocal.h>
+#include <stdint.h>
 
-#include "gatekeeper_log_ratelimit.h"
+#include <rte_atomic.h>
+
 #include "list.h"
 
 /*
@@ -144,6 +143,17 @@ struct sol_config {
 	 * Configuration files should not refer to them.
 	 */
 
+	/*
+	 * Number of references to this struct.
+	 *
+	 * The resources associated to this struct are only freed
+	 * when field @ref_cnt reaches zero.
+	 *
+	 * Use sol_conf_hold() and sol_conf_put() to acquire and release
+	 * a reference to this struct.
+	 */
+	rte_atomic32_t      ref_cnt;
+
 	/* The lcore ids at which each instance runs. */
 	unsigned int        *lcores;
 
@@ -158,5 +168,13 @@ struct sol_config *alloc_sol_conf(void);
 int run_sol(struct net_config *net_conf, struct sol_config *sol_conf);
 int gk_solicitor_enqueue_bulk(struct sol_instance *instance,
 	struct rte_mbuf **pkts, uint16_t num_pkts);
+
+static inline void
+sol_conf_hold(struct sol_config *sol_conf)
+{
+	rte_atomic32_inc(&sol_conf->ref_cnt);
+}
+
+int sol_conf_put(struct sol_config *sol_conf);
 
 #endif /* _GATEKEEPER_SOL_H_ */

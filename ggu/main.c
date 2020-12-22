@@ -862,10 +862,13 @@ run_ggu(struct net_config *net_conf,
 		sizeof(struct rte_mbuf *), ggu_conf->mailbox_mem_cache_size,
 		ggu_conf->lcore_id, &ggu_conf->mailbox);
 	if (ret < 0)
-		goto stage3;
+		goto put_gk;
 
 	goto out;
-stage3:
+put_gk:
+	ggu_conf->gk = NULL;
+	gk_conf_put(gk_conf);
+/* stage3: */
 	pop_n_at_stage3(1);
 stage2:
 	pop_n_at_stage2(1);

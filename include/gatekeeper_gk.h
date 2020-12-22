@@ -205,6 +205,15 @@ struct gk_config {
 	 * Configuration files should not refer to them.
 	 */
 
+	/*
+	 * Number of references to this struct.
+	 *
+	 * The resources associated to this struct are only freed
+	 * when field @ref_cnt reaches zero.
+	 *
+	 * Use gk_conf_hold() and gk_conf_put() to acquire and release
+	 * a reference to this struct.
+	 */
 	rte_atomic32_t     ref_cnt;
 
 	/* The lcore ids at which each instance runs. */
