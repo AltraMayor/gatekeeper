@@ -948,6 +948,12 @@ done:
 	rte_atomic32_inc(req->done_counter);
 }
 
+static bool
+test_bpf(void *arg, struct flow_entry *fe)
+{
+	return fe->state == GK_BPF && fe->program_index == (uintptr_t)arg;
+}
+
 static void
 process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
 	int *num_policies, struct gk_instance *instance)
@@ -968,6 +974,18 @@ process_gk_cmd(struct gk_cmd_entry *entry, struct gk_add_policy **policies,
 
 	case GK_LOG_FLOW_STATE:
 		log_flow_state(&entry->u.log, instance);
+		break;
+
+	case GK_FLUSH_BPF:
+		/*
+		 * Release the message sender now because we already have
+		 * a local copy of entry->u.flush_bpf.program_index.
+		 */
+		rte_atomic32_inc(entry->u.flush_bpf.done_counter);
+
+		flush_flow_table(instance, test_bpf,
+			(void *)(uintptr_t)entry->u.flush_bpf.program_index,
+			"GK_FLUSH_BPF");
 		break;
 
 	default:

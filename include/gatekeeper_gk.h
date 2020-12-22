@@ -352,6 +352,7 @@ enum gk_cmd_op {
 	GK_SYNCH_WITH_LPM,
 	GK_FLUSH_FLOW_TABLE,
 	GK_LOG_FLOW_STATE,
+	GK_FLUSH_BPF,
 	GK_CMD_OP_MAX,
 };
 
@@ -376,6 +377,11 @@ struct gk_log_flow {
 	uint32_t flow_hash_val;
 };
 
+struct gk_flush_bpf {
+	uint8_t        program_index;
+	rte_atomic32_t *done_counter;
+};
+
 /*
  * Structure for each command.
  *
@@ -393,6 +399,8 @@ struct gk_cmd_entry {
 		struct gk_flush_request flush;
 		/* Flow state logging request with GK_LOG_FLOW_STATE op. */
 		struct gk_log_flow log;
+		/* Flow table flush request with GK_FLUSH_BPF op. */
+		struct gk_flush_bpf flush_bpf;
 	} u;
 };
 
