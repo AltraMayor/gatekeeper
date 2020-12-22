@@ -39,7 +39,7 @@ const char *argp_program_version =
 /* Arguments. */
 static char adoc[] = "<PATH>";
 
-static char doc[] = "Gatekeeper Client -- configure Gatekeeper via"
+static char doc[] = "Gatekeeper Client -- configure Gatekeeper via "
 	"the dynamic configuration functional block";
 
 static struct argp_option options[] = {
