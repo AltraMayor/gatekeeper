@@ -15,13 +15,13 @@ if dyc.gt ~= nil then
 	return "gt: successfully updated the lua states\n"
 end
 
-local ret = dylib.c.add_fib_entry("198.51.100.0/24", "203.0.113.1",
+local ret = dylib.c.add_fib_entry("198.51.100.0/25", "203.0.113.1",
 	"10.0.2.253", dylib.c.GK_FWD_GRANTOR, dyc.gk)
 if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
-ret = dylib.c.del_fib_entry("198.51.100.0/24", dyc.gk)
+ret = dylib.c.del_fib_entry("198.51.100.0/25", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
@@ -34,11 +34,11 @@ addrs = {
 	{ gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' },
 	{ gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' }
 }
-dylib.add_grantor_entry_lb("198.51.100.0/24", addrs, dyc.gk)
+dylib.add_grantor_entry_lb("198.51.100.0/25", addrs, dyc.gk)
 
 -- Update to make one Grantor weighted 3x as much as the other.
 addrs[1] = { gt_ip = '203.0.113.4', gw_ip = '10.0.2.250' }
-dylib.update_grantor_entry_lb("198.51.100.0/24", addrs, dyc.gk)
+dylib.update_grantor_entry_lb("198.51.100.0/25", addrs, dyc.gk)
 
 -- Examples of temporarily changing global and block log levels.
 local old_log_level = staticlib.c.rte_log_get_global_level()
@@ -57,6 +57,12 @@ end
 ret = staticlib.c.rte_log_set_level(cpsc.log_type, staticlib.c.RTE_LOG_ERR)
 if ret < 0 then
 	return "cps: failed to set new log level"
+end
+
+ret = dylib.c.add_fib_entry("198.51.100.128/25", nil, nil,
+	dylib.c.GK_DROP, dyc.gk)
+if ret < 0 then
+	return "gk: failed to add an FIB entry\n"
 end
 
 ret = dylib.c.add_fib_entry("192.0.2.0/24", nil,
@@ -106,7 +112,12 @@ reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
 reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
 	dylib.print_neighbor_dump_entry, acc_start)
 
-ret = dylib.c.del_fib_entry("198.51.100.0/24", dyc.gk)
+ret = dylib.c.del_fib_entry("198.51.100.0/25", dyc.gk)
+if ret < 0 then
+	return "gk: failed to delete an FIB entry\n"
+end
+
+ret = dylib.c.del_fib_entry("198.51.100.128/25", dyc.gk)
 if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
@@ -165,7 +176,7 @@ if ret < 0 then
 	return "gk: failed to log the flow state\n"
 end
 
-ret = dylib.c.gk_flush_flow_table("198.51.100.0/24", "192.0.2.0/24", dyc.gk)
+ret = dylib.c.gk_flush_flow_table("198.51.100.0/25", "192.0.2.0/24", dyc.gk)
 if ret < 0 then
 	return "gk: failed to flush the flow table\n"
 end

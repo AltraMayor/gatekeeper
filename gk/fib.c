@@ -1668,16 +1668,16 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 }
 
 /*
- * Add FIB entry for binary IP address prefix.
+ * Add a FIB entry for a binary IP address prefix.
  *
- * @num_addrs represents the number of Grantor and gateawy
- * pairs for the FIB entry.
+ * GK_FWD_GRANTOR entries use both @gt_addrs and @gw_addrs,
+ * and @num_addrs represents the number of such Grantor and
+ * gateway pairs for the FIB entry.
  *
- * Only GK_FWD_GRANTOR entries use @gt_addrs, and can have
- * any number of pairs.
+ * GK_DROP uses neither @gt_addrs nor @gw_addrs.
  *
- * All other types only use @gw_addrs, and should only
- * have one address.
+ * All other entry types only use @gw_addrs, and should only
+ * have one gateway (@num_addrs == 1).
  */
 int
 add_fib_entry_numerical(struct ip_prefix *prefix_info,
@@ -2067,6 +2067,20 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 
 #define CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR "struct gk_fib_dump_entry *"
 
+static inline unsigned int
+num_addrs_entry_type(struct gk_fib *fib)
+{
+	switch (fib->action) {
+	case GK_FWD_GRANTOR:
+		return fib->u.grantor.set->num_entries;
+	case GK_DROP:
+		return 0;
+	default:
+		/* All other entry types have a single Gateway. */
+		return 1;
+	}
+}
+
 static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
@@ -2099,9 +2113,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 			continue;
 		}
 
-		num_addrs = fib->action == GK_FWD_GRANTOR
-			? fib->u.grantor.set->num_entries
-			: 1;
+		num_addrs = num_addrs_entry_type(fib);
 		dentry_size = sizeof(*dentry) +
 			num_addrs * sizeof(*dentry->addr_sets);
 
@@ -2173,9 +2185,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 			continue;
 		}
 
-		num_addrs = fib->action == GK_FWD_GRANTOR
-			? fib->u.grantor.set->num_entries
-			: 1;
+		num_addrs = num_addrs_entry_type(fib);
 		dentry_size = sizeof(*dentry) +
 			num_addrs * sizeof(*dentry->addr_sets);
 
