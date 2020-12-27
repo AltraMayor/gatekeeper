@@ -333,13 +333,12 @@ icmp_cksum(void *buf, unsigned int size)
 	return (unsigned short)(~cksum);
 }
 
-static void
+static bool
 xmit_icmp_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 {
 	struct rte_ether_addr eth_addr_tmp;
 	struct rte_ether_hdr *icmp_eth = rte_pktmbuf_mtod(pkt,
 		struct rte_ether_hdr *);
-	uint32_t ip_addr_tmp;
 	struct rte_ipv4_hdr *icmp_ipv4;
 	struct rte_icmp_hdr *icmph;
 
@@ -351,51 +350,117 @@ xmit_icmp_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 			RTE_ETHER_TYPE_IPV4);
 	}
 
-	/*
-	 * Set-up IPv4 header.
-	 *
-	 * According to RFC 792 page 13: to form an echo reply
-	 * message, the source and destination addresses are simply reversed,
-	 * the type code changed to 0, and the checksum recomputed.
-	 */
+	/* Set-up IPv4 header. */
 	icmp_ipv4 = (struct rte_ipv4_hdr *)pkt_out_skip_l2(iface, icmp_eth);
+	icmph = (struct rte_icmp_hdr *)ipv4_skip_exthdr(icmp_ipv4);
 
 	icmp_ipv4->time_to_live = IP_DEFTTL;
-	ip_addr_tmp = icmp_ipv4->src_addr;
-	icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
-	icmp_ipv4->dst_addr = ip_addr_tmp;
+	switch (icmph->icmp_type) {
+	case ICMP_ECHO_REQUEST_TYPE: {
+		/*
+		 * According to RFC 792 page 13: to form an echo reply
+		 * message, the source and destination addresses are simply
+		 * reversed, the type code changed to 0, and the checksum
+		 * recomputed.
+		 */
+		rte_be32_t ip_addr_tmp = icmp_ipv4->src_addr;
+		icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
+		icmp_ipv4->dst_addr = ip_addr_tmp;
+
+		/*
+		 * According to RFC 792 page 14:
+		 *
+		 * (1) the data received in the echo message must be returned in
+		 * the echo reply message.
+		 *
+		 * (2) the identifier and sequence number may be used by
+		 * the echo sender to aid in matching the replies with
+		 * the echo requests.
+		 *
+		 * So, we keep these fields unmodified.
+		 */
+		icmph->icmp_type = ICMP_ECHO_REPLY_TYPE;
+		icmph->icmp_code = ICMP_ECHO_REPLY_CODE;
+
+		break;
+	}
+	case ICMP_MASK_REQUEST_TYPE: {
+		uint32_t pkt_size;
+		struct in_addr *ip4_mask;
+
+		/*
+		 * According to RFC 3021: the 255.255.255.255 IP broadcast
+		 * address MUST be used for broadcast Address Mask Replies
+		 * in point-to-point links with 31-bit subnet masks.
+		 * In other cases, the form {<Network-number>, -1} should be
+		 * used.
+		 */
+		icmp_ipv4->src_addr = icmp_ipv4->dst_addr;
+		if (iface->ip4_addr_plen >= 31)
+			icmp_ipv4->dst_addr = (uint32_t)-1;
+		else {
+			icmp_ipv4->dst_addr = (iface->ip4_addr.s_addr |
+					(~iface->ip4_mask.s_addr));
+		}
+
+		pkt_size = iface->l2_len_out + ipv4_hdr_len(icmp_ipv4) +
+			sizeof(*icmph) + sizeof(struct in_addr);
+		if (pkt->pkt_len < pkt_size) {
+			char *data = rte_pktmbuf_append(pkt, pkt_size -
+					pkt->pkt_len);
+			if (data == NULL) {
+				LLS_LOG(WARNING,
+						"Could not append %d bytes of data to the ICMP mask reply packet\n",
+						pkt_size -
+						pkt->pkt_len);
+				return false;
+			}
+		} else if (pkt->pkt_len > pkt_size) {
+			int ret = rte_pktmbuf_trim(pkt, pkt->pkt_len -
+					pkt_size);
+			if (ret != 0) {
+				LLS_LOG(WARNING,
+						"Could not remove %d bytes of data at the end of the ICMP mask reply packet\n",
+						pkt->pkt_len -
+						pkt_size);
+				return false;
+			}
+		}
+
+		icmp_ipv4->total_length = rte_cpu_to_be_16(pkt_size - iface->l2_len_out);
+		/* The reply contains the nework's subnet address mask. */
+		icmph->icmp_type = ICMP_MASK_REPLY_TYPE;
+		icmph->icmp_code = ICMP_MASK_REPLY_CODE;
+		ip4_mask = (struct in_addr *)&icmph[1];
+		rte_memcpy(ip4_mask, &iface->ip4_mask, sizeof(*ip4_mask));
+
+		break;
+	}
+	default:
+		LLS_LOG(ERR, "Invalide ICMP packet with type %d\n",
+				icmph->icmp_type);
+		return false;
+	}
 
 	pkt->l2_len = iface->l2_len_out;
 	pkt->l3_len = ipv4_hdr_len(icmp_ipv4);
 	set_ipv4_checksum(iface, pkt, icmp_ipv4);
 
-	/*
-	 * According to RFC 792 page 14:
-	 *
-	 * (1) the data received in the echo message must be returned in
-	 * the echo reply message.
-	 *
-	 * (2) the identifier and sequence number may be used by
-	 * the echo sender to aid in matching the replies with
-	 * the echo requests.
-	 *
-	 * So, we keep these fields unmodified.
-	 */
-	icmph = (struct rte_icmp_hdr *)ipv4_skip_exthdr(icmp_ipv4);
-	icmph->icmp_type = ICMP_ECHO_REPLY_TYPE;
-	icmph->icmp_code = ICMP_ECHO_REPLY_CODE;
 	icmph->icmp_cksum = 0;
 	icmph->icmp_cksum = icmp_cksum(icmph, sizeof(*icmph));
+	return true;
 }
 
 static void
 process_ping_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct lls_config *lls_conf, struct gatekeeper_if *iface,
-	void (*xmit_reply_fn)(struct gatekeeper_if *, struct rte_mbuf *))
+	bool (*xmit_reply_fn)(struct gatekeeper_if *, struct rte_mbuf *))
 {
+	struct rte_mbuf *ping_pkts[num_pkts];
 	uint16_t tx_queue;
 	struct token_bucket_ratelimit_state *rs;
 	unsigned int i;
+	unsigned int num_ping_reply_pkts;
 	unsigned int num_granted_pkts;
 
 	if (iface == &lls_conf->net->front) {
@@ -408,12 +473,18 @@ process_ping_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	num_granted_pkts = tb_ratelimit_allow_n(num_pkts, rs);
 
-	for (i = 0; i < num_granted_pkts; i++)
-		(*xmit_reply_fn)(iface, pkts[i]);
-	send_pkts(iface->id, tx_queue, num_granted_pkts, pkts);
+	for (i = 0, num_ping_reply_pkts = 0; num_ping_reply_pkts <
+			num_granted_pkts && i < num_pkts; i++) {
+		bool succ = (*xmit_reply_fn)(iface, pkts[i]);
+		if (succ)
+			ping_pkts[num_ping_reply_pkts++] = pkts[i];
+		else
+			rte_pktmbuf_free(pkts[i]);
+	}
+	send_pkts(iface->id, tx_queue, num_ping_reply_pkts, ping_pkts);
 
 	/* XXX #435: Adopt rte_pktmbuf_free_bulk() when DPDK is updated. */
-	for (i = num_granted_pkts; i < num_pkts; i++)
+	for (; i < num_pkts; i++)
 		rte_pktmbuf_free(pkts[i]);
 }
 
@@ -465,8 +536,10 @@ process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
 
 		icmphdr = (struct rte_icmp_hdr *)ipv4_skip_exthdr(ip4hdr);
 
-		if (icmphdr->icmp_type == ICMP_ECHO_REQUEST_TYPE &&
-				icmphdr->icmp_code == ICMP_ECHO_REQUEST_CODE) {
+		if ((icmphdr->icmp_type == ICMP_ECHO_REQUEST_TYPE &&
+				icmphdr->icmp_code == ICMP_ECHO_REQUEST_CODE) ||
+				(icmphdr->icmp_type == ICMP_MASK_REQUEST_TYPE &&
+				icmphdr->icmp_code == ICMP_MASK_REQUEST_CODE)) {
 			ping_pkts[num_ping_pkts++] = pkt;
 			continue;
 		}
@@ -493,7 +566,7 @@ process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
 			lls_conf, icmp->iface, xmit_icmp_ping_reply);
 }
 
-static void
+static bool
 xmit_icmp6_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 {
 	/*
@@ -568,6 +641,7 @@ xmit_icmp6_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	 */
 
 	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(icmp_ipv6, icmpv6_hdr);
+	return true;
 }
 
 static void

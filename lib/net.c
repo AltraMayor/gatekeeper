@@ -622,6 +622,21 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 		else if (gk_type == AF_INET6 &&
 				inet_pton(AF_INET6, ip_addr,
 				&iface->ip6_addr) == 1) {
+			/*
+			 * According to RFC 6164, addresses with all zeros
+			 * in the rightmost 64 bits SHOULD NOT be assigned as
+			 * unicast addresses; addresses in which the rightmost
+			 * 64 bits are assigned the highest 128 values
+			 * (i.e., ffff:ffff:ffff:ff7f to ffff:ffff:ffff:ffff)
+			 * SHOULD NOT be used as unicast addresses.
+			 */
+			uint64_t addr2 = rte_be_to_cpu_64(((rte_be64_t *)iface->ip6_addr.s6_addr)[1]);
+			if (addr2 == 0 || addr2 >= 0xffffffffffffff7f) {
+				G_LOG(ERR,
+					"net: the rightmost 64 bits of the IP address %016" PRIx64 " SHOULD NOT be assigned to the interface\n",
+					addr2);
+				goto pci_addrs;
+			}
 			iface->configured_proto |= CONFIGURED_IPV6;
 		}
 		else
@@ -646,7 +661,7 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 			goto pci_addrs;
 		}
 
-		max_prefix = max_prefix_len(gk_type) - 2;
+		max_prefix = max_prefix_len(gk_type) - 1;
 		if (prefix_len < 0 || prefix_len > max_prefix) {
 			G_LOG(ERR,
 				"net: invalid prefix length \"%s\" on %s; must be in range [0, %d] to provide enough addresses for a valid deployment\n",
