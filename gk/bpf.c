@@ -430,16 +430,81 @@ f_init:
 	return -1;
 }
 
+static void
+fill_in_cmd_entry(struct gk_cmd_entry *entry, rte_atomic32_t *done_counter,
+	void *arg)
+{
+	entry->op = GK_FLUSH_BPF;
+	entry->u.flush_bpf.program_index = (uintptr_t)arg;
+	entry->u.flush_bpf.done_counter = done_counter;
+}
+
+int
+gk_unload_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index)
+{
+	struct gk_bpf_flow_handler *handler;
+	struct rte_bpf *bpf;
+
+	if (gk_conf == NULL) {
+		GK_LOG(ERR, "%s(): parameter gk_conf cannot be NULL\n",
+			__func__);
+		return -1;
+	}
+
+	if (index >= GK_MAX_BPF_FLOW_HANDLERS) {
+		GK_LOG(ERR,
+			"%s(): parameter index must be in [0, %i], received %u\n",
+			__func__, GK_MAX_BPF_FLOW_HANDLERS, index);
+		return -1;
+	}
+
+	handler = &gk_conf->flow_handlers[index];
+	bpf = handler->f_init;
+	if (bpf == NULL || handler->f_pkt == NULL) {
+		GK_LOG(ERR, "%s(): index %i is NOT in use\n",
+			__func__, index);
+		return -1;
+	}
+
+	/* Stop new flow entries of refering to this BPF program. */
+	handler->f_init = NULL;
+	handler->f_init_jit = NULL;
+	rte_mb();
+
+	/*
+	 * Flush all flow entries in all flow tables that refer to
+	 * this BPF program.
+	 */
+	synchronize_gk_instances(gk_conf, fill_in_cmd_entry,
+		(void *)(uintptr_t)index);
+
+	/*
+	 * Free the BPF program.
+	 */
+
+	rte_bpf_destroy(bpf);
+
+	bpf = handler->f_pkt;
+	handler->f_pkt = NULL;
+	handler->f_pkt_jit = NULL;
+	rte_bpf_destroy(bpf);
+
+	return 0;
+}
+
 int
 gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 	struct gk_bpf_cookie *cookie)
 {
 	const struct gk_bpf_flow_handler *handler =
 		&gk_conf->flow_handlers[program_index];
+	struct rte_bpf *bpf;
 	struct gk_bpf_init_frame frame;
+	rte_bpf_jitted_func_t jit;
 	uint64_t bpf_ret;
 
-	if (handler->f_init == NULL || handler->f_pkt == NULL) {
+	bpf = handler->f_init;
+	if (bpf == NULL || handler->f_pkt == NULL) {
 		GK_LOG(ERR, "The GK BPF program at index %u is not available\n",
 			program_index);
 		return -1;
@@ -448,9 +513,10 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 	frame.password = init_password;
 	frame.cookie = cookie;
 	frame.ctx.now = rte_rdtsc();
-	bpf_ret = likely(handler->f_init_jit != NULL)
-		? handler->f_init_jit(&frame.ctx)
-		: rte_bpf_exec(handler->f_init, &frame.ctx);
+	jit = handler->f_init_jit;
+	bpf_ret = likely(jit != NULL)
+		? jit(&frame.ctx)
+		: rte_bpf_exec(bpf, &frame.ctx);
 	if (bpf_ret != GK_BPF_INIT_RET_OK) {
 		GK_LOG(ERR, "The function init of the GK BPF program at index %u returned an error\n",
 			program_index);
@@ -531,8 +597,10 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 	};
 	const struct gk_bpf_flow_handler *handler =
 		&gk_conf->flow_handlers[program_index];
+	struct rte_bpf *bpf = handler->f_pkt;
+	rte_bpf_jitted_func_t jit;
 
-	if (unlikely(handler->f_pkt == NULL)) {
+	if (unlikely(bpf == NULL)) {
 		GK_LOG(WARNING,
 			"The BPF program at index %u does not have function pkt\n",
 			program_index);
@@ -542,9 +610,10 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 	if (unlikely(parse_packet_further(packet, &frame.ctx) < 0))
 		return -EINVAL;
 
-	*p_bpf_ret = likely(handler->f_pkt_jit != NULL)
-		? handler->f_pkt_jit(&frame.ctx)
-		: rte_bpf_exec(handler->f_pkt, &frame.ctx);
+	jit = handler->f_pkt_jit;
+	*p_bpf_ret = likely(jit != NULL)
+		? jit(&frame.ctx)
+		: rte_bpf_exec(bpf, &frame.ctx);
 
 	if (unlikely(*p_bpf_ret == GK_BPF_PKT_RET_FORWARD &&
 			!frame.ready_to_tx)) {

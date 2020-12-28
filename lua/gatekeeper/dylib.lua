@@ -86,6 +86,7 @@ int gk_log_flow_state(const char *src_addr,
 
 int gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	const char *filename, int jit);
+int gk_unload_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index);
 ]]
 
 c = ffi.C

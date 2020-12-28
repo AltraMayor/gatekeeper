@@ -460,7 +460,6 @@ initialize_fib_entry(struct gk_fib *fib)
 {
 	/* Reset the fields of the deleted FIB entry. */
 	fib->action = GK_FIB_MAX;
-	rte_atomic16_init(&fib->num_updated_instances);
 	memset(&fib->u, 0, sizeof(fib->u));
 }
 
@@ -581,19 +580,13 @@ init_fib_tbl(struct gk_config *gk_conf)
 	rte_spinlock_init(&ltbl->lock);
 
 	if (ltbl->fib_tbl != NULL) {
-		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++) {
-			struct gk_fib *fib = &ltbl->fib_tbl[i];
-			fib->action = GK_FIB_MAX;
-			rte_atomic16_init(&fib->num_updated_instances);
-		}
+		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++)
+			ltbl->fib_tbl[i].action = GK_FIB_MAX;
 	}
 
 	if (ltbl->fib_tbl6 != NULL) {
-		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++) {
-			struct gk_fib *fib = &ltbl->fib_tbl6[i];
-			fib->action = GK_FIB_MAX;
-			rte_atomic16_init(&fib->num_updated_instances);
-		}
+		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++)
+			ltbl->fib_tbl6[i].action = GK_FIB_MAX;
 	}
 
 	/* Set up the FIB entry for the front network prefixes. */
@@ -754,85 +747,26 @@ out:
 	return ret;
 }
 
-static int
-notify_gk_instance(struct gk_fib *fib, struct gk_instance *instance,
-	int update_only)
+static void
+fill_in_cmd_entry(struct gk_cmd_entry *entry, rte_atomic32_t *done_counter,
+	void *arg)
 {
-	int ret;
-	struct mailbox *mb = &instance->mb;
-	struct gk_cmd_entry *entry = mb_alloc_entry(mb);
-	if (entry == NULL) {
-		GK_LOG(ERR,
-			"Failed to allocate a `struct gk_cmd_entry` entry at %s\n",
-			__func__);
-		return -1;
-	}
-
+	struct gk_synch_request *req_template = arg;
 	entry->op = GK_SYNCH_WITH_LPM;
-	entry->u.synch.fib = fib;
-	entry->u.synch.update_only = update_only;
-
-	ret = mb_send_entry(mb, entry);
-	if (ret < 0) {
-		GK_LOG(ERR,
-			"Failed to send a `struct gk_cmd_entry` entry at %s\n",
-			__func__);
-		return -1;
-	}
-
-	return 0;
+	entry->u.synch = *req_template;
+	entry->u.synch.done_counter = done_counter;
 }
 
-/*
- * XXX #70 What we are doing here is analogous to RCU's synchronize_rcu(),
- * what suggests that we may be able to profit from RCU. But we are going
- * to postpone that until we have a better case to bring RCU to Gatekeeper.
- */
 static void
-synchronize_gk_instances(struct gk_fib *fib, struct gk_config *gk_conf,
-	int update_only)
+synchronize_gk_instances_with_fib(struct gk_config *gk_conf,
+	struct gk_fib *fib, bool update_only)
 {
-	int i, loop;
-	int num_succ_notified_inst = 0;
-	bool is_succ_notified[gk_conf->num_lcores];
-
-	/* The maximum number of times to try to notify the GK instances. */
-	const int MAX_NUM_NOTIFY_TRY = 3;
-
-	rte_atomic16_init(&fib->num_updated_instances);
-
-	memset(is_succ_notified, false, sizeof(is_succ_notified));
-
-	for (loop = 0; loop < MAX_NUM_NOTIFY_TRY; loop++) {
-		/* Send the FIB entry to the GK mailboxes. */
-		for (i = 0; i < gk_conf->num_lcores; i++) {
-			if (!is_succ_notified[i]) {
-				int ret = notify_gk_instance(fib,
-					&gk_conf->instances[i],
-					update_only);
-				if (ret == 0) {
-					is_succ_notified[i] = true;
-					num_succ_notified_inst++;
-					if (num_succ_notified_inst >=
-							gk_conf->num_lcores)
-						goto finish_notify;
-				}
-			}
-		}
-	}
-
-finish_notify:
-
-	if (num_succ_notified_inst != gk_conf->num_lcores) {
-		GK_LOG(WARNING,
-			"%s successfully notifies only %d/%d instances\n",
-			__func__, num_succ_notified_inst, gk_conf->num_lcores);
-	}
-
-	/* Wait for all GK instances to synchronize. */
-	while (rte_atomic16_read(&fib->num_updated_instances)
-			< num_succ_notified_inst)
-		rte_pause();
+	struct gk_synch_request req_template = {
+		.fib = fib,
+		.update_only = update_only,
+		.done_counter = NULL,
+	};
+	synchronize_gk_instances(gk_conf, fill_in_cmd_entry, &req_template);
 }
 
 /*
@@ -1111,7 +1045,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 * We need to notify the GK blocks whenever we remove
 	 * a FIB entry that is accessible through a prefix.
 	 */
-	synchronize_gk_instances(ip_prefix_fib, gk_conf, false);
+	synchronize_gk_instances_with_fib(gk_conf, ip_prefix_fib, false);
 
 	/*
 	 * From now on, GK blocks must not have a reference
@@ -1333,7 +1267,7 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 		/* Replace old set of Grantors in existing entry. */
 		struct grantor_set *old_set = gt_fib->u.grantor.set;
 		gt_fib->u.grantor.set = new_set;
-		synchronize_gk_instances(gt_fib, gk_conf, true);
+		synchronize_gk_instances_with_fib(gk_conf, gt_fib, true);
 		clear_grantor_set(ip_prefix, old_set, gk_conf);
 	} else {
 		/* Add new entry. */

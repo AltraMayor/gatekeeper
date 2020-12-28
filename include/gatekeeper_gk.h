@@ -352,6 +352,7 @@ enum gk_cmd_op {
 	GK_SYNCH_WITH_LPM,
 	GK_FLUSH_FLOW_TABLE,
 	GK_LOG_FLOW_STATE,
+	GK_FLUSH_BPF,
 	GK_CMD_OP_MAX,
 };
 
@@ -361,8 +362,9 @@ struct gk_add_policy {
 };
 
 struct gk_synch_request {
-	struct gk_fib *fib;
-	int update_only;
+	struct gk_fib  *fib;
+	bool           update_only;
+	rte_atomic32_t *done_counter;
 };
 
 struct gk_flush_request {
@@ -373,6 +375,11 @@ struct gk_flush_request {
 struct gk_log_flow {
 	struct ip_flow flow;
 	uint32_t flow_hash_val;
+};
+
+struct gk_flush_bpf {
+	uint8_t        program_index;
+	rte_atomic32_t *done_counter;
 };
 
 /*
@@ -392,6 +399,8 @@ struct gk_cmd_entry {
 		struct gk_flush_request flush;
 		/* Flow state logging request with GK_LOG_FLOW_STATE op. */
 		struct gk_log_flow log;
+		/* Flow table flush request with GK_FLUSH_BPF op. */
+		struct gk_flush_bpf flush_bpf;
 	} u;
 };
 
@@ -426,5 +435,11 @@ choose_grantor_per_flow(struct flow_entry *fe)
 		fe->flow_hash_val % fe->grantor_fib->u.grantor.set->num_entries
 	];
 }
+
+typedef void (*fill_in_gk_cmd_entry_t)(struct gk_cmd_entry *entry,
+	rte_atomic32_t *done_counter, void *arg);
+
+void synchronize_gk_instances(struct gk_config *gk_conf,
+	fill_in_gk_cmd_entry_t fill_f, void *arg);
 
 #endif /* _GATEKEEPER_GK_H_ */

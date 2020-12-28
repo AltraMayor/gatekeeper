@@ -144,13 +144,6 @@ struct gk_fib {
 	/* The fib action. */
 	enum gk_fib_action action;
 
-	/*
-	 * The callee that finished processing the notification
-	 * needs to increment this counter, so that the block
-	 * that is updating the FIB entry can finish its operation.
-	 */
-	rte_atomic16_t     num_updated_instances;
-
 	union {
 		/*
 	 	 * The nexthop information when the action is
