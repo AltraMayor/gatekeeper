@@ -23,6 +23,7 @@
 #include <arpa/inet.h>
 #include <linux/random.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
 
@@ -1671,21 +1672,21 @@ fail:
 static int
 drop_privileges(void)
 {
-	int ret;
-	char user[128];
+	struct passwd *pw;
 
-	ret = getlogin_r(user, sizeof(user));
-	if (ret != 0) {
-		G_LOG(ERR, "%s: failed to get the current logged in user - %s\n",
-			__func__, strerror(errno));
-		return ret;
+	errno = 0;
+	pw = getpwuid(config.pw_uid);
+	if (pw == NULL) {
+		G_LOG(ERR, "%s: failed to get the passwd struct for uid %u - %s\n",
+			__func__, config.pw_uid,
+			errno != 0 ? strerror(errno) : "user not found");
+		return -1;
 	}
 
-	ret = initgroups(user, config.pw_gid);
-	if (ret != 0) {
+	if (initgroups(pw->pw_name, config.pw_gid) != 0) {
 		G_LOG(ERR, "%s: failed to call initgrous(%s, %u) - %s\n",
-			__func__, user, config.pw_gid, strerror(errno));
-		return ret;
+			__func__, pw->pw_name, config.pw_gid, strerror(errno));
+		return -1;
 	}
 
 	/* Drop privileges. */
