@@ -6,7 +6,7 @@ if [ "$1" = "configure" ]; then
         adduser --quiet --system --group --no-create-home --home /run/gatekeeper gatekeeper
     fi
 
-    generate_if_map /etc/gatekeeper/if_map.lua
+    [ -f /etc/gatekeeper/if_map.lua ] || generate_if_map /etc/gatekeeper/if_map.lua
 
     dpkg-statoverride --list /usr/share/gatekeeper/devbind.sh > /dev/null || \
       dpkg-statoverride --update --add root root 0755 /usr/share/gatekeeper/devbind.sh
