@@ -1110,7 +1110,8 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 	icmph->icmp_cksum = 0;
 	icmph->icmp_ident = 0;
 	icmph->icmp_seq_nb = 0;
-	icmph->icmp_cksum = icmp_cksum(icmph, sizeof(*icmph));
+	icmph->icmp_cksum = icmp_cksum(icmph,
+		pkt->pkt_len - (pkt->l2_len + pkt->l3_len));
 
 	icmp_bufs[*num_pkts] = pkt;
 	(*num_pkts)++;

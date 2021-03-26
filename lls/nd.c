@@ -698,7 +698,7 @@ process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		return process_nd_neigh_solicitation(lls_conf, buf, eth_hdr,
 			ipv6_hdr, icmpv6_hdr, pkt_len, l2_len, icmpv6_len,
 			iface, tx_queue);
-	case ND_NEIGHBOR_ADVERTISEMENT_CODE:
+	case ND_NEIGHBOR_ADVERTISEMENT_TYPE:
 		if (icmpv6_hdr->code != ND_NEIGHBOR_ADVERTISEMENT_CODE)
 			goto log;
 		return process_nd_neigh_advertisement(lls_conf,
