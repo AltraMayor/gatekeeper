@@ -313,19 +313,31 @@ lls_process_mod(struct lls_config *lls_conf, struct lls_mod_req *mod_req)
 	}
 }
 
+/*
+ * According to RFC 792, the ICMP checksum is computed
+ * over all of the words in the ICMP "header." This is ambiguous
+ * because ICMP messages can have a "header" portion and
+ * a "data" portion. More accurately, the checksum is computed
+ * over the header *and* data portion, as described by
+ * the formats of the individual ICMP message types in RFC 792.
+ *
+ * @buf is a pointer to the start of the ICMP header.
+ * @size is the length of the ICMP message, including
+ * both the header and data portion.
+ */
 unsigned short
 icmp_cksum(void *buf, unsigned int size)
 {
 	unsigned short *buffer = buf;
 	unsigned long cksum = 0;
 
-	while(size > 1) {
+	while (size > 1) {
 		cksum += *buffer++;
 		size -= sizeof(*buffer);
 	}
 
-	if(size)
-		cksum += *(unsigned char*)buffer;
+	if (size)
+		cksum += *(unsigned char *)buffer;
 
 	cksum = (cksum >> 16) + (cksum & 0xffff);
 	cksum += (cksum >> 16);
@@ -447,7 +459,8 @@ xmit_icmp_ping_reply(struct gatekeeper_if *iface, struct rte_mbuf *pkt)
 	set_ipv4_checksum(iface, pkt, icmp_ipv4);
 
 	icmph->icmp_cksum = 0;
-	icmph->icmp_cksum = icmp_cksum(icmph, sizeof(*icmph));
+	icmph->icmp_cksum = icmp_cksum(icmph,
+		pkt->pkt_len - (pkt->l2_len + pkt->l3_len));
 	return true;
 }
 
