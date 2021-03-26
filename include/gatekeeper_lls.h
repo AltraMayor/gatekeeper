@@ -412,6 +412,14 @@ static const struct in6_addr ip6_allnodes_mc_addr = {
 #define ICMP_DEST_UNREACHABLE_TYPE (3)
 #define ICMP_FRAG_REQ_DF_CODE (4)
 
+/* ICMP Address Mask Request. */
+#define ICMP_MASK_REQUEST_TYPE (17)
+#define ICMP_MASK_REQUEST_CODE (0)
+
+/* ICMP Address Mask Reply. */
+#define ICMP_MASK_REPLY_TYPE (18)
+#define ICMP_MASK_REPLY_CODE (0)
+
 /*
  * ICMPv6 message types.
  */
