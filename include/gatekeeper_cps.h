@@ -133,15 +133,15 @@ struct cps_config {
 	struct rte_mempool *nd_mp;
 };
 
-/* Information needed to submit IPv6 BGP packets to the CPS block. */
-struct cps_bgp_req {
+/* Information needed to submit packets directly to KNI. */
+struct cps_direct_req {
 	/* Number of packets stored in @pkts. */
 	unsigned int         num_pkts;
 
 	/* KNI that should receive @pkts. */
 	struct rte_kni       *kni;
 
-	/* IPv6 BGP packets. */
+	/* Packets to submit to KNI. */
 	struct rte_mbuf      *pkts[0];
 };
 
@@ -166,8 +166,8 @@ struct cps_nd_req {
 
 /* Requests that can be made to the CPS block. */
 enum cps_req_ty {
-	/* Request to handle an IPv6 BGP packet received from another block. */
-	CPS_REQ_BGP,
+	/* Request to directly hand packets received by other blocks to KNI. */
+	CPS_REQ_DIRECT,
 	/* Request to handle a response to an ARP packet. */
 	CPS_REQ_ARP,
 	/* Request to handle a response to an ND packet. */
@@ -182,14 +182,17 @@ struct cps_request {
 	int end_of_header[0];
 
 	union {
-		/* If @ty is CPS_REQ_BGP, use @bgp. */
-		struct cps_bgp_req bgp;
+		/* If @ty is CPS_REQ_DIRECT, use @direct. */
+		struct cps_direct_req direct;
 		/* If @ty is CPS_REQ_ARP, use @arp. */
 		struct cps_arp_req arp;
 		/* If @ty is CPS_REQ_ND, use @nd. */
 		struct cps_nd_req nd;
 	} u;
 };
+
+int cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct gatekeeper_if *iface);
 
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,

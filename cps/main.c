@@ -248,14 +248,14 @@ process_reqs(struct cps_config *cps_conf)
 
 	for (i = 0; i < count; i++) {
 		switch (reqs[i]->ty) {
-		case CPS_REQ_BGP: {
-			struct cps_bgp_req *bgp = &reqs[i]->u.bgp;
-			unsigned int num_tx = rte_kni_tx_burst(bgp->kni,
-				bgp->pkts, bgp->num_pkts);
-			if (unlikely(num_tx < bgp->num_pkts)) {
+		case CPS_REQ_DIRECT: {
+			struct cps_direct_req *direct = &reqs[i]->u.direct;
+			unsigned int num_tx = rte_kni_tx_burst(direct->kni,
+				direct->pkts, direct->num_pkts);
+			if (unlikely(num_tx < direct->num_pkts)) {
 				uint16_t j;
-				for (j = num_tx; j < bgp->num_pkts; j++)
-					rte_pktmbuf_free(bgp->pkts[j]);
+				for (j = num_tx; j < direct->num_pkts; j++)
+					rte_pktmbuf_free(direct->pkts[j]);
 			}
 			break;
 		}
@@ -546,8 +546,8 @@ cps_proc(void *arg)
 	return cleanup_cps();
 }
 
-static int
-submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
+int
+cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
 	struct cps_config *cps_conf = get_cps_conf();
@@ -564,12 +564,13 @@ submit_bgp(struct rte_mbuf **pkts, unsigned int num_pkts,
 		goto free_pkts;
 	}
 
-	req->ty = CPS_REQ_BGP;
-	req->u.bgp.num_pkts = num_pkts;
-	req->u.bgp.kni = iface == &cps_conf->net->front
+	req->ty = CPS_REQ_DIRECT;
+	req->u.direct.num_pkts = num_pkts;
+	req->u.direct.kni = iface == &cps_conf->net->front
 		? cps_conf->front_kni
 		: cps_conf->back_kni;
-	rte_memcpy(req->u.bgp.pkts, pkts, sizeof(*req->u.bgp.pkts) * num_pkts);
+	rte_memcpy(req->u.direct.pkts, pkts,
+		sizeof(*req->u.direct.pkts) * num_pkts);
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {
@@ -1093,7 +1094,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 				false, tcp_port_bgp);
 
 			ret = register_ipv4_acl(ipv4_rules, NUM_ACL_BGP_RULES,
-				submit_bgp, match_bgp4, iface);
+				cps_submit_direct, match_bgp4, iface);
 			if (ret < 0) {
 				CPS_LOG(ERR,
 					"Could not register BGP IPv4 ACL on %s iface\n",
@@ -1115,7 +1116,7 @@ add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
 		fill_bgp6_rule(&ipv6_rules[1], iface, false, tcp_port_bgp);
 
 		ret = register_ipv6_acl(ipv6_rules, NUM_ACL_BGP_RULES,
-			submit_bgp, match_bgp6, iface);
+			cps_submit_direct, match_bgp6, iface);
 		if (ret < 0) {
 			CPS_LOG(ERR,
 				"Could not register BGP IPv6 ACL on %s iface\n",
@@ -1280,7 +1281,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	ele_size = RTE_MAX(sizeof(struct cps_request),
 		offsetof(struct cps_request, end_of_header) +
-		sizeof(struct cps_bgp_req) + sizeof(struct rte_mbuf *) *
+		sizeof(struct cps_direct_req) + sizeof(struct rte_mbuf *) *
 		cps_conf->mailbox_max_pkt_burst);
 
 	ret = init_mailbox("cps_mb", cps_conf->mailbox_max_entries_exp,

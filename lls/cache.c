@@ -22,6 +22,7 @@
 #include <rte_hash.h>
 #include <rte_icmp.h>
 
+#include <gatekeeper_cps.h>
 #include <gatekeeper_lls.h>
 #include "gatekeeper_varip.h"
 #include "cache.h"
@@ -506,6 +507,8 @@ process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
 {
 	struct rte_mbuf *ping_pkts[icmp->num_pkts];
 	unsigned int num_ping_pkts = 0;
+	struct rte_mbuf *kni_pkts[icmp->num_pkts];
+	unsigned int num_kni_pkts = 0;
 	int i;
 
 	for (i = 0; i < icmp->num_pkts; i++) {
@@ -557,6 +560,12 @@ process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
 			continue;
 		}
 
+		if (icmphdr->icmp_type == ICMP_ECHO_REPLY_TYPE &&
+				icmphdr->icmp_code == ICMP_ECHO_REPLY_CODE) {
+			kni_pkts[num_kni_pkts++] = pkt;
+			continue;
+		}
+
 		src_ip_or_err = inet_ntop(AF_INET, &ip4hdr->src_addr,
 			src_ip_buf, sizeof(src_ip_buf));
 		if (unlikely(!src_ip_or_err))
@@ -577,6 +586,9 @@ process_icmp_pkts(struct lls_config *lls_conf, struct lls_icmp_req *icmp)
 	if (num_ping_pkts > 0)
 		process_ping_pkts(ping_pkts, num_ping_pkts,
 			lls_conf, icmp->iface, xmit_icmp_ping_reply);
+
+	if (num_kni_pkts > 0)
+		cps_submit_direct(kni_pkts, num_kni_pkts, icmp->iface);
 }
 
 static bool
@@ -662,6 +674,8 @@ process_icmp6_pkts(struct lls_config *lls_conf, struct lls_icmp6_req *icmp6)
 {
 	struct rte_mbuf *ping6_pkts[icmp6->num_pkts];
 	unsigned int num_ping6_pkts = 0;
+	struct rte_mbuf *kni_pkts[icmp6->num_pkts];
+	unsigned int num_kni_pkts = 0;
 	int i;
 
 	for (i = 0; i < icmp6->num_pkts; i++) {
@@ -734,6 +748,12 @@ process_icmp6_pkts(struct lls_config *lls_conf, struct lls_icmp6_req *icmp6)
 			continue;
 		}
 
+		if (icmp6_hdr->type == ICMPV6_ECHO_REPLY_TYPE &&
+				icmp6_hdr->code == ICMPV6_ECHO_REPLY_CODE) {
+			kni_pkts[num_kni_pkts++] = pkt;
+			continue;
+		}
+
 		if (pkt_is_nd_neighbor(icmp6_hdr->type, icmp6_hdr->code)) {
 			if (process_nd(lls_conf, icmp6->iface, pkt) == -1)
 				rte_pktmbuf_free(pkt);
@@ -760,6 +780,9 @@ process_icmp6_pkts(struct lls_config *lls_conf, struct lls_icmp6_req *icmp6)
 	if (num_ping6_pkts > 0)
 		process_ping_pkts(ping6_pkts, num_ping6_pkts,
 			lls_conf, icmp6->iface, xmit_icmp6_ping_reply);
+
+	if (num_kni_pkts > 0)
+		cps_submit_direct(kni_pkts, num_kni_pkts, icmp6->iface);
 }
 
 unsigned int
