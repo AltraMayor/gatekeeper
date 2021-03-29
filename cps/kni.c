@@ -40,6 +40,9 @@
 
 #define KNI_MODULE_NAME ("rte_kni")
 
+/* Defined in the kernel headers, but not included in net/if.h. */
+#define IFF_LOWER_UP (1<<16)
+
 /*
  * According to init_module(2) and delete_module(2), there
  * are no declarations for these functions in header files.
@@ -233,7 +236,7 @@ modify_link(struct mnl_socket *nl, struct rte_kni *kni,
 	ifm->ifi_change = IFF_UP;
 	ifm->ifi_flags = flags;
 
-	mnl_attr_put_str(nlh, IFLA_IFNAME, kni_name);
+	mnl_attr_put_strz(nlh, IFLA_IFNAME, kni_name);
 
 	/*
 	 * The KNI library registers callbacks for MTU changes and
@@ -1225,10 +1228,10 @@ rd_fill_getlink_reply(const struct cps_config *cps_conf,
 	ifim->ifi_family = AF_UNSPEC;
 	ifim->ifi_type = ARPHRD_ETHER;
 	ifim->ifi_index = kni_index;
-	ifim->ifi_flags = 0;
+	ifim->ifi_flags = IFF_UP|IFF_LOWER_UP;
 	ifim->ifi_change = 0xFFFFFFFF;
 
-	mnl_attr_put_str(reply, IFLA_IFNAME, kni_name);
+	mnl_attr_put_strz(reply, IFLA_IFNAME, kni_name);
 	mnl_attr_put_u32(reply, IFLA_MTU, kni_mtu);
 }
 
