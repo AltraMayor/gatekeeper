@@ -1389,12 +1389,14 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 /*
  * Return 0 when @gw_addr is not included in @prefix.
  * If not, or if there is an error, return -1.
+ *
+ * Issue #267 discusses the assumptions behind this verification.
  */
 static int
 check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 {
 	if (unlikely(prefix->addr.proto != gw_addr->proto)) {
-		GK_LOG(ERR, "IP prefix protocol (%hu) does not match the gateway address protocol (%hu) for prefix string %s\n",
+		GK_LOG(ERR, "IP prefix protocol (%hu) does not match the gateway address protocol (%hu) for prefix %s\n",
 			prefix->addr.proto, gw_addr->proto, prefix->str);
 		return -1;
 	}
@@ -1425,10 +1427,13 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 				return 0;
 		}
 	} else {
-		GK_LOG(ERR, "Unexpected condition at %s: unknown IP type %hu for prefix string %s\n",
+		GK_LOG(ERR, "Unexpected condition at %s(): unknown IP type %hu for prefix %s\n",
 			__func__, gw_addr->proto, prefix->str);
+		return -1;
 	}
 
+	GK_LOG(ERR, "Gateway address is in prefix %s, so gateway is not a neighbor\n",
+		prefix->str);
 	return -1;
 }
 
@@ -1668,10 +1673,8 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		 * are not included in the prefix.
 		 */
 		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (ret < 0) {
-			GK_LOG(ERR, "Gateway address is not in prefix, or error occurred\n");
+		if (ret < 0)
 			return -1;
-		}
 	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
