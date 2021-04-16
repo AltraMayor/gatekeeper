@@ -320,6 +320,7 @@ main(int argc, char *argv[])
 	if (recv_buff[ret - 1] != '\0')
 		recv_buff[ret] = '\0';
 	printf("%s\n", recv_buff);
+	ret = 0;
 
 close_sock:
 	close(sock_fd);
