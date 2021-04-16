@@ -277,14 +277,14 @@ main(int argc, char *argv[])
 	*(uint16_t *)send_buff = htons(ret);
 
 	if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-		perror("Error : Could not create socket\n");
+		perror("Error: Could not create socket");
 		ret = -1;
 		goto out;
 	}
 
 	if (connect_wait(sock_fd, (struct sockaddr *)&serv_addr,
 			sizeof(serv_addr), args.connect_timeout) < 0) {
-		perror("Error : Connect failed\n");
+		perror("Error: Connect failed");
 		ret = -1;
 		goto close_sock;
 	}
