@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 EnvironmentFile=/etc/gatekeeper/envvars
-ExecStartPre=/bin/mkdir -p /var/run/gatekeeper
+ExecStartPre=/usr/bin/install -oroot -ggatekeeper -m0770 -d /var/run/gatekeeper /var/run/dpdk/rte
 
 # We ignore dpdk-devbind errors on ExecStartPre to allow Gatekeeper
 # to be restarted, as dpdk-devbind will fail due to the interfaces
