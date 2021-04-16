@@ -45,12 +45,15 @@ static char doc[] = "Gatekeeper Client -- configure Gatekeeper via "
 static struct argp_option options[] = {
 	{"server-path",		's',	"FILE",		0,
 		"Path to Gatekeeper/Grantor's UNIX socket",	1},
+	{"conn-timeout",	't',	"TIMEOUT",	0,
+		"UNIX socket connect timeout, in seconds",	1},
 	{ 0 }
 };
 
 struct args {
 	const char *server_path;
 	const char *lua_script_path;
+	unsigned int connect_timeout;
 };
 
 static error_t
@@ -62,6 +65,19 @@ parse_opt(int key, char *arg, struct argp_state *state)
 	case 's':
 		args->server_path = arg;
 		break;
+
+	case 't': {
+		unsigned long timeout;
+
+		errno = 0;
+		timeout = strtoul(arg, NULL, 10);
+		if (errno != 0)
+			argp_failure(state, 1, errno, "Invalid connect timeout");
+		if (timeout > UINT_MAX)
+			argp_failure(state, 1, ERANGE, "Invalid connect timeout");
+		args->connect_timeout = timeout;
+		break;
+	}
 
 	case ARGP_KEY_INIT:
 		args->lua_script_path = NULL;
@@ -186,6 +202,39 @@ read_all(int conn_fd, char *msg_buff, int nbytes)
 }
 
 int
+connect_wait(int sock_fd, const struct sockaddr *addr, socklen_t addrlen,
+	unsigned int timeout)
+{
+	unsigned int remain = timeout;
+
+	for (;;) {
+		if (connect(sock_fd, addr, addrlen) == 0)
+			return 0;
+		switch (errno) {
+			/* Retry in case of these expected errors:
+			 *   1) Gatekeeper has not yet created the dynamic configuration
+			 *      socket;
+			 *   2) Gatekeeper has created the socket but its permissions
+			 *      have not yet been changed to allow access to the
+			 *      unprivileged user (can only happpen if gkctl itself is
+			 *      running as the unprivileged user);
+			 *   3) Gatekeeper is not yet listening on the socket.
+			 */
+			case ENOENT:
+			case EPERM:
+			case ECONNREFUSED:
+				if (remain == 0)
+					return -1;
+				sleep(1);
+				remain--;
+				break;
+			default:
+				return -1;
+		}
+	}
+}
+
+int
 main(int argc, char *argv[])
 {
 	int ret;
@@ -199,6 +248,7 @@ main(int argc, char *argv[])
 	struct args args = {
 		/* Defaults. */
 		.server_path = "/var/run/gatekeeper/dyn_cfg.socket",
+		.connect_timeout = 0,
 	};
 
 	/* Read parameters. */
@@ -232,8 +282,8 @@ main(int argc, char *argv[])
 		goto out;
 	}
 
-	if (connect(sock_fd, (struct sockaddr *)&serv_addr,
-			sizeof(serv_addr)) < 0) {
+	if (connect_wait(sock_fd, (struct sockaddr *)&serv_addr,
+			sizeof(serv_addr), args.connect_timeout) < 0) {
 		perror("Error : Connect failed\n");
 		ret = -1;
 		goto close_sock;
