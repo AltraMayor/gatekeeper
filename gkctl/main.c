@@ -25,7 +25,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <arpa/inet.h> 
+#include <arpa/inet.h>
 #include <error.h>
 #include <argp.h>
 #include <assert.h>
@@ -194,9 +194,9 @@ main(int argc, char *argv[])
 	char recv_buff[MSG_MAX_LEN + 1];
 	size_t len;
 	size_t total_file_len;
-	struct sockaddr_un serv_addr; 
+	struct sockaddr_un serv_addr;
 
-    	struct args args = {
+	struct args args = {
 		/* Defaults. */
 		.server_path = "/var/run/gatekeeper/dyn_cfg.socket",
 	};
