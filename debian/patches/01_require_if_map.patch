@@ -1,0 +1,13 @@
+Index: gatekeeper/lua/gatekeeper/staticlib.lua
+===================================================================
+--- gatekeeper.orig/lua/gatekeeper/staticlib.lua
++++ gatekeeper/lua/gatekeeper/staticlib.lua
+@@ -481,7 +481,7 @@ c = ffi.C
+ -- Network configuration functions
+ --
+ 
+-local ifaces = require("if_map")
++local ifaces = dofile("/etc/gatekeeper/if_map.lua")
+ 
+ function check_ifaces(front_ports, back_ports)
+ 	for i1, v1 in ipairs(front_ports) do
