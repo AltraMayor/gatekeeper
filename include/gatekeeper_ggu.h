@@ -61,6 +61,9 @@ struct ggu_config {
 
 	/* RX queue on the back interface. */
 	uint16_t           rx_queue_back;
+	/* RX method on the back interface. */
+	uint8_t            rx_method_back;
+
 	struct net_config  *net;
 	struct gk_config   *gk;
 

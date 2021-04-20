@@ -146,6 +146,7 @@ destroy_acls(struct acl_state *astate)
 			astate->acls[i] = NULL;
 		}
 	}
+	astate->enabled = false;
 }
 
 /*
@@ -336,6 +337,7 @@ init_ipv4_acls(struct gatekeeper_if *iface)
 	iface->ipv4_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv4_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv4_acls.func_count = 1;
+	iface->ipv4_acls.enabled = true;
 
 	return 0;
 }
@@ -561,6 +563,7 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 	iface->ipv6_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv6_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv6_acls.func_count = 1;
+	iface->ipv6_acls.enabled = true;
 
 	return 0;
 }

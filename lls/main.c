@@ -600,7 +600,7 @@ lls_proc(void *arg)
 		/* Read in packets on front and back interfaces. */
 		int num_tx;
 
-		if (hw_filter_eth_available(front)) {
+		if (lls_conf->rx_method_front & RX_METHOD_NIC) {
 			num_tx = process_pkts(lls_conf, front,
 				lls_conf->rx_queue_front,
 				lls_conf->tx_queue_front,
@@ -612,7 +612,7 @@ lls_proc(void *arg)
 		}
 
 		if (net_conf->back_iface_enabled &&
-				hw_filter_eth_available(back)) {
+				lls_conf->rx_method_back & RX_METHOD_NIC) {
 			num_tx = process_pkts(lls_conf, back,
 				lls_conf->rx_queue_back,
 				lls_conf->tx_queue_back,
@@ -623,7 +623,11 @@ lls_proc(void *arg)
 			}
 		}
 
-		/* Process any requests. */
+		/*
+		 * Process any requests. The RX method does not
+		 * matter here, since the mailbox is always used
+		 * for ARP/ND hold requests from other blocks.
+		 */
 		if (likely(lls_process_reqs(lls_conf) == 0)) {
 			/*
 			 * If there are no requests to go through, then do a
@@ -875,6 +879,7 @@ lls_stage2(void *arg)
 				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
 			if (ret < 0)
 				return ret;
+			lls_conf->rx_method_front |= RX_METHOD_NIC;
 		} else if (lls_conf->rx_queue_front != 0) {
 			/*
 			 * RSS on most NICs seem to default to sending ARP
@@ -904,6 +909,7 @@ lls_stage2(void *arg)
 				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
 			if (ret < 0)
 				return ret;
+			lls_conf->rx_method_back |= RX_METHOD_NIC;
 		} else if (lls_conf->rx_queue_back != 0) {
 			/* See comment above about LLS listening on queue 0. */
 			LLS_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");

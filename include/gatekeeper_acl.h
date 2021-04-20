@@ -60,21 +60,16 @@ add_pkt_acl(struct acl_search *acl, struct rte_mbuf *pkt)
 	acl->num++;
 }
 
-static inline int
-ipv4_acl_enabled(struct gatekeeper_if *iface)
+static inline bool
+ipv4_acl_enabled(const struct gatekeeper_if *iface)
 {
-	/*
-	 * The IPv4 ACL is only needed for interfaces that have
-	 * IPv4 addresses and don't support the ntuple filter.
-	 */
-	return !iface->hw_filter_ntuple && ipv4_if_configured(iface);
+	return iface->ipv4_acls.enabled;
 }
 
-static inline int
-ipv6_acl_enabled(struct gatekeeper_if *iface)
+static inline bool
+ipv6_acl_enabled(const struct gatekeeper_if *iface)
 {
-	/* The IPv6 ACL is needed whenever an interface has an IPv6 address. */
-	return ipv6_if_configured(iface);
+	return iface->ipv6_acls.enabled;
 }
 
 static inline int

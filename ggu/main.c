@@ -591,6 +591,43 @@ free_pkts:
 	return ret;
 }
 
+static void
+process_back_nic(struct ggu_config *ggu_conf,
+	uint16_t port_in, uint16_t rx_queue, uint16_t max_pkt_burst)
+{
+	struct rte_mbuf *bufs[max_pkt_burst];
+	uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
+		bufs, max_pkt_burst);
+	unsigned int i;
+
+	if (unlikely(num_rx == 0))
+		return;
+
+	for (i = 0; i < num_rx; i++)
+		process_single_packet(bufs[i], ggu_conf);
+}
+
+static void
+process_mb(struct ggu_config *ggu_conf)
+{
+	unsigned int mailbox_burst_size = ggu_conf->mailbox_burst_size;
+	struct ggu_request *reqs[mailbox_burst_size];
+	unsigned int num_reqs = mb_dequeue_burst(&ggu_conf->mailbox,
+		(void **)reqs, mailbox_burst_size);
+	unsigned int i;
+
+	if (unlikely(num_reqs == 0))
+		return;
+
+	for (i = 0; i < num_reqs; i++) {
+		unsigned int j;
+		for (j = 0; j < reqs[i]->num_pkts; j++)
+			process_single_packet(reqs[i]->pkts[j], ggu_conf);
+	}
+
+	mb_free_entry_bulk(&ggu_conf->mailbox, (void * const *)reqs, num_reqs);
+}
+
 static int
 ggu_proc(void *arg)
 {
@@ -598,53 +635,25 @@ ggu_proc(void *arg)
 	struct ggu_config *ggu_conf = (struct ggu_config *)arg;
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
-	unsigned int i;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
-	GGU_LOG(NOTICE, "The GK-GT unit is running at lcore = %u\n", lcore);
+	GGU_LOG(NOTICE, "The GT-GK unit is running at lcore = %u\n", lcore);
 
 	/*
-	 * Load a set of GK-GT packets from the back NIC
+	 * Load sets of GT-GK packets from the back NIC
 	 * or from the GGU mailbox.
 	 */
-	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
-		while (likely(!exiting)) {
-			struct rte_mbuf *bufs[max_pkt_burst];
-			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
-				bufs, max_pkt_burst);
-
-			if (unlikely(num_rx == 0))
-				continue;
-
-			for (i = 0; i < num_rx; i++)
-				process_single_packet(bufs[i], ggu_conf);
+	while (likely(!exiting)) {
+		if (ggu_conf->rx_method_back & RX_METHOD_NIC) {
+			process_back_nic(ggu_conf, port_in,
+				rx_queue, max_pkt_burst);
 		}
-	} else {
-		unsigned int mailbox_burst_size =
-			ggu_conf->mailbox_burst_size;
 
-		while (likely(!exiting)) {
-			struct ggu_request *reqs[mailbox_burst_size];
-			unsigned int num_reqs =
-				mb_dequeue_burst(&ggu_conf->mailbox,
-				(void **)reqs, mailbox_burst_size);
-
-			if (unlikely(num_reqs == 0))
-				continue;
-
-			for (i = 0; i < num_reqs; i++) {
-				unsigned int j;
-				for (j = 0; j < reqs[i]->num_pkts; j++) {
-					process_single_packet(reqs[i]->pkts[j],
-						ggu_conf);
-				}
-			}
-			mb_free_entry_bulk(&ggu_conf->mailbox,
-				(void * const *)reqs, num_reqs);
-		}
+		if (ggu_conf->rx_method_back & RX_METHOD_MB)
+			process_mb(ggu_conf);
 	}
 
-	GGU_LOG(NOTICE, "The GK-GT unit at lcore = %u is exiting\n", lcore);
+	GGU_LOG(NOTICE, "The GT-GK unit at lcore = %u is exiting\n", lcore);
 	return cleanup_ggu(ggu_conf);
 }
 
@@ -746,16 +755,23 @@ ggu_stage2(void *arg)
 	int ret;
 
 	/*
-	 * Setup the ntuple filters that assign the GK-GT packets
+	 * Setup the ntuple filters that assign the GT-GK packets
 	 * to its queue for both IPv4 and IPv6 addresses.
 	 */
 	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
-		return ntuple_filter_add(&ggu_conf->net->back,
+		ret = ntuple_filter_add(&ggu_conf->net->back,
 			ggu_conf->net->back.ip4_addr.s_addr,
 			ggu_conf->ggu_src_port, UINT16_MAX,
 			ggu_conf->ggu_dst_port, UINT16_MAX,
 			IPPROTO_UDP, ggu_conf->rx_queue_back,
 			ipv4_configured, ipv6_configured);
+		/*
+		 * TODO Returning here without adding an ACL
+		 * rule for IPv6 is a known bug that is fixed
+		 * in the next commit.
+		 */
+		ggu_conf->rx_method_back |= RX_METHOD_NIC;
+		return ret;
 	}
 
 	/*
@@ -774,6 +790,7 @@ ggu_stage2(void *arg)
 			GGU_LOG(ERR, "Could not register IPv4 GGU ACL on back iface\n");
 			return ret;
 		}
+		ggu_conf->rx_method_back |= RX_METHOD_MB;
 	}
 
 	if (ipv6_configured) {
@@ -784,6 +801,7 @@ ggu_stage2(void *arg)
 			GGU_LOG(ERR, "Could not register IPv6 GGU ACL on back iface\n");
 			return ret;
 		}
+		ggu_conf->rx_method_back |= RX_METHOD_MB;
 	}
 
 	return 0;

@@ -71,6 +71,25 @@ struct gatekeeper_rss_config {
 #define GATEKEEPER_ACL_MAX (8)
 
 /*
+ * Some blocks can receive packets via different
+ * methods, such as via the NIC or mailboxes. These
+ * methods can change depending on hardware support.
+ */
+enum {
+	/* Receive packets from a NIC. */
+	RX_METHOD_NIC = 0x1,
+
+	/*
+	 * Receive packets from a mailbox.
+	 *
+	 * Note: All packets that are matched through
+	 * an ACL are delivered through mailboxes to
+	 * the block that processes them.
+	 */
+	RX_METHOD_MB = 0x2
+};
+
+/*
  * Format of function called when a rule matches in the IPv6 ACL.
  * Need forward declaration because acl_cb_func and struct gatekeeper_if
  * are circularly defined.
@@ -104,6 +123,9 @@ struct acl_state {
 
 	/* Number of ACL types installed in @funcs. */
 	unsigned int       func_count;
+
+	/* Whether this ACL is enabled. */
+	bool               enabled;
 };
 
 /*
@@ -477,13 +499,13 @@ destroy_mempool(__attribute__((unused)) struct rte_mempool *mp)
 }
 
 static inline bool
-ipv4_if_configured(struct gatekeeper_if *iface)
+ipv4_if_configured(const struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV4);
 }
 
 static inline bool
-ipv6_if_configured(struct gatekeeper_if *iface)
+ipv6_if_configured(const struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV6);
 }

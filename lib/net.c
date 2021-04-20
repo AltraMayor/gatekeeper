@@ -1553,17 +1553,24 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 		"net: ntuple filters %s supported on the %s iface\n",
 		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);
 
-	if (ipv4_acl_enabled(iface)) {
+	/* TODO Move this to packet filter API in next patch. */
+	if (ipv4_if_configured(iface)) {
 		ret = init_ipv4_acls(iface);
 		if (ret < 0)
 			goto stop_partial;
 	}
 
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
-	if (ipv6_acl_enabled(iface)) {
+	/* TODO Move this to packet filter API in next patch. */
+	if (ipv6_if_configured(iface)) {
 		ret = init_ipv6_acls(iface);
 		if (ret < 0)
 			goto ipv4_acls;
+		/*
+		 * TODO The IPv6 address setup should happen
+		 * whenever IPv6 is configured, which is
+		 * addressed in the next patch.
+		 */
 		setup_ipv6_addrs(iface);
 	}
 

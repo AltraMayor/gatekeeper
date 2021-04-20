@@ -240,6 +240,10 @@ struct lls_config {
 	uint16_t           rx_queue_back;
 	uint16_t           tx_queue_back;
 
+	/* RX methods for both interfaces. */
+	uint8_t            rx_method_front;
+	uint8_t            rx_method_back;
+
 	unsigned int       total_pkt_burst;
 	/* The packet mbuf pool for the LLS block. */
 	struct rte_mempool *mp;
