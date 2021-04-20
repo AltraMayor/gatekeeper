@@ -20,7 +20,9 @@
 #include <stdbool.h>
 
 #include <rte_ip.h>
+#include <rte_ip_frag.h>
 
+#include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 #include "cache.h"
 #include "nd.h"

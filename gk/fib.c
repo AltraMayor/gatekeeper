@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <linux/rtnetlink.h>
 
+#include "gatekeeper_config.h"
 #include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_l2.h"

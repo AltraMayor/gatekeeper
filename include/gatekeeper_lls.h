@@ -19,14 +19,16 @@
 #ifndef _GATEKEEPER_LLS_H_
 #define _GATEKEEPER_LLS_H_
 
+#include <lua.h>
 #include <netinet/in.h>
 
 #include <rte_arp.h>
 #include <rte_ip.h>
 
-#include "gatekeeper_acl.h"
-#include "gatekeeper_mailbox.h"
 #include "gatekeeper_log_ratelimit.h"
+#include "gatekeeper_mailbox.h"
+#include "gatekeeper_net.h"
+#include "gatekeeper_ratelimit.h"
 
 extern int lls_logtype;
 
