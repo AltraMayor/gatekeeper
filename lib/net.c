@@ -279,7 +279,7 @@ ipv4_pkt_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 			src_port_be, src_port_mask_be,
 			dst_port_be, dst_port_mask_be,
 			proto);
-		ret = register_ipv4_acl(&ipv4_rule, 1,
+		ret = register_ipv4_acl(&ipv4_rule,
 			cb_f, ext_cb_f, iface);
 		if (ret < 0) {
 			G_LOG(ERR, "Could not register IPv4 ACL on the %s interface\n",
@@ -349,7 +349,7 @@ ipv6_pkt_filter_add(struct gatekeeper_if *iface,
 		src_port_be, src_port_mask_be,
 		dst_port_be, dst_port_mask_be,
 		proto);
-	ret = register_ipv6_acl(&ipv6_rule, 1,
+	ret = register_ipv6_acl(&ipv6_rule,
 		cb_f, ext_cb_f, iface);
 	if (ret < 0) {
 		G_LOG(ERR, "Could not register IPv6 ACL on the %s interface\n",
