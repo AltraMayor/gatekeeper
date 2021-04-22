@@ -35,6 +35,14 @@ struct log_ratelimit_state {
 
 static struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
 
+static bool enabled;
+
+void
+log_ratelimit_enable(void)
+{
+	enabled = true;
+}
+
 static inline void
 log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
@@ -74,12 +82,21 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 {
 	uint64_t now;
 
-	if (lrs->interval_cycles == 0)
+	/* unlikely() reason: @enabled is only false during startup. */
+	if (unlikely(!enabled))
+		return true;
+
+	/* unlikely() reason: all logs are rate-limited in production. */
+	if (unlikely(lrs->interval_cycles == 0))
 		return true;
 
 	now = rte_rdtsc();
 
-	if (lrs->end < now)
+	/*
+	 * unlikely() reason: there is only one
+	 * reset every @lrs->interval_cycles.
+	 */
+	if (unlikely(lrs->end < now))
 		log_ratelimit_reset(lrs, now);
 
 	if (lrs->burst > lrs->printed) {

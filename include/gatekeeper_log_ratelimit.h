@@ -23,6 +23,14 @@
 #include <stdint.h>
 
 /*
+ * At startup, log ratelimiting is disabled so that all
+ * startup logs are captured. Before the blocks start,
+ * the launch routine calls this function to enable log
+ * ratelimiting during operation.
+ */
+void log_ratelimit_enable(void);
+
+/*
  * Check whether a log entry will be permitted, according to the level
  * of the log entry and the configured level of the system's log.
  * Note that even when this test passes, log entries may not occur
