@@ -22,9 +22,10 @@
 #include <rte_hash.h>
 #include <rte_icmp.h>
 
-#include <gatekeeper_cps.h>
-#include <gatekeeper_lls.h>
-#include <gatekeeper_varip.h>
+#include "gatekeeper_cps.h"
+#include "gatekeeper_l2.h"
+#include "gatekeeper_lls.h"
+#include "gatekeeper_varip.h"
 #include "cache.h"
 #include "arp.h"
 #include "nd.h"

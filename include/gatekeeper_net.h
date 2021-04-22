@@ -68,7 +68,26 @@ struct gatekeeper_rss_config {
 };
 
 /* Maximum number of ACL classification types. */
-#define GATEKEEPER_ACL_MAX (8)
+#define GATEKEEPER_ACL_MAX (16)
+
+/*
+ * Some blocks can receive packets via different
+ * methods, such as via the NIC or mailboxes. These
+ * methods can change depending on hardware support.
+ */
+enum {
+	/* Receive packets from a NIC. */
+	RX_METHOD_NIC = 0x1,
+
+	/*
+	 * Receive packets from a mailbox.
+	 *
+	 * Note: All packets that are matched through
+	 * an ACL are delivered through mailboxes to
+	 * the block that processes them.
+	 */
+	RX_METHOD_MB = 0x2
+};
 
 /*
  * Format of function called when a rule matches in the IPv6 ACL.
@@ -104,6 +123,14 @@ struct acl_state {
 
 	/* Number of ACL types installed in @funcs. */
 	unsigned int       func_count;
+
+	/*
+	 * Whether this ACL is enabled.
+	 *
+	 * Set to true by ipv{4,6}_pkt_filter_add() when an ACL is
+	 * determined to be needed.
+	 */
+	bool               enabled;
 };
 
 /*
@@ -443,11 +470,89 @@ int convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n);
 int ethertype_filter_add(struct gatekeeper_if *iface, uint16_t ether_type,
 	uint16_t queue_id);
 
-int ntuple_filter_add(struct gatekeeper_if *iface, uint32_t dst_ip,
-	uint16_t src_port, uint16_t src_port_mask,
-	uint16_t dst_port, uint16_t dst_port_mask,
+/*
+ * Add a filter for IPv4 packets based on the destination IP address,
+ * source and destination ports, and protocol.
+ *
+ * The destination IP address as well as all ports and masks
+ * should all be big endian when passed to this function. Although
+ * ntuple filters use big endian values, ACLs use host ordering,
+ * so this function converts these values to host ordering when
+ * the ACL is used.
+ *
+ * @dst_ip_be: destination IP address to match against
+ * @src_port_be: L4 source port to match against
+ * @src_port_mask_be: mask for @src_port_be; set to 0xFFFF to match
+ *     against @src_port_be, or set to 0 to not match against @src_port_be
+ * @dst_port_be: L4 destination port to match against
+ * @dst_port_mask_be: mask for @dst_port_be; set to 0xFFFF to match
+ *     against @dst_port_be, or set to 0 to not match against @dst_port_be
+ * @proto: next header protocol to match against
+ *
+ * Filters can be installed using whatever methods are available,
+ * including ntuple filters (if supported by hardware) or ACLs
+ * (as a software backup). Depending on the method used, the block
+ * that uses the filter may need to query the NIC or a mailbox, etc.
+ * Therefore, this function inserts the RX method needed into
+ * @rx_method by logical OR'ing it into the existing value.
+ *
+ * @queue_id: the RX queue ID to which matching packets are
+ *     steered (if ntuple filters are supported)
+ * @cb_f: the function that is invoked on matching packets
+ *     (if the ACL is being used)
+ * @ext_cb_f: the function that is invoked on potential
+ *     matching packets that checks for variable-length/extension
+ *     headers (if the ACL is being used)
+ */
+int ipv4_pkt_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
 	uint8_t proto, uint16_t queue_id,
-	int ipv4_configured, int ipv6_configured);
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	uint8_t *rx_method);
+
+/*
+ * Add a filter for IPv6 packets based on the destination IP address,
+ * source and destination ports, and protocol.
+ *
+ * The destination IP address as well as all ports and masks
+ * should all be big endian when passed to this function. Although
+ * ntuple filters use big endian values, ACLs use host ordering,
+ * so this function converts these values to host ordering when
+ * the ACL is used.
+ *
+ * @dst_ip_be_ptr32: pointer to destination IP address to match against
+ * @src_port_be: L4 source port to match against
+ * @src_port_mask_be: mask for @src_port_be; set to 0xFFFF to match
+ *     against @src_port_be, or set to 0 to not match against @src_port_be
+ * @dst_port_be: L4 destination port to match against
+ * @dst_port_mask_be: mask for @dst_port_be; set to 0xFFFF to match
+ *     against @dst_port_be, or set to 0 to not match against @dst_port_be
+ * @proto: next header protocol to match against
+ *
+ * Filters can be installed using whatever methods are available,
+ * including ntuple filters (if supported by hardware) or ACLs
+ * (as a software backup). Depending on the method used, the block
+ * that uses the filter may need to query the NIC or a mailbox, etc.
+ * Therefore, this function inserts the RX method needed into
+ * @rx_method by logical OR'ing it into the existing value.
+ *
+ * @queue_id: the RX queue ID to which matching packets are
+ *     steered (if ntuple filters are supported)
+ * @cb_f: the function that is invoked on matching packets
+ *     (if the ACL is being used)
+ * @ext_cb_f: the function that is invoked on potential
+ *     matching packets that checks for variable-length/extension
+ *     headers (if the ACL is being used)
+ */
+int ipv6_pkt_filter_add(struct gatekeeper_if *iface,
+	const rte_be32_t *dst_ip_be_ptr32,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto, uint16_t queue_id,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	uint8_t *rx_method);
+
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
@@ -477,29 +582,22 @@ destroy_mempool(__attribute__((unused)) struct rte_mempool *mp)
 }
 
 static inline bool
-ipv4_if_configured(struct gatekeeper_if *iface)
+ipv4_if_configured(const struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV4);
 }
 
 static inline bool
-ipv6_if_configured(struct gatekeeper_if *iface)
+ipv6_if_configured(const struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV6);
 }
 
 /*
- * EtherType and ntuple filters can only be used if supported
- * by the NIC (to steer matching packets) and if RSS is supported
+ * EtherType filters can only be used if supported by the NIC
+ * (to steer matching packets) and if RSS is supported
  * (to steer non-matching packets elsewhere).
  */
-
-static inline bool
-hw_filter_ntuple_available(const struct gatekeeper_if *iface)
-{
-	return iface->hw_filter_ntuple && iface->rss;
-}
-
 static inline bool
 hw_filter_eth_available(const struct gatekeeper_if *iface)
 {

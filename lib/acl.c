@@ -146,6 +146,7 @@ destroy_acls(struct acl_state *astate)
 			astate->acls[i] = NULL;
 		}
 	}
+	astate->enabled = false;
 }
 
 /*
@@ -225,8 +226,9 @@ struct rte_acl_field_def ipv4_defs[NUM_FIELDS_IPV4] = {
  *   is not very efficient due to the variable header of IP.
  */
 int
-register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
-	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface)
+register_ipv4_acl(struct ipv4_acl_rule *ipv4_rule,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	struct gatekeeper_if *iface)
 {
 	unsigned int numa_nodes = get_net_conf()->numa_nodes;
 	unsigned int i;
@@ -238,8 +240,7 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
 	}
 
 	/* Assign a new ID for this rule type. */
-	for (i = 0; i < num_rules; i++)
-		ipv4_rules[i].data.userdata = iface->ipv4_acls.func_count;
+	ipv4_rule->data.userdata = iface->ipv4_acls.func_count;
 
 	for (i = 0; i < numa_nodes; i++) {
 		int ret;
@@ -248,7 +249,7 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rules, unsigned int num_rules,
 			continue;
 
 		ret = rte_acl_add_rules(iface->ipv4_acls.acls[i],
-			(struct rte_acl_rule *)ipv4_rules, num_rules);
+			(struct rte_acl_rule *)ipv4_rule, 1);
 		if (ret < 0) {
 			G_LOG(ERR, "acl: failed to add IPv4 ACL rules on the %s interface on socket %d\n",
 				iface->name, i);
@@ -336,6 +337,7 @@ init_ipv4_acls(struct gatekeeper_if *iface)
 	iface->ipv4_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv4_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv4_acls.func_count = 1;
+	iface->ipv4_acls.enabled = true;
 
 	return 0;
 }
@@ -450,8 +452,9 @@ struct rte_acl_field_def ipv6_defs[NUM_FIELDS_IPV6] = {
  *   is not very efficient due to the variable header of IP.
  */
 int
-register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
-	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface)
+register_ipv6_acl(struct ipv6_acl_rule *ipv6_rule,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	struct gatekeeper_if *iface)
 {
 	unsigned int numa_nodes = get_net_conf()->numa_nodes;
 	unsigned int i;
@@ -463,8 +466,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 	}
 
 	/* Assign a new ID for this rule type. */
-	for (i = 0; i < num_rules; i++)
-		ipv6_rules[i].data.userdata = iface->ipv6_acls.func_count;
+	ipv6_rule->data.userdata = iface->ipv6_acls.func_count;
 
 	for (i = 0; i < numa_nodes; i++) {
 		int ret;
@@ -473,7 +475,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rules, unsigned int num_rules,
 			continue;
 
 		ret = rte_acl_add_rules(iface->ipv6_acls.acls[i],
-			(struct rte_acl_rule *)ipv6_rules, num_rules);
+			(struct rte_acl_rule *)ipv6_rule, 1);
 		if (ret < 0) {
 			G_LOG(ERR, "acl: failed to add IPv6 ACL rules on the %s interface on socket %d\n",
 				iface->name, i);
@@ -561,6 +563,7 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 	iface->ipv6_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv6_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv6_acls.func_count = 1;
+	iface->ipv6_acls.enabled = true;
 
 	return 0;
 }

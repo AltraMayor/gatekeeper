@@ -24,6 +24,7 @@
 #include <rte_icmp.h>
 
 #include "gatekeeper_config.h"
+#include "gatekeeper_l2.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_varip.h"
@@ -600,7 +601,7 @@ lls_proc(void *arg)
 		/* Read in packets on front and back interfaces. */
 		int num_tx;
 
-		if (hw_filter_eth_available(front)) {
+		if (lls_conf->rx_method_front & RX_METHOD_NIC) {
 			num_tx = process_pkts(lls_conf, front,
 				lls_conf->rx_queue_front,
 				lls_conf->tx_queue_front,
@@ -612,7 +613,7 @@ lls_proc(void *arg)
 		}
 
 		if (net_conf->back_iface_enabled &&
-				hw_filter_eth_available(back)) {
+				lls_conf->rx_method_back & RX_METHOD_NIC) {
 			num_tx = process_pkts(lls_conf, back,
 				lls_conf->rx_queue_back,
 				lls_conf->tx_queue_back,
@@ -623,7 +624,11 @@ lls_proc(void *arg)
 			}
 		}
 
-		/* Process any requests. */
+		/*
+		 * Process any requests. The RX method does not
+		 * matter here, since the mailbox is always used
+		 * for ARP/ND hold requests from other blocks.
+		 */
 		if (likely(lls_process_reqs(lls_conf) == 0)) {
 			/*
 			 * If there are no requests to go through, then do a
@@ -664,88 +669,58 @@ lls_proc(void *arg)
 	return cleanup_lls();
 }
 
-static void
-fill_icmp_rule(struct ipv4_acl_rule *rule, struct in_addr *addr)
-{
-	rule->data.category_mask = 0x1;
-	rule->data.priority = 1;
-	/* Userdata is filled in in register_ipv4_acl(). */
-
-	rule->field[PROTO_FIELD_IPV4].value.u8 = IPPROTO_ICMP;
-	rule->field[PROTO_FIELD_IPV4].mask_range.u8 = 0xFF;
-
-	rule->field[DST_FIELD_IPV4].value.u32 =
-		rte_be_to_cpu_32(addr->s_addr);
-	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
-}
-
 static int
-register_icmp_acl_rules(struct gatekeeper_if *iface)
+register_icmp_filter(struct gatekeeper_if *iface, uint16_t rx_queue,
+	uint8_t *rx_method)
 {
-	struct ipv4_acl_rule ipv4_rules[1];
-	int ret;
-
-	memset(ipv4_rules, 0, sizeof(ipv4_rules));
-
-	fill_icmp_rule(&ipv4_rules[0], &iface->ip4_addr);
-
-	ret = register_ipv4_acl(ipv4_rules, RTE_DIM(ipv4_rules),
-		submit_icmp, match_icmp, iface);
+	int ret = ipv4_pkt_filter_add(iface,
+		iface->ip4_addr.s_addr,
+		0, 0, 0, 0,
+		IPPROTO_ICMP, rx_queue,
+		submit_icmp, match_icmp,
+		rx_method);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ICMP ACL on %s iface\n",
+		LLS_LOG(ERR,
+			"Could not add IPv4 ICMP filter on %s iface\n",
 			iface->name);
 		return ret;
 	}
-
 	return 0;
 }
 
-static void
-fill_icmp6_rule(struct ipv6_acl_rule *rule, const struct in6_addr *addr)
-{
-	const uint32_t *ptr32 = (const uint32_t *)addr;
-	int i;
-
-	rule->data.category_mask = 0x1;
-	rule->data.priority = 1;
-	/* Userdata is filled in in register_ipv6_acl(). */
-
-	rule->field[PROTO_FIELD_IPV6].value.u8 = IPPROTO_ICMPV6;
-	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
-
-	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
-		rule->field[i].value.u32 = rte_be_to_cpu_32(*ptr32);
-		rule->field[i].mask_range.u32 = 32;
-		ptr32++;
-	}
-}
-
 static int
-register_icmp6_acl_rules(struct gatekeeper_if *iface)
+register_icmp6_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
+	uint8_t *rx_method)
 {
-	struct ipv6_acl_rule ipv6_rules[5];
+	/* All of the IPv6 addresses that a Gatekeeper interface supports. */
+	const struct in6_addr *ip6_addrs[] = {
+		&iface->ip6_addr,
+		&iface->ll_ip6_addr,
+		&iface->ip6_mc_addr,
+		&iface->ll_ip6_mc_addr,
+		/*
+		 * The all nodes multicast address is only used to ignore
+		 * router solitication/advertisement messages so that they
+		 * do not clutter the Gatekeeper log.
+		 */
+		&ip6_allnodes_mc_addr,
+	};
+	unsigned int i;
 	int ret;
 
-	memset(&ipv6_rules, 0, sizeof(ipv6_rules));
-
-	/* All of the IPv6 addresses that a Gatekeeper interface supports. */
-	fill_icmp6_rule(&ipv6_rules[0], &iface->ip6_addr);
-	fill_icmp6_rule(&ipv6_rules[1], &iface->ll_ip6_addr);
-	fill_icmp6_rule(&ipv6_rules[2], &iface->ip6_mc_addr);
-	fill_icmp6_rule(&ipv6_rules[3], &iface->ll_ip6_mc_addr);
-	/*
-	 * The all nodes multicast address is only used to ignore
-	 * router solitication/advertisement messages so that they
-	 * do not clutter the Gatekeeper log.
-	 */
-	fill_icmp6_rule(&ipv6_rules[4], &ip6_allnodes_mc_addr);
-
-	ret = register_ipv6_acl(ipv6_rules, RTE_DIM(ipv6_rules),
-		submit_icmp6, match_icmp6, iface);
-	if (ret < 0) {
-		LLS_LOG(ERR, "Could not register ICMPv6 ACL on %s iface\n",
-			iface->name);
-		return ret;
+	for (i = 0; i < RTE_DIM(ip6_addrs); i++) {
+		ret = ipv6_pkt_filter_add(iface,
+			(rte_be32_t *)&ip6_addrs[i]->s6_addr,
+			0, 0, 0, 0,
+			IPPROTO_ICMPV6, rx_queue,
+			submit_icmp6, match_icmp6,
+			rx_method);
+		if (ret < 0) {
+			LLS_LOG(ERR,
+				"Could not add IPv6 ICMP filter on %s iface\n",
+				iface->name);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -875,6 +850,7 @@ lls_stage2(void *arg)
 				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
 			if (ret < 0)
 				return ret;
+			lls_conf->rx_method_front |= RX_METHOD_NIC;
 		} else if (lls_conf->rx_queue_front != 0) {
 			/*
 			 * RSS on most NICs seem to default to sending ARP
@@ -892,8 +868,9 @@ lls_stage2(void *arg)
 			return -1;
 		}
 
-		/* Receive ICMP packets using IPv4 ACL filters. */
-		ret = register_icmp_acl_rules(&net_conf->front);
+		ret = register_icmp_filter(&net_conf->front,
+			lls_conf->rx_queue_front,
+			&lls_conf->rx_method_front);
 		if (ret < 0)
 			return ret;
 	}
@@ -904,28 +881,32 @@ lls_stage2(void *arg)
 				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
 			if (ret < 0)
 				return ret;
+			lls_conf->rx_method_back |= RX_METHOD_NIC;
 		} else if (lls_conf->rx_queue_back != 0) {
 			/* See comment above about LLS listening on queue 0. */
 			LLS_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");
 			return -1;
 		}
 
-		/* Receive ICMP packets using IPv4 ACL filters. */
-		ret = register_icmp_acl_rules(&net_conf->back);
+		ret = register_icmp_filter(&net_conf->back,
+			lls_conf->rx_queue_back,
+			&lls_conf->rx_method_back);
 		if (ret < 0)
 			return ret;
 	}
 
-	/* Receive ND packets using IPv6 ACL filters. */
-
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = register_icmp6_acl_rules(&net_conf->front);
+		ret = register_icmp6_filters(&net_conf->front,
+			lls_conf->rx_queue_front,
+			&lls_conf->rx_method_front);
 		if (ret < 0)
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = register_icmp6_acl_rules(&net_conf->back);
+		ret = register_icmp6_filters(&net_conf->back,
+			lls_conf->rx_queue_back,
+			&lls_conf->rx_method_back);
 		if (ret < 0)
 			return ret;
 	}

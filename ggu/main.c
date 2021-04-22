@@ -26,7 +26,6 @@
 #include <rte_ethdev.h>
 #include <rte_atomic.h>
 
-#include "gatekeeper_acl.h"
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
@@ -43,12 +42,6 @@ int ggu_logtype;
 #define GGU_LOG(level, ...)                               \
 	rte_log_ratelimit(RTE_LOG_ ## level, ggu_logtype, \
 		"GATEKEEPER GGU: " __VA_ARGS__)
-
-static inline const char *
-filter_name(const struct gatekeeper_if *iface)
-{
-	return hw_filter_ntuple_available(iface) ? "ntuple filter" : "ACL";
-}
 
 static void
 process_single_policy(struct ggu_policy *policy, void *arg)
@@ -361,16 +354,12 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 
 		ip4hdr = l3_hdr;
 		if (ip4hdr->next_proto_id != IPPROTO_UDP) {
-			GGU_LOG(ERR,
-				"Received non-UDP packets, IPv4 %s bug\n",
-				filter_name(back));
+			GGU_LOG(ERR, "Received non-UDP packets, IPv4 filter bug\n");
 			goto free_packet;
 		}
 
 		if (ip4hdr->dst_addr != back->ip4_addr.s_addr) {
-			GGU_LOG(ERR,
-				"Received packets not destined to the Gatekeeper server, IPv4 %s bug\n",
-				filter_name(back));
+			GGU_LOG(ERR, "Received packets not destined to the Gatekeeper server, IPv4 filter bug\n");
 			goto free_packet;
 		}
 
@@ -422,21 +411,6 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		ip6hdr = l3_hdr;
 
-		/*
-		 * XXX #63 Given that IPv6 ntuple filter doesn't check
-		 * the destination address, it must be done here.
-		 * If the IPv6 packet is not destined to
-		 * the Gatekeeper server, redirect the packet properly.
-		 */
-		if (hw_filter_ntuple_available(back) &&
-				memcmp(ip6hdr->dst_addr,
-					back->ip6_addr.s6_addr,
-					sizeof(ip6hdr->dst_addr)) != 0) {
-			GGU_LOG(NOTICE,
-				"Received an IPv6 packet destined to other host\n");
-			return;
-		}
-
 		if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
 			GGU_LOG(WARNING,
 				"Received IPv6 fragmented packets destined to the Gatekeeper server at %s\n",
@@ -453,9 +427,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		}
 
 		if (nexthdr != IPPROTO_UDP) {
-			GGU_LOG(ERR,
-				"Received non-UDP packets, IPv6 %s bug\n",
-				filter_name(back));
+			GGU_LOG(ERR, "Received non-UDP packets, IPv6 filter bug\n");
 			goto free_packet;
 		}
 
@@ -485,10 +457,9 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	if (udphdr->src_port != ggu_conf->ggu_src_port ||
 			udphdr->dst_port != ggu_conf->ggu_dst_port) {
 		GGU_LOG(ERR,
-			"Unknown udp src port %hu, dst port %hu, %s bug\n",
+			"Unknown UDP src port %hu, dst port %hu, filter bug\n",
 			rte_be_to_cpu_16(udphdr->src_port),
-			rte_be_to_cpu_16(udphdr->dst_port),
-			filter_name(back));
+			rte_be_to_cpu_16(udphdr->dst_port));
 		goto free_packet;
 	}
 
@@ -591,6 +562,43 @@ free_pkts:
 	return ret;
 }
 
+static void
+process_back_nic(struct ggu_config *ggu_conf,
+	uint16_t port_in, uint16_t rx_queue, uint16_t max_pkt_burst)
+{
+	struct rte_mbuf *bufs[max_pkt_burst];
+	uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
+		bufs, max_pkt_burst);
+	unsigned int i;
+
+	if (unlikely(num_rx == 0))
+		return;
+
+	for (i = 0; i < num_rx; i++)
+		process_single_packet(bufs[i], ggu_conf);
+}
+
+static void
+process_mb(struct ggu_config *ggu_conf)
+{
+	unsigned int mailbox_burst_size = ggu_conf->mailbox_burst_size;
+	struct ggu_request *reqs[mailbox_burst_size];
+	unsigned int num_reqs = mb_dequeue_burst(&ggu_conf->mailbox,
+		(void **)reqs, mailbox_burst_size);
+	unsigned int i;
+
+	if (unlikely(num_reqs == 0))
+		return;
+
+	for (i = 0; i < num_reqs; i++) {
+		unsigned int j;
+		for (j = 0; j < reqs[i]->num_pkts; j++)
+			process_single_packet(reqs[i]->pkts[j], ggu_conf);
+	}
+
+	mb_free_entry_bulk(&ggu_conf->mailbox, (void * const *)reqs, num_reqs);
+}
+
 static int
 ggu_proc(void *arg)
 {
@@ -598,53 +606,25 @@ ggu_proc(void *arg)
 	struct ggu_config *ggu_conf = (struct ggu_config *)arg;
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
-	unsigned int i;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
-	GGU_LOG(NOTICE, "The GK-GT unit is running at lcore = %u\n", lcore);
+	GGU_LOG(NOTICE, "The GT-GK unit is running at lcore = %u\n", lcore);
 
 	/*
-	 * Load a set of GK-GT packets from the back NIC
+	 * Load sets of GT-GK packets from the back NIC
 	 * or from the GGU mailbox.
 	 */
-	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
-		while (likely(!exiting)) {
-			struct rte_mbuf *bufs[max_pkt_burst];
-			uint16_t num_rx = rte_eth_rx_burst(port_in, rx_queue,
-				bufs, max_pkt_burst);
-
-			if (unlikely(num_rx == 0))
-				continue;
-
-			for (i = 0; i < num_rx; i++)
-				process_single_packet(bufs[i], ggu_conf);
+	while (likely(!exiting)) {
+		if (ggu_conf->rx_method_back & RX_METHOD_NIC) {
+			process_back_nic(ggu_conf, port_in,
+				rx_queue, max_pkt_burst);
 		}
-	} else {
-		unsigned int mailbox_burst_size =
-			ggu_conf->mailbox_burst_size;
 
-		while (likely(!exiting)) {
-			struct ggu_request *reqs[mailbox_burst_size];
-			unsigned int num_reqs =
-				mb_dequeue_burst(&ggu_conf->mailbox,
-				(void **)reqs, mailbox_burst_size);
-
-			if (unlikely(num_reqs == 0))
-				continue;
-
-			for (i = 0; i < num_reqs; i++) {
-				unsigned int j;
-				for (j = 0; j < reqs[i]->num_pkts; j++) {
-					process_single_packet(reqs[i]->pkts[j],
-						ggu_conf);
-				}
-			}
-			mb_free_entry_bulk(&ggu_conf->mailbox,
-				(void * const *)reqs, num_reqs);
-		}
+		if (ggu_conf->rx_method_back & RX_METHOD_MB)
+			process_mb(ggu_conf);
 	}
 
-	GGU_LOG(NOTICE, "The GK-GT unit at lcore = %u is exiting\n", lcore);
+	GGU_LOG(NOTICE, "The GT-GK unit at lcore = %u is exiting\n", lcore);
 	return cleanup_ggu(ggu_conf);
 }
 
@@ -690,98 +670,52 @@ ggu_stage1(void *arg)
 	return 0;
 }
 
-static void
-fill_ggu4_rule(struct ipv4_acl_rule *rule, struct ggu_config *ggu_conf)
-{
-	rule->data.category_mask = 0x1;
-	rule->data.priority = 1;
-	/* Userdata is filled in in register_ipv4_acl(). */
-
-	rule->field[PROTO_FIELD_IPV4].value.u8 = IPPROTO_UDP;
-	rule->field[PROTO_FIELD_IPV4].mask_range.u8 = 0xFF;
-
-	rule->field[DST_FIELD_IPV4].value.u32 =
-		rte_be_to_cpu_32(ggu_conf->net->back.ip4_addr.s_addr);
-	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
-
-	rule->field[SRCP_FIELD_IPV4].value.u16 = ggu_conf->ggu_src_port;
-	rule->field[SRCP_FIELD_IPV4].mask_range.u16 = 0xFFFF;
-	rule->field[DSTP_FIELD_IPV4].value.u16 = ggu_conf->ggu_dst_port;
-	rule->field[DSTP_FIELD_IPV4].mask_range.u16 = 0xFFFF;
-}
-
-static void
-fill_ggu6_rule(struct ipv6_acl_rule *rule, struct ggu_config *ggu_conf)
-{
-	uint32_t *ptr32 = (uint32_t *)&ggu_conf->net->back.ip6_addr.s6_addr;
-	int i;
-
-	rule->data.category_mask = 0x1;
-	rule->data.priority = 1;
-	/* Userdata is filled in in register_ipv6_acl(). */
-
-	rule->field[PROTO_FIELD_IPV6].value.u8 = IPPROTO_UDP;
-	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
-
-	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
-		rule->field[i].value.u32 = rte_be_to_cpu_32(*ptr32);
-		rule->field[i].mask_range.u32 = 32;
-		ptr32++;
-	}
-
-	rule->field[SRCP_FIELD_IPV6].value.u16 = ggu_conf->ggu_src_port;
-	rule->field[SRCP_FIELD_IPV6].mask_range.u16 = 0xFFFF;
-	rule->field[DSTP_FIELD_IPV6].value.u16 = ggu_conf->ggu_dst_port;
-	rule->field[DSTP_FIELD_IPV6].mask_range.u16 = 0xFFFF;
-}
-
 static int
 ggu_stage2(void *arg)
 {
 	struct ggu_config *ggu_conf = arg;
-	bool ipv4_configured = ipv4_if_configured(&ggu_conf->net->back);
-	bool ipv6_configured = ipv6_if_configured(&ggu_conf->net->back);
-	struct ipv4_acl_rule ipv4_rule = { };
-	struct ipv6_acl_rule ipv6_rule = { };
 	int ret;
 
 	/*
-	 * Setup the ntuple filters that assign the GK-GT packets
+	 * Setup the filters that assign the GT-GK packets
 	 * to its queue for both IPv4 and IPv6 addresses.
+	 * Packets using the GGU protocol don't have variable
+	 * length headers, and therefore we don't need a match
+	 * function when calling ipv{4,6}_pkt_filter_add().
 	 */
-	if (hw_filter_ntuple_available(&ggu_conf->net->back)) {
-		return ntuple_filter_add(&ggu_conf->net->back,
+
+	if (ipv4_if_configured(&ggu_conf->net->back)) {
+		/*
+		 * Note that the IP address, ports, and masks
+		 * are all in big endian ordering as required.
+		 */
+		ret = ipv4_pkt_filter_add(&ggu_conf->net->back,
 			ggu_conf->net->back.ip4_addr.s_addr,
 			ggu_conf->ggu_src_port, UINT16_MAX,
 			ggu_conf->ggu_dst_port, UINT16_MAX,
 			IPPROTO_UDP, ggu_conf->rx_queue_back,
-			ipv4_configured, ipv6_configured);
-	}
-
-	/*
-	 * ntuple filter is not supported, so add ACL rules
-	 * to capture GGU packets. Since the channel that
-	 * GGU packets are sent through is controlled by
-	 * Gatekeeper, GGU packets won't have variable
-	 * headers, so we don't need a match function.
-	 */
-
-	if (ipv4_configured) {
-		fill_ggu4_rule(&ipv4_rule, ggu_conf);
-		ret = register_ipv4_acl(&ipv4_rule, 1,
-			submit_ggu, NULL, &ggu_conf->net->back);
+			submit_ggu, NULL,
+			&ggu_conf->rx_method_back);
 		if (ret < 0) {
-			GGU_LOG(ERR, "Could not register IPv4 GGU ACL on back iface\n");
+			GGU_LOG(ERR, "Could not configure IPv4 filter for GGU packets\n");
 			return ret;
 		}
 	}
 
-	if (ipv6_configured) {
-		fill_ggu6_rule(&ipv6_rule, ggu_conf);
-		ret = register_ipv6_acl(&ipv6_rule, 1,
-			submit_ggu, NULL, &ggu_conf->net->back);
+	if (ipv6_if_configured(&ggu_conf->net->back)) {
+		/*
+		 * Note that the IP address, ports, and masks
+		 * are all in big endian ordering as required.
+		 */
+		ret = ipv6_pkt_filter_add(&ggu_conf->net->back,
+			(rte_be32_t *)&ggu_conf->net->back.ip6_addr.s6_addr,
+			ggu_conf->ggu_src_port, UINT16_MAX,
+			ggu_conf->ggu_dst_port, UINT16_MAX,
+			IPPROTO_UDP, ggu_conf->rx_queue_back,
+			submit_ggu, NULL,
+			&ggu_conf->rx_method_back);
 		if (ret < 0) {
-			GGU_LOG(ERR, "Could not register IPv6 GGU ACL on back iface\n");
+			GGU_LOG(ERR, "Could not configure IPv6 filter for GGU packets\n");
 			return ret;
 		}
 	}

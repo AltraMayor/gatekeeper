@@ -20,6 +20,7 @@
 
 #include <rte_arp.h>
 
+#include "gatekeeper_l2.h"
 #include "arp.h"
 #include "cache.h"
 

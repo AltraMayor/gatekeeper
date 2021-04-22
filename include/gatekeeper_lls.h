@@ -19,14 +19,16 @@
 #ifndef _GATEKEEPER_LLS_H_
 #define _GATEKEEPER_LLS_H_
 
+#include <lua.h>
 #include <netinet/in.h>
 
 #include <rte_arp.h>
 #include <rte_ip.h>
 
-#include "gatekeeper_acl.h"
-#include "gatekeeper_mailbox.h"
 #include "gatekeeper_log_ratelimit.h"
+#include "gatekeeper_mailbox.h"
+#include "gatekeeper_net.h"
+#include "gatekeeper_ratelimit.h"
 
 extern int lls_logtype;
 
@@ -239,6 +241,10 @@ struct lls_config {
 	uint16_t           tx_queue_front;
 	uint16_t           rx_queue_back;
 	uint16_t           tx_queue_back;
+
+	/* RX methods for both interfaces. */
+	uint8_t            rx_method_front;
+	uint8_t            rx_method_back;
 
 	unsigned int       total_pkt_burst;
 	/* The packet mbuf pool for the LLS block. */

@@ -60,21 +60,16 @@ add_pkt_acl(struct acl_search *acl, struct rte_mbuf *pkt)
 	acl->num++;
 }
 
-static inline int
-ipv4_acl_enabled(struct gatekeeper_if *iface)
+static inline bool
+ipv4_acl_enabled(const struct gatekeeper_if *iface)
 {
-	/*
-	 * The IPv4 ACL is only needed for interfaces that have
-	 * IPv4 addresses and don't support the ntuple filter.
-	 */
-	return !iface->hw_filter_ntuple && ipv4_if_configured(iface);
+	return iface->ipv4_acls.enabled;
 }
 
-static inline int
-ipv6_acl_enabled(struct gatekeeper_if *iface)
+static inline bool
+ipv6_acl_enabled(const struct gatekeeper_if *iface)
 {
-	/* The IPv6 ACL is needed whenever an interface has an IPv6 address. */
-	return ipv6_if_configured(iface);
+	return iface->ipv6_acls.enabled;
 }
 
 static inline int
@@ -116,9 +111,10 @@ RTE_ACL_RULE_DEF(ipv4_acl_rule, RTE_DIM(ipv4_defs));
 /* Allocate IPv4 ACLs. */
 int init_ipv4_acls(struct gatekeeper_if *iface);
 
-/* Register IPv4 ACL rules and callback functions. */
-int register_ipv4_acl(struct ipv4_acl_rule *rules, unsigned int num_rules,
-	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface);
+/* Register an IPv4 ACL rule and callback functions. */
+int register_ipv4_acl(struct ipv4_acl_rule *rule,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	struct gatekeeper_if *iface);
 
 /* Build the ACL trie. This should be invoked after all ACL rules are added. */
 int build_ipv4_acls(struct gatekeeper_if *iface);
@@ -146,9 +142,10 @@ RTE_ACL_RULE_DEF(ipv6_acl_rule, RTE_DIM(ipv6_defs));
 /* Allocate IPv6 ACLs. */
 int init_ipv6_acls(struct gatekeeper_if *iface);
 
-/* Register IPv6 ACL rules and callback functions. */
-int register_ipv6_acl(struct ipv6_acl_rule *rules, unsigned int num_rules,
-	acl_cb_func cb_f, ext_cb_func ext_cb_f, struct gatekeeper_if *iface);
+/* Register an IPv6 ACL rule and callback functions. */
+int register_ipv6_acl(struct ipv6_acl_rule *rule,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	struct gatekeeper_if *iface);
 
 /* Build the ACL trie. This should be invoked after all ACL rules are added. */
 int build_ipv6_acls(struct gatekeeper_if *iface);

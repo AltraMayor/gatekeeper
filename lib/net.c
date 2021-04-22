@@ -154,120 +154,211 @@ out:
 }
 
 /*
- * @dst_ip, @src_port, @src_port_mask, @dst_port, and @dst_port_mask
- * must be in big endian.
- *
- * By specifying the tuple (proto, src_port, dst_port) (and masks),
- * it can filter both IPv4 and IPv6 addresses.
+ * ntuple filters can only be used if supported by the NIC
+ * (to steer matching packets) and if RSS is supported
+ * (to steer non-matching packets elsewhere).
  */
-int
-ntuple_filter_add(struct gatekeeper_if *iface, uint32_t dst_ip,
-	uint16_t src_port, uint16_t src_port_mask,
-	uint16_t dst_port, uint16_t dst_port_mask,
-	uint8_t proto, uint16_t queue_id,
-	int ipv4_configured, int ipv6_configured)
+static inline bool
+hw_filter_ntuple_available(const struct gatekeeper_if *iface)
 {
-	int ret = 0;
+	return iface->hw_filter_ntuple && iface->rss;
+}
+
+static int
+ipv4_ntuple_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto, uint16_t queue_id)
+{
 	unsigned int i;
 	struct rte_eth_ntuple_filter filter_v4 = {
 		.flags = RTE_5TUPLE_FLAGS,
-		.dst_ip = dst_ip,
+		.dst_ip = dst_ip_be,
 		.dst_ip_mask = UINT32_MAX,
 		.src_ip = 0,
 		.src_ip_mask = 0,
-		.dst_port = dst_port,
-		.dst_port_mask = dst_port_mask,
-		.src_port = src_port,
-		.src_port_mask = src_port_mask,
+		.dst_port = dst_port_be,
+		.dst_port_mask = dst_port_mask_be,
+		.src_port = src_port_be,
+		.src_port_mask = src_port_mask_be,
 		.proto = proto,
 		.proto_mask = UINT8_MAX,
 		.tcp_flags = 0,
 		.priority = 1,
 		.queue = queue_id,
 	};
-
-	struct rte_eth_ntuple_filter filter_v6 = {
-		.flags = RTE_5TUPLE_FLAGS,
-		.dst_ip = 0,
-		.dst_ip_mask = 0,
-		.src_ip = 0,
-		.src_ip_mask = 0,
-		.dst_port = dst_port,
-		.dst_port_mask = dst_port_mask,
-		.src_port = src_port,
-		.src_port_mask = src_port_mask,
-		.proto = proto,
-		.proto_mask = UINT8_MAX,
-		.tcp_flags = 0,
-		.priority = 1,
-		.queue = queue_id,
-	};
-
-	RTE_VERIFY(iface->hw_filter_ntuple);
-
-	if (!ipv4_configured)
-		goto ipv6;
 
 	for (i = 0; i < iface->num_ports; i++) {
 		uint16_t port_id = iface->ports[i];
-		ret = rte_eth_dev_filter_ctrl(port_id,
+		int ret = rte_eth_dev_filter_ctrl(port_id,
 			RTE_ETH_FILTER_NTUPLE,
 			RTE_ETH_FILTER_ADD,
 			&filter_v4);
-		if (ret == -ENOTSUP) {
+		switch (ret) {
+		case 0:
+			/* Success. */
+			break;
+		case -ENOTSUP:
 			G_LOG(ERR,
 				"net: hardware doesn't support adding an IPv4 ntuple filter on port %hhu\n",
 				port_id);
-			ret = -1;
-			goto out;
-		} else if (ret == -ENODEV) {
+			return -1;
+		case -ENODEV:
 			G_LOG(ERR,
 				"net: port %hhu is invalid for adding an IPv4 ntuple filter\n",
 				port_id);
-			ret = -1;
-			goto out;
-		} else if (ret != 0) {
+			return -1;
+		default:
 			G_LOG(ERR,
-				"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv4 ntuple filter\n",
-				port_id);
-			ret = -1;
-			goto out;
-		}
-	}
-ipv6:
-	if (!ipv6_configured)
-		goto out;
-
-	for (i = 0; i < iface->num_ports; i++) {
-		uint16_t port_id = iface->ports[i];
-		ret = rte_eth_dev_filter_ctrl(port_id,
-			RTE_ETH_FILTER_NTUPLE,
-			RTE_ETH_FILTER_ADD,
-			&filter_v6);
-		if (ret == -ENOTSUP) {
-			G_LOG(ERR,
-				"net: hardware doesn't support adding an IPv6 ntuple filter on port %hhu\n",
-				port_id);
-			ret = -1;
-			goto out;
-		} else if (ret == -ENODEV) {
-			G_LOG(ERR,
-				"net: port %hhu is invalid for adding an IPv6 ntuple filter\n",
-				port_id);
-			ret = -1;
-			goto out;
-		} else if (ret != 0) {
-			G_LOG(ERR,
-				"net: other errors that depend on the specific operations implementation on port %hhu for adding an IPv6 ntuple filter\n",
-				port_id);
-			ret = -1;
-			goto out;
+				"net: implementation-specific error (%d: %s) on port %hhu for adding an IPv4 ntuple filter\n",
+				ret, strerror(-ret), port_id);
+			return -1;
 		}
 	}
 
-	ret = 0;
-out:
-	return ret;
+	return 0;
+}
+
+static void
+ipv4_fill_acl_rule(struct ipv4_acl_rule *rule,
+	rte_be32_t dst_ip_be,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto)
+{
+	rule->data.category_mask = 0x1;
+	rule->data.priority = 1;
+	/* Userdata is filled in in register_ipv4_acl(). */
+
+	rule->field[PROTO_FIELD_IPV4].value.u8 = proto;
+	rule->field[PROTO_FIELD_IPV4].mask_range.u8 = 0xFF;
+
+	rule->field[DST_FIELD_IPV4].value.u32 = rte_be_to_cpu_32(dst_ip_be);
+	rule->field[DST_FIELD_IPV4].mask_range.u32 = 32;
+
+	rule->field[SRCP_FIELD_IPV4].value.u16 = rte_be_to_cpu_16(src_port_be);
+	rule->field[SRCP_FIELD_IPV4].mask_range.u16 =
+		rte_be_to_cpu_16(src_port_mask_be);
+	rule->field[DSTP_FIELD_IPV4].value.u16 = rte_be_to_cpu_16(dst_port_be);
+	rule->field[DSTP_FIELD_IPV4].mask_range.u16 =
+		rte_be_to_cpu_16(dst_port_mask_be);
+}
+
+int
+ipv4_pkt_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto, uint16_t queue_id,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	uint8_t *rx_method)
+{
+	int ret;
+
+	if ((proto == IPPROTO_TCP || proto == IPPROTO_UDP) &&
+			hw_filter_ntuple_available(iface)) {
+		ret = ipv4_ntuple_filter_add(iface, dst_ip_be,
+			src_port_be, src_port_mask_be,
+			dst_port_be, dst_port_mask_be,
+			proto, queue_id);
+		if (ret < 0) {
+			G_LOG(ERR, "Could not register IPv4 ntuple filter on the %s interface\n",
+				iface->name);
+			return ret;
+		}
+		*rx_method |= RX_METHOD_NIC;
+	} else {
+		struct ipv4_acl_rule ipv4_rule = { };
+
+		if (!ipv4_acl_enabled(iface)) {
+			ret = init_ipv4_acls(iface);
+			if (ret < 0)
+				return ret;
+		}
+
+		ipv4_fill_acl_rule(&ipv4_rule, dst_ip_be,
+			src_port_be, src_port_mask_be,
+			dst_port_be, dst_port_mask_be,
+			proto);
+		ret = register_ipv4_acl(&ipv4_rule,
+			cb_f, ext_cb_f, iface);
+		if (ret < 0) {
+			G_LOG(ERR, "Could not register IPv4 ACL on the %s interface\n",
+				iface->name);
+			return ret;
+		}
+		*rx_method |= RX_METHOD_MB;
+	}
+
+	return 0;
+}
+
+static void
+ipv6_fill_acl_rule(struct ipv6_acl_rule *rule,
+	const rte_be32_t *dst_ip_be_ptr32,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto)
+{
+	int i;
+
+	rule->data.category_mask = 0x1;
+	rule->data.priority = 1;
+	/* Userdata is filled in in register_ipv6_acl(). */
+
+	rule->field[PROTO_FIELD_IPV6].value.u8 = proto;
+	rule->field[PROTO_FIELD_IPV6].mask_range.u8 = 0xFF;
+
+	for (i = DST1_FIELD_IPV6; i <= DST4_FIELD_IPV6; i++) {
+		rule->field[i].value.u32 = rte_be_to_cpu_32(*dst_ip_be_ptr32);
+		rule->field[i].mask_range.u32 = 32;
+		dst_ip_be_ptr32++;
+	}
+
+	rule->field[SRCP_FIELD_IPV6].value.u16 = rte_be_to_cpu_16(src_port_be);
+	rule->field[SRCP_FIELD_IPV6].mask_range.u16 =
+		rte_be_to_cpu_16(src_port_mask_be);
+	rule->field[DSTP_FIELD_IPV6].value.u16 = rte_be_to_cpu_16(dst_port_be);
+	rule->field[DSTP_FIELD_IPV6].mask_range.u16 =
+		rte_be_to_cpu_16(dst_port_mask_be);
+}
+
+int
+ipv6_pkt_filter_add(struct gatekeeper_if *iface,
+	const rte_be32_t *dst_ip_be_ptr32,
+	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
+	rte_be16_t dst_port_be, rte_be16_t dst_port_mask_be,
+	uint8_t proto, __attribute__((unused)) uint16_t queue_id,
+	acl_cb_func cb_f, ext_cb_func ext_cb_f,
+	uint8_t *rx_method)
+{
+	/*
+	 * XXX #466 The ntuple filter does not consistently
+	 * work with IPv6 destination addresses, so we
+	 * completely disable its usage and use an ACL instead.
+	 */
+	struct ipv6_acl_rule ipv6_rule = { };
+	int ret;
+
+	if (!ipv6_acl_enabled(iface)) {
+		ret = init_ipv6_acls(iface);
+		if (ret < 0)
+			return ret;
+	}
+
+	ipv6_fill_acl_rule(&ipv6_rule, dst_ip_be_ptr32,
+		src_port_be, src_port_mask_be,
+		dst_port_be, dst_port_mask_be,
+		proto);
+	ret = register_ipv6_acl(&ipv6_rule,
+		cb_f, ext_cb_f, iface);
+	if (ret < 0) {
+		G_LOG(ERR, "Could not register IPv6 ACL on the %s interface\n",
+			iface->name);
+		return ret;
+	}
+	*rx_method |= RX_METHOD_MB;
+
+	return 0;
 }
 
 static uint32_t
@@ -418,6 +509,8 @@ enum iface_destroy_cmd {
 	IFACE_DESTROY_PORTS,
 	/* Destroy the data initialized by the first phase of net config. */
 	IFACE_DESTROY_INIT,
+	/* Destroy data associated with running ports (stop them). */
+	IFACE_DESTROY_STOP,
 	/* Destroy all data for this interface. */
 	IFACE_DESTROY_ALL,
 };
@@ -435,6 +528,8 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 			destroy_acls(&iface->ipv6_acls);
 		if (ipv4_acl_enabled(iface))
 			destroy_acls(&iface->ipv4_acls);
+		/* FALLTHROUGH */
+	case IFACE_DESTROY_STOP:
 		/* Stop interface ports (bonded port is stopped below). */
 		stop_iface_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
@@ -1377,6 +1472,14 @@ gen_ipv6_link_local(struct gatekeeper_if *iface)
 	pmask[1] = 0ULL;
 }
 
+/*
+ * Setup the various IPv6 addresses that represent this host.
+ * Needed whenever IPv6 is configured.
+ *
+ * Note: must be called after the interface's MAC address is
+ * fetched (for the link local address), which can only happen
+ * after the interface is started.
+ */
 static void
 setup_ipv6_addrs(struct gatekeeper_if *iface)
 {
@@ -1553,25 +1656,13 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 		"net: ntuple filters %s supported on the %s iface\n",
 		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);
 
-	if (ipv4_acl_enabled(iface)) {
-		ret = init_ipv4_acls(iface);
-		if (ret < 0)
-			goto stop_partial;
-	}
-
 	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
-	if (ipv6_acl_enabled(iface)) {
-		ret = init_ipv6_acls(iface);
-		if (ret < 0)
-			goto ipv4_acls;
+
+	if (ipv6_if_configured(iface))
 		setup_ipv6_addrs(iface);
-	}
 
 	return 0;
 
-ipv4_acls:
-	if (ipv4_acl_enabled(iface))
-		destroy_acls(&iface->ipv4_acls);
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
 destroy_init:
@@ -1678,7 +1769,7 @@ start_network_stage2(void *arg)
 	return 0;
 
 destroy_front:
-	destroy_iface(&net->front, IFACE_DESTROY_ALL);
+	destroy_iface(&net->front, IFACE_DESTROY_STOP);
 fail:
 	G_LOG(ERR, "net: failed to start Gatekeeper network\n");
 	return ret;

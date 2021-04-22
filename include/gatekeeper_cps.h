@@ -107,6 +107,10 @@ struct cps_config {
 	uint16_t           rx_queue_back;
 	uint16_t           tx_queue_back;
 
+	/* The RX methods for both interfaces. */
+	uint8_t            rx_method_front;
+	uint8_t            rx_method_back;
+
 	/* Unanswered resolution requests from the KNIs. */
 	struct list_head   arp_requests;
 	struct list_head   nd_requests;
