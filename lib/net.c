@@ -1803,7 +1803,10 @@ drop_privileges(void)
 		return -1;
 	}
 
-	return (seteuid(0) == -1 && setegid(0) == -1) ? 0 : -1;
+	/* Sanity check to ensure process can't effectively be root. */
+	RTE_VERIFY(seteuid(0) == -1 && setegid(0) == -1);
+
+	return 0;
 }
 
 int
@@ -1840,8 +1843,15 @@ finalize_stage2(void *arg)
 				config.pw_gid, strerror(errno));
 			return ret;
 		}
-		return drop_privileges();
+
+		ret = drop_privileges();
+		if (ret != 0)
+			return ret;
 	}
+
+	/* Enable rate-limited logging now that startup is complete. */
+	log_ratelimit_enable();
+
 	return 0;
 }
 
