@@ -3,6 +3,6 @@
 /usr/bin/find /var/log/gatekeeper \
   -maxdepth 1                     \
   -type f                         \
-  -name gatekeeper_*.log          \
-  -mtime +1                       \
+  -name gatekeeper_\*.log         \
+  -mtime 1                        \
   -delete
