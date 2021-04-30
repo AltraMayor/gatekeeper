@@ -232,6 +232,65 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 }
 
 static void
+kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
+	struct rte_mbuf **pkts, const uint16_t num_pkts)
+{
+	uint16_t num_kni;
+	uint16_t num_tx;
+	uint16_t i;
+
+	if (unlikely(num_pkts == 0))
+		return;
+
+	if (!iface->vlan_insert) {
+		num_kni = num_pkts;
+		goto kni_tx;
+	}
+
+	/* Remove VLAN headers before passing to the KNI. */
+	num_kni = 0;
+	for (i = 0; i < num_pkts; i++) {
+		struct rte_ether_hdr *eth_hdr =
+			rte_pktmbuf_mtod(pkts[i], struct rte_ether_hdr *);
+		struct rte_vlan_hdr *vlan_hdr;
+
+		RTE_VERIFY(num_kni <= i);
+
+		if (unlikely(eth_hdr->ether_type !=
+				rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
+			CPS_LOG(WARNING,
+				"%s iface is configured for VLAN but received a non-VLAN packet\n",
+				iface->name);
+			goto to_kni;
+		}
+
+		/* Copy Ethernet header over VLAN header. */
+		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
+		eth_hdr->ether_type = vlan_hdr->eth_proto;
+		memmove(RTE_PTR_ADD(eth_hdr, sizeof(struct rte_vlan_hdr)),
+			eth_hdr, sizeof(*eth_hdr));
+
+		/* Remove the unneeded bytes from the front of the buffer. */
+		if (unlikely(rte_pktmbuf_adj(pkts[i],
+				sizeof(struct rte_vlan_hdr)) == NULL)) {
+			CPS_LOG(ERR, "Can't remove VLAN header\n");
+			rte_pktmbuf_free(pkts[i]);
+			continue;
+		}
+to_kni:
+		if (unlikely(num_kni < i))
+			pkts[num_kni++] = pkts[i];
+	}
+
+kni_tx:
+	num_tx = rte_kni_tx_burst(kni, pkts, num_kni);
+	if (unlikely(num_tx < num_kni)) {
+		for (i = num_tx; i < num_kni; i++)
+			rte_pktmbuf_free(pkts[i]);
+	}
+}
+
+static void
 process_reqs(struct cps_config *cps_conf)
 {
 	unsigned int mailbox_burst_size = cps_conf->mailbox_burst_size;
@@ -244,13 +303,12 @@ process_reqs(struct cps_config *cps_conf)
 		switch (reqs[i]->ty) {
 		case CPS_REQ_DIRECT: {
 			struct cps_direct_req *direct = &reqs[i]->u.direct;
-			unsigned int num_tx = rte_kni_tx_burst(direct->kni,
-				direct->pkts, direct->num_pkts);
-			if (unlikely(num_tx < direct->num_pkts)) {
-				uint16_t j;
-				for (j = num_tx; j < direct->num_pkts; j++)
-					rte_pktmbuf_free(direct->pkts[j]);
-			}
+			struct rte_kni *kni =
+				direct->iface == &cps_conf->net->front
+					? cps_conf->front_kni
+					: cps_conf->back_kni;
+			kni_tx_burst(direct->iface, kni, direct->pkts,
+				direct->num_pkts);
 			break;
 		}
 		case CPS_REQ_ARP: {
@@ -316,56 +374,7 @@ process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
 	struct rte_mbuf *rx_bufs[cps_max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, rx_bufs,
 		cps_max_pkt_burst);
-	uint16_t num_kni;
-	uint16_t num_tx;
-	uint16_t i;
-
-	if (!iface->vlan_insert) {
-		num_kni = num_rx;
-		goto kni_tx;
-	}
-
-	/* Remove any VLAN headers before passing to the KNI. */
-	num_kni = 0;
-	for (i = 0; i < num_rx; i++) {
-		struct rte_ether_hdr *eth_hdr =
-			rte_pktmbuf_mtod(rx_bufs[i], struct rte_ether_hdr *);
-		struct rte_vlan_hdr *vlan_hdr;
-
-		RTE_VERIFY(num_kni <= i);
-
-		if (unlikely(eth_hdr->ether_type !=
-				rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
-			CPS_LOG(WARNING,
-				"%s iface is configured for VLAN but received a non-VLAN packet\n",
-				iface->name);
-			goto to_kni;
-		}
-
-		/* Copy Ethernet header over VLAN header. */
-		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
-		eth_hdr->ether_type = vlan_hdr->eth_proto;
-		memmove((uint8_t *)eth_hdr + sizeof(struct rte_vlan_hdr),
-			eth_hdr, sizeof(*eth_hdr));
-
-		/* Remove the unneeded bytes from the front of the buffer. */
-		if (unlikely(rte_pktmbuf_adj(rx_bufs[i],
-				sizeof(struct rte_vlan_hdr)) == NULL)) {
-			CPS_LOG(ERR, "Can't remove VLAN header\n");
-			rte_pktmbuf_free(rx_bufs[i]);
-			continue;
-		}
-to_kni:
-		if (unlikely(num_kni < i))
-			rx_bufs[num_kni++] = rx_bufs[i];
-	}
-
-kni_tx:
-	num_tx = rte_kni_tx_burst(kni, rx_bufs, num_kni);
-	if (unlikely(num_tx < num_kni)) {
-		for (i = num_tx; i < num_kni; i++)
-			rte_pktmbuf_free(rx_bufs[i]);
-	}
+	kni_tx_burst(iface, kni, rx_bufs, num_rx);
 }
 
 static int
@@ -562,9 +571,7 @@ cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	req->ty = CPS_REQ_DIRECT;
 	req->u.direct.num_pkts = num_pkts;
-	req->u.direct.kni = iface == &cps_conf->net->front
-		? cps_conf->front_kni
-		: cps_conf->back_kni;
+	req->u.direct.iface = iface;
 	rte_memcpy(req->u.direct.pkts, pkts,
 		sizeof(*req->u.direct.pkts) * num_pkts);
 

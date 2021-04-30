@@ -142,8 +142,8 @@ struct cps_direct_req {
 	/* Number of packets stored in @pkts. */
 	unsigned int         num_pkts;
 
-	/* KNI that should receive @pkts. */
-	struct rte_kni       *kni;
+	/* Interface that received @pkts. */
+	struct gatekeeper_if *iface;
 
 	/* Packets to submit to KNI. */
 	struct rte_mbuf      *pkts[0];
