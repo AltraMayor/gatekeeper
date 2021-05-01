@@ -546,6 +546,8 @@ sol_proc(void *arg)
 	SOL_LOG(NOTICE,
 		"The Solicitor block is running at lcore = %u\n", lcore);
 
+	drop_privileges(sol_conf->net);
+
 	sol_conf_hold(sol_conf);
 
 	while (likely(!exiting)) {

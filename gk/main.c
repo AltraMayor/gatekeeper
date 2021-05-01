@@ -2240,6 +2240,8 @@ gk_proc(void *arg)
 
 	GK_LOG(NOTICE, "The GK block is running at lcore = %u\n", lcore);
 
+	drop_privileges(gk_conf->net);
+
 	gk_conf_hold(gk_conf);
 
 	while (likely(!exiting)) {

@@ -1554,6 +1554,8 @@ gt_proc(void *arg)
 
 	GT_LOG(NOTICE, "The GT block is running at lcore = %u\n", lcore);
 
+	drop_privileges(gt_conf->net);
+
 	gt_conf_hold(gt_conf);
 
 	while (likely(!exiting)) {

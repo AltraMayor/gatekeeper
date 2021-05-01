@@ -572,6 +572,18 @@ struct rte_mempool *create_pktmbuf_pool(const char *block_name,
 	unsigned int lcore, unsigned int num_mbuf);
 
 /*
+ * Drop user and group privileges for this thread.
+ * In order to perform some restricted operations,
+ * the CPS block must be run as root, but all other
+ * blocks can drop their privileges when they start.
+ *
+ * This function uses a syscall version of the API
+ * to drop privileges, since the operation needs
+ * to be done on a per-thread basis (see setuid(2)).
+ */
+int drop_privileges(struct net_config *net);
+
+/*
  * No cleanup for this step, since DPDK
  * doesn't offer a way to deallocate pools.
  */

@@ -610,6 +610,8 @@ ggu_proc(void *arg)
 
 	GGU_LOG(NOTICE, "The GT-GK unit is running at lcore = %u\n", lcore);
 
+	drop_privileges(ggu_conf->net);
+
 	/*
 	 * Load sets of GT-GK packets from the back NIC
 	 * or from the GGU mailbox.

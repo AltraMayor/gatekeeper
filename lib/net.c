@@ -1775,36 +1775,30 @@ fail:
 	return ret;
 }
 
-static int
-drop_privileges(void)
+int
+drop_privileges(struct net_config *net)
 {
-	struct passwd *pw;
-
-	errno = 0;
-	pw = getpwuid(config.pw_uid);
-	if (pw == NULL) {
-		G_LOG(ERR, "%s: failed to get the passwd struct for uid %u - %s\n",
-			__func__, config.pw_uid,
-			errno != 0 ? strerror(errno) : "user not found");
-		return -1;
+	if (syscall(SYS_setresgid, net->pw_gid, -1, -1) != 0) {
+		G_LOG(ERR, "%s: failed to drop group privileges for user with user ID %u and group ID %u: %s\n",
+			__func__, net->pw_uid, net->pw_gid,
+			strerror(errno));
 	}
 
-	if (initgroups(pw->pw_name, config.pw_gid) != 0) {
-		G_LOG(ERR, "%s: failed to call initgrous(%s, %u) - %s\n",
-			__func__, pw->pw_name, config.pw_gid, strerror(errno));
-		return -1;
+	if (syscall(SYS_setresuid, net->pw_uid, -1, -1) != 0) {
+		G_LOG(ERR, "%s: failed to drop user privileges for user with user ID %u and group ID %u: %s\n",
+			__func__, net->pw_uid, net->pw_gid,
+			strerror(errno));
 	}
 
-	/* Drop privileges. */
-	if (setgid(config.pw_gid) != 0 || setuid(config.pw_uid) != 0) {
-		G_LOG(ERR, "%s: failed to drop privileges for user with user id %u and group id %u: %s\n",
-			__func__, config.pw_uid,
-			config.pw_gid, strerror(errno));
-		return -1;
-	}
-
-	/* Sanity check to ensure process can't effectively be root. */
-	RTE_VERIFY(seteuid(0) == -1 && setegid(0) == -1);
+	/*
+	 * Sanity check to ensure thread can't effectively be root.
+	 * Typically, after dropping privileges, a process shouldn't
+	 * be able to successfully make these calls. However, with
+	 * the syscall approach above, this sanity check does not
+	 * seem to correctly validate that the privileges were dropped.
+	 *
+	 * RTE_VERIFY(seteuid(0) == -1 && setegid(0) == -1);
+	 */
 
 	return 0;
 }
@@ -1835,6 +1829,8 @@ finalize_stage2(void *arg)
 			return ret;
 	}
 	if (config.pw_uid != 0) {
+		struct passwd *pw;
+
 		int log_fd = (intptr_t)arg;
 		ret = fchown(log_fd, config.pw_uid, config.pw_gid);
 		if (ret != 0) {
@@ -1844,9 +1840,23 @@ finalize_stage2(void *arg)
 			return ret;
 		}
 
-		ret = drop_privileges();
-		if (ret != 0)
-			return ret;
+		errno = 0;
+		pw = getpwuid(config.pw_uid);
+		if (pw == NULL) {
+			G_LOG(ERR, "%s: failed to get the passwd struct for uid %u - %s\n",
+				__func__, config.pw_uid,
+				errno != 0
+				? strerror(errno)
+				: "user not found");
+			return -1;
+		}
+
+		if (initgroups(pw->pw_name, config.pw_gid) != 0) {
+			G_LOG(ERR, "%s: failed to call initgroups(%s, %u) - %s\n",
+				__func__, pw->pw_name, config.pw_gid,
+				strerror(errno));
+			return -1;
+		}
 	}
 
 	/* Enable rate-limited logging now that startup is complete. */

@@ -597,6 +597,8 @@ lls_proc(void *arg)
 	LLS_LOG(NOTICE, "The LLS block is running at lcore = %u\n",
 		lls_conf->lcore_id);
 
+	drop_privileges(lls_conf->net);
+
 	while (likely(!exiting)) {
 		/* Read in packets on front and back interfaces. */
 		int num_tx;

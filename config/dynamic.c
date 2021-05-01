@@ -629,6 +629,8 @@ dyn_cfg_proc(void *arg)
 	DYC_LOG(NOTICE,
 		"The Dynamic Config block is running at lcore = %u\n", lcore);
 
+	drop_privileges(dy_conf->gk->net);
+
 	while (likely(!exiting)) {
 		fd_set fds;
 		struct timeval stv;
