@@ -172,11 +172,7 @@ launch_at_stage3(const char *name, lcore_function_t *f, void *arg,
 	entry->arg = arg;
 	entry->lcore_id = lcore_id;
 
-	if (lcore_id != rte_get_master_lcore())
-		list_add_tail(&entry->list, &launch_heads.stage3);
-	else
-		list_add(&entry->list, &launch_heads.stage3);
-
+	list_add_tail(&entry->list, &launch_heads.stage3);
 	return 0;
 
 name_cpy:
@@ -237,10 +233,18 @@ run_master_if_applicable(void)
 	if (list_empty(&launch_heads.stage3))
 		return 0;
 
+	if (!list_is_singular(&launch_heads.stage3)) {
+		G_LOG(ERR, "launch: list of stage 3 functions should not contain multiple master lcore entries\n");
+		return -1;
+	}
+
 	first = list_first_entry(&launch_heads.stage3, struct stage3_entry,
 		list);
-	if (first->lcore_id != master_id)
-		return 0;
+	if (first->lcore_id != master_id) {
+		G_LOG(ERR, "launch: list of stage 3 functions should not contain non-master lcore entries in %s\n",
+			__func__);
+		return -1;
+	}
 
 	list_del(&first->list);
 	ret = first->f(first->arg);
