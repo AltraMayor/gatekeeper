@@ -254,8 +254,6 @@ kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
 			rte_pktmbuf_mtod(pkts[i], struct rte_ether_hdr *);
 		struct rte_vlan_hdr *vlan_hdr;
 
-		RTE_VERIFY(num_kni <= i);
-
 		if (unlikely(eth_hdr->ether_type !=
 				rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
 			CPS_LOG(WARNING,
@@ -278,8 +276,7 @@ kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
 			continue;
 		}
 to_kni:
-		if (unlikely(num_kni < i))
-			pkts[num_kni++] = pkts[i];
+		pkts[num_kni++] = pkts[i];
 	}
 
 kni_tx:
