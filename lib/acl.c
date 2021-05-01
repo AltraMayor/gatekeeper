@@ -43,9 +43,11 @@ drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 		 *   Gatekeeper down since Gatekeeper does a lot of
 		 *   processing to eventually discard these packets.
 		 */
-		G_LOG(WARNING,
-			"acl: a packet failed to match any ACL rules, the whole packet is dumped below:\n");
-		rte_pktmbuf_dump(log_file, pkts[i], pkts[i]->pkt_len);
+		if (unlikely(G_LOG_CHECK(DEBUG))) {
+			G_LOG(DEBUG,
+				"acl: a packet failed to match any ACL rules, the whole packet is dumped below:\n");
+			rte_pktmbuf_dump(log_file, pkts[i], pkts[i]->pkt_len);
+		}
 		rte_pktmbuf_free(pkts[i]);
 	}
 
