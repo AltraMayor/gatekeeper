@@ -25,7 +25,7 @@ jobs:
       run: sudo apt-get update
 
     - name: Install dependencies
-      run: sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 autoconf flex bison libncurses5-dev libreadline-dev
+      run: sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin build-essential linux-headers-`uname -r` libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 autoconf flex bison libncurses5-dev libreadline-dev libcap-dev
 
     - name: Setup Gatekeeper
       run: sudo ./setup.sh

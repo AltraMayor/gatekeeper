@@ -19,9 +19,10 @@
 #ifndef _GATEKEEPER_NET_H_
 #define _GATEKEEPER_NET_H_
 
-#include <stdint.h>
-#include <stdbool.h>
 #include <netinet/in.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/capability.h>
 
 #include <rte_acl.h>
 #include <rte_eth_bond.h>
@@ -552,6 +553,17 @@ int ipv6_pkt_filter_add(struct gatekeeper_if *iface,
 	uint8_t proto, uint16_t queue_id,
 	acl_cb_func cb_f, ext_cb_func ext_cb_f,
 	uint8_t *rx_method);
+
+/*
+ * Drop all Linux capabilities (capabilities(7))
+ * except for those needed by a block.
+ *
+ * @caps contains the @ncap number of entries that
+ * the block wants to keep. @block is the name of
+ * the calling block, used for logging purposes,
+ * and must not be NULL.
+ */
+int needed_caps(const char *block, int ncap, const cap_value_t *caps);
 
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);

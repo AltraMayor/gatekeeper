@@ -25,6 +25,7 @@
 #include <argp.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -341,6 +342,16 @@ main(int argc, char **argv)
 	gatekeeper_logtype = rte_log_register("gatekeeper");
 	if (gatekeeper_logtype < 0)
 		rte_exit(EXIT_FAILURE, "Error registering gatekeeper log type\n");
+
+	/*
+	 * rte_eal_init(), which is called next, creates all threads that
+	 * Gatekeeper will use before the code finds out if Gatekeeper is
+	 * going to run as root or not. When Gatekeeper runs with a
+	 * non-root user, Gatekeeper has to assign capabilities to the
+	 * functional blocks, which, in turn, is only possible if the flag
+	 * PR_SET_KEEPCAPS is already set.
+	 */
+	RTE_VERIFY(prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0) == 0);
 
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0)

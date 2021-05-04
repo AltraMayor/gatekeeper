@@ -21,6 +21,7 @@
 #include <math.h>
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
+#include <unistd.h>
 
 #include <rte_ip.h>
 #include <rte_log.h>
@@ -2238,7 +2239,13 @@ gk_proc(void *arg)
 	uint32_t scan_iter = gk_conf->flow_table_scan_iter;
 	uint32_t iter_count = 0;
 
-	GK_LOG(NOTICE, "The GK block is running at lcore = %u\n", lcore);
+	GK_LOG(NOTICE, "The GK block is running at: lcore = %u; tid = %u\n",
+		lcore, gettid());
+
+	if (needed_caps("GK", 0, NULL) < 0) {
+		GK_LOG(ERR, "Could not set needed capabilities\n");
+		exiting = true;
+	}
 
 	gk_conf_hold(gk_conf);
 
