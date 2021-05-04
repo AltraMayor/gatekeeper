@@ -92,7 +92,7 @@ Install the following software dependencies:
     $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
 	build-essential linux-headers-`uname -r` libmnl0 libmnl-dev \
 	libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
-	autoconf flex bison libncurses5-dev libreadline-dev
+	autoconf flex bison libncurses5-dev libreadline-dev python
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
 `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
@@ -107,6 +107,7 @@ The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD. The `devscripts` package is used to
 build Gatekeeper Debian packages.
 Until Ubuntu 18.04, the `libhugetlbfs-bin` package was `hugepages`.
+`python` is needed to be able to run the `dpdk-devbind.py` script.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
