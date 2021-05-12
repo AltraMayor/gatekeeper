@@ -17,6 +17,7 @@
  */
 
 #include <net/if.h>
+#include <unistd.h>
 
 #include <rte_bus_pci.h>
 #include <rte_tcp.h>
@@ -491,8 +492,15 @@ cps_proc(void *arg)
 	struct rte_kni *front_kni = cps_conf->front_kni;
 	struct rte_kni *back_kni = cps_conf->back_kni;
 
-	CPS_LOG(NOTICE, "The CPS block is running at lcore = %u\n",
-		cps_conf->lcore_id);
+	cap_value_t caps[] = { CAP_NET_ADMIN };
+
+	CPS_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
+		cps_conf->lcore_id, gettid());
+
+	if (needed_caps("CPS", RTE_DIM(caps), caps) < 0) {
+		CPS_LOG(ERR, "Could not set needed capabilities\n");
+		exiting = true;
+	}
 
 	while (likely(!exiting)) {
 		/*

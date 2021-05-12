@@ -17,6 +17,7 @@
  */
 
 #include <stdbool.h>
+#include <unistd.h>
 
 #include <rte_ip.h>
 #include <rte_udp.h>
@@ -608,7 +609,13 @@ ggu_proc(void *arg)
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
-	GGU_LOG(NOTICE, "The GT-GK unit is running at lcore = %u\n", lcore);
+	GGU_LOG(NOTICE, "The GT-GK unit is running at: lcore = %u; tid = %u\n",
+		lcore, gettid());
+
+	if (needed_caps("GGU", 0, NULL) < 0) {
+		GGU_LOG(ERR, "Could not set needed capabilities\n");
+		exiting = true;
+	}
 
 	/*
 	 * Load sets of GT-GK packets from the back NIC

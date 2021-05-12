@@ -22,6 +22,7 @@
 #include <lauxlib.h>
 #include <netinet/ip.h>
 #include <math.h>
+#include <unistd.h>
 
 #include <rte_log.h>
 #include <rte_ether.h>
@@ -1552,7 +1553,13 @@ gt_proc(void *arg)
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
 
-	GT_LOG(NOTICE, "The GT block is running at lcore = %u\n", lcore);
+	GT_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
+		lcore, gettid());
+
+	if (needed_caps("GT", 0, NULL) < 0) {
+		GT_LOG(ERR, "Could not set needed capabilities\n");
+		exiting = true;
+	}
 
 	gt_conf_hold(gt_conf);
 

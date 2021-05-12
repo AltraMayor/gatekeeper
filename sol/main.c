@@ -17,6 +17,7 @@
  */
 
 #include <math.h>
+#include <unistd.h>
 
 #include <rte_approx.h>
 #include <rte_sched.h>
@@ -544,7 +545,13 @@ sol_proc(void *arg)
 	uint8_t tx_port_back = sol_conf->net->back.id;
 
 	SOL_LOG(NOTICE,
-		"The Solicitor block is running at lcore = %u\n", lcore);
+		"The Solicitor block is running at: lcore = %u; tid = %u\n",
+		lcore, gettid());
+
+	if (needed_caps("SOL", 0, NULL) < 0) {
+		SOL_LOG(ERR, "Could not set needed capabilities\n");
+		exiting = true;
+	}
 
 	sol_conf_hold(sol_conf);
 
