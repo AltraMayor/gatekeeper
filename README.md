@@ -34,7 +34,7 @@ On many systems, the following hugepages setup is sufficient:
 
 ### Option 1: Obtain Packages
 
-Debian packages for Gatekeeper are available at the project's
+Gatekeeper Debian packages are available for Ubuntu 18.04 LTS at the project's
 [Releases](https://github.com/AltraMayor/gatekeeper/releases)
 page.
 
@@ -57,16 +57,31 @@ The `gatekeeper-dpdk-dev` package is a dependency of the DKMS packages, which
 build their respective kernel modules during package installation and kernel
 upgrades.
 
-#### Configure Network Adapters
+#### Configure Gatekeeper
 
-Edit the `/etc/gatekeeper/envvars` file and insert names of the network adapters
-to be bound to DPDK. For example:
+When installed via Debian packages, Gatekeeper configuration files are located
+in `/etc/gatekeeper`. You should edit at least the `net.lua` file, and set the
+`front_ports`, `front_ips`, `back_ports` and `back_ips` variables according to
+your environment.
 
-    GATEKEEPER_INTERFACES="eth0 eth1"
+The other Lua files configure different Gatekeeper functional blocks. Please
+refer to the project's [wiki](https://github.com/AltraMayor/gatekeeper/wiki)
+for further information on whether these need to be changed in your setup.
 
-Alternatively, the interfaces' PCI addresses can be specified:
+You also need to edit the `/etc/gatekeeper/envvars` file and set the
+`GATEKEEPER_INTERFACES` variable to the PCI addresses of the network adapters
+to be bound to DPDK. These can found using the `lshw` command. For example:
 
-    GATEKEEPER_INTERFACES="0000:00:07.0 0000:00:08.0"
+    # lshw -c network -businfo
+    Bus info          Device     Class          Description
+    =======================================================
+    pci@0000:08:00.0  eth0       network        I350 Gigabit Network Connection
+    pci@0000:08:00.1  eth1       network        I350 Gigabit Network Connection
+    ...
+
+Given this output, set `GATEKEEPER_INTERFACES` as below:
+
+    GATEKEEPER_INTERFACES="08:00.0 08:00.1"
 
 In the same file, you can optionally specify
 [Environmental Abstraction Layer options](https://doc.dpdk.org/guides/linux_gsg/linux_eal_parameters.html)
