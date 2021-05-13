@@ -1,4 +1,4 @@
-gatekeeper (1.0.0-0) bionic; urgency=medium
+gatekeeper (1.0.0-0) focal; urgency=medium
 
   * Rebuild for 1.0.0
 
