@@ -628,7 +628,7 @@ dyn_cfg_proc(void *arg)
 
 	DYC_LOG(NOTICE,
 		"The Dynamic Config block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+		lcore, rte_sys_gettid());
 
 	if (needed_caps("DYC", 0, NULL) < 0) {
 		DYC_LOG(ERR, "Could not set needed capabilities\n");

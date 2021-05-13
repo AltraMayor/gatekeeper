@@ -18,7 +18,6 @@
 
 #include <alloca.h>
 #include <stdbool.h>
-#include <unistd.h>
 
 #include <rte_cycles.h>
 #include <rte_ethdev.h>
@@ -596,7 +595,7 @@ lls_proc(void *arg)
 		net_conf->rotate_log_interval_sec * cycles_per_sec;
 
 	LLS_LOG(NOTICE, "The LLS block is running at: lcore = %u; tid = %u\n",
-		lls_conf->lcore_id, gettid());
+		lls_conf->lcore_id, rte_sys_gettid());
 
 	if (needed_caps("LLS", 0, NULL) < 0) {
 		LLS_LOG(ERR, "Could not set needed capabilities\n");

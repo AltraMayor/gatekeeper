@@ -17,7 +17,6 @@
  */
 
 #include <math.h>
-#include <unistd.h>
 
 #include <rte_approx.h>
 #include <rte_sched.h>
@@ -546,7 +545,7 @@ sol_proc(void *arg)
 
 	SOL_LOG(NOTICE,
 		"The Solicitor block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+		lcore, rte_sys_gettid());
 
 	if (needed_caps("SOL", 0, NULL) < 0) {
 		SOL_LOG(ERR, "Could not set needed capabilities\n");

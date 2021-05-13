@@ -17,7 +17,6 @@
  */
 
 #include <net/if.h>
-#include <unistd.h>
 
 #include <rte_bus_pci.h>
 #include <rte_tcp.h>
@@ -495,7 +494,7 @@ cps_proc(void *arg)
 	cap_value_t caps[] = { CAP_NET_ADMIN };
 
 	CPS_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
-		cps_conf->lcore_id, gettid());
+		cps_conf->lcore_id, rte_sys_gettid());
 
 	if (needed_caps("CPS", RTE_DIM(caps), caps) < 0) {
 		CPS_LOG(ERR, "Could not set needed capabilities\n");

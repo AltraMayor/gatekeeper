@@ -17,7 +17,6 @@
  */
 
 #include <stdbool.h>
-#include <unistd.h>
 
 #include <rte_ip.h>
 #include <rte_udp.h>
@@ -610,7 +609,7 @@ ggu_proc(void *arg)
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
 	GGU_LOG(NOTICE, "The GT-GK unit is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+		lcore, rte_sys_gettid());
 
 	if (needed_caps("GGU", 0, NULL) < 0) {
 		GGU_LOG(ERR, "Could not set needed capabilities\n");
