@@ -1775,6 +1775,27 @@ fail:
 	return ret;
 }
 
+/* These definitions are meant to support older versions of libcap. */
+#ifndef CAP_AMBIENT_SUPPORTED
+
+#define CAP_AMBIENT_SUPPORTED() (0)
+
+static inline int
+cap_get_ambient(__attribute__((unused)) cap_value_t x)
+{
+	errno = EINVAL;
+	return -1;
+}
+
+static inline int
+cap_reset_ambient(void)
+{
+	errno = EINVAL;
+	return -1;
+}
+
+#endif /* CAP_AMBIENT_SUPPORTED */
+
 static int
 copy_amb_to_inh(const char *name, cap_t cap_p)
 {
