@@ -1,6 +1,7 @@
-[submodule "dpdk"]
+[submodule "dependencies/dpdk"]
 	path = dependencies/dpdk
 	url = https://github.com/cjdoucette/dpdk
+	branch = lpm6-paras
 [submodule "dependencies/luajit-2.0"]
 	path = dependencies/luajit-2.0
 	url = http://luajit.org/git/luajit-2.0.git

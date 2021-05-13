@@ -3,10 +3,10 @@ Section: net
 Priority: optional
 Build-Depends: debhelper (>= 9.20160709),
                clang,
-               hugepages,
                libc6-dev-i386,
-               libcap-dev,
+               libcap-dev (>= 2.32),
                libelf-dev,
+               libhugetlbfs-bin,
                libkmod-dev,
                linux-headers-generic,
                libmnl0,

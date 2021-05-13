@@ -34,7 +34,7 @@ On many systems, the following hugepages setup is sufficient:
 
 ### Option 1: Obtain Packages
 
-Gatekeeper Debian packages are available for Ubuntu 18.04 LTS at the project's
+Gatekeeper Debian packages are available for Ubuntu 20.04 LTS at the project's
 [Releases](https://github.com/AltraMayor/gatekeeper/releases)
 page.
 
@@ -42,8 +42,8 @@ page.
 
 Once the packages are downloaded, they can be installed with the commands below:
 
-    $ tar -zxvf gatekeeper-ubuntu-18.04-packages.tar.gz
-    $ cd gatekeeper-ubuntu-18.04-packages
+    $ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
+    $ cd gatekeeper-ubuntu-20.04-packages
     $ sudo dpkg -i libgkrte-*.deb \
         libgkdpdk-dev_*_amd64.deb \
         gatekeeper-dpdk_*_amd64.deb \
@@ -122,7 +122,6 @@ the folder `bpf/`.
 The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD. The `devscripts` package is used to
 build Gatekeeper Debian packages.
-Until Ubuntu 18.04, the `libhugetlbfs-bin` package was `hugepages`.
 `python` is needed to be able to run the `dpdk-devbind.py` script.
 `libcap-dev` is needed to compile Gatekeeper, but only `libcap2` is needed
 to run Gatekeeper.
