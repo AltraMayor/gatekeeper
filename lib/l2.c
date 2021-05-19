@@ -101,18 +101,21 @@ verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 			return -1;
 		}
 
-		/*
-		 * Only warn if the VLAN tag is incorrect, but correct
-		 * the VLAN tag in case we reuse this packet.
-		 */
+		/* Drop packets whose VLAN tags are not correct. */
 		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
 		if (unlikely(vlan_hdr->vlan_tci != vlan_tag_be)) {
-			G_LOG(WARNING,
+			/*
+			 * The log level below cannot be low due to
+			 * loose filters in some vantage points, that is,
+			 * Gatekeeper receives many packets for other VLANs
+			 * during normal operation.
+			 */
+			G_LOG(INFO,
 				"l2: %s interface received an %s packet with an incorrect VLAN tag (0x%02x but should be 0x%02x)\n",
 				iface->name, proto_name,
 				rte_be_to_cpu_16(vlan_hdr->vlan_tci),
 				rte_be_to_cpu_16(vlan_tag_be));
-			vlan_hdr->vlan_tci = vlan_tag_be;
+			return -1;
 		}
 	} else if (unlikely(l2_type != RTE_PTYPE_UNKNOWN)) {
 		/*
