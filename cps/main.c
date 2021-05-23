@@ -677,6 +677,36 @@ fail:
 }
 
 /*
+ * In order to avoid a race condition in which the interface @if_name is
+ * seen as not available in the kernel, wait for its interface index
+ * to be assigned.
+ */
+static int
+wait_for_the_kernel(const char *if_name, const unsigned int wait_trials)
+{
+	unsigned int i = 0;
+
+	do {
+		if (if_nametoindex(if_name) > 0) {
+			/* Interface is available. */
+			return 0;
+		}
+
+		i++;
+		sleep(1);
+	/*
+	 * Use the less-than-or-equal-to sign in the test below to account for
+	 * the fact that there is no wait before the first call of
+	 * if_nametoindex().
+	 */
+	} while (i <= wait_trials);
+
+	CPS_LOG(ERR, "The kernel is not reporting the index of the interface %s after %i trials\n",
+		if_name, i);
+	return -1;
+}
+
+/*
  * Many NIC drivers apparently do not directly support the
  * link up/link down functionality of DPDK's Ethernet library.
  * Instead, the suggested way to bring a KNI's link up (shown in
@@ -713,7 +743,7 @@ fail:
  */
 static int
 kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
-	struct gatekeeper_if *iface)
+	struct gatekeeper_if *iface, const unsigned int wait_trials)
 {
 	struct rte_kni_conf conf;
 	struct rte_eth_dev_info dev_info;
@@ -765,7 +795,14 @@ nodev:
 		return -1;
 	}
 
-	return 0;
+	if (wait_for_the_kernel(kni_name, wait_trials) == 0)
+		return 0;
+
+	if (rte_kni_release(*kni) < 0) {
+		CPS_LOG(ERR, "Could not release KNI for %s iface\n",
+			iface->name);
+	}
+	return -1;
 }
 
 static void
@@ -823,7 +860,8 @@ cps_stage1(void *arg)
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
 
 	ret = kni_create(&cps_conf->front_kni, name,
-		cps_conf->mp, &cps_conf->net->front);
+		cps_conf->mp, &cps_conf->net->front,
+		cps_conf->num_attempts_kni_link_set);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Failed to create KNI for the front iface\n");
 		goto error;
@@ -855,7 +893,8 @@ cps_stage1(void *arg)
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
 
 		ret = kni_create(&cps_conf->back_kni, name,
-			cps_conf->mp, &cps_conf->net->back);
+			cps_conf->mp, &cps_conf->net->back,
+			cps_conf->num_attempts_kni_link_set);
 		if (ret < 0) {
 			CPS_LOG(ERR,
 				"Failed to create KNI for the back iface\n");
