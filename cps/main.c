@@ -19,10 +19,6 @@
 #include <net/if.h>
 #include <unistd.h>
 
-#include <rte_bus_pci.h>
-#include <rte_tcp.h>
-#include <rte_cycles.h>
-
 #include "gatekeeper_cps.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_launch.h"
@@ -716,7 +712,6 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	struct gatekeeper_if *iface)
 {
 	struct rte_kni_conf conf;
-	struct rte_eth_dev_info dev_info;
 	struct rte_kni_ops ops;
 
 	memset(&conf, 0, sizeof(conf));
@@ -731,26 +726,6 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 		conf.group_id = rte_eth_bond_primary_get(iface->id);
 	else
 		conf.group_id = iface->id;
-
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(conf.group_id, &dev_info);
-	if (dev_info.device != NULL) {
-		const struct rte_bus *bus =
-			rte_bus_find_by_device(dev_info.device);
-		if (bus != NULL && strcmp(bus->name, "pci") == 0) {
-			struct rte_pci_device *pci_dev =
-				RTE_DEV_TO_PCI(dev_info.device);
-			conf.addr = pci_dev->addr;
-			conf.id = pci_dev->id;
-		} else
-			goto nodev;
-	} else {
-nodev:
-		CPS_LOG(ERR,
-			"Could not create KNI %s for iface with no dev/PCI data\n",
-			conf.name);
-		return -1;
-	}
 
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
