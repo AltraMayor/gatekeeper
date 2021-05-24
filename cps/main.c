@@ -819,6 +819,7 @@ cps_stage1(void *arg)
 
 	cps_conf->front_kni_index = if_nametoindex(name);
 	if (cps_conf->front_kni_index == 0) {
+		ret = -errno;
 		CPS_LOG(ERR, "Failed to get front KNI index: %s\n",
 			strerror(errno));
 		goto error;
@@ -852,6 +853,7 @@ cps_stage1(void *arg)
 
 		cps_conf->back_kni_index = if_nametoindex(name);
 		if (cps_conf->back_kni_index == 0) {
+			ret = -errno;
 			CPS_LOG(ERR, "Failed to get back KNI index: %s\n",
 				strerror(errno));
 			goto error;
