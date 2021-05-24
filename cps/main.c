@@ -591,6 +591,12 @@ free_pkts:
 	return ret;
 }
 
+/*
+ * XXX #481 This define is only available in
+ * dependencies/dpdk/lib/librte_kni/rte_kni.c
+ */
+#define KNI_FIFO_COUNT_MAX (1024)
+
 static int
 assign_cps_queue_ids(struct cps_config *cps_conf)
 {
@@ -610,6 +616,14 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 	/* The back NIC is enabled but doesn't have hardware support. */
 	if (cps_conf->net->back_iface_enabled && !cps_conf->net->back.rss)
 		total_pkt_burst -= cps_conf->back_max_pkt_burst;
+
+	/*
+	 * According to the documentation of rte_kni_alloc(),
+	 * each KNI interface needs at least (2 * KNI_FIFO_COUNT_MAX) packets.
+	 */
+	total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
+	if (cps_conf->net->back_iface_enabled)
+		total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
 
 	num_mbuf = calculate_mempool_config_para("cps",
 		cps_conf->net, total_pkt_burst);
