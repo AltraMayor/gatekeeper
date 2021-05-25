@@ -134,6 +134,23 @@ kni_disable_change_mac_address(__attribute__((unused)) uint16_t port_id,
 	return -ENOTSUP;
 }
 
+int
+kni_disable_change_promiscusity(__attribute__((unused)) uint16_t port_id,
+	uint8_t to_on)
+{
+	if (to_on == 0)
+		return 0;
+
+	/*
+	 * Only specific classes of packets that arrive at
+	 * the physical interfaces are forwarded to the KNI interfaces.
+	 * Thus, there is no point in enabling promiscuous mode on
+	 * the physical interfaces since the extra packets are
+	 * just going to be discarded.
+	 */
+	return -ENOTSUP;
+}
+
 static int
 modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 	int family, void *ipaddr, uint8_t prefixlen, const char *kni_name,
