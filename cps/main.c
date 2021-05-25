@@ -19,10 +19,6 @@
 #include <net/if.h>
 #include <unistd.h>
 
-#include <rte_bus_pci.h>
-#include <rte_tcp.h>
-#include <rte_cycles.h>
-
 #include "gatekeeper_cps.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_launch.h"
@@ -595,6 +591,12 @@ free_pkts:
 	return ret;
 }
 
+/*
+ * XXX #481 This define is only available in
+ * dependencies/dpdk/lib/librte_kni/rte_kni.c
+ */
+#define KNI_FIFO_COUNT_MAX (1024)
+
 static int
 assign_cps_queue_ids(struct cps_config *cps_conf)
 {
@@ -614,6 +616,14 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 	/* The back NIC is enabled but doesn't have hardware support. */
 	if (cps_conf->net->back_iface_enabled && !cps_conf->net->back.rss)
 		total_pkt_burst -= cps_conf->back_max_pkt_burst;
+
+	/*
+	 * According to the documentation of rte_kni_alloc(),
+	 * each KNI interface needs at least (2 * KNI_FIFO_COUNT_MAX) packets.
+	 */
+	total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
+	if (cps_conf->net->back_iface_enabled)
+		total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
 
 	num_mbuf = calculate_mempool_config_para("cps",
 		cps_conf->net, total_pkt_burst);
@@ -716,41 +726,15 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	struct gatekeeper_if *iface)
 {
 	struct rte_kni_conf conf;
-	struct rte_eth_dev_info dev_info;
 	struct rte_kni_ops ops;
 
 	memset(&conf, 0, sizeof(conf));
 	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
 	strcpy(conf.name, kni_name);
+	conf.group_id = iface->id;
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
-	conf.mtu = iface->mtu;
 	rte_eth_macaddr_get(iface->id, (struct rte_ether_addr *)conf.mac_addr);
-
-	/* If the interface is bonded, take PCI info from the primary slave. */
-	if (iface->num_ports > 1 || iface->bonding_mode == BONDING_MODE_8023AD)
-		conf.group_id = rte_eth_bond_primary_get(iface->id);
-	else
-		conf.group_id = iface->id;
-
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(conf.group_id, &dev_info);
-	if (dev_info.device != NULL) {
-		const struct rte_bus *bus =
-			rte_bus_find_by_device(dev_info.device);
-		if (bus != NULL && strcmp(bus->name, "pci") == 0) {
-			struct rte_pci_device *pci_dev =
-				RTE_DEV_TO_PCI(dev_info.device);
-			conf.addr = pci_dev->addr;
-			conf.id = pci_dev->id;
-		} else
-			goto nodev;
-	} else {
-nodev:
-		CPS_LOG(ERR,
-			"Could not create KNI %s for iface with no dev/PCI data\n",
-			conf.name);
-		return -1;
-	}
+	conf.mtu = iface->mtu;
 
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
@@ -844,6 +828,7 @@ cps_stage1(void *arg)
 
 	cps_conf->front_kni_index = if_nametoindex(name);
 	if (cps_conf->front_kni_index == 0) {
+		ret = -errno;
 		CPS_LOG(ERR, "Failed to get front KNI index: %s\n",
 			strerror(errno));
 		goto error;
@@ -877,6 +862,7 @@ cps_stage1(void *arg)
 
 		cps_conf->back_kni_index = if_nametoindex(name);
 		if (cps_conf->back_kni_index == 0) {
+			ret = -errno;
 			CPS_LOG(ERR, "Failed to get back KNI index: %s\n",
 				strerror(errno));
 			goto error;
