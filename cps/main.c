@@ -731,15 +731,10 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	memset(&conf, 0, sizeof(conf));
 	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
 	strcpy(conf.name, kni_name);
+	conf.group_id = iface->id;
 	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
-	conf.mtu = iface->mtu;
 	rte_eth_macaddr_get(iface->id, (struct rte_ether_addr *)conf.mac_addr);
-
-	/* If the interface is bonded, take PCI info from the primary slave. */
-	if (iface->num_ports > 1 || iface->bonding_mode == BONDING_MODE_8023AD)
-		conf.group_id = rte_eth_bond_primary_get(iface->id);
-	else
-		conf.group_id = iface->id;
+	conf.mtu = iface->mtu;
 
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
