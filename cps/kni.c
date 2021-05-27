@@ -176,7 +176,7 @@ modify_ipaddr(struct mnl_socket *nl, unsigned int cmd, int flags,
 
 	if (ifa->ifa_family == AF_INET)
 		mnl_attr_put_u32(nlh, IFA_LOCAL, *(uint32_t *)ipaddr);
-	else if (ifa->ifa_family == AF_INET6)
+	else if (likely(ifa->ifa_family == AF_INET6))
 		mnl_attr_put(nlh, IFA_LOCAL, 16, ipaddr);
 	else
 		rte_panic("%s: address family (%d) not recognized\n",
