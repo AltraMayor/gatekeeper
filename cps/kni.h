@@ -42,9 +42,6 @@ int kni_disable_change_promiscusity(uint16_t port_id, uint8_t to_on);
 int kni_config_ip_addrs(struct rte_kni *kni, unsigned int kni_index,
 	struct gatekeeper_if *iface);
 int kni_config_link(struct rte_kni *kni);
-int rd_event_sock_open(struct cps_config *cps_conf);
-void rd_event_sock_close(struct cps_config *cps_conf);
-void kni_cps_rd_event(struct cps_config *cps_conf);
 int init_kni(const char *kni_kmod_path, unsigned int num_kni);
 void rm_kni(void);
 

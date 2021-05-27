@@ -26,6 +26,7 @@
 #include "gatekeeper_log_ratelimit.h"
 #include "gatekeeper_varip.h"
 #include "kni.h"
+#include "rd.h"
 
 static struct cps_config cps_conf;
 
@@ -543,7 +544,7 @@ cps_proc(void *arg)
 		rte_timer_manage();
 
 		/* Read in routing table updates and update LPM table. */
-		kni_cps_rd_event(cps_conf);
+		rd_process_events(cps_conf);
 	}
 
 	CPS_LOG(NOTICE, "The CPS block at lcore = %u is exiting\n",
