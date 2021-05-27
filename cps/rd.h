@@ -23,6 +23,9 @@
 
 /* Functions to handle interactions with the routing daemon. */
 
+int rd_alloc_coro(struct cps_config *cps_conf);
+void rd_free_coro(struct cps_config *cps_conf);
+
 int rd_event_sock_open(struct cps_config *cps_conf);
 void rd_event_sock_close(struct cps_config *cps_conf);
 void rd_process_events(struct cps_config *cps_conf);

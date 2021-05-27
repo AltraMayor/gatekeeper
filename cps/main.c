@@ -72,6 +72,7 @@ cleanup_cps(void)
 	cps_conf.gk = NULL;
 
 	rte_timer_stop(&cps_conf.scan_timer);
+	rd_free_coro(&cps_conf);
 	destroy_mailbox(&cps_conf.mailbox);
 	rm_kni();
 	if (cps_conf.nd_mp)
@@ -1229,6 +1230,12 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	if (ret < 0)
 		goto kni;
 
+	ret = rd_alloc_coro(cps_conf);
+	if (ret < 0) {
+		CPS_LOG(ERR, "Failed to allocate coroutines\n");
+		goto mailbox;
+	}
+
 	if (arp_enabled(cps_conf->lls))
 		INIT_LIST_HEAD(&cps_conf->arp_requests);
 	if (nd_enabled(cps_conf->lls))
@@ -1240,7 +1247,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		PERIODICAL, cps_conf->lcore_id, cps_scan, cps_conf);
 	if (ret < 0) {
 		CPS_LOG(ERR, "Cannot set CPS scan timer\n");
-		goto mailbox;
+		goto coro;
 	}
 
 	if (gk_conf != NULL)
@@ -1252,6 +1259,9 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	cps_conf->gt = gt_conf;
 
 	return 0;
+
+coro:
+	rd_free_coro(cps_conf);
 mailbox:
 	destroy_mailbox(&cps_conf->mailbox);
 kni:

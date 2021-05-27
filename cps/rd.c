@@ -1161,6 +1161,12 @@ mnl_socket_recvfrom_flags(const struct mnl_socket *nl, void *buf, size_t bufsiz,
 void
 rd_process_events(struct cps_config *cps_conf)
 {
+	coro_transfer(&cps_conf->coro_root, &cps_conf->coro_rd);
+}
+
+static void
+__rd_process_events(struct cps_config *cps_conf)
+{
 	unsigned int update_pkts = cps_conf->max_rt_update_pkts;
 	do {
 		char buf[MNL_SOCKET_BUFFER_SIZE];
@@ -1179,4 +1185,49 @@ rd_process_events(struct cps_config *cps_conf)
 
 		update_pkts--;
 	} while (update_pkts > 0);
+}
+
+static inline void
+rd_yield(struct cps_config *cps_conf)
+{
+	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
+}
+
+static void
+cps_co_rd_main(void *arg)
+{
+	struct cps_config *cps_conf = arg;
+
+	while (true) {
+		__rd_process_events(cps_conf);
+		rd_yield(cps_conf);
+	}
+
+	rte_panic("%s() terminated\n", __func__);
+}
+
+int
+rd_alloc_coro(struct cps_config *cps_conf)
+{
+	const unsigned int stack_size_byte = 1024 * 1024; /* 1MB */
+	const unsigned int stack_size_ptr = stack_size_byte / sizeof(void *);
+
+	if (unlikely(coro_stack_alloc(&cps_conf->coro_rd_stack, stack_size_ptr)
+			!= 1)) {
+		CPS_LOG(ERR, "Failed to allocate stack for RD coroutine\n");
+		return -1;
+	}
+
+	coro_create(&cps_conf->coro_root, NULL, NULL, NULL, 0);
+	coro_create(&cps_conf->coro_rd, cps_co_rd_main, cps_conf,
+		cps_conf->coro_rd_stack.sptr, cps_conf->coro_rd_stack.ssze);
+	return 0;
+}
+
+void
+rd_free_coro(struct cps_config *cps_conf)
+{
+	coro_destroy(&cps_conf->coro_rd);
+	coro_destroy(&cps_conf->coro_root);
+	coro_stack_free(&cps_conf->coro_rd_stack);
 }
