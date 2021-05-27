@@ -676,9 +676,23 @@ rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	return 0;
 }
 
+static inline void
+rd_yield(struct cps_config *cps_conf)
+{
+	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
+}
+
+static void
+spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
+{
+	int ret;
+	while ((ret = rte_spinlock_trylock_tm(sl)) == 0)
+		rd_yield(cps_conf);
+	RTE_VERIFY(ret == 1);
+}
+
 static int
-rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
-	int *err)
+rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
 	/*
 	 * Buffer length set according to libmnl documentation:
@@ -739,7 +753,7 @@ rd_getroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 			}
 		}
 
-		rte_spinlock_lock_tm(&ltbl->lock);
+		spinlock_lock_with_yield(&ltbl->lock, cps_conf);
 		*err = rd_getroute_ipv4_locked(cps_conf, ltbl, batch, req);
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		if (*err < 0)
@@ -756,7 +770,7 @@ ipv6:
 			}
 		}
 
-		rte_spinlock_lock_tm(&ltbl->lock);
+		spinlock_lock_with_yield(&ltbl->lock, cps_conf);
 		*err = rd_getroute_ipv6_locked(cps_conf, ltbl, batch, req);
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		if (*err < 0)
@@ -1185,12 +1199,6 @@ __rd_process_events(struct cps_config *cps_conf)
 
 		update_pkts--;
 	} while (update_pkts > 0);
-}
-
-static inline void
-rd_yield(struct cps_config *cps_conf)
-{
-	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
 }
 
 static void
