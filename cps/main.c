@@ -741,6 +741,7 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	ops.change_mtu = kni_disable_change_mtu;
 	ops.config_network_if = kni_change_if;
 	ops.config_mac_address = kni_disable_change_mac_address;
+	ops.config_promiscusity = kni_disable_change_promiscusity;
 
 	*kni = rte_kni_alloc(mp, &conf, &ops);
 	if (*kni == NULL) {
