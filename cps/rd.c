@@ -409,6 +409,27 @@ data_ipv6_attr_cb(const struct nlattr *attr, void *data)
 	return MNL_CB_OK;
 }
 
+static inline void
+rd_yield(struct cps_config *cps_conf)
+{
+	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
+}
+
+static ssize_t
+sendto_with_yield(int sockfd, const void *buf, size_t len,
+	const struct sockaddr *dest_addr, socklen_t addrlen,
+	struct cps_config *cps_conf)
+{
+	ssize_t ret;
+	while (
+			((ret = sendto(sockfd, buf, len, MSG_DONTWAIT,
+				dest_addr, addrlen)) == -1) &&
+			(errno == EAGAIN || errno == EWOULDBLOCK)
+			)
+		rd_yield(cps_conf);
+	return ret;
+}
+
 static void
 rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 {
@@ -444,12 +465,12 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 	errmsg->error = err;
 	memcpy(&errmsg->msg, req, sizeof(errmsg->msg) + payload_len);
 
-	if (sendto(mnl_socket_get_fd(cps_conf->rd_nl),
-			rep, sizeof(*rep) + errmsg_len, 0,
-			(struct sockaddr *)&rd_sa, sizeof(rd_sa)) < 0) {
-		CPS_LOG(ERR, "sendto: cannot send NLMSG_ERROR to daemon (pid=%u seq=%u): %s\n",
-			req->nlmsg_pid, req->nlmsg_seq,
-			strerror(errno));
+	if (sendto_with_yield(mnl_socket_get_fd(cps_conf->rd_nl),
+			rep, sizeof(*rep) + errmsg_len,
+			(struct sockaddr *)&rd_sa, sizeof(rd_sa),
+			cps_conf) < 0) {
+		CPS_LOG(ERR, "sendto_with_yield: cannot send NLMSG_ERROR to daemon (pid=%u seq=%u): %s\n",
+			req->nlmsg_pid, req->nlmsg_seq, strerror(errno));
 	}
 }
 
@@ -522,7 +543,7 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 }
 
 static int
-rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
+rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 	const char *daemon, uint32_t seq, uint32_t pid, int done)
 {
 	/* Address of routing daemon. */
@@ -550,13 +571,14 @@ rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 	rd_sa.nl_family = AF_NETLINK;
 	rd_sa.nl_pid = pid;
 
-	if (sendto(mnl_socket_get_fd(cps_conf->rd_nl),
+	if (sendto_with_yield(mnl_socket_get_fd(cps_conf->rd_nl),
 			mnl_nlmsg_batch_head(batch),
-			mnl_nlmsg_batch_size(batch), 0,
-			(struct sockaddr *)&rd_sa, sizeof(rd_sa)) < 0) {
+			mnl_nlmsg_batch_size(batch),
+			(struct sockaddr *)&rd_sa, sizeof(rd_sa),
+			cps_conf) < 0) {
 		ret = -errno;
 		CPS_LOG(ERR,
-			"sendto: cannot dump route batch to %s daemon (pid=%u seq=%u): %s\n",
+			"sendto_with_yield: cannot dump route batch to %s daemon (pid=%u seq=%u): %s\n",
 			daemon, pid, seq, strerror(errno));
 	}
 
@@ -565,7 +587,7 @@ rd_send_batch(const struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 }
 
 static int
-rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm_iterator_state state;
@@ -620,7 +642,7 @@ rd_getroute_ipv4_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 }
 
 static int
-rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm6_iterator_state state6;
@@ -674,12 +696,6 @@ rd_getroute_ipv6_locked(const struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	}
 
 	return 0;
-}
-
-static inline void
-rd_yield(struct cps_config *cps_conf)
-{
-	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
 }
 
 static void
@@ -814,8 +830,7 @@ rd_fill_getlink_reply(const struct cps_config *cps_conf,
 }
 
 static int
-rd_getlink(const struct nlmsghdr *req, const struct cps_config *cps_conf,
-	int *err)
+rd_getlink(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
 	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
 	struct mnl_nlmsg_batch *batch;
@@ -992,7 +1007,7 @@ rd_fill_getaddr_reply(const struct cps_config *cps_conf,
 }
 
 static int
-rd_getaddr_iface(const struct cps_config *cps_conf,
+rd_getaddr_iface(struct cps_config *cps_conf,
 	struct mnl_nlmsg_batch *batch, struct gatekeeper_if *iface,
 	uint8_t family, unsigned int kni_index, uint32_t seq, uint32_t pid)
 {
@@ -1028,8 +1043,7 @@ rd_getaddr_iface(const struct cps_config *cps_conf,
 }
 
 static int
-rd_getaddr(const struct nlmsghdr *req, const struct cps_config *cps_conf,
-	int *err)
+rd_getaddr(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
 	char buf[2 * MNL_SOCKET_BUFFER_SIZE];
 	struct mnl_nlmsg_batch *batch;
