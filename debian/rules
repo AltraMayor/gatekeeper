@@ -59,6 +59,9 @@ clean_gatekeeper:
 clean_bpf:
 	cd bpf; rm -f *.bpf
 
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
 override_dh_auto_install:
 
 override_dh_auto_clean:
