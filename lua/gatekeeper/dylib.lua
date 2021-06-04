@@ -8,6 +8,7 @@ local ffi = require("ffi")
 
 -- Structs
 ffi.cdef[[
+static const uint16_t MSG_MAX_LEN = (uint16_t)~0U;
 
 static const int ETHER_ADDR_LEN = 6;
 
@@ -121,33 +122,47 @@ end
 -- or any of the data reachable through its fields.
 
 function print_fib_dump_entry(fib_dump_entry, acc)
-	local ip_addr_str
-	local d_buf
-	local stale
+	if acc.done then
+		return acc
+	end
 
-	ip_addr_str = dylib.ip_format_addr(fib_dump_entry.addr)
-	acc = acc .. "FIB entry for IP prefix: " .. ip_addr_str ..
-		"/" .. fib_dump_entry.prefix_len .. " with action " ..
-		fib_action_to_str(fib_dump_entry.action)
+	acc[#acc + 1] = "FIB entry for IP prefix: "
+	acc[#acc + 1] = dylib.ip_format_addr(fib_dump_entry.addr)
+	acc[#acc + 1] = "/"
+	acc[#acc + 1] = tostring(fib_dump_entry.prefix_len)
+	acc[#acc + 1] = " with action "
+	acc[#acc + 1] = fib_action_to_str(fib_dump_entry.action)
 
 	for i = 0,fib_dump_entry.num_addr_sets - 1,1 do
 		if fib_dump_entry.action == c.GK_FWD_GRANTOR then
-			ip_addr_str = dylib.ip_format_addr(
+			acc[#acc + 1] = "\n\tGrantor IP address: "
+			acc[#acc + 1] = dylib.ip_format_addr(
 				fib_dump_entry.addr_sets[i].grantor_ip)
-			acc = acc .. "\n\tGrantor IP address: " .. ip_addr_str
 		end
-		acc = acc .. "\n\tEthernet cache entry:"
-		d_buf = dylib.ether_format_addr(
-			fib_dump_entry.addr_sets[i].d_addr)
-		stale = fib_dump_entry.addr_sets[i].stale
+		acc[#acc + 1] = "\n\tEthernet cache entry: [state: "
+		acc[#acc + 1] = fib_dump_entry.addr_sets[i].stale
 			and "stale" or "fresh"
-		ip_addr_str = dylib.ip_format_addr(
+		acc[#acc + 1] = ", nexthop ip: "
+		acc[#acc + 1] = dylib.ip_format_addr(
 			fib_dump_entry.addr_sets[i].nexthop_ip)
-		acc = acc .. " [state: " .. stale .. ", nexthop ip: " ..
-			ip_addr_str .. ", d_addr: " .. d_buf .. "]"
+		acc[#acc + 1] = ", d_addr: "
+		acc[#acc + 1] = dylib.ether_format_addr(
+			fib_dump_entry.addr_sets[i].d_addr)
+		acc[#acc + 1] = "]"
+	end
+	acc[#acc + 1] = "\n"
+
+	if #acc < 1000 then
+		return acc
 	end
 
-	return acc .. "\n"
+	-- If the FIB table is too big to dump into a single message
+	-- of the dynamic configuration block, ignore the following entries.
+	acc = { [1] = table.concat(acc) }
+	if string.len(acc[1]) >= c.MSG_MAX_LEN then
+		acc.done = true
+	end
+	return acc
 end
 
 -- The following is an example function that can be used as
@@ -158,14 +173,16 @@ end
 -- neighbor_dump_entry or any of the data reachable through its fields.
 
 function print_neighbor_dump_entry(neighbor_dump_entry, acc)
-	local stale = neighbor_dump_entry.stale and "stale" or "fresh"
-	local neigh_ip = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
-	local d_buf = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
-
-	return acc .. "Neighbor Ethernet cache entry: [state: " .. stale ..
-		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
-		", action: " ..
-		fib_action_to_str(neighbor_dump_entry.action) .. "]\n"
+	acc[#acc + 1] = "Neighbor Ethernet cache entry: [state: "
+	acc[#acc + 1] = neighbor_dump_entry.stale and "stale" or "fresh"
+	acc[#acc + 1] = ", neighbor ip: "
+	acc[#acc + 1] = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
+	acc[#acc + 1] = ", d_addr: "
+	acc[#acc + 1] = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
+	acc[#acc + 1] = ", action: "
+	acc[#acc + 1] = fib_action_to_str(neighbor_dump_entry.action)
+	acc[#acc + 1] = "]\n"
+	return acc
 end
 
 -- The following is an example function that can be used as
@@ -176,14 +193,16 @@ end
 -- lls_dump_entry or any of the data reachable through its fields.
 
 function print_lls_dump_entry(lls_dump_entry, acc)
-	local stale = lls_dump_entry.stale and "stale" or "fresh"
-	local ip = dylib.ip_format_addr(lls_dump_entry.addr)
-	local ha = dylib.ether_format_addr(lls_dump_entry.ha)
-	local port_id = lls_dump_entry.port_id
-
-	return acc .. "LLS cache entry:" .. ": [state: " .. stale ..
-		", ip: " .. ip .. ", mac: " .. ha ..
-		", port: " .. port_id .. "]\n"
+	acc[#acc + 1] = "LLS cache entry: [state: "
+	acc[#acc + 1] = lls_dump_entry.stale and "stale" or "fresh"
+	acc[#acc + 1] = ", ip: "
+	acc[#acc + 1] = dylib.ip_format_addr(lls_dump_entry.addr)
+	acc[#acc + 1] = ", mac: "
+	acc[#acc + 1] = dylib.ether_format_addr(lls_dump_entry.ha)
+	acc[#acc + 1] = ", port: "
+	acc[#acc + 1] = tostring(lls_dump_entry.port_id)
+	acc[#acc + 1] = "]\n"
+	return acc
 end
 
 function update_gt_lua_states_incrementally(gt_conf, lua_code, is_returned)

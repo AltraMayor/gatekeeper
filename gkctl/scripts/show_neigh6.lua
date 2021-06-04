@@ -7,4 +7,5 @@ end
 if dyc.gk == nil then
 	return "No GK block available; not a Gatekeeper server"
 end
-return dylib.list_gk_neighbors6(dyc.gk, dylib.print_neighbor_dump_entry, "")
+return table.concat(dylib.list_gk_neighbors6(dyc.gk,
+	dylib.print_neighbor_dump_entry, {}))
