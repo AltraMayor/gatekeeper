@@ -7,4 +7,4 @@ end
 if dyc.gk == nil then
 	return "No GK block available; not a Gatekeeper server"
 end
-return dylib.list_gk_fib4(dyc.gk, dylib.print_fib_dump_entry, "")
+return table.concat(dylib.list_gk_fib4(dyc.gk, dylib.print_fib_dump_entry, {}))
