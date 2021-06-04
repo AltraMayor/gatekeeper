@@ -173,14 +173,16 @@ end
 -- neighbor_dump_entry or any of the data reachable through its fields.
 
 function print_neighbor_dump_entry(neighbor_dump_entry, acc)
-	local stale = neighbor_dump_entry.stale and "stale" or "fresh"
-	local neigh_ip = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
-	local d_buf = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
-
-	return acc .. "Neighbor Ethernet cache entry: [state: " .. stale ..
-		", neighbor ip: " .. neigh_ip .. ", d_addr: " .. d_buf ..
-		", action: " ..
-		fib_action_to_str(neighbor_dump_entry.action) .. "]\n"
+	acc[#acc + 1] = "Neighbor Ethernet cache entry: [state: "
+	acc[#acc + 1] = neighbor_dump_entry.stale and "stale" or "fresh"
+	acc[#acc + 1] = ", neighbor ip: "
+	acc[#acc + 1] = dylib.ip_format_addr(neighbor_dump_entry.neigh_ip)
+	acc[#acc + 1] = ", d_addr: "
+	acc[#acc + 1] = dylib.ether_format_addr(neighbor_dump_entry.d_addr)
+	acc[#acc + 1] = ", action: "
+	acc[#acc + 1] = fib_action_to_str(neighbor_dump_entry.action)
+	acc[#acc + 1] = "]\n"
+	return acc
 end
 
 -- The following is an example function that can be used as
