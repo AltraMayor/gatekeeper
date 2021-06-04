@@ -26,6 +26,7 @@
 #include "gatekeeper_mailbox.h"
 #include "gatekeeper_log_ratelimit.h"
 #include "list.h"
+#include "coro.h"
 
 extern int cps_logtype;
 
@@ -124,6 +125,15 @@ struct cps_config {
 	 * can be configured to update Gatekeeper.
 	 */
 	struct mnl_socket  *rd_nl;
+
+	/*
+	 * Coroutines for
+	 *	@coro_root:	The main thread of CPS.
+	 *	@coro_rd:	The communication with routing daemons.
+	 */
+	struct coro_context coro_root;
+	struct coro_context coro_rd;
+	struct coro_stack   coro_rd_stack;
 
 	struct gk_config   *gk;
 	struct gt_config   *gt;
