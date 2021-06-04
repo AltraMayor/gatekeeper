@@ -193,14 +193,16 @@ end
 -- lls_dump_entry or any of the data reachable through its fields.
 
 function print_lls_dump_entry(lls_dump_entry, acc)
-	local stale = lls_dump_entry.stale and "stale" or "fresh"
-	local ip = dylib.ip_format_addr(lls_dump_entry.addr)
-	local ha = dylib.ether_format_addr(lls_dump_entry.ha)
-	local port_id = lls_dump_entry.port_id
-
-	return acc .. "LLS cache entry:" .. ": [state: " .. stale ..
-		", ip: " .. ip .. ", mac: " .. ha ..
-		", port: " .. port_id .. "]\n"
+	acc[#acc + 1] = "LLS cache entry: [state: "
+	acc[#acc + 1] = lls_dump_entry.stale and "stale" or "fresh"
+	acc[#acc + 1] = ", ip: "
+	acc[#acc + 1] = dylib.ip_format_addr(lls_dump_entry.addr)
+	acc[#acc + 1] = ", mac: "
+	acc[#acc + 1] = dylib.ether_format_addr(lls_dump_entry.ha)
+	acc[#acc + 1] = ", port: "
+	acc[#acc + 1] = tostring(lls_dump_entry.port_id)
+	acc[#acc + 1] = "]\n"
+	return acc
 end
 
 function update_gt_lua_states_incrementally(gt_conf, lua_code, is_returned)
