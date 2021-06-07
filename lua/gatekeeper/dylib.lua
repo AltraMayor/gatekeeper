@@ -114,6 +114,17 @@ function fib_action_to_str(fib_action)
 	return res
 end
 
+-- Bound the output of the FIB table to the maximum size of
+-- a message of the dynamic configuration block.
+function bound_fib_dump_output(acc)
+	if #acc < 1000 then
+		return false, acc
+	end
+
+	local output = table.concat(acc)
+	return string.len(output) >= c.MSG_MAX_LEN, { [1] = output }
+end
+
 -- The following is an example function that can be used as
 -- the callback function of list_gk_fib4() and list_gk_fib6().
 
@@ -148,14 +159,7 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 	end
 	acc[#acc + 1] = "\n"
 
-	if #acc < 1000 then
-		return false, acc
-	end
-
-	-- If the FIB table is too big to dump into a single message
-	-- of the dynamic configuration block, ignore the following entries.
-	local output = table.concat(acc)
-	return string.len(output) >= c.MSG_MAX_LEN, { [1] = output }
+	return bound_fib_dump_output(acc)
 end
 
 -- The following is an example function that can be used as
