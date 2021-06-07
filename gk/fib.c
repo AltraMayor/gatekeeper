@@ -2044,6 +2044,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	while (index >= 0) {
 		unsigned int num_addrs;
 		size_t new_dentry_size;
+		int done;
 
 		fib = &ltbl->fib_tbl[re4->next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
@@ -2086,11 +2087,16 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = dentry;
 		lua_insert(l, 4);
 
-		if (lua_pcall(l, 2, 1, 0) != 0) {
+		if (lua_pcall(l, 2, 2, 0) != 0) {
 			rte_free(dentry);
 			rte_spinlock_unlock_tm(&ltbl->lock);
 			lua_error(l);
 		}
+
+		done = lua_toboolean(l, -2);
+		lua_remove(l, -2);
+		if (unlikely(done))
+			break;
 
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
@@ -2123,6 +2129,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	while (index >= 0) {
 		unsigned int num_addrs;
 		size_t new_dentry_size;
+		int done;
 
 		fib = &ltbl->fib_tbl6[re6.next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
@@ -2166,11 +2173,16 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = dentry;
 		lua_insert(l, 4);
 
-		if (lua_pcall(l, 2, 1, 0) != 0) {
+		if (lua_pcall(l, 2, 2, 0) != 0) {
 			rte_free(dentry);
 			rte_spinlock_unlock_tm(&ltbl->lock);
 			lua_error(l);
 		}
+
+		done = lua_toboolean(l, -2);
+		lua_remove(l, -2);
+		if (unlikely(done))
+			break;
 
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}

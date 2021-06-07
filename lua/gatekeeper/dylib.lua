@@ -122,10 +122,6 @@ end
 -- or any of the data reachable through its fields.
 
 function print_fib_dump_entry(fib_dump_entry, acc)
-	if acc.done then
-		return acc
-	end
-
 	acc[#acc + 1] = "FIB entry for IP prefix: "
 	acc[#acc + 1] = dylib.ip_format_addr(fib_dump_entry.addr)
 	acc[#acc + 1] = "/"
@@ -153,16 +149,13 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 	acc[#acc + 1] = "\n"
 
 	if #acc < 1000 then
-		return acc
+		return false, acc
 	end
 
 	-- If the FIB table is too big to dump into a single message
 	-- of the dynamic configuration block, ignore the following entries.
-	acc = { [1] = table.concat(acc) }
-	if string.len(acc[1]) >= c.MSG_MAX_LEN then
-		acc.done = true
-	end
-	return acc
+	local output = table.concat(acc)
+	return string.len(output) >= c.MSG_MAX_LEN, { [1] = output }
 end
 
 -- The following is an example function that can be used as
