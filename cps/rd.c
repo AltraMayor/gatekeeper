@@ -664,7 +664,7 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
 
 		rd_fill_getroute_reply(cps_conf, reply, fib,
-			AF_INET6, req->nlmsg_seq, state6.depth, &gw_addr);
+			AF_INET6, req->nlmsg_seq, re6.depth, &gw_addr);
 
 		/* Add address. */
 		mnl_attr_put(reply, RTA_DST,

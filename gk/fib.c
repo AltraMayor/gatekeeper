@@ -2162,7 +2162,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		dentry->addr.proto = RTE_ETHER_TYPE_IPV6;
 		rte_memcpy(&dentry->addr.ip.v6, re6.ip,
 			sizeof(dentry->addr.ip.v6));
-		dentry->prefix_len = state6.depth;
+		dentry->prefix_len = re6.depth;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 
