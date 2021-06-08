@@ -114,6 +114,52 @@ function fib_action_to_str(fib_action)
 	return res
 end
 
+-- Bound the output of the FIB table to the maximum size of
+-- a message of the dynamic configuration block.
+function bound_fib_dump_output(acc)
+	local next_stop = acc.next_stop
+	local total_rows = #acc
+
+	if next_stop == nil then
+		next_stop = 1000
+		acc.next_stop = next_stop
+		acc.total_rows = 0
+	end
+
+	if total_rows < next_stop then
+		return false, acc
+	end
+
+	if acc.total_rows ~= 0 then
+		-- Subtract one because acc[1] is
+		-- the concatenated output of acc.total_rows rows.
+		total_rows = acc.total_rows + total_rows - 1
+	end
+
+	local output = table.concat(acc)
+	local output_len = string.len(output)
+	acc = { [1] = output } -- Free previous acc.
+	if output_len >= c.MSG_MAX_LEN then
+		return true, acc
+	end
+
+	-- Find the new acc.next_stop
+	local avg_len_per_row = output_len / total_rows
+	next_stop = math.ceil(
+		((c.MSG_MAX_LEN - output_len) / avg_len_per_row)
+		-- Add 1% to next_stop to increase the chance that
+		-- the next stop is the last stop.
+		* 1.01)
+	if next_stop <= 0 then
+		next_stop = 1
+	end
+	-- Add one because acc already includes acc[1].
+	acc.next_stop = next_stop + 1
+
+	acc.total_rows = total_rows
+	return false, acc
+end
+
 -- The following is an example function that can be used as
 -- the callback function of list_gk_fib4() and list_gk_fib6().
 
@@ -122,10 +168,6 @@ end
 -- or any of the data reachable through its fields.
 
 function print_fib_dump_entry(fib_dump_entry, acc)
-	if acc.done then
-		return acc
-	end
-
 	acc[#acc + 1] = "FIB entry for IP prefix: "
 	acc[#acc + 1] = dylib.ip_format_addr(fib_dump_entry.addr)
 	acc[#acc + 1] = "/"
@@ -152,17 +194,7 @@ function print_fib_dump_entry(fib_dump_entry, acc)
 	end
 	acc[#acc + 1] = "\n"
 
-	if #acc < 1000 then
-		return acc
-	end
-
-	-- If the FIB table is too big to dump into a single message
-	-- of the dynamic configuration block, ignore the following entries.
-	acc = { [1] = table.concat(acc) }
-	if string.len(acc[1]) >= c.MSG_MAX_LEN then
-		acc.done = true
-	end
-	return acc
+	return bound_fib_dump_output(acc)
 end
 
 -- The following is an example function that can be used as

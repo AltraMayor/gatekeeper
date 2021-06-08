@@ -2026,7 +2026,8 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	struct gk_fib *fib;
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
-	struct gk_fib_dump_entry *dentry;
+	struct gk_fib_dump_entry *dentry = NULL;
+	size_t dentry_size = 0;
 	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
@@ -2042,7 +2043,8 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	index = rte_lpm_rule_iterate(&state, &re4);
 	while (index >= 0) {
 		unsigned int num_addrs;
-		size_t dentry_size;
+		size_t new_dentry_size;
+		int done;
 
 		fib = &ltbl->fib_tbl[re4->next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
@@ -2052,20 +2054,26 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		}
 
 		num_addrs = num_addrs_entry_type(fib);
-		dentry_size = sizeof(*dentry) +
+		new_dentry_size = sizeof(*dentry) +
 			num_addrs * sizeof(*dentry->addr_sets);
 
-		/*
-		 * We don't need rte_zmalloc_socket() here because
-		 * the memory is not being used by the GK block.
-		 */
-		dentry = rte_zmalloc("fib4_dump", dentry_size, 0);
-		if (unlikely(dentry == NULL)) {
-			rte_spinlock_unlock_tm(&ltbl->lock);
-			luaL_error(l,
-				"gk: failed to allocate memory for the IPv4 FIB dump at %s",
-				__func__);
-		}
+		if (new_dentry_size > dentry_size) {
+			dentry_size = new_dentry_size;
+			rte_free(dentry);
+			/*
+			 * We don't need rte_zmalloc_socket() here because
+			 * the memory is not being used by the GK block.
+			 */
+			dentry = rte_zmalloc("fib4_dump", dentry_size, 0);
+			if (unlikely(dentry == NULL)) {
+				rte_spinlock_unlock_tm(&ltbl->lock);
+				luaL_error(l,
+					"gk: failed to allocate memory for the IPv4 FIB dump at %s",
+					__func__);
+			}
+		} else
+			memset(dentry, 0, new_dentry_size);
+
 		dentry->addr.proto = RTE_ETHER_TYPE_IPV4;
 		dentry->addr.ip.v4.s_addr = htonl(re4->ip);
 		dentry->prefix_len = state.depth;
@@ -2079,15 +2087,20 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = dentry;
 		lua_insert(l, 4);
 
-		if (lua_pcall(l, 2, 1, 0) != 0) {
+		if (lua_pcall(l, 2, 2, 0) != 0) {
 			rte_free(dentry);
 			rte_spinlock_unlock_tm(&ltbl->lock);
 			lua_error(l);
 		}
 
-		rte_free(dentry);
+		done = lua_toboolean(l, -2);
+		lua_remove(l, -2);
+		if (unlikely(done))
+			break;
+
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
+	rte_free(dentry);
 	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
@@ -2098,7 +2111,8 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	struct gk_fib *fib;
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
-	struct gk_fib_dump_entry *dentry;
+	struct gk_fib_dump_entry *dentry = NULL;
+	size_t dentry_size = 0;
 	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
@@ -2114,7 +2128,8 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	index = rte_lpm6_rule_iterate(&state6, &re6);
 	while (index >= 0) {
 		unsigned int num_addrs;
-		size_t dentry_size;
+		size_t new_dentry_size;
+		int done;
 
 		fib = &ltbl->fib_tbl6[re6.next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
@@ -2124,20 +2139,26 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		}
 
 		num_addrs = num_addrs_entry_type(fib);
-		dentry_size = sizeof(*dentry) +
+		new_dentry_size = sizeof(*dentry) +
 			num_addrs * sizeof(*dentry->addr_sets);
 
-		/*
-		 * We don't need rte_zmalloc_socket() here because
-		 * the memory is not being used by the GK block.
-		 */
-		dentry = rte_zmalloc("fib6_dump", dentry_size, 0);
-		if (unlikely(dentry == NULL)) {
-			rte_spinlock_unlock_tm(&ltbl->lock);
-			luaL_error(l,
-				"gk: failed to allocate memory for the IPv6 FIB dump at %s",
-				__func__);
-		}
+		if (new_dentry_size > dentry_size) {
+			dentry_size = new_dentry_size;
+			rte_free(dentry);
+			/*
+			 * We don't need rte_zmalloc_socket() here because
+			 * the memory is not being used by the GK block.
+			 */
+			dentry = rte_zmalloc("fib6_dump", dentry_size, 0);
+			if (unlikely(dentry == NULL)) {
+				rte_spinlock_unlock_tm(&ltbl->lock);
+				luaL_error(l,
+					"gk: failed to allocate memory for the IPv6 FIB dump at %s",
+					__func__);
+			}
+		} else
+			memset(dentry, 0, new_dentry_size);
+
 		dentry->addr.proto = RTE_ETHER_TYPE_IPV6;
 		rte_memcpy(&dentry->addr.ip.v6, re6.ip,
 			sizeof(dentry->addr.ip.v6));
@@ -2152,15 +2173,20 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		*(struct gk_fib_dump_entry **)cdata = dentry;
 		lua_insert(l, 4);
 
-		if (lua_pcall(l, 2, 1, 0) != 0) {
+		if (lua_pcall(l, 2, 2, 0) != 0) {
 			rte_free(dentry);
 			rte_spinlock_unlock_tm(&ltbl->lock);
 			lua_error(l);
 		}
 
-		rte_free(dentry);
+		done = lua_toboolean(l, -2);
+		lua_remove(l, -2);
+		if (unlikely(done))
+			break;
+
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
+	rte_free(dentry);
 	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
