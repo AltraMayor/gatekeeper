@@ -787,9 +787,8 @@ remove_prefix_from_lpm_locked(
 	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
 		uint32_t fib_id;
 
-		ip_prefix_present = rte_lpm_is_rule_present(
-			ltbl->lpm, ntohl(ip_prefix->addr.ip.v4.s_addr),
-			ip_prefix->len, &fib_id);
+		ip_prefix_present = lpm_is_rule_present(ltbl->lpm,
+			ip_prefix->addr.ip.v4.s_addr, ip_prefix->len, &fib_id);
 		if (ip_prefix_present == 0) {
 			GK_LOG(WARNING,
 				"Delete an non-existent IP prefix (%s)\n",
@@ -797,7 +796,7 @@ remove_prefix_from_lpm_locked(
 			return NULL;
 		} else if (ip_prefix_present < 0) {
 			GK_LOG(ERR,
-				"Failed to call rte_lpm_is_rule_present() for IP prefix (%s)\n",
+				"Failed to call lpm_is_rule_present() for IP prefix (%s)\n",
 				ip_prefix->str);
 			return NULL;
 		}
@@ -806,9 +805,8 @@ remove_prefix_from_lpm_locked(
 	} else if (likely(ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		uint32_t fib_id;
 
-		ip_prefix_present = rte_lpm6_is_rule_present(
-			ltbl->lpm6, ip_prefix->addr.ip.v6.s6_addr,
-			ip_prefix->len, &fib_id);
+		ip_prefix_present = lpm6_is_rule_present(ltbl->lpm6,
+			ip_prefix->addr.ip.v6.s6_addr, ip_prefix->len, &fib_id);
 		if (ip_prefix_present == 0) {
 			GK_LOG(WARNING,
 				"Delete an non-existent IP prefix (%s)\n",
@@ -816,7 +814,7 @@ remove_prefix_from_lpm_locked(
 			return NULL;
 		} else if (ip_prefix_present < 0) {
 			GK_LOG(ERR,
-				"Failed to call rte_lpm6_is_rule_present() for IP prefix (%s)\n",
+				"Failed to call lpm6_is_rule_present() for IP prefix (%s)\n",
 				ip_prefix->str);
 			return NULL;
 		}
@@ -1527,12 +1525,10 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 
 	/* Ensure that the new prefix does not create a security hole. */
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		uint32_t prefix_ip4 = ntohl(prefix->addr.ip.v4.s_addr);
-
 		for (i = 0; i < prefix->len; i++) {
 			uint32_t fib_id;
-			ip_prefix_present = rte_lpm_is_rule_present(
-				ltbl->lpm, prefix_ip4, i, &fib_id);
+			ip_prefix_present = lpm_is_rule_present(ltbl->lpm,
+				prefix->addr.ip.v4.s_addr, i, &fib_id);
 			if (ip_prefix_present != 1)
 				continue;
 
@@ -1548,9 +1544,8 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		for (i = 0; i < prefix->len; i++) {
 			uint32_t fib_id;
-			ip_prefix_present = rte_lpm6_is_rule_present(
-				ltbl->lpm6, prefix->addr.ip.v6.s6_addr,
-				i, &fib_id);
+			ip_prefix_present = lpm6_is_rule_present(ltbl->lpm6,
+				prefix->addr.ip.v6.s6_addr, i, &fib_id);
 			if (ip_prefix_present != 1)
 				continue;
 
@@ -1588,13 +1583,11 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	int ret;
 
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ret = rte_lpm_is_rule_present(ltbl->lpm,
-			ntohl(prefix->addr.ip.v4.s_addr),
+		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
 			prefix->len, &fib_id);
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = rte_lpm6_is_rule_present(ltbl->lpm6,
-			prefix->addr.ip.v6.s6_addr,
-			prefix->len, &fib_id);
+		ret = lpm6_is_rule_present(ltbl->lpm6,
+			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
 	} else {
 		GK_LOG(WARNING,
 			"Unknown IP type %hu with prefix %s\n",
