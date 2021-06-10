@@ -108,59 +108,86 @@ close:
 }
 
 static int
-new_route(struct route_update *update, const struct cps_config *cps_conf)
+get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
+	struct gk_fib **prefix_fib)
 {
-	int ret;
 	uint32_t fib_id;
-	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
-	struct gk_fib *prefix_fib = NULL;
+	int ret;
 
 	if (update->family == AF_INET) {
 		ret = lpm_is_rule_present(ltbl->lpm,
 			update->prefix_info.addr.ip.v4.s_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			CPS_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed\n",
-				__func__, update->prefix_info.str);
+			CPS_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed (%i)\n",
+				__func__, update->prefix_info.str, ret);
 			return ret;
 		}
-		if (ret == 1)
-			prefix_fib = &ltbl->fib_tbl[fib_id];
+		if (ret == 1) {
+			*prefix_fib = &ltbl->fib_tbl[fib_id];
+			return 0;
+		}
 	} else if (likely(update->family == AF_INET6)) {
 		ret = lpm6_is_rule_present(ltbl->lpm6,
 			update->prefix_info.addr.ip.v6.s6_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			CPS_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed\n",
-				__func__, update->prefix_info.str);
+			CPS_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed (%i)\n",
+				__func__, update->prefix_info.str, ret);
 			return ret;
 		}
-		if (ret == 1)
-			prefix_fib = &ltbl->fib_tbl6[fib_id];
+		if (ret == 1) {
+			*prefix_fib = &ltbl->fib_tbl6[fib_id];
+			return 0;
+		}
 	} else {
-		CPS_LOG(WARNING,
+		CPS_LOG(ERR,
 			"cps update: unknown address family %d at %s()\n",
 			update->family, __func__);
 		return -EAFNOSUPPORT;
 	}
 
-	if (ret == 1) {
-		RTE_VERIFY(prefix_fib != NULL);
+	RTE_VERIFY(ret == 0);
+	*prefix_fib = NULL;
+	return 0;
+}
 
+static int
+can_rd_del_route(struct route_update *update, struct gk_fib *prefix_fib)
+{
+	/*
+	 * Protect grantor entries from configuration mistakes
+	 * in routing daemons.
+	 */
+	if (prefix_fib->action == GK_FWD_GRANTOR) {
+		CPS_LOG(ERR,
+			"Prefix %s cannot be updated via RTNetlink because it is a grantor entry; use the dynamic configuration block to update grantor entries\n",
+			update->prefix_info.str);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+static int
+new_route(struct route_update *update, const struct cps_config *cps_conf)
+{
+	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	struct gk_fib *prefix_fib;
+	int ret;
+
+	ret = get_prefix_fib(update, ltbl, &prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	if (prefix_fib != NULL) {
 		if ((update->rt_flags & NLM_F_EXCL) ||
 			!(update->rt_flags & NLM_F_REPLACE))
 			return -EEXIST;
 
-		/*
-		 * Protect grantor entries from configuration mistakes
-		 * in routing daemons.
-		 */
-		if (prefix_fib->action == GK_FWD_GRANTOR) {
-			CPS_LOG(ERR,
-				"Prefix %s cannot be updated via RTNetlink because it is a grantor entry; use the dynamic configuration block to update grantor entries\n",
-				update->prefix_info.str);
-			return -EPERM;
-		}
+		ret = can_rd_del_route(update, prefix_fib);
+		if (ret < 0)
+			return ret;
 
 		/* Gatekeeper does not currently support multipath. */
 		if (update->rt_flags & NLM_F_APPEND) {
@@ -177,8 +204,6 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		 */
 		del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
 	} else {
-		RTE_VERIFY(ret == 0);
-		RTE_VERIFY(prefix_fib == NULL);
 		if (!(update->rt_flags & NLM_F_CREATE))
 			return -ENOENT;
 	}
@@ -258,6 +283,26 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		__func__, update->ip_px_buf, update->oif_index,
 		cps_conf->front_kni_index, cps_conf->back_kni_index);
 	return -EINVAL;
+}
+
+static int
+del_route(struct route_update *update, const struct cps_config *cps_conf)
+{
+	struct gk_fib *prefix_fib;
+	int ret;
+
+	ret = get_prefix_fib(update, &cps_conf->gk->lpm_tbl, &prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	if (prefix_fib == NULL)
+		return -ENOENT;
+
+	ret = can_rd_del_route(update, prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	return del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
 }
 
 /*
@@ -1031,8 +1076,7 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		if (update.type == RTM_NEWROUTE) {
 			*err = new_route(&update, cps_conf);
 		} else if (likely(update.type == RTM_DELROUTE)) {
-			*err = del_fib_entry_numerical(&update.prefix_info,
-				cps_conf->gk);
+			*err = del_route(&update, cps_conf);
 		} else {
 			CPS_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
 				update.type);
