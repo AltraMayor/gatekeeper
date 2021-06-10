@@ -48,6 +48,12 @@ struct route_update {
 	/* Route type. See field rtm_type of struct rtmsg. */
 	uint8_t  rt_type;
 
+	/*
+	 * Flags over the update request.
+	 * See field nlmsg_flags of struct nlmsghdr.
+	 */
+	unsigned int rt_flags;
+
 	/* Output interface index of route. */
 	uint32_t oif_index;
 
@@ -105,38 +111,33 @@ static int
 new_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	int ret;
-	struct gk_fib *gw_fib = NULL;
+	uint32_t fib_id;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	struct gk_fib *prefix_fib = NULL;
+	struct gk_fib *gw_fib = NULL;
 
 	if (update->family == AF_INET) {
-		if (update->rt_type != RTN_BLACKHOLE) {
-			ret = lpm_lookup_ipv4(ltbl->lpm,
-				update->gw.ip.v4.s_addr);
-			if (ret < 0) {
-				if (ret == -ENOENT) {
-					CPS_LOG(WARNING,
-						"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
-						__func__, update->gw_buf,
-						update->ip_px_buf);
-				}
-				return ret;
-			}
-			gw_fib = &ltbl->fib_tbl[ret];
+		ret = lpm_is_rule_present(ltbl->lpm,
+			update->prefix_info.addr.ip.v4.s_addr,
+			update->prefix_info.len, &fib_id);
+		if (ret < 0) {
+			CPS_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed\n",
+				__func__, update->prefix_info.str);
+			return ret;
 		}
+		if (ret == 1)
+			prefix_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(update->family == AF_INET6)) {
-		if (update->rt_type != RTN_BLACKHOLE) {
-			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
-			if (ret < 0) {
-				if (ret == -ENOENT) {
-					CPS_LOG(WARNING,
-						"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
-						__func__, update->gw_buf,
-						update->ip_px_buf);
-				}
-				return ret;
-			}
-			gw_fib = &ltbl->fib_tbl6[ret];
+		ret = lpm6_is_rule_present(ltbl->lpm6,
+			update->prefix_info.addr.ip.v6.s6_addr,
+			update->prefix_info.len, &fib_id);
+		if (ret < 0) {
+			CPS_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed\n",
+				__func__, update->prefix_info.str);
+			return ret;
 		}
+		if (ret == 1)
+			prefix_fib = &ltbl->fib_tbl6[fib_id];
 	} else {
 		CPS_LOG(WARNING,
 			"cps update: unknown address family %d at %s()\n",
@@ -144,11 +145,81 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		return -EAFNOSUPPORT;
 	}
 
+	if (ret == 1) {
+		RTE_VERIFY(prefix_fib != NULL);
+
+		if ((update->rt_flags & NLM_F_EXCL) ||
+			!(update->rt_flags & NLM_F_REPLACE))
+			return -EEXIST;
+
+		/*
+		 * Protect grantor entries from configuration mistakes
+		 * in routing daemons.
+		 */
+		if (prefix_fib->action == GK_FWD_GRANTOR) {
+			CPS_LOG(ERR,
+				"Prefix %s cannot be updated via RTNetlink because it is a grantor entry; use the dynamic configuration block to update grantor entries\n",
+				update->prefix_info.str);
+			return -EPERM;
+		}
+
+		/* Gatekeeper does not currently support multipath. */
+		if (update->rt_flags & NLM_F_APPEND) {
+			CPS_LOG(WARNING,
+				"%s(%s): flag NLM_F_APPEND is NOT supported\n",
+				__func__, update->ip_px_buf);
+			return -EOPNOTSUPP;
+		}
+
+		/*
+		 * Ignore the return of del_fib_entry_numerical() because
+		 * no lock is held since the prefix lookup. Thus,
+		 * the prefix may or may not be in the table.
+		 */
+		del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
+	} else {
+		RTE_VERIFY(ret == 0);
+		RTE_VERIFY(prefix_fib == NULL);
+		if (!(update->rt_flags & NLM_F_CREATE))
+			return -ENOENT;
+	}
+
 	if (update->rt_type == RTN_BLACKHOLE) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			NULL, 0, GK_DROP, update->rt_proto, cps_conf->gk);
 	}
 
+	/*
+	 * Obtain @gw_fib.
+	 */
+	if (update->family == AF_INET) {
+		ret = lpm_lookup_ipv4(ltbl->lpm, update->gw.ip.v4.s_addr);
+		if (ret < 0) {
+			if (ret == -ENOENT) {
+				CPS_LOG(WARNING,
+					"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
+					__func__, update->gw_buf,
+					update->ip_px_buf);
+			}
+			return ret;
+		}
+		gw_fib = &ltbl->fib_tbl[ret];
+	} else if (likely(update->family == AF_INET6)) {
+		ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
+		if (ret < 0) {
+			if (ret == -ENOENT) {
+				CPS_LOG(WARNING,
+					"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
+					__func__, update->gw_buf,
+					update->ip_px_buf);
+			}
+			return ret;
+		}
+		gw_fib = &ltbl->fib_tbl6[ret];
+	} else {
+		/* The execution should never reach here. */
+		rte_panic("Unexpected condition in %s()\n", __func__);
+	}
 	RTE_VERIFY(gw_fib != NULL);
 
 	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
@@ -917,6 +988,12 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 
 	/* Route type. */
 	update.rt_type = rm->rtm_type;
+
+	/*
+	 * Flags over the update request.
+	 * Example: NLM_F_REQUEST|NLM_F_ACK|NLM_F_REPLACE|NLM_F_CREATE
+	 */
+	update.rt_flags = req->nlmsg_flags;
 
 	switch (rm->rtm_family) {
 	case AF_INET:
