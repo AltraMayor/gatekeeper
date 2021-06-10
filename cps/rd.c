@@ -114,7 +114,6 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	uint32_t fib_id;
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 	struct gk_fib *prefix_fib = NULL;
-	struct gk_fib *gw_fib = NULL;
 
 	if (update->family == AF_INET) {
 		ret = lpm_is_rule_present(ltbl->lpm,
@@ -189,69 +188,75 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			NULL, 0, GK_DROP, update->rt_proto, cps_conf->gk);
 	}
 
-	/*
-	 * Obtain @gw_fib.
-	 */
-	if (update->family == AF_INET) {
-		ret = lpm_lookup_ipv4(ltbl->lpm, update->gw.ip.v4.s_addr);
-		if (ret < 0) {
-			if (ret == -ENOENT) {
-				CPS_LOG(WARNING,
-					"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
-					__func__, update->gw_buf,
-					update->ip_px_buf);
+	if (update->oif_index == 0) {
+		/*
+		 * Find out where the gateway is a neighbor:
+		 * front or back network.
+		 */
+		struct gk_fib *gw_fib = NULL;
+
+		/*
+		 * Obtain @gw_fib.
+		 */
+		if (update->family == AF_INET) {
+			ret = lpm_lookup_ipv4(ltbl->lpm,
+				update->gw.ip.v4.s_addr);
+			if (ret < 0) {
+				if (ret == -ENOENT) {
+					CPS_LOG(WARNING,
+						"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
+						__func__, update->gw_buf,
+						update->ip_px_buf);
+				}
+				return ret;
 			}
-			return ret;
-		}
-		gw_fib = &ltbl->fib_tbl[ret];
-	} else if (likely(update->family == AF_INET6)) {
-		ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
-		if (ret < 0) {
-			if (ret == -ENOENT) {
-				CPS_LOG(WARNING,
-					"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
-					__func__, update->gw_buf,
-					update->ip_px_buf);
+			gw_fib = &ltbl->fib_tbl[ret];
+		} else if (likely(update->family == AF_INET6)) {
+			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
+			if (ret < 0) {
+				if (ret == -ENOENT) {
+					CPS_LOG(WARNING,
+						"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
+						__func__, update->gw_buf,
+						update->ip_px_buf);
+				}
+				return ret;
 			}
-			return ret;
+			gw_fib = &ltbl->fib_tbl6[ret];
+		} else {
+			/* The execution should never reach here. */
+			rte_panic("Unexpected condition in %s()\n", __func__);
 		}
-		gw_fib = &ltbl->fib_tbl6[ret];
-	} else {
-		/* The execution should never reach here. */
-		rte_panic("Unexpected condition in %s()\n", __func__);
+		RTE_VERIFY(gw_fib != NULL);
+
+		if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET)
+			update->oif_index = cps_conf->front_kni_index;
+		else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET))
+			update->oif_index = cps_conf->back_kni_index;
+		else {
+			CPS_LOG(ERR,
+				"%s(%s): the gateway %s is NOT a neighbor\n",
+				__func__, update->ip_px_buf, update->gw_buf);
+			return -EINVAL;
+		}
 	}
-	RTE_VERIFY(gw_fib != NULL);
 
-	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->front_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the front interface while the gateway %s is a neighbor of the front network\n",
-					update->ip_px_buf, update->gw_buf);
-				return -EINVAL;
-			}
-		}
-
+	if (update->oif_index == cps_conf->front_kni_index) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
 			update->rt_proto, cps_conf->gk);
 	}
 
-	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->back_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the back interface while the gateway %s is a neighbor of the back network\n",
-					update->ip_px_buf, update->gw_buf);
-				return -EINVAL;
-			}
-		}
-
+	if (likely(update->oif_index == cps_conf->back_kni_index)) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
 			update->rt_proto, cps_conf->gk);
 	}
 
+	CPS_LOG(ERR,
+		"%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
+		__func__, update->ip_px_buf, update->oif_index,
+		cps_conf->front_kni_index, cps_conf->back_kni_index);
 	return -EINVAL;
 }
 
@@ -318,7 +323,6 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	int ret;
 	bool dst_present = false;
 	bool gw_present = false;
-	bool oif_present = false;
 
 	if (tb[RTA_MULTIPATH]) {
 		/*
@@ -365,7 +369,6 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	if (tb[RTA_OIF]) {
 		update->oif_index = mnl_attr_get_u32(tb[RTA_OIF]);
 		CPS_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
-		oif_present = true;
 	}
 
 	if (tb[RTA_FLOW]) {
@@ -400,11 +403,12 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 			mnl_attr_get_u32(tb[RTA_PRIORITY]));
 	}
 
-	update->valid = dst_present &&
-		(update->type == RTM_DELROUTE ||
-		(update->type == RTM_NEWROUTE && gw_present && oif_present) ||
+	update->valid = dst_present && (
+		(update->type == RTM_DELROUTE) ||
+		(update->type == RTM_NEWROUTE && gw_present) ||
 		(update->type == RTM_NEWROUTE &&
-			update->rt_type == RTN_BLACKHOLE));
+			update->rt_type == RTN_BLACKHOLE)
+		);
 	return 0;
 }
 
