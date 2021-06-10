@@ -48,6 +48,12 @@ struct route_update {
 	/* Route type. See field rtm_type of struct rtmsg. */
 	uint8_t  rt_type;
 
+	/*
+	 * Flags over the update request.
+	 * See field nlmsg_flags of struct nlmsghdr.
+	 */
+	unsigned int rt_flags;
+
 	/* Output interface index of route. */
 	uint32_t oif_index;
 
@@ -102,14 +108,122 @@ close:
 }
 
 static int
-new_route(struct route_update *update, const struct cps_config *cps_conf)
+get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
+	struct gk_fib **prefix_fib)
 {
+	uint32_t fib_id;
 	int ret;
-	struct gk_fib *gw_fib = NULL;
-	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 
 	if (update->family == AF_INET) {
-		if (update->rt_type != RTN_BLACKHOLE) {
+		ret = lpm_is_rule_present(ltbl->lpm,
+			update->prefix_info.addr.ip.v4.s_addr,
+			update->prefix_info.len, &fib_id);
+		if (ret < 0) {
+			CPS_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed (%i)\n",
+				__func__, update->prefix_info.str, ret);
+			return ret;
+		}
+		if (ret == 1) {
+			*prefix_fib = &ltbl->fib_tbl[fib_id];
+			return 0;
+		}
+	} else if (likely(update->family == AF_INET6)) {
+		ret = lpm6_is_rule_present(ltbl->lpm6,
+			update->prefix_info.addr.ip.v6.s6_addr,
+			update->prefix_info.len, &fib_id);
+		if (ret < 0) {
+			CPS_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed (%i)\n",
+				__func__, update->prefix_info.str, ret);
+			return ret;
+		}
+		if (ret == 1) {
+			*prefix_fib = &ltbl->fib_tbl6[fib_id];
+			return 0;
+		}
+	} else {
+		CPS_LOG(ERR,
+			"cps update: unknown address family %d at %s()\n",
+			update->family, __func__);
+		return -EAFNOSUPPORT;
+	}
+
+	RTE_VERIFY(ret == 0);
+	*prefix_fib = NULL;
+	return 0;
+}
+
+static int
+can_rd_del_route(struct route_update *update, struct gk_fib *prefix_fib)
+{
+	/*
+	 * Protect grantor entries from configuration mistakes
+	 * in routing daemons.
+	 */
+	if (prefix_fib->action == GK_FWD_GRANTOR) {
+		CPS_LOG(ERR,
+			"Prefix %s cannot be updated via RTNetlink because it is a grantor entry; use the dynamic configuration block to update grantor entries\n",
+			update->prefix_info.str);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+static int
+new_route(struct route_update *update, const struct cps_config *cps_conf)
+{
+	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
+	struct gk_fib *prefix_fib;
+	int ret;
+
+	ret = get_prefix_fib(update, ltbl, &prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	if (prefix_fib != NULL) {
+		if ((update->rt_flags & NLM_F_EXCL) ||
+			!(update->rt_flags & NLM_F_REPLACE))
+			return -EEXIST;
+
+		ret = can_rd_del_route(update, prefix_fib);
+		if (ret < 0)
+			return ret;
+
+		/* Gatekeeper does not currently support multipath. */
+		if (update->rt_flags & NLM_F_APPEND) {
+			CPS_LOG(WARNING,
+				"%s(%s): flag NLM_F_APPEND is NOT supported\n",
+				__func__, update->ip_px_buf);
+			return -EOPNOTSUPP;
+		}
+
+		/*
+		 * Ignore the return of del_fib_entry_numerical() because
+		 * no lock is held since the prefix lookup. Thus,
+		 * the prefix may or may not be in the table.
+		 */
+		del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
+	} else {
+		if (!(update->rt_flags & NLM_F_CREATE))
+			return -ENOENT;
+	}
+
+	if (update->rt_type == RTN_BLACKHOLE) {
+		return add_fib_entry_numerical(&update->prefix_info, NULL,
+			NULL, 0, GK_DROP, update->rt_proto, cps_conf->gk);
+	}
+
+	if (update->oif_index == 0) {
+		/*
+		 * Find out where the gateway is a neighbor:
+		 * front or back network.
+		 */
+		struct gk_fib *gw_fib = NULL;
+
+		/*
+		 * Obtain @gw_fib.
+		 */
+		if (update->family == AF_INET) {
 			ret = lpm_lookup_ipv4(ltbl->lpm,
 				update->gw.ip.v4.s_addr);
 			if (ret < 0) {
@@ -122,9 +236,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				return ret;
 			}
 			gw_fib = &ltbl->fib_tbl[ret];
-		}
-	} else if (likely(update->family == AF_INET6)) {
-		if (update->rt_type != RTN_BLACKHOLE) {
+		} else if (likely(update->family == AF_INET6)) {
 			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
@@ -136,52 +248,61 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				return ret;
 			}
 			gw_fib = &ltbl->fib_tbl6[ret];
+		} else {
+			/* The execution should never reach here. */
+			rte_panic("Unexpected condition in %s()\n", __func__);
 		}
-	} else {
-		CPS_LOG(WARNING,
-			"cps update: unknown address family %d at %s()\n",
-			update->family, __func__);
-		return -EAFNOSUPPORT;
+		RTE_VERIFY(gw_fib != NULL);
+
+		if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET)
+			update->oif_index = cps_conf->front_kni_index;
+		else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET))
+			update->oif_index = cps_conf->back_kni_index;
+		else {
+			CPS_LOG(ERR,
+				"%s(%s): the gateway %s is NOT a neighbor\n",
+				__func__, update->ip_px_buf, update->gw_buf);
+			return -EINVAL;
+		}
 	}
 
-	if (update->rt_type == RTN_BLACKHOLE) {
-		return add_fib_entry_numerical(&update->prefix_info, NULL,
-			NULL, 0, GK_DROP, update->rt_proto, cps_conf->gk);
-	}
-
-	RTE_VERIFY(gw_fib != NULL);
-
-	if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->front_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the front interface while the gateway %s is a neighbor of the front network\n",
-					update->ip_px_buf, update->gw_buf);
-				return -EINVAL;
-			}
-		}
-
+	if (update->oif_index == cps_conf->front_kni_index) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
 			update->rt_proto, cps_conf->gk);
 	}
 
-	if (gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-		if (update->oif_index != 0) {
-			if (update->oif_index != cps_conf->back_kni_index) {
-				CPS_LOG(WARNING,
-					"The output KNI interface for prefix %s is not the back interface while the gateway %s is a neighbor of the back network\n",
-					update->ip_px_buf, update->gw_buf);
-				return -EINVAL;
-			}
-		}
-
+	if (likely(update->oif_index == cps_conf->back_kni_index)) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
 			update->rt_proto, cps_conf->gk);
 	}
 
+	CPS_LOG(ERR,
+		"%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
+		__func__, update->ip_px_buf, update->oif_index,
+		cps_conf->front_kni_index, cps_conf->back_kni_index);
 	return -EINVAL;
+}
+
+static int
+del_route(struct route_update *update, const struct cps_config *cps_conf)
+{
+	struct gk_fib *prefix_fib;
+	int ret;
+
+	ret = get_prefix_fib(update, &cps_conf->gk->lpm_tbl, &prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	if (prefix_fib == NULL)
+		return -ENOENT;
+
+	ret = can_rd_del_route(update, prefix_fib);
+	if (ret < 0)
+		return ret;
+
+	return del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
 }
 
 /*
@@ -247,7 +368,6 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	int ret;
 	bool dst_present = false;
 	bool gw_present = false;
-	bool oif_present = false;
 
 	if (tb[RTA_MULTIPATH]) {
 		/*
@@ -294,7 +414,6 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	if (tb[RTA_OIF]) {
 		update->oif_index = mnl_attr_get_u32(tb[RTA_OIF]);
 		CPS_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
-		oif_present = true;
 	}
 
 	if (tb[RTA_FLOW]) {
@@ -329,11 +448,12 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 			mnl_attr_get_u32(tb[RTA_PRIORITY]));
 	}
 
-	update->valid = dst_present &&
-		(update->type == RTM_DELROUTE ||
-		(update->type == RTM_NEWROUTE && gw_present && oif_present) ||
+	update->valid = dst_present && (
+		(update->type == RTM_DELROUTE) ||
+		(update->type == RTM_NEWROUTE && gw_present) ||
 		(update->type == RTM_NEWROUTE &&
-			update->rt_type == RTN_BLACKHOLE));
+			update->rt_type == RTN_BLACKHOLE)
+		);
 	return 0;
 }
 
@@ -918,6 +1038,12 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 	/* Route type. */
 	update.rt_type = rm->rtm_type;
 
+	/*
+	 * Flags over the update request.
+	 * Example: NLM_F_REQUEST|NLM_F_ACK|NLM_F_REPLACE|NLM_F_CREATE
+	 */
+	update.rt_flags = req->nlmsg_flags;
+
 	switch (rm->rtm_family) {
 	case AF_INET:
 		if (!ipv4_configured(cps_conf->net)) {
@@ -950,8 +1076,7 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		if (update.type == RTM_NEWROUTE) {
 			*err = new_route(&update, cps_conf);
 		} else if (likely(update.type == RTM_DELROUTE)) {
-			*err = del_fib_entry_numerical(&update.prefix_info,
-				cps_conf->gk);
+			*err = del_route(&update, cps_conf);
 		} else {
 			CPS_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
 				update.type);
