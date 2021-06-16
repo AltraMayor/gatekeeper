@@ -1110,7 +1110,8 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
  */
 static int
 init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
-	uint8_t rt_proto, struct ipaddr *gw_addr, struct gk_config *gk_conf)
+	const struct route_properties *props, struct ipaddr *gw_addr,
+	struct gk_config *gk_conf)
 {
 	int ret, fib_id;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
@@ -1158,7 +1159,7 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	/* Fills up the Gateway FIB entry for the IP prefix. */
 	gw_fib->action = action;
 	gw_fib->u.gateway.eth_cache = eth_cache;
-	gw_fib->u.gateway.rt_proto = rt_proto;
+	gw_fib->u.gateway.props = *props;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0)
@@ -1292,8 +1293,8 @@ put_ether_cache:
 }
 
 static int
-init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
-	struct gk_config *gk_conf)
+init_drop_fib_locked(struct ip_prefix *ip_prefix,
+	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int ret;
 	struct gk_fib *ip_prefix_fib;
@@ -1313,7 +1314,7 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix, uint8_t rt_proto,
 			ip_prefix->addr.proto, __func__);
 
 	ip_prefix_fib->action = GK_DROP;
-	ip_prefix_fib->u.drop.rt_proto = rt_proto;
+	ip_prefix_fib->u.drop.props = *props;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
 	if (ret < 0) {
@@ -1333,7 +1334,7 @@ static int
 add_fib_entry_locked(struct ip_prefix *prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
-	uint8_t rt_proto, struct gk_config *gk_conf,
+	const struct route_properties *props, struct gk_config *gk_conf,
 	int64_t fib_id)
 {
 	int ret;
@@ -1356,8 +1357,8 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 				fib_id >= 0)
 			return -1;
 
-		ret = init_gateway_fib_locked(
-			prefix, action, rt_proto, &gw_addrs[0], gk_conf);
+		ret = init_gateway_fib_locked(prefix, action, props,
+			&gw_addrs[0], gk_conf);
 		if (ret < 0)
 			return -1;
 
@@ -1367,8 +1368,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 				fib_id >= 0)
 			return -1;
 
-		ret = init_drop_fib_locked(
-			prefix, rt_proto, gk_conf);
+		ret = init_drop_fib_locked(prefix, props, gk_conf);
 		if (ret < 0)
 			return -1;
 
@@ -1616,7 +1616,7 @@ int
 add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
-	uint8_t rt_proto, struct gk_config *gk_conf)
+	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int ret;
 	struct gk_fib *neigh_fib;
@@ -1686,7 +1686,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, rt_proto, gk_conf, -1);
+		action, props, gk_conf, -1);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1696,7 +1696,7 @@ static int
 update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
-	uint8_t rt_proto, struct gk_config *gk_conf)
+	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int ret;
 	uint32_t fib_id = 0;
@@ -1731,11 +1731,16 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, rt_proto, gk_conf, fib_id);
+		action, props, gk_conf, fib_id);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
 }
+
+static const struct route_properties default_route_properties = {
+	.rt_proto = RTPROT_STATIC,
+	.priority = 0,
+};
 
 int
 add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
@@ -1766,7 +1771,7 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	return add_fib_entry_numerical(&prefix_info,
 		gt_para, gw_para,
 		gt_ip != NULL || gw_ip != NULL ? 1 : 0,
-		action, RTPROT_STATIC, gk_conf);
+		action, &default_route_properties, gk_conf);
 }
 
 int
@@ -1924,11 +1929,11 @@ __add_grantor_entry_lb(lua_State *l, int overwrite)
 	if (overwrite) {
 		ret = update_fib_entry_numerical(&prefix_info,
 			gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
-			RTPROT_STATIC, gk_conf);
+			&default_route_properties, gk_conf);
 	} else {
 		ret = add_fib_entry_numerical(&prefix_info,
 			gt_addrs, gw_addrs, tbl_size, GK_FWD_GRANTOR,
-			RTPROT_STATIC, gk_conf);
+			&default_route_properties, gk_conf);
 	}
 	if (ret < 0)
 		luaL_error(l, "Could not add or update FIB entry; check Gatekeeper log");
