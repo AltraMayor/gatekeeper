@@ -42,11 +42,11 @@ struct route_update {
 	 */
 	int      valid;
 
-	/* Route origin. See field rtm_protocol of struct rtmsg. */
-	uint8_t  rt_proto;
-
 	/* Route type. See field rtm_type of struct rtmsg. */
 	uint8_t  rt_type;
+
+	/* Properties of the route to be saved in the FIB. */
+	struct route_properties rt_props;
 
 	/*
 	 * Flags over the update request.
@@ -210,7 +210,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 
 	if (update->rt_type == RTN_BLACKHOLE) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
-			NULL, 0, GK_DROP, update->rt_proto, cps_conf->gk);
+			NULL, 0, GK_DROP, &update->rt_props, cps_conf->gk);
 	}
 
 	if (update->oif_index == 0) {
@@ -269,13 +269,13 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 	if (update->oif_index == cps_conf->front_kni_index) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
-			update->rt_proto, cps_conf->gk);
+			&update->rt_props, cps_conf->gk);
 	}
 
 	if (likely(update->oif_index == cps_conf->back_kni_index)) {
 		return add_fib_entry_numerical(&update->prefix_info, NULL,
 			&update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
-			update->rt_proto, cps_conf->gk);
+			&update->rt_props, cps_conf->gk);
 	}
 
 	CPS_LOG(ERR,
@@ -443,9 +443,9 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 	}
 
 	if (tb[RTA_PRIORITY]) {
-		CPS_LOG(WARNING,
-			"cps update: the rtnetlink command has information (RTA_PRIORITY with prio=%u) that we don't need or don't honor\n",
-			mnl_attr_get_u32(tb[RTA_PRIORITY]));
+		update->rt_props.priority = mnl_attr_get_u32(tb[RTA_PRIORITY]);
+		CPS_LOG(DEBUG, "cps update: priority = %u\n",
+			update->rt_props.priority);
 	}
 
 	update->valid = dst_present && (
@@ -594,6 +594,19 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 	}
 }
 
+static inline void
+put_priority(struct nlmsghdr *reply, uint32_t priority)
+{
+	/*
+	 * Not only is the default priority very common,
+	 * it does not need to be reported.
+	 */
+	if (likely(priority == 0))
+		return;
+
+	mnl_attr_put_u32(reply, RTA_PRIORITY, priority);
+}
+
 static void
 rd_fill_getroute_reply(const struct cps_config *cps_conf,
 	struct nlmsghdr *reply, struct gk_fib *fib, int family, uint32_t seq,
@@ -628,13 +641,15 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
-		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		put_priority(reply, fib->u.gateway.props.priority);
+		rm->rtm_protocol = fib->u.gateway.props.rt_proto;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_BACK_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
-		rm->rtm_protocol = fib->u.gateway.rt_proto;
+		put_priority(reply, fib->u.gateway.props.priority);
+		rm->rtm_protocol = fib->u.gateway.props.rt_proto;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
@@ -651,7 +666,8 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 		*gw_addr = NULL;
 		break;
 	case GK_DROP:
-		rm->rtm_protocol = fib->u.drop.rt_proto;
+		put_priority(reply, fib->u.gateway.props.priority);
+		rm->rtm_protocol = fib->u.drop.props.rt_proto;
 		rm->rtm_type = RTN_BLACKHOLE;
 		*gw_addr = NULL;
 		break;
@@ -1032,11 +1048,13 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 	/* Default to an invalid index number. */
 	update.oif_index = 0;
 
-	/* Route origin (routing daemon). */
-	update.rt_proto = rm->rtm_protocol;
-
 	/* Route type. */
 	update.rt_type = rm->rtm_type;
+
+	/* Route origin (routing daemon). */
+	update.rt_props.rt_proto = rm->rtm_protocol;
+	/* Default route priority. */
+	update.rt_props.priority = 0;
 
 	/*
 	 * Flags over the update request.

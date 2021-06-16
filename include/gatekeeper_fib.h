@@ -138,6 +138,23 @@ struct grantor_set {
 	struct grantor_entry entries[0];
 };
 
+/*
+ * Route properties.
+ *
+ * Gatekeeper does not acts on these properties. They are needed to
+ * support routing daemons that expect them.
+ */
+struct route_properties {
+	/*
+	 * Routing table protocol -- origin of the route.
+	 * RTPROT_STATIC for routes added by user.
+	 * RTPROT_BIRD for routes added by BIRD daemon, etc.
+	 */
+	uint8_t  rt_proto;
+
+	uint32_t priority;
+};
+
 /* The gk forward information base (fib). */
 struct gk_fib {
 
@@ -153,12 +170,7 @@ struct gk_fib {
 			/* The cached Ethernet header. */
 			struct ether_cache *eth_cache;
 
-			/*
-			 * Routing table protocol - origin of the root.
-			 * RTPROT_STATIC for routes added by user.
-			 * RTPROT_BIRD for routes added by BIRD daemon, etc.
-			 */
-			uint8_t rt_proto;
+			struct route_properties props;
 		} gateway;
 
 		struct {
@@ -180,12 +192,7 @@ struct gk_fib {
 
 		/* Route information when the action is GK_DROP. */
 		struct {
-			/*
-			 * Routing table protocol - origin of the root.
-			 * RTPROT_STATIC for routes added by user.
-			 * RTPROT_BIRD for routes added by BIRD daemon, etc.
-			 */
-			uint8_t rt_proto;
+			struct route_properties props;
 		} drop;
 	} u;
 };
@@ -305,7 +312,7 @@ int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
 int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
-	uint8_t protocol, struct gk_config *gk_conf);
+	const struct route_properties *props, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(
