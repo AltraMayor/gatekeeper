@@ -2242,7 +2242,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (entry == NULL) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to send new lua state to GT block %d at lcore %d\n",
+			luaL_error(l, "gt: failed to allocate a mailbox entry to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;
