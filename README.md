@@ -105,7 +105,7 @@ Install the following software dependencies:
 
     $ sudo apt-get update
     $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
-	build-essential linux-headers-`uname -r` libmnl0 libmnl-dev \
+	build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
 	libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
 	autoconf flex bison libncurses5-dev libreadline-dev python \
 	libcap-dev libcap2
