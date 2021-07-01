@@ -490,7 +490,12 @@ cps_proc(void *arg)
 	struct rte_kni *front_kni = cps_conf->front_kni;
 	struct rte_kni *back_kni = cps_conf->back_kni;
 
-	cap_value_t caps[] = { CAP_NET_ADMIN };
+	/*
+	 * CAP_NET_ADMIN: allow RTNetlink communication between the CPS and
+	 *			routing daemons.
+	 * CAP_SYS_MODULE: remove the rte_kni kernel module while exiting.
+	 */
+	cap_value_t caps[] = {CAP_NET_ADMIN, CAP_SYS_MODULE};
 
 	CPS_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
 		cps_conf->lcore_id, gettid());
