@@ -1822,8 +1822,7 @@ alloc_lua_mem_in_dpdk(void *ud, void *ptr,
 #endif
 
 static lua_State *
-alloc_and_setup_lua_state(struct gt_config *gt_conf,
-	__attribute__((unused))unsigned int lcore_id)
+alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
 {
 	int ret;
 	char lua_entry_path[128];
@@ -1848,6 +1847,11 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf,
 			__func__);
 		goto out;
 	}
+
+	/* Add lcore_id information to the registry of @lua_state. */
+	lua_pushstring(lua_state, GT_LUA_LCORE_ID_NAME);
+	lua_pushnumber(lua_state, lcore_id);
+	lua_settable(lua_state, LUA_REGISTRYINDEX);
 
 	luaL_openlibs(lua_state);
 	lualpm_openlib(lua_state);
