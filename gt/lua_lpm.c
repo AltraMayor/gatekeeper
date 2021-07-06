@@ -26,6 +26,7 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_lpm.h"
 #include "gatekeeper_fib.h"
+#include "gatekeeper_gt.h"
 
 static int
 l_str_to_prefix(lua_State *l)
@@ -91,6 +92,7 @@ l_new_lpm(lua_State *l)
 	struct rte_lpm_config lpm_conf;
 	struct rte_lpm **p_lpm;
 	static rte_atomic32_t identifier = RTE_ATOMIC32_INIT(0);
+	unsigned int lcore_id;
 
 	memset(&lpm_conf, 0, sizeof(lpm_conf));
 
@@ -104,9 +106,13 @@ l_new_lpm(lua_State *l)
 		luaL_error(l, "Expected two arguments, however it got %d arguments",
 			lua_gettop(l));
 
+	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
+	lcore_id = lua_tonumber(l, -1);
+
 	p_lpm = lua_newuserdata(l, sizeof(struct rte_lpm *));
-	*p_lpm = init_ipv4_lpm("gt_", &lpm_conf, rte_socket_id(),
-		rte_lcore_id(), rte_atomic32_add_return(&identifier, 1));
+	*p_lpm = init_ipv4_lpm("gt_", &lpm_conf,
+		rte_lcore_to_socket_id(lcore_id), lcore_id,
+		rte_atomic32_add_return(&identifier, 1));
 	if (unlikely(*p_lpm == NULL))
 		luaL_error(l, "gt: failed to initialize the IPv4 LPM table for Lua policies");
 
@@ -255,6 +261,7 @@ l_new_lpm6(lua_State *l)
 	struct rte_lpm6_config lpm6_conf;
 	struct rte_lpm6 **p_lpm6;
 	static rte_atomic32_t identifier6 = RTE_ATOMIC32_INIT(0);
+	unsigned int lcore_id;
 
 	memset(&lpm6_conf, 0, sizeof(lpm6_conf));
 
@@ -268,9 +275,13 @@ l_new_lpm6(lua_State *l)
 		luaL_error(l, "Expected two arguments, however it got %d arguments",
 			lua_gettop(l));
 
+	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
+	lcore_id = lua_tonumber(l, -1);
+
 	p_lpm6 = lua_newuserdata(l, sizeof(struct rte_lpm6 *));
-	*p_lpm6 = init_ipv6_lpm("gt", &lpm6_conf, rte_socket_id(),
-		rte_lcore_id(), rte_atomic32_add_return(&identifier6, 1));
+	*p_lpm6 = init_ipv6_lpm("gt", &lpm6_conf,
+		rte_lcore_to_socket_id(lcore_id), lcore_id,
+		rte_atomic32_add_return(&identifier6, 1));
 	if (unlikely(*p_lpm6 == NULL))
 		luaL_error(l, "gt: failed to initialize the IPv6 LPM table for Lua policies");
 

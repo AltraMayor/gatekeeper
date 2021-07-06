@@ -234,4 +234,10 @@ gt_conf_hold(struct gt_config *gt_conf)
 	rte_atomic32_inc(&gt_conf->ref_cnt);
 }
 
+/*
+ * Key in the registry of a Lua state used to run policies that points to
+ * the lcore_id where the policy runs.
+ */
+#define GT_LUA_LCORE_ID_NAME "lcore_id"
+
 #endif /* _GATEKEEPER_GT_H_ */
