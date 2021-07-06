@@ -1549,6 +1549,15 @@ gt_proc(void *arg)
 	struct rte_ip_frag_death_row death_row;
 	uint16_t gt_max_pkt_burst;
 	bool reassembling_enabled = gt_conf->reassembling_enabled;
+	/*
+	 * GT instances need capabilities CAP_DAC_OVERRIDE and CAP_SYS_ADMIN
+	 * to allow policies to allocate more hugepages from the kernel
+	 * when dylib.update_gt_lua_states_incrementally() is called from
+	 * the dynamic configuration block.
+	 * More details on why these capabilities are needed are found in
+	 * dyn_cfg_proc().
+	 */
+	cap_value_t caps[] = {CAP_DAC_OVERRIDE, CAP_SYS_ADMIN};
 
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
@@ -1556,7 +1565,7 @@ gt_proc(void *arg)
 	GT_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
-	if (needed_caps("GT", 0, NULL) < 0) {
+	if (needed_caps("GT", RTE_DIM(caps), caps) < 0) {
 		GT_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
@@ -2246,7 +2255,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (entry == NULL) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to send new lua state to GT block %d at lcore %d\n",
+			luaL_error(l, "gt: failed to allocate a mailbox entry to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;

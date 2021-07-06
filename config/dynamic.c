@@ -630,9 +630,46 @@ dyn_cfg_proc(void *arg)
 		"The Dynamic Config block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
-	if (needed_caps("DYC", 0, NULL) < 0) {
-		DYC_LOG(ERR, "Could not set needed capabilities\n");
-		exiting = true;
+	if (dy_conf->gt != NULL) {
+		/*
+		 * Grantor servers.
+		 *
+		 * When a client calls dylib.update_gt_lua_states() to
+		 * reload the Lua policy of a Grantor server, the policy
+		 * may need to request more hugepages from the kernel.
+		 * This need can arrise, for example, when a policy allocates
+		 * LPM tables.
+		 *
+		 * In order to obtain more hugepages, DPDK needs to access
+		 * a number of control files such as files in /dev/hugepages/,
+		 * file /proc/self/pagemap, and potentially more.
+		 * Thus, the capability CAP_DAC_OVERRIDE is neccessary.
+		 *
+		 * The capability CAP_SYS_ADMIN is also needed, so DPDK can
+		 * map virtual addresses into physical addresses.
+		 * See details in rte_mem_virt2phy(), and
+		 * the following function of the Linux kernel:
+		 * fs/proc/task_mmu.c:pagemap_read().
+		 *
+		 * Notice that the dynamic configuration needs
+		 * these capabilities because dylib.update_gt_lua_states()
+		 * creates the new Lua states and then send them to
+		 * the GT instances.
+		 *
+		 * A positive side effect of capability CAP_DAC_OVERRIDE is to
+		 * allow the dynamic configuration block to remove
+		 * its Unix socket while exiting.
+		 */
+		cap_value_t caps[] = {CAP_DAC_OVERRIDE, CAP_SYS_ADMIN};
+		if (needed_caps("DYC", RTE_DIM(caps), caps) < 0) {
+			DYC_LOG(ERR, "Could not set needed capabilities for Grantor\n");
+			exiting = true;
+		}
+	} else {
+		if (needed_caps("DYC", 0, NULL) < 0) {
+			DYC_LOG(ERR, "Could not set needed capabilities\n");
+			exiting = true;
+		}
 	}
 
 	while (likely(!exiting)) {
