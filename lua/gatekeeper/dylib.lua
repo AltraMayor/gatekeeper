@@ -238,6 +238,6 @@ function print_lls_dump_entry(lls_dump_entry, acc)
 end
 
 function update_gt_lua_states_incrementally(gt_conf, lua_code, is_returned)
-	dylib.internal_update_gt_lua_states_incrementally(gt_conf,
+	return dylib.internal_update_gt_lua_states_incrementally(gt_conf,
 		string.dump(lua_code), is_returned)
 end
