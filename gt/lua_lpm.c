@@ -43,7 +43,8 @@ l_str_to_prefix(lua_State *l)
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
 	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV4)
-		luaL_error(l, "gk: failed to parse an IPv4 prefix");
+		luaL_error(l, "gk: failed to parse the IPv4 prefix: %s",
+			prefix_str);
 
 	lua_pushinteger(l, ip_addr.ip.v4.s_addr);
 	lua_pushinteger(l, ret);
@@ -71,7 +72,8 @@ l_str_to_prefix6(lua_State *l)
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
 	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV6)
-		luaL_error(l, "gk: failed to parse an IPv6 prefix");
+		luaL_error(l, "gk: failed to parse the IPv6 prefix: %s",
+			prefix_str);
 
 	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_IN6_ADDR);
@@ -149,8 +151,8 @@ l_lpm_add(lua_State *l)
 
 	ret = rte_lpm_add(lpm, ntohl(ip), depth, label);
 	if (ret < 0) {
-		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s",
-			ip, depth, label, __func__);
+		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s(%d): %s",
+			ip, depth, label, __func__, -ret, strerror(-ret));
 	}
 
 	return 0;
@@ -326,8 +328,14 @@ l_lpm6_add(lua_State *l)
 
 	ret = rte_lpm6_add(lpm6, ipv6_addr->s6_addr, depth, label);
 	if (ret < 0) {
-		luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s",
-			__func__);
+		char addr_buf[INET6_ADDRSTRLEN];
+		if (unlikely(inet_ntop(AF_INET6, ipv6_addr, addr_buf,
+				INET6_ADDRSTRLEN) == NULL)) {
+			luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%d): %s",
+				__func__, -ret, strerror(-ret));
+		}
+		luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%s/%d, %d): %s",
+			__func__, addr_buf, depth, -ret, strerror(-ret));
 	}
 
 	return 0;
