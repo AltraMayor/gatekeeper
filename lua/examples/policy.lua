@@ -156,10 +156,9 @@ local function lpm6_para_estimate(ipv6_file)
 
 	for line in io.lines(ipv6_file) do
 		local ip6_addr, prefix_len = lpmlib.str_to_prefix6(line)
-		local ip6_addr_ref = ffi.cast("struct in6_addr &", ip6_addr)
 		num_rules = num_rules + 1
 		num_tbl8s = num_tbl8s +
-			lpmlib.lpm6_add_tbl8s(ip6_addr_ref, prefix_len, prefixes)
+			lpmlib.lpm6_add_tbl8s(ip6_addr, prefix_len, prefixes)
 	end
 
 	return num_rules, num_tbl8s
@@ -190,8 +189,7 @@ end
 
 for line in io.lines(bogons_ipv6_file) do
 	local ip_addr, prefix_len = lpmlib.str_to_prefix6(line)
-	local ip_addr_ref = ffi.cast("struct in6_addr &", ip_addr)
-	lpmlib.lpm6_add(lpm6, ip_addr_ref, prefix_len, 253)
+	lpmlib.lpm6_add(lpm6, ip_addr, prefix_len, 253)
 end
 
 -- Example global IP addresses for special cases in policy.
