@@ -43,7 +43,8 @@ l_str_to_prefix(lua_State *l)
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
 	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV4)
-		luaL_error(l, "gk: failed to parse an IPv4 prefix");
+		luaL_error(l, "gk: failed to parse the IPv4 prefix: %s",
+			prefix_str);
 
 	lua_pushinteger(l, ip_addr.ip.v4.s_addr);
 	lua_pushinteger(l, ret);
@@ -51,8 +52,41 @@ l_str_to_prefix(lua_State *l)
 	return 2;
 }
 
-#define CTYPE_STRUCT_IN6_ADDR_REF "struct in6_addr &"
 #define CTYPE_STRUCT_IN6_ADDR "struct in6_addr"
+#define CTYPE_STRUCT_IN6_ADDR_REF "struct in6_addr &"
+#define CTYPE_STRUCT_IN6_ADDR_PTR "struct in6_addr *"
+
+static struct in6_addr *
+get_ipv6_addr(lua_State *l, int idx)
+{
+	/* Testing for type CTYPE_STRUCT_IN6_ADDR. */
+	uint32_t correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_IN6_ADDR);
+	uint32_t ctypeid;
+	void *cdata = luaL_checkcdata(l, idx, &ctypeid,	CTYPE_STRUCT_IN6_ADDR);
+	if (ctypeid == correct_ctypeid_in6_addr)
+		return cdata;
+
+	/* Testing for type CTYPE_STRUCT_IN6_ADDR_REF. */
+	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_IN6_ADDR_REF);
+	cdata = luaL_checkcdata(l, idx, &ctypeid, CTYPE_STRUCT_IN6_ADDR_REF);
+	if (likely(ctypeid == correct_ctypeid_in6_addr))
+		return *(struct in6_addr **)cdata;
+
+	/* Testing for type CTYPE_STRUCT_IN6_ADDR_PTR. */
+	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_IN6_ADDR_PTR);
+	cdata = luaL_checkcdata(l, idx, &ctypeid, CTYPE_STRUCT_IN6_ADDR_PTR);
+	if (likely(ctypeid == correct_ctypeid_in6_addr))
+		return *(struct in6_addr **)cdata;
+
+	luaL_error(l, "Expected '%s', `%s', or '%s' as argument #%d",
+		CTYPE_STRUCT_IN6_ADDR, CTYPE_STRUCT_IN6_ADDR_REF,
+		CTYPE_STRUCT_IN6_ADDR_PTR, idx);
+	/* Make compiler happy; the above luaL_error() doesn't return. */
+	return NULL;
+}
 
 static int
 l_str_to_prefix6(lua_State *l)
@@ -71,7 +105,8 @@ l_str_to_prefix6(lua_State *l)
 
 	ret = parse_ip_prefix(prefix_str, &ip_addr);
 	if (ret < 0 || ip_addr.proto != RTE_ETHER_TYPE_IPV6)
-		luaL_error(l, "gk: failed to parse an IPv6 prefix");
+		luaL_error(l, "gk: failed to parse the IPv6 prefix: %s",
+			prefix_str);
 
 	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_IN6_ADDR);
@@ -149,8 +184,8 @@ l_lpm_add(lua_State *l)
 
 	ret = rte_lpm_add(lpm, ntohl(ip), depth, label);
 	if (ret < 0) {
-		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s",
-			ip, depth, label, __func__);
+		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s(%d): %s",
+			ip, depth, label, __func__, -ret, strerror(-ret));
 	}
 
 	return 0;
@@ -295,30 +330,19 @@ static int
 l_lpm6_add(lua_State *l)
 {
 	int ret;
-	struct in6_addr *ipv6_addr;
-	uint8_t depth;
-	uint32_t label;
-	uint32_t ctypeid;
-	uint32_t correct_ctypeid_in6_addr;
 
 	/* First argument must be of type struct rte_lpm6 **. */
 	struct rte_lpm6 *lpm6 =
 		*(struct rte_lpm6 **)luaL_checkudata(l, 1, LUA_LPM6_TNAME);
 
-	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	/* Second argument must be of type CTYPE_STRUCT_IN6_ADDR_REF. */
-	ipv6_addr = luaL_checkcdata(l, 2, &ctypeid,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	if (ctypeid != correct_ctypeid_in6_addr)
-		luaL_error(l, "Expected `%s' as second argument",
-			CTYPE_STRUCT_IN6_ADDR_REF);
+	/* Second argument must be a struct in6_add. */
+	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 2);
 
 	/* Third argument must be a Lua number. */
-	depth = luaL_checknumber(l, 3);
+	uint8_t depth = luaL_checknumber(l, 3);
 
 	/* Fourth argument must be a Lua number. */
-	label = luaL_checknumber(l, 4);
+	uint32_t label = luaL_checknumber(l, 4);
 
 	if (lua_gettop(l) != 4)
 		luaL_error(l, "Expected four arguments, however it got %d arguments",
@@ -326,8 +350,14 @@ l_lpm6_add(lua_State *l)
 
 	ret = rte_lpm6_add(lpm6, ipv6_addr->s6_addr, depth, label);
 	if (ret < 0) {
-		luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s",
-			__func__);
+		char addr_buf[INET6_ADDRSTRLEN];
+		if (unlikely(inet_ntop(AF_INET6, ipv6_addr, addr_buf,
+				INET6_ADDRSTRLEN) == NULL)) {
+			luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%d): %s",
+				__func__, -ret, strerror(-ret));
+		}
+		luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%s/%d, %d): %s",
+			__func__, addr_buf, depth, -ret, strerror(-ret));
 	}
 
 	return 0;
@@ -336,25 +366,15 @@ l_lpm6_add(lua_State *l)
 static int
 l_lpm6_del(lua_State *l)
 {
-	uint8_t depth;
-	struct in6_addr *ipv6_addr;
-	uint32_t ctypeid;
-	uint32_t correct_ctypeid_in6_addr;
-
 	/* First argument must be of type struct rte_lpm6 **. */
 	struct rte_lpm6 *lpm6 =
 		*(struct rte_lpm6 **)luaL_checkudata(l, 1, LUA_LPM6_TNAME);
 
-	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	/* Second argument must be of type CTYPE_STRUCT_IN6_ADDR_REF. */
-	ipv6_addr = luaL_checkcdata(l, 2, &ctypeid, CTYPE_STRUCT_IN6_ADDR_REF);
-	if (ctypeid != correct_ctypeid_in6_addr)
-		luaL_error(l, "Expected `%s' as second argument",
-			CTYPE_STRUCT_IN6_ADDR_REF);
+	/* Second argument must be a struct in6_add. */
+	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 2);
 
 	/* Third argument must be a Lua number. */
-	depth = luaL_checknumber(l, 3);
+	uint8_t depth = luaL_checknumber(l, 3);
 
 	if (lua_gettop(l) != 3)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
@@ -368,21 +388,12 @@ l_lpm6_del(lua_State *l)
 static int
 l_lpm6_lookup(lua_State *l)
 {
-	struct in6_addr *ipv6_addr;
-	uint32_t ctypeid;
-	uint32_t correct_ctypeid_in6_addr;
-
 	/* First argument must be of type struct rte_lpm6 **. */
 	struct rte_lpm6 *lpm6 =
 		*(struct rte_lpm6 **)luaL_checkudata(l, 1, LUA_LPM6_TNAME);
 
-	correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	/* Second argument must be of type CTYPE_STRUCT_IN6_ADDR_REF. */
-	ipv6_addr = luaL_checkcdata(l, 2, &ctypeid, CTYPE_STRUCT_IN6_ADDR_REF);
-	if (ctypeid != correct_ctypeid_in6_addr)
-		luaL_error(l, "Expected `%s' as second argument",
-			CTYPE_STRUCT_IN6_ADDR_REF);
+	/* Second argument must be a struct in6_add. */
+	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 2);
 
 	if (lua_gettop(l) != 2)
 		luaL_error(l, "Expected two arguments, however it got %d arguments",
@@ -419,22 +430,14 @@ ip6_copy_addr(uint8_t *dst, const uint8_t *src)
 static int
 l_ip6_mask_addr(lua_State *l)
 {
-	uint8_t depth;
-	uint32_t ctypeid;
 	uint8_t masked_ip[RTE_LPM6_IPV6_ADDR_SIZE];
 	char buf[INET6_ADDRSTRLEN];
 
-	uint32_t correct_ctypeid_in6_addr = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	/* First argument must be of type CTYPE_STRUCT_IN6_ADDR_REF. */
-	struct in6_addr *ipv6_addr = luaL_checkcdata(l, 1, &ctypeid,
-		CTYPE_STRUCT_IN6_ADDR_REF);
-	if (ctypeid != correct_ctypeid_in6_addr)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_IN6_ADDR_REF);
+	/* First argument must be a struct in6_add. */
+	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 1);
 
 	/* Second argument must be a Lua number. */
-	depth = luaL_checknumber(l, 2);
+	uint8_t depth = luaL_checknumber(l, 2);
 	if ((depth == 0) || (depth > RTE_LPM6_MAX_DEPTH))
 		luaL_error(l, "Expected a depth value between 1 and 128, however it is %d",
 			depth);
