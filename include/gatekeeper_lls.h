@@ -406,49 +406,17 @@ static const struct in6_addr ip6_allnodes_mc_addr = {
  * ICMP message types.
  */
 
-/* ICMP Echo Request. */
-#define ICMP_ECHO_REQUEST_TYPE (8)
-#define ICMP_ECHO_REQUEST_CODE (0)
-
-/* ICMP Echo Reply. */
-#define ICMP_ECHO_REPLY_TYPE (0)
-#define ICMP_ECHO_REPLY_CODE (0)
-
 /* ICMP Destination Unreachable, Fragmentation required, and DF flag set. */
 #define ICMP_DEST_UNREACHABLE_TYPE (3)
 #define ICMP_FRAG_REQ_DF_CODE (4)
-
-/* ICMP Address Mask Request. */
-#define ICMP_MASK_REQUEST_TYPE (17)
-#define ICMP_MASK_REQUEST_CODE (0)
-
-/* ICMP Address Mask Reply. */
-#define ICMP_MASK_REPLY_TYPE (18)
-#define ICMP_MASK_REPLY_CODE (0)
 
 /*
  * ICMPv6 message types.
  */
 
-/* ICMPv6 Echo Request. */
-#define ICMPV6_ECHO_REQUEST_TYPE (128)
-#define ICMPV6_ECHO_REQUEST_CODE (0)
-
-/* ICMPv6 Echo Reply. */
-#define ICMPV6_ECHO_REPLY_TYPE (129)
-#define ICMPV6_ECHO_REPLY_CODE (0)
-
 /* ICMPv6 Packet Too Big. */
 #define ICMPV6_PACKET_TOO_BIG_TYPE (2)
 #define ICMPV6_PACKET_TOO_BIG_CODE (0)
-
-/* ICMPv6 Neighbor Discovery Router Solicitation. */
-#define ND_ROUTER_SOLICITATION_TYPE (133)
-#define ND_ROUTER_SOLICITATION_CODE (0)
-
-/* ICMPv6 Neighbor Discovery Router Advertisement. */
-#define ND_ROUTER_ADVERTISEMENT_TYPE (134)
-#define ND_ROUTER_ADVERTISEMENT_CODE (0)
 
 /* ICMPv6 Neighbor Discovery Neighbor Solicitation. */
 #define ND_NEIGHBOR_SOLICITATION_TYPE (135)
@@ -457,15 +425,6 @@ static const struct in6_addr ip6_allnodes_mc_addr = {
 /* ICMPv6 Neighbor Discovery Neighbor Advertisement. */
 #define ND_NEIGHBOR_ADVERTISEMENT_TYPE (136)
 #define ND_NEIGHBOR_ADVERTISEMENT_CODE (0)
-
-static inline int
-pkt_is_nd_router(uint8_t type, uint8_t code)
-{
-	return (type == ND_ROUTER_SOLICITATION_TYPE &&
-		code == ND_ROUTER_SOLICITATION_CODE) ||
-		(type == ND_ROUTER_ADVERTISEMENT_TYPE &&
-		code == ND_ROUTER_ADVERTISEMENT_CODE);
-}
 
 static inline int
 pkt_is_nd_neighbor(uint8_t type, uint8_t code)
