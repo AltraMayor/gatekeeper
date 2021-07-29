@@ -214,6 +214,34 @@ struct rte_acl_field_def ipv4_defs[NUM_FIELDS_IPV4] = {
 	},
 };
 
+static void
+register_cb_fs(struct acl_state *acls, acl_cb_func cb_f, ext_cb_func ext_cb_f)
+{
+	unsigned int i, last_index = acls->func_count;
+
+	acls->funcs[last_index] = cb_f;
+	acls->ext_funcs[last_index] = ext_cb_f;
+	acls->func_count++;
+
+	if (ext_cb_f == NULL)
+		return;
+
+	for (i = 0; i < last_index; i++) {
+		if (acls->ext_funcs[i] == ext_cb_f) {
+			/*
+			 * Extension callback functions return the same output
+			 * for the same packet, so we can avoid running them
+			 * more than once when they do not match a packet.
+			 * It is safe to make extension callback functions
+			 * NULL because process_acl() checks them before
+			 * calling them.
+			 */
+			acls->ext_funcs[last_index] = NULL;
+			break;
+		}
+	}
+}
+
 /*
  * For each ACL rule set, register a match function that parses
  * the unmatched IPv4 packets, and direct them to the corresponding
@@ -259,10 +287,7 @@ register_ipv4_acl(struct ipv4_acl_rule *ipv4_rule,
 		}
 	}
 
-	iface->ipv4_acls.funcs[iface->ipv4_acls.func_count] = cb_f;
-	iface->ipv4_acls.ext_funcs[iface->ipv4_acls.func_count] = ext_cb_f;
-	iface->ipv4_acls.func_count++;
-
+	register_cb_fs(&iface->ipv4_acls, cb_f, ext_cb_f);
 	return 0;
 }
 
@@ -335,7 +360,7 @@ init_ipv4_acls(struct gatekeeper_if *iface)
 	}
 
 	/* Add drop function for packets that cannot be classified. */
-	RTE_VERIFY(ACL_NO_MATCH == 0);
+	RTE_BUILD_BUG_ON(ACL_NO_MATCH != 0);
 	iface->ipv4_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv4_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv4_acls.func_count = 1;
@@ -485,10 +510,7 @@ register_ipv6_acl(struct ipv6_acl_rule *ipv6_rule,
 		}
 	}
 
-	iface->ipv6_acls.funcs[iface->ipv6_acls.func_count] = cb_f;
-	iface->ipv6_acls.ext_funcs[iface->ipv6_acls.func_count] = ext_cb_f;
-	iface->ipv6_acls.func_count++;
-
+	register_cb_fs(&iface->ipv6_acls, cb_f, ext_cb_f);
 	return 0;
 }
 
@@ -561,7 +583,7 @@ init_ipv6_acls(struct gatekeeper_if *iface)
 	}
 
 	/* Add drop function for packets that cannot be classified. */
-	RTE_VERIFY(ACL_NO_MATCH == 0);
+	RTE_BUILD_BUG_ON(ACL_NO_MATCH != 0);
 	iface->ipv6_acls.funcs[ACL_NO_MATCH] = drop_unmatched_pkts;
 	iface->ipv6_acls.ext_funcs[ACL_NO_MATCH] = NULL;
 	iface->ipv6_acls.func_count = 1;
