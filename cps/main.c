@@ -507,7 +507,7 @@ cps_proc(void *arg)
 
 	while (likely(!exiting)) {
 		/*
-		 * Read in IPv4 BGP packets that arrive directly
+		 * Read in IPv4 TCP packets that arrive directly
 		 * on the Gatekeeper interfaces.
 		 */
 		if (cps_conf->rx_method_front & RX_METHOD_NIC) {
@@ -886,24 +886,21 @@ error:
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's a bgp packet, then submit it to the CPS block.
+ * If it's a TCP packet, then submit it to the CPS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_tcp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	const uint16_t BE_ETHER_TYPE_IPv4 =
 		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 	struct rte_ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	struct rte_ipv4_hdr *ip4hdr;
-	struct rte_tcp_hdr *tcp_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-	uint16_t minimum_size = l2_len +
-		sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
-	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
+	uint16_t minimum_size = l2_len + sizeof(struct rte_ipv4_hdr);
 
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv4))
 		return -ENOENT;
@@ -917,34 +914,17 @@ match_bgp4(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	if (ip4hdr->next_proto_id != IPPROTO_TCP)
 		return -ENOENT;
 
-	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
-		CPS_LOG(WARNING,
-			"Received IPv4 fragmented packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
-	minimum_size = l2_len + ipv4_hdr_len(ip4hdr) +
-		sizeof(*tcp_hdr);
-	if (pkt->data_len < minimum_size)
-		return -ENOENT;
-
-	tcp_hdr = (struct rte_tcp_hdr *)ipv4_skip_exthdr(ip4hdr);
-	if (tcp_hdr->src_port != cps_bgp_port &&
-			tcp_hdr->dst_port != cps_bgp_port)
-		return -ENOENT;
-
 	return 0;
 }
 
 /*
  * Match the packet if it fails to be classifed by ACL rules.
- * If it's a bgp packet, then submit it to the CPS block.
+ * If it's a TCP packet, then submit it to the CPS block.
  *
  * Return values: 0 for successful match, and -ENOENT for no matching.
  */
 static int
-match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
+match_tcp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 {
 	/*
 	 * The TCP header offset in terms of the
@@ -957,12 +937,9 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	struct rte_ether_hdr *eth_hdr =
 		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	struct rte_ipv6_hdr *ip6hdr;
-	struct rte_tcp_hdr *tcp_hdr;
 	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
 	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-	uint16_t minimum_size = l2_len +
-		sizeof(struct rte_ipv6_hdr) + sizeof(struct rte_tcp_hdr);
-	uint16_t cps_bgp_port = rte_cpu_to_be_16(get_cps_conf()->tcp_port_bgp);
+	uint16_t minimum_size = l2_len + sizeof(struct rte_ipv6_hdr);
 
 	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
 		return -ENOENT;
@@ -974,95 +951,39 @@ match_bgp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 			sizeof(iface->ip6_addr)) != 0))
 		return -ENOENT;
 
-	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-		CPS_LOG(WARNING,
-			"Received IPv6 fragmented packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
 	tcp_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len, &nexthdr);
 	if (tcp_offset < 0 || nexthdr != IPPROTO_TCP)
-		return -ENOENT;
-
-	minimum_size += tcp_offset - sizeof(*ip6hdr);
-	if (pkt->data_len < minimum_size)
-		return -ENOENT;
-
-	tcp_hdr = (struct rte_tcp_hdr *)((uint8_t *)ip6hdr + tcp_offset);
-	if (tcp_hdr->src_port != cps_bgp_port &&
-			tcp_hdr->dst_port != cps_bgp_port)
 		return -ENOENT;
 
 	return 0;
 }
 
 static int
-add_bgp_filters(struct gatekeeper_if *iface, uint16_t tcp_port_bgp,
-	uint16_t rx_queue, uint8_t *rx_method)
+add_tcp_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
+	uint8_t *rx_method)
 {
-	if (ipv4_if_configured(iface)) {
-		/*
-		 * Capture pkts for connections started by our BGP speaker.
-		 *
-		 * Note that the IP address, ports, and masks
-		 * are all in big endian ordering as required.
-		 */
-		int ret = ipv4_pkt_filter_add(iface,
-			iface->ip4_addr.s_addr,
-			rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX, 0, 0,
-			IPPROTO_TCP, rx_queue,
-			cps_submit_direct, match_bgp4,
-			rx_method);
-		if (ret < 0) {
-			CPS_LOG(ERR,
-				"Could not add source IPv4 BGP filter on %s iface\n",
-				iface->name);
-			return ret;
-		}
+	int ret;
 
-		/*
-		 * Capture connections remote speakers started.
-		 * Note that the IP address, ports, and masks
-		 * are all in big endian ordering as required.
-		 */
-		ret = ipv4_pkt_filter_add(iface,
-			iface->ip4_addr.s_addr,
-			0, 0, rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
-			IPPROTO_TCP, rx_queue,
-			cps_submit_direct, match_bgp4,
-			rx_method);
+	if (ipv4_if_configured(iface)) {
+		ret = ipv4_pkt_filter_add(iface, iface->ip4_addr.s_addr,
+			0, 0, 0, 0, IPPROTO_TCP, rx_queue,
+			cps_submit_direct, match_tcp4, rx_method);
 		if (ret < 0) {
 			CPS_LOG(ERR,
-				"Could not add destination IPv4 BGP filter on %s iface\n",
+				"Could not add IPv4 TCP filter on %s iface\n",
 				iface->name);
 			return ret;
 		}
 	}
 
 	if (ipv6_if_configured(iface)) {
-		int ret = ipv6_pkt_filter_add(iface,
-			(rte_be32_t *)&iface->ip6_addr.s6_addr,
-			rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX, 0, 0,
-			IPPROTO_TCP, rx_queue,
-			cps_submit_direct, match_bgp6,
-			rx_method);
-		if (ret < 0) {
-			CPS_LOG(ERR,
-				"Could not add source IPv6 BGP filter on %s iface\n",
-				iface->name);
-			return ret;
-		}
-
 		ret = ipv6_pkt_filter_add(iface,
 			(rte_be32_t *)&iface->ip6_addr.s6_addr,
-			0, 0, rte_cpu_to_be_16(tcp_port_bgp), UINT16_MAX,
-			IPPROTO_TCP, rx_queue,
-			cps_submit_direct, match_bgp6,
-			rx_method);
+			0, 0, 0, 0, IPPROTO_TCP, rx_queue,
+			cps_submit_direct, match_tcp6, rx_method);
 		if (ret < 0) {
 			CPS_LOG(ERR,
-				"Could not add destination IPv6 BGP filter on %s iface\n",
+				"Could not add IPv6 TCP filter on %s iface\n",
 				iface->name);
 			return ret;
 		}
@@ -1077,11 +998,10 @@ cps_stage2(void *arg)
 	struct cps_config *cps_conf = arg;
 	int ret;
 
-	ret = add_bgp_filters(&cps_conf->net->front,
-		cps_conf->tcp_port_bgp, cps_conf->rx_queue_front,
+	ret = add_tcp_filters(&cps_conf->net->front, cps_conf->rx_queue_front,
 		&cps_conf->rx_method_front);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to add BGP filters on the front iface");
+		CPS_LOG(ERR, "Failed to add TCP filters on the front iface");
 		goto error;
 	}
 
@@ -1093,11 +1013,10 @@ cps_stage2(void *arg)
 	}
 
 	if (cps_conf->net->back_iface_enabled) {
-		ret = add_bgp_filters(&cps_conf->net->back,
-			cps_conf->tcp_port_bgp, cps_conf->rx_queue_back,
-			&cps_conf->rx_method_back);
+		ret = add_tcp_filters(&cps_conf->net->back,
+			cps_conf->rx_queue_back, &cps_conf->rx_method_back);
 		if (ret < 0) {
-			CPS_LOG(ERR, "Failed to add BGP filters on the back iface");
+			CPS_LOG(ERR, "Failed to add TCP filters on the back iface");
 			goto error;
 		}
 
