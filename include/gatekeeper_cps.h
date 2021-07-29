@@ -38,8 +38,6 @@ extern int cps_logtype;
 struct cps_config {
 	/* lcore that the CPS block runs on. */
 	unsigned int       lcore_id;
-	/* Source and destination TCP ports to capture BGP traffic. */
-	uint16_t           tcp_port_bgp;
 
 	/* Log level for CPS block. */
 	uint32_t           log_level;
