@@ -368,7 +368,6 @@ struct gt_config {
 
 struct cps_config {
 	unsigned int lcore_id;
-	uint16_t     tcp_port_bgp;
 	uint32_t     log_level;
 	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;

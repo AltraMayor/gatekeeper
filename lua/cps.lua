@@ -19,7 +19,6 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	local nd_max_entries_exp = 10
 
 	-- These variables are unlikely to need to be changed.
-	local tcp_port_bgp = 179
 	local num_attempts_kni_link_set = 5
 	local max_rt_update_pkts = 8
 	local scan_interval_sec = 5
@@ -46,7 +45,6 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.front_max_pkt_burst = front_max_pkt_burst
 	cps_conf.back_max_pkt_burst = back_max_pkt_burst
 
-	cps_conf.tcp_port_bgp = tcp_port_bgp
 	cps_conf.num_attempts_kni_link_set = num_attempts_kni_link_set
 	cps_conf.max_rt_update_pkts = max_rt_update_pkts
 	cps_conf.scan_interval_sec = scan_interval_sec
