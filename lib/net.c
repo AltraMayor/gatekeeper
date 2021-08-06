@@ -643,6 +643,17 @@ convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n)
 	return 0;
 }
 
+static int
+check_vlan_tag(const char *iface_name, uint16_t vlan_tag)
+{
+	if (vlan_tag > RTE_ETHER_MAX_VLAN_ID) {
+		G_LOG(ERR, "net: VLAN ID %d of interface %s is too big; the maximum VLAN ID is %d\n",
+			vlan_tag, iface_name, RTE_ETHER_MAX_VLAN_ID);
+		return -1;
+	}
+	return 0;
+}
+
 int
 lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs, const char **ip_cidrs,
@@ -776,6 +787,10 @@ lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 
 	iface->l2_len_out = sizeof(struct rte_ether_hdr);
 	if (iface->vlan_insert) {
+		if (check_vlan_tag(iface_name, ipv4_vlan_tag) != 0 ||
+				check_vlan_tag(iface_name, ipv6_vlan_tag) != 0)
+			goto pci_addrs;
+
 		iface->ipv4_vlan_tag_be = rte_cpu_to_be_16(ipv4_vlan_tag);
 		iface->ipv6_vlan_tag_be = rte_cpu_to_be_16(ipv6_vlan_tag);
 		iface->l2_len_out += sizeof(struct rte_vlan_hdr);
