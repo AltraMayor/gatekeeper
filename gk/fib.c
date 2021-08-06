@@ -522,7 +522,7 @@ setup_net_prefix_fib(int identifier,
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2 + 1),
 			RTE_ETHER_TYPE_IPV6, gk_conf->max_num_ipv6_neighbors,
-			&neigh_fib_ipv6->u.neigh6, DEFAULT_HASH_FUNC);
+			&neigh_fib_ipv6->u.neigh, DEFAULT_HASH_FUNC);
 		if (ret < 0)
 			goto init_fib_ipv6;
 
@@ -627,7 +627,7 @@ free_front_fibs:
 		struct gatekeeper_if *iface = &gk_conf->net->front;
 		RTE_VERIFY(rte_lpm6_delete(gk_conf->lpm_tbl.lpm6,
 			iface->ip6_addr.s6_addr, iface->ip6_addr_plen) == 0);
-		destroy_neigh_hash_table(&neigh6_fib_front->u.neigh6);
+		destroy_neigh_hash_table(&neigh6_fib_front->u.neigh);
 		initialize_fib_entry(neigh6_fib_front);
 		neigh6_fib_front = NULL;
 	}
@@ -948,8 +948,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	}
 
 	if (addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ret = put_arp((struct in_addr *)
-			&addr.ip.v4, gk_conf->lcores[0]);
+		ret = put_arp(&addr.ip.v4, gk_conf->lcores[0]);
 		if (ret < 0)
 			return ret;
 
@@ -964,12 +963,11 @@ ether_cache_put(struct gk_fib *neigh_fib,
 	}
 
 	if (likely(addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = put_nd((struct in6_addr *)
-			&addr.ip.v6, gk_conf->lcores[0]);
+		ret = put_nd(&addr.ip.v6, gk_conf->lcores[0]);
 		if (ret < 0)
 			return ret;
 
-		ret = rte_hash_del_key(neighbor_fib->u.neigh6.hash_table,
+		ret = rte_hash_del_key(neighbor_fib->u.neigh.hash_table,
 			addr.ip.v6.s6_addr);
 		if (ret < 0) {
 			GK_LOG(CRIT,
@@ -2336,8 +2334,7 @@ list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	neigh_fib = &ltbl->fib_tbl6[fib_id];
 	RTE_VERIFY(neigh_fib->action == action);
 
-	list_hash_table_neighbors_unlock(l, action,
-		&neigh_fib->u.neigh6, ltbl);
+	list_hash_table_neighbors_unlock(l, action, &neigh_fib->u.neigh, ltbl);
 }
 
 static void

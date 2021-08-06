@@ -1360,24 +1360,12 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 	struct gk_measurement_metrics *stats = &instance->traffic_stats;
 
 	if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
-		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
+		stats->tot_pkts_num_distributed++;
+		stats->tot_pkts_size_distributed += rte_pktmbuf_pkt_len(pkt);
+		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4)
 			add_pkt_acl(acl4, pkt);
-		} else if (likely(packet->flow.proto ==
-				RTE_ETHER_TYPE_IPV6)) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
+		else
 			add_pkt_acl(acl6, pkt);
-		} else {
-			print_flow_err_msg(&packet->flow,
-				"gk: failed to get the fib entry");
-			drop_packet_front(pkt, instance);
-		}
 		return NULL;
 	}
 
@@ -1454,12 +1442,10 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		 * the back network, forward accordingly.
 		 */
 		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh,
+			eth_cache = lookup_ether_cache(&fib->u.neigh,
 				&packet->flow.f.v4.dst);
 		} else {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh6,
+			eth_cache = lookup_ether_cache(&fib->u.neigh,
 				&packet->flow.f.v6.dst);
 		}
 
@@ -1865,12 +1851,10 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 		 * the front network, forward accordingly.
 		 */
 		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh,
+			eth_cache = lookup_ether_cache(&fib->u.neigh,
 				&packet->flow.f.v4.dst);
 		} else {
-			eth_cache = lookup_ether_cache(
-				&fib->u.neigh6,
+			eth_cache = lookup_ether_cache(&fib->u.neigh,
 				&packet->flow.f.v6.dst);
 		}
 
@@ -2387,7 +2371,7 @@ cleanup_gk(struct gk_config *gk_conf)
 			if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 					fib->action ==
 						GK_FWD_NEIGHBOR_BACK_NET) {
-				destroy_neigh_hash_table(&fib->u.neigh6);
+				destroy_neigh_hash_table(&fib->u.neigh);
 			}
 		}
 	}

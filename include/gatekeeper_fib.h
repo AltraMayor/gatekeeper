@@ -173,6 +173,7 @@ struct gk_fib {
 			struct route_properties props;
 		} gateway;
 
+		/* Route information when the action is GK_FWD_GRANTOR. */
 		struct {
 			/*
 			 * Set of Grantors that packets to this
@@ -187,8 +188,6 @@ struct gk_fib {
 		 * The entries can be accessed according to its IP address.
 		 */
 		struct neighbor_hash_table neigh;
-
-		struct neighbor_hash_table neigh6;
 
 		/* Route information when the action is GK_DROP. */
 		struct {
