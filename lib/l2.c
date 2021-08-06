@@ -101,8 +101,12 @@ verify_l2_hdr(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 			return -1;
 		}
 
-		/* Drop packets whose VLAN tags are not correct. */
+		/* Clear priority and CFI fields. */
 		vlan_hdr = (struct rte_vlan_hdr *)&eth_hdr[1];
+		RTE_BUILD_BUG_ON(!RTE_IS_POWER_OF_2(RTE_ETHER_MAX_VLAN_ID + 1));
+		vlan_hdr->vlan_tci &= rte_cpu_to_be_16(RTE_ETHER_MAX_VLAN_ID);
+
+		/* Drop packets whose VLAN tags are not correct. */
 		if (unlikely(vlan_hdr->vlan_tci != vlan_tag_be)) {
 			/*
 			 * The log level below cannot be low due to
