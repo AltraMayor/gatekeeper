@@ -2104,6 +2104,28 @@ finalize_stage2(void *arg)
 	return 0;
 }
 
+static bool
+ipv4_test_same_subnet(struct net_config *net)
+{
+	const uint32_t ip4_mask =
+		net->front.ip4_addr_plen <= net->back.ip4_addr_plen
+			? net->front.ip4_mask.s_addr
+			: net->back.ip4_mask.s_addr;
+	return ip4_same_subnet(net->front.ip4_addr.s_addr,
+		net->back.ip4_addr.s_addr, ip4_mask);
+}
+
+static bool
+ipv6_test_same_subnet(struct net_config *net)
+{
+	const struct in6_addr *ip6_mask =
+		net->front.ip6_addr_plen <= net->back.ip6_addr_plen
+			? &net->front.ip6_mask
+			: &net->back.ip6_mask;
+	return ip6_same_subnet(&net->front.ip6_addr, &net->back.ip6_addr,
+		ip6_mask);
+}
+
 /* Initialize the network. */
 int
 gatekeeper_init_network(struct net_config *net_conf)
@@ -2129,6 +2151,18 @@ gatekeeper_init_network(struct net_config *net_conf)
 		if (ipv6_if_configured(&net_conf->front) !=
 				ipv6_if_configured(&net_conf->back)) {
 			G_LOG(ERR, "net: front and back interfaces must either both support IPv6 or neither support IPv6\n");
+			return -1;
+		}
+		if (ipv4_if_configured(&net_conf->front) &&
+				ipv4_if_configured(&net_conf->back) &&
+				ipv4_test_same_subnet(net_conf)) {
+			G_LOG(ERR, "net: the IPv4 addresses of the front and back interfaces cannot belong to the same subnet\n");
+			return -1;
+		}
+		if (ipv6_if_configured(&net_conf->front) &&
+				ipv6_if_configured(&net_conf->back) &&
+				ipv6_test_same_subnet(net_conf)) {
+			G_LOG(ERR, "net: the IPv6 addresses of the front and back interfaces cannot belong to the same subnet\n");
 			return -1;
 		}
 	}
