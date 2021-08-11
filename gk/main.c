@@ -89,43 +89,6 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	return integer_log_base_2(delta_time);
 }
 
-static struct gk_fib *
-__look_up_fib(struct gk_lpm *ltbl, struct ip_flow *flow, const char *calledby)
-{
-	int fib_id;
-
-	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
-		fib_id = lpm_lookup_ipv4(ltbl->lpm, flow->f.v4.dst.s_addr);
-		if (fib_id < 0) {
-			if (fib_id == -ENOENT) {
-				GK_LOG(DEBUG,
-					"%s could not find FIB entry when processing incoming IPv4 flow\n",
-					calledby);
-			}
-			return NULL;
-		}
-		return &ltbl->fib_tbl[fib_id];
-	}
-
-	if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
-		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &flow->f.v6.dst);
-		if (fib_id < 0) {
-			if (fib_id == -ENOENT) {
-				GK_LOG(DEBUG,
-					"%s could not find FIB entry when processing incoming IPv6 flow\n",
-					calledby);
-			}
-			return NULL;
-		}
-		return &ltbl->fib_tbl6[fib_id];
-	}
-
-	rte_panic("Unexpected condition at %s: unknown flow type %hu\n",
-		__func__, flow->proto);
-
-	return NULL; /* Unreachable. */
-}
-
 static int
 extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 {
@@ -1265,8 +1228,8 @@ send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
 }
 
 static void
-__lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
-	int num_flows, struct gk_fib *fibs[], const char *calledby)
+lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows, int num_flows,
+	struct gk_fib *fibs[])
 {
 	int i;
 	/* The batch size for IPv4 LPM table lookup. */
@@ -1297,7 +1260,6 @@ __lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 		for (j = 0; j < FWDSTEP; j++) {
 			if (dst.u32[j] != default_nh) {
 				fibs[i + j] = &ltbl->fib_tbl[dst.u32[j]];
-
 				rte_prefetch0(fibs[i + j]);
 			} else
 				fibs[i + j] = NULL;
@@ -1307,14 +1269,15 @@ __lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	RTE_VERIFY(i == k);
 
 	for (; i < num_flows; i++) {
-		fibs[i] = __look_up_fib(ltbl, flows[i], calledby);
-		if (fibs[i])
+		int fib_id = lpm_lookup_ipv4(ltbl->lpm,
+			flows[i]->f.v4.dst.s_addr);
+		if (fib_id >= 0) {
+			fibs[i] = &ltbl->fib_tbl[fib_id];
 			rte_prefetch0(fibs[i]);
+		} else
+			fibs[i] = NULL;
 	}
 }
-
-#define lookup_fib_bulk(ltbl, flows, num_flows, fibs)	\
-	__lookup_fib_bulk(ltbl, flows, num_flows, fibs, __func__)
 
 static void
 lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
