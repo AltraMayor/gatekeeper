@@ -116,35 +116,37 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 void
 print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 {
-	char src[128];
-	char dst[128];
+	char src[INET6_ADDRSTRLEN];
+	char dst[INET6_ADDRSTRLEN];
+
+	RTE_BUILD_BUG_ON(INET6_ADDRSTRLEN < INET_ADDRSTRLEN);
 
 	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
 		if (inet_ntop(AF_INET, &flow->f.v4.src,
 				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv4 address (%s)\n",
-				__func__, strerror(errno));
+			G_LOG(ERR, "flow: %s(): failed to convert source IPv4 address to a string errno=%i: %s\n",
+				__func__, errno, strerror(errno));
 			return;
 		}
 
 		if (inet_ntop(AF_INET, &flow->f.v4.dst,
 				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv4 address (%s)\n",
-				__func__, strerror(errno));
+			G_LOG(ERR, "flow: %s(): failed to convert destination IPv4 address to a string errno=%i: %s\n",
+				__func__, errno, strerror(errno));
 			return;
 		}
 	} else if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
 		if (inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
 				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv6 address (%s)\n",
-				__func__, strerror(errno));
+			G_LOG(ERR, "flow: %s(): failed to convert source IPv6 address to a string errno=%i: %s\n",
+				__func__, errno, strerror(errno));
 			return;
 		}
 
 		if (inet_ntop(AF_INET6, flow->f.v6.dst.s6_addr,
 				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "flow: %s: failed to convert a number to an IPv6 address (%s)\n",
-				__func__, strerror(errno));
+			G_LOG(ERR, "flow: %s(): failed to convert destination IPv6 address to a string errno=%i: %s\n",
+				__func__, errno, strerror(errno));
 			return;
 		}
 	} else {

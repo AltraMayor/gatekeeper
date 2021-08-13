@@ -1361,7 +1361,20 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		return fe;
 	}
 
-	case GK_FWD_GATEWAY_BACK_NET: {
+	case GK_FWD_GATEWAY_FRONT_NET:
+		/* Gatekeeper does not intermediate neighbors. */
+
+		/*
+		 * Although this is the GK block, print_flow_err_msg() uses
+		 * G_LOG, so test log level at the Gatekeeper level.
+		 */
+		if (unlikely(G_LOG_CHECK(DEBUG)))
+			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to a front gateway");
+
+		drop_packet_front(pkt, instance);
+		return NULL;
+
+	case GK_FWD_GATEWAY_BACK_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the gateway in
@@ -1380,25 +1393,25 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		RTE_VERIFY(eth_cache != NULL);
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
 			return NULL;
 		}
 
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
+		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
+				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
 			return NULL;
 
 		tx_bufs[(*num_tx)++] = pkt;
 		return NULL;
-	}
 
-	case GK_FWD_NEIGHBOR_BACK_NET: {
+	case GK_FWD_NEIGHBOR_FRONT_NET:
+		rte_panic("GK_FWD_NEIGHBOR_FRONT_NET should have been already handled");
+		return NULL;
+
+	case GK_FWD_NEIGHBOR_BACK_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the neighbor in
@@ -1412,26 +1425,40 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 				&packet->flow.f.v6.dst);
 		}
 
-		RTE_VERIFY(eth_cache != NULL);
+		if (eth_cache == NULL) {
+			/*
+			 * Although this is the GK block, print_flow_err_msg()
+			 * uses G_LOG, so test log level at the Gatekeeper
+			 * level.
+			 *
+			 * NOTICE that the unknown back neighbor that the log
+			 * entry below refers to could be the address of
+			 * our back interface as well. We cannot just send
+			 * the packet to the filter of the back interface
+			 * because the target filter may be implemented in
+			 * the hardware of the back interface.
+			 */
+			if (unlikely(G_LOG_CHECK(DEBUG)))
+				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
+
+			drop_packet_front(pkt, instance);
+			return NULL;
+		}
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
 			return NULL;
 		}
 
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
+		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
+				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
 			return NULL;
 
 		tx_bufs[(*num_tx)++] = pkt;
 		return NULL;
-	}
 
 	case GK_DROP:
 		/* FALLTHROUGH */
@@ -1439,8 +1466,6 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		drop_packet_front(pkt, instance);
 		return NULL;
 	}
-
-	return NULL;
 }
 
 static int
