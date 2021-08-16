@@ -1361,7 +1361,20 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		return fe;
 	}
 
-	case GK_FWD_GATEWAY_BACK_NET: {
+	case GK_FWD_GATEWAY_FRONT_NET:
+		/* Gatekeeper does not intermediate neighbors. */
+
+		/*
+		 * Although this is the GK block, print_flow_err_msg() uses
+		 * G_LOG, so test log level at the Gatekeeper level.
+		 */
+		if (unlikely(G_LOG_CHECK(DEBUG)))
+			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to a front gateway");
+
+		drop_packet_front(pkt, instance);
+		return NULL;
+
+	case GK_FWD_GATEWAY_BACK_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the gateway in
@@ -1380,25 +1393,25 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		RTE_VERIFY(eth_cache != NULL);
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
 			return NULL;
 		}
 
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
+		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
+				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
 			return NULL;
 
 		tx_bufs[(*num_tx)++] = pkt;
 		return NULL;
-	}
 
-	case GK_FWD_NEIGHBOR_BACK_NET: {
+	case GK_FWD_NEIGHBOR_FRONT_NET:
+		rte_panic("GK_FWD_NEIGHBOR_FRONT_NET should have been already handled");
+		return NULL;
+
+	case GK_FWD_NEIGHBOR_BACK_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the neighbor in
@@ -1412,26 +1425,40 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 				&packet->flow.f.v6.dst);
 		}
 
-		RTE_VERIFY(eth_cache != NULL);
+		if (eth_cache == NULL) {
+			/*
+			 * Although this is the GK block, print_flow_err_msg()
+			 * uses G_LOG, so test log level at the Gatekeeper
+			 * level.
+			 *
+			 * NOTICE that the unknown back neighbor that the log
+			 * entry below refers to could be the address of
+			 * our back interface as well. We cannot just send
+			 * the packet to the filter of the back interface
+			 * because the target filter may be implemented in
+			 * the hardware of the back interface.
+			 */
+			if (unlikely(G_LOG_CHECK(DEBUG)))
+				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
+
+			drop_packet_front(pkt, instance);
+			return NULL;
+		}
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
 			return NULL;
 		}
 
-		if (update_ip_hop_count(front, packet,
-				num_pkts, icmp_bufs,
-				&instance->front_icmp_rs,
-				instance,
+		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
+				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
 			return NULL;
 
 		tx_bufs[(*num_tx)++] = pkt;
 		return NULL;
-	}
 
 	case GK_DROP:
 		/* FALLTHROUGH */
@@ -1439,8 +1466,6 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		drop_packet_front(pkt, instance);
 		return NULL;
 	}
-
-	return NULL;
 }
 
 static int
@@ -1748,12 +1773,11 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 }
 
 static void
-process_fib(struct ipacket *packet, struct gk_fib *fib,
-		uint16_t *num_tx, struct rte_mbuf **tx_bufs,
-		struct acl_search *acl4, struct acl_search *acl6,
-		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
-		struct gatekeeper_if *front, struct gatekeeper_if *back,
-		struct gk_instance *instance)
+process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
+	struct rte_mbuf **tx_bufs, struct acl_search *acl4,
+	struct acl_search *acl6, uint16_t *num_pkts,
+	struct rte_mbuf **icmp_bufs, struct gatekeeper_if *front,
+	struct gatekeeper_if *back, struct gk_instance *instance)
 {
 	struct rte_mbuf *pkt = packet->pkt;
 	struct ether_cache *eth_cache;
@@ -1773,7 +1797,7 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 	}
 
 	switch (fib->action) {
-	case GK_FWD_GATEWAY_FRONT_NET: {
+	case GK_FWD_GATEWAY_FRONT_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the gateway in
@@ -1790,24 +1814,34 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 		RTE_VERIFY(eth_cache != NULL);
 
 		if (adjust_pkt_len(pkt, front, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					front->l2_len_out)) {
 			drop_packet(pkt);
 			return;
 		}
 
-		if (update_ip_hop_count(back, packet,
-				num_pkts, icmp_bufs,
-				&instance->back_icmp_rs,
-				instance, drop_packet_back) < 0)
+		if (update_ip_hop_count(back, packet, num_pkts, icmp_bufs,
+				&instance->back_icmp_rs, instance,
+				drop_packet_back) < 0)
 			return;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		break;
-	}
+		return;
 
-	case GK_FWD_NEIGHBOR_FRONT_NET: {
+	case GK_FWD_GATEWAY_BACK_NET:
+		/* Gatekeeper does not intermediate neighbors. */
+
+		/*
+		 * Although this is the GK block, print_flow_err_msg() uses
+		 * G_LOG, so test log level at the Gatekeeper level.
+		 */
+		if (unlikely(G_LOG_CHECK(DEBUG)))
+			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the back interface and is destined to a back gateway");
+
+		drop_packet(pkt);
+		return;
+
+	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/*
 		 * The entry instructs to forward
 		 * its packets to the neighbor in
@@ -1821,37 +1855,56 @@ process_fib(struct ipacket *packet, struct gk_fib *fib,
 				&packet->flow.f.v6.dst);
 		}
 
-		RTE_VERIFY(eth_cache != NULL);
+		if (eth_cache == NULL) {
+			/*
+			 * Although this is the GK block, print_flow_err_msg()
+			 * uses G_LOG, so test log level at the Gatekeeper
+			 * level.
+			 *
+			 * NOTICE that the unknown front neighbor that the log
+			 * entry below refers to could be the address of
+			 * our front interface as well. We cannot just send
+			 * the packet to the filter of the front interface
+			 * because the target filter may be implemented in
+			 * the hardware of the front interface.
+			 */
+			if (unlikely(G_LOG_CHECK(DEBUG)))
+				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the back interface and is destined to an uknown front neighbor");
+
+			drop_packet(pkt);
+			return;
+		}
 
 		if (adjust_pkt_len(pkt, front, 0) == NULL ||
-				pkt_copy_cached_eth_header(pkt,
-					eth_cache,
+				pkt_copy_cached_eth_header(pkt, eth_cache,
 					front->l2_len_out)) {
 			drop_packet(pkt);
 			return;
 		}
 
-		if (update_ip_hop_count(back, packet,
-				num_pkts, icmp_bufs,
-				&instance->back_icmp_rs,
-				instance, drop_packet_back) < 0)
+		if (update_ip_hop_count(back, packet, num_pkts, icmp_bufs,
+				&instance->back_icmp_rs, instance,
+				drop_packet_back) < 0)
 			return;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		break;
-	}
+		return;
+
+	case GK_FWD_NEIGHBOR_BACK_NET:
+		rte_panic("GK_FWD_NEIGHBOR_BACK_NET should have been already handled");
+		return;
 
 	case GK_DROP:
 		drop_packet(pkt);
-		break;
+		return;
 
 	default:
 		/* All other actions should log a warning. */
 		GK_LOG(WARNING,
-			"The fib entry has an unexpected action %u at %s\n",
-			fib->action, __func__);
+			"%s(): A FIB entry has the unexpected action %u\n",
+			__func__, fib->action);
 		drop_packet(pkt);
-		break;
+		return;
 	}
 }
 
@@ -1948,7 +2001,7 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 	for (i = 0; i < num_lpm_lookups; i++) {
 		int fidx = lpm_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs[i],
+		process_fib_back(&pkt_arr[fidx], fibs[i],
 			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
 			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
@@ -1957,7 +2010,7 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 	for (i = 0; i < num_lpm6_lookups; i++) {
 		int fidx = lpm6_lookup_pos[i];
 
-		process_fib(&pkt_arr[fidx], fibs6[i],
+		process_fib_back(&pkt_arr[fidx], fibs6[i],
 			tx_front_num_pkts, tx_front_pkts, &acl4, &acl6,
 			tx_back_num_pkts, tx_back_pkts, front, back,
 			instance);
