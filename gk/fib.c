@@ -855,9 +855,8 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 	else if (likely(action == GK_FWD_GATEWAY_BACK_NET))
 		iface = &gk_conf->net->back;
 	else {
-		GK_LOG(ERR,
-			"Failed to delete a Gateway ethernet cache entry from neighbor hash table, since it has invalid action %d\n",
-			action);
+		GK_LOG(ERR, "%s(): action = %d is not expected\n",
+			__func__, action);
 		return NULL;
 	}
 
@@ -884,9 +883,8 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 
 		neigh_fib = &ltbl->fib_tbl6[fib_id];
 	} else {
-		GK_LOG(ERR,
-			"Unconfigued IP type %hu at interface %s\n",
-			gw_addr->proto, iface->name);
+		GK_LOG(ERR, "%s(): Unconfigued IP type %hu at interface %s\n",
+			__func__, gw_addr->proto, iface->name);
 		return NULL;
 	}
 
@@ -897,8 +895,7 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 	if ((action == GK_FWD_GATEWAY_FRONT_NET &&
 			neigh_fib->action != GK_FWD_NEIGHBOR_FRONT_NET)
 			|| (action == GK_FWD_GATEWAY_BACK_NET &&
-			neigh_fib->action !=
-			GK_FWD_NEIGHBOR_BACK_NET))
+			neigh_fib->action != GK_FWD_NEIGHBOR_BACK_NET))
 		return NULL;
 
 	return neigh_fib;
