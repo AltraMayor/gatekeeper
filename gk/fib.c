@@ -280,7 +280,7 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 }
 
 /* WARNING: do NOT call this function directly, call get_empty_fib_id(). */
-static int
+static inline int
 __get_empty_fib_id(struct gk_fib *fib_tbl, unsigned int num_fib_entries)
 {
 	unsigned int i;
@@ -300,8 +300,9 @@ __get_empty_fib_id(struct gk_fib *fib_tbl, unsigned int num_fib_entries)
 }
 
 /* This function will return an empty FIB entry. */
-static inline int
-get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf)
+static int
+get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf,
+	struct gk_fib **p_fib)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	int ret;
@@ -312,6 +313,8 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf)
 			gk_conf->max_num_ipv4_rules);
 		if (ret < 0)
 			GK_LOG(WARNING, "Cannot find an empty fib entry in the IPv4 FIB table\n");
+		else 
+			*p_fib = &ltbl->fib_tbl[ret];
 		return ret;
 	}
 
@@ -320,6 +323,8 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf)
 			gk_conf->max_num_ipv6_rules);
 		if (ret < 0)
 			GK_LOG(WARNING, "Cannot find an empty fib entry in the IPv6 FIB table\n");
+		else
+			*p_fib = &ltbl->fib_tbl6[ret];
 		return ret;
 	}
 
@@ -478,11 +483,10 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv4 network prefix. */
 	if (ipv4_if_configured(iface)) {
-		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV4, gk_conf);
+		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV4, gk_conf,
+			&neigh_fib_ipv4);
 		if (fib_id < 0)
 			goto out;
-
-		neigh_fib_ipv4 = &ltbl->fib_tbl[fib_id];
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2),
 			RTE_ETHER_TYPE_IPV4, (1 << (32 - iface->ip4_addr_plen)),
@@ -508,11 +512,10 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv6 network prefix. */
 	if (ipv6_if_configured(iface)) {
-		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV6, gk_conf);
+		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV6, gk_conf,
+			&neigh_fib_ipv6);
 		if (fib_id < 0)
 			goto free_fib_ipv4;
-
-		neigh_fib_ipv6 = &ltbl->fib_tbl6[fib_id];
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2 + 1),
 			RTE_ETHER_TYPE_IPV6, gk_conf->max_num_ipv6_neighbors,
@@ -1136,14 +1139,9 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 		return -1;
 
 	/* Find an empty FIB entry for the Gateway. */
-	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
+	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf, &gw_fib);
 	if (fib_id < 0)
 		goto put_ether_cache;
-
-	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
-		gw_fib = &ltbl->fib_tbl[fib_id];
-	else
-		gw_fib = &ltbl->fib_tbl6[fib_id];
 
 	/* Fills up the Gateway FIB entry for the IP prefix. */
 	gw_fib->action = action;
@@ -1228,11 +1226,13 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 	}
 
 	if (!prefix_exists) {
-		fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
+		fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
+			&gt_fib);
 		if (fib_id < 0)
 			goto put_ether_cache;
 	}
 
+	/* TODO The code below will be removed in a subsequent patch. */
 	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
 		gt_fib = &ltbl->fib_tbl[fib_id];
 	else
@@ -1290,17 +1290,10 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix,
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	/* Initialize the fib entry for the IP prefix. */
-	int fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf);
+	int fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
+		&ip_prefix_fib);
 	if (fib_id < 0)
 		return -1;
-
-	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
-		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
-	else if (likely(ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV6))
-		ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
-	else
-		rte_panic("Unexpected condition at gk: unknown IP type %hu at %s",
-			ip_prefix->addr.proto, __func__);
 
 	ip_prefix_fib->action = GK_DROP;
 	ip_prefix_fib->u.drop.props = *props;
