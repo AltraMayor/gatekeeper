@@ -1552,13 +1552,13 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 
 /*
  * Returns:
- *   1 if the prefix already exists
- *   0 if the prefix does not exist
- *  <0 if an error occurred
+ *    >= 0 if the prefix already exists, the return is the FIB ID.
+ * -ENOENT if the prefix does not exist.
+ *     < 0 if an error occurred.
  */
 static int
 check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
-	uint32_t *fibp)
+	struct gk_fib **p_fib)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	uint32_t fib_id;
@@ -1567,18 +1567,24 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
 		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
 			prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
 		ret = lpm6_is_rule_present(ltbl->lpm6,
 			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl6[fib_id];
 	} else {
-		GK_LOG(WARNING,
-			"Unknown IP type %hu with prefix %s\n",
-			prefix->addr.proto, prefix->str);
-		return -1;
+		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
+			__func__, prefix->addr.proto, prefix->str);
+		return -EINVAL;
 	}
 
-	if (ret == 1 && fibp != NULL)
-		*fibp = fib_id;
+	if (ret == 1)
+	       return fib_id;
+	if (ret == 0)
+		return -ENOENT;
+	RTE_VERIFY(ret < 0 && ret != -ENOENT);
 	return ret;
 }
 
@@ -1655,7 +1661,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
-	if (ret != 0) {
+	if (ret != -ENOENT) {
 		GK_LOG(ERR, "Prefix already exists or error occurred\n");
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 		return -1;
@@ -1680,8 +1686,7 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
-	int ret;
-	uint32_t fib_id = 0;
+	int ret, fib_id;
 	unsigned int i;
 
 	if (prefix_info->len < 0)
@@ -1705,8 +1710,8 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = check_prefix_exists_locked(prefix_info, gk_conf, &fib_id);
-	if (ret != 1) {
+	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
+	if (fib_id < 0) {
 		GK_LOG(ERR, "Cannot update set of Grantors; prefix does not already exist or error occurred\n");
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 		return -1;
