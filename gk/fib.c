@@ -1312,6 +1312,12 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 {
 	int ret;
 
+	if (cur_fib != NULL && cur_fib->action != action) {
+		GK_LOG(ERR, "Attempt to overwrite prefix %s whose action is %u with a new FIB entry of action %u; delete current FIB entry and add the new one\n",
+				prefix->str, cur_fib->action, action);
+		return -1;
+	}
+
 	switch (action) {
 	case GK_FWD_GRANTOR:
 		if (num_addrs < 1 || gt_addrs == NULL || gw_addrs == NULL)
@@ -1351,7 +1357,8 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		/* FALLTHROUGH */
 	default:
-		GK_LOG(ERR, "Invalid FIB action %u at %s\n", action, __func__);
+		GK_LOG(ERR, "%s(%s): Invalid FIB action %u\n",
+			__func__, prefix->str, action);
 		return -1;
 	}
 
