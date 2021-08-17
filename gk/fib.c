@@ -1178,20 +1178,18 @@ put_ether_cache:
  * and the prefix have the same IP version.
  */
 static int
-init_grantor_fib_locked(struct ip_prefix *ip_prefix,
-	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
-	unsigned int num_addrs, struct gk_config *gk_conf,
-	int64_t fib_id)
+init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
+	struct ipaddr *gw_addrs, unsigned int num_addrs,
+	struct gk_config *gk_conf, struct gk_fib *gt_fib)
 {
 	int ret;
-	struct gk_fib *gt_fib;
 	struct gk_fib *neigh_fibs[num_addrs];
 	struct ether_cache *eth_caches[num_addrs];
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	struct grantor_set *new_set;
 	unsigned int i, num_cache_holds = 0;
-	bool prefix_exists = fib_id >= 0;
+	int fib_id = -1;
 
 	if (num_addrs > MAX_NUM_GRANTORS_PER_ENTRY) {
 		GK_LOG(ERR, "Number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
@@ -1225,18 +1223,12 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 		num_cache_holds++;
 	}
 
-	if (!prefix_exists) {
+	if (gt_fib == NULL) {
 		fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
 			&gt_fib);
 		if (fib_id < 0)
 			goto put_ether_cache;
 	}
-
-	/* TODO The code below will be removed in a subsequent patch. */
-	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4)
-		gt_fib = &ltbl->fib_tbl[fib_id];
-	else
-		gt_fib = &ltbl->fib_tbl6[fib_id];
 
 	new_set = rte_malloc_socket("gk_fib.grantor.set",
 		sizeof(*new_set) + num_addrs * sizeof(*(new_set->entries)),
@@ -1252,7 +1244,7 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix,
 		new_set->entries[i].eth_cache = eth_caches[i];
 	}
 
-	if (prefix_exists) {
+	if (fib_id < 0) {
 		/* Replace old set of Grantors in existing entry. */
 		struct grantor_set *old_set = gt_fib->u.grantor.set;
 		gt_fib->u.grantor.set = new_set;
@@ -1308,16 +1300,15 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix,
 }
 
 /*
- * If a FIB entry already exists for @prefix, then
- * @fib_id contains its index in the FIB table.
- * Otherwise, @fib_id is <0.
+ * If a FIB entry already exists for @prefix, then @cur_fib points to it.
+ * Otherwise, @cur_fib is NULL.
  */
 static int
 add_fib_entry_locked(struct ip_prefix *prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf,
-	int64_t fib_id)
+	struct gk_fib *cur_fib)
 {
 	int ret;
 
@@ -1327,7 +1318,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 			return -1;
 
 		ret = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
-			num_addrs, gk_conf, fib_id);
+			num_addrs, gk_conf, cur_fib);
 		if (ret < 0)
 			return -1;
 
@@ -1336,7 +1327,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET:
 		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL ||
-				fib_id >= 0)
+				cur_fib != NULL)
 			return -1;
 
 		ret = init_gateway_fib_locked(prefix, action, props,
@@ -1347,7 +1338,7 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 		break;
 	case GK_DROP:
 		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL ||
-				fib_id >= 0)
+				cur_fib != NULL)
 			return -1;
 
 		ret = init_drop_fib_locked(prefix, props, gk_conf);
@@ -1674,7 +1665,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, props, gk_conf, -1);
+		action, props, gk_conf, NULL);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1688,6 +1679,7 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 {
 	int ret, fib_id;
 	unsigned int i;
+	struct gk_fib *cur_fib = NULL;
 
 	if (prefix_info->len < 0)
 		return -1;
@@ -1710,7 +1702,7 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
+	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, &cur_fib);
 	if (fib_id < 0) {
 		GK_LOG(ERR, "Cannot update set of Grantors; prefix does not already exist or error occurred\n");
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
@@ -1718,7 +1710,7 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	}
 
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, props, gk_conf, fib_id);
+		action, props, gk_conf, cur_fib);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
