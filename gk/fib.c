@@ -2007,12 +2007,10 @@ static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
 	int ret, index;
-	struct gk_fib *fib;
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
 	struct gk_fib_dump_entry *dentry = NULL;
 	size_t dentry_size = 0;
-	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
@@ -2029,8 +2027,9 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		unsigned int num_addrs;
 		size_t new_dentry_size;
 		int done;
+		void *cdata;
 
-		fib = &ltbl->fib_tbl[re4->next_hop];
+		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 			index = rte_lpm_rule_iterate(&state, &re4);
@@ -2092,12 +2091,10 @@ static void
 list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
 	int ret, index;
-	struct gk_fib *fib;
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
 	struct gk_fib_dump_entry *dentry = NULL;
 	size_t dentry_size = 0;
-	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
@@ -2114,8 +2111,9 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		unsigned int num_addrs;
 		size_t new_dentry_size;
 		int done;
+		void *cdata;
 
-		fib = &ltbl->fib_tbl6[re6.next_hop];
+		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 			index = rte_lpm6_rule_iterate(&state6, &re6);
