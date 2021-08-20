@@ -1944,10 +1944,9 @@ fillup_gk_fib_dump_entry_ether(struct fib_dump_addr_set *addr_set,
 	struct ether_cache *eth_cache)
 {
 	addr_set->stale = eth_cache->stale;
-	rte_memcpy(&addr_set->nexthop_ip, &eth_cache->ip_addr,
-		sizeof(addr_set->nexthop_ip));
-	rte_memcpy(&addr_set->d_addr, &eth_cache->l2_hdr.eth_hdr.d_addr,
-		sizeof(addr_set->d_addr));
+	addr_set->nexthop_ip = eth_cache->ip_addr;
+	rte_ether_addr_copy(&eth_cache->l2_hdr.eth_hdr.d_addr,
+		&addr_set->d_addr);
 }
 
 static void
@@ -1958,9 +1957,8 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 	case GK_FWD_GRANTOR: {
 		unsigned int i;
 		for (i = 0; i < dentry->num_addr_sets; i++) {
-			rte_memcpy(&dentry->addr_sets[i].grantor_ip,
-				&fib->u.grantor.set->entries[i].gt_addr,
-				sizeof(dentry->addr_sets[i].grantor_ip));
+			dentry->addr_sets[i].grantor_ip =
+				fib->u.grantor.set->entries[i].gt_addr;
 			fillup_gk_fib_dump_entry_ether(&dentry->addr_sets[i],
 				fib->u.grantor.set->entries[i].eth_cache);
 		}
