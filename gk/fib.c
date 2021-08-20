@@ -2058,6 +2058,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		dentry->addr.proto = RTE_ETHER_TYPE_IPV4;
 		dentry->addr.ip.v4.s_addr = htonl(re4->ip);
 		dentry->prefix_len = state.depth;
+		dentry->fib_id = re4->next_hop;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 
@@ -2143,6 +2144,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		rte_memcpy(&dentry->addr.ip.v6, re6.ip,
 			sizeof(dentry->addr.ip.v6));
 		dentry->prefix_len = re6.depth;
+		dentry->fib_id = re6.next_hop;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 

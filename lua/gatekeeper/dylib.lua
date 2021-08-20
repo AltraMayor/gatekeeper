@@ -53,6 +53,7 @@ struct gk_fib_dump_entry {
 	struct ipaddr addr;
 	int           prefix_len;
 	enum gk_fib_action action;
+	unsigned int  fib_id;
 	unsigned int  num_addr_sets;
 	struct fib_dump_addr_set addr_sets[0];
 };
