@@ -1944,10 +1944,9 @@ fillup_gk_fib_dump_entry_ether(struct fib_dump_addr_set *addr_set,
 	struct ether_cache *eth_cache)
 {
 	addr_set->stale = eth_cache->stale;
-	rte_memcpy(&addr_set->nexthop_ip, &eth_cache->ip_addr,
-		sizeof(addr_set->nexthop_ip));
-	rte_memcpy(&addr_set->d_addr, &eth_cache->l2_hdr.eth_hdr.d_addr,
-		sizeof(addr_set->d_addr));
+	addr_set->nexthop_ip = eth_cache->ip_addr;
+	rte_ether_addr_copy(&eth_cache->l2_hdr.eth_hdr.d_addr,
+		&addr_set->d_addr);
 }
 
 static void
@@ -1958,9 +1957,8 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 	case GK_FWD_GRANTOR: {
 		unsigned int i;
 		for (i = 0; i < dentry->num_addr_sets; i++) {
-			rte_memcpy(&dentry->addr_sets[i].grantor_ip,
-				&fib->u.grantor.set->entries[i].gt_addr,
-				sizeof(dentry->addr_sets[i].grantor_ip));
+			dentry->addr_sets[i].grantor_ip =
+				fib->u.grantor.set->entries[i].gt_addr;
 			fillup_gk_fib_dump_entry_ether(&dentry->addr_sets[i],
 				fib->u.grantor.set->entries[i].eth_cache);
 		}
@@ -2007,12 +2005,10 @@ static void
 list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
 	int ret, index;
-	struct gk_fib *fib;
 	const struct rte_lpm_rule *re4;
 	struct rte_lpm_iterator_state state;
 	struct gk_fib_dump_entry *dentry = NULL;
 	size_t dentry_size = 0;
-	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
@@ -2029,8 +2025,9 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		unsigned int num_addrs;
 		size_t new_dentry_size;
 		int done;
+		void *cdata;
 
-		fib = &ltbl->fib_tbl[re4->next_hop];
+		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 			index = rte_lpm_rule_iterate(&state, &re4);
@@ -2061,6 +2058,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		dentry->addr.proto = RTE_ETHER_TYPE_IPV4;
 		dentry->addr.ip.v4.s_addr = htonl(re4->ip);
 		dentry->prefix_len = state.depth;
+		dentry->fib_id = re4->next_hop;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 
@@ -2092,12 +2090,10 @@ static void
 list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 {
 	int ret, index;
-	struct gk_fib *fib;
 	struct rte_lpm6_rule re6;
 	struct rte_lpm6_iterator_state state6;
 	struct gk_fib_dump_entry *dentry = NULL;
 	size_t dentry_size = 0;
-	void *cdata;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 
@@ -2114,8 +2110,9 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		unsigned int num_addrs;
 		size_t new_dentry_size;
 		int done;
+		void *cdata;
 
-		fib = &ltbl->fib_tbl6[re6.next_hop];
+		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
 		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 			index = rte_lpm6_rule_iterate(&state6, &re6);
@@ -2147,6 +2144,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		rte_memcpy(&dentry->addr.ip.v6, re6.ip,
 			sizeof(dentry->addr.ip.v6));
 		dentry->prefix_len = re6.depth;
+		dentry->fib_id = re6.next_hop;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 

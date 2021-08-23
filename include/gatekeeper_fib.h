@@ -255,6 +255,9 @@ struct gk_fib_dump_entry {
 	/* The FIB action. */
 	enum gk_fib_action action;
 
+	/* Unique ID of this FIB entry. */
+	unsigned int  fib_id;
+
 	/*
 	 * The number of entries starting at @addr_sets.
 	 *
