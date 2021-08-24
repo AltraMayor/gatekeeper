@@ -1014,6 +1014,21 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 	RTE_VERIFY(prefix_fib != NULL);
 
+	/*
+	 * GK_FWD_NEIGHBOR_*_NET FIB entries are initialized when
+	 * Gatekeeper starts. These FIB entries are only reserved
+	 * for the network prefixes which Gatekeeper is responsible.
+	 * Changing these network prefixes requires restarting Gatekeeper,
+	 * so one can ignore the deletion of these FIB entries.
+	 */
+	if (unlikely(prefix_fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+			prefix_fib->action == GK_FWD_NEIGHBOR_BACK_NET)) {
+		GK_LOG(WARNING,
+			"%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
+			__func__, ip_prefix->str);
+		return -1;
+	}
+
 	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
 		&gk_conf->lpm_tbl);
 	if (ret < 0) {
@@ -1041,36 +1056,26 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
-	case GK_FWD_GATEWAY_BACK_NET: {
+	case GK_FWD_GATEWAY_BACK_NET:
 		ret = del_gateway_from_neigh_table_locked(
 			ip_prefix, prefix_fib->action,
 			prefix_fib->u.gateway.eth_cache, gk_conf);
-
 		break;
-	}
 
 	case GK_DROP:
 		break;
 
-	/*
-	 * For GK_FWD_NEIGHBOR_*_NET FIB entries, they are initialized
-	 * when the Gatekeeper starts. These FIB entries are only reserved
-	 * for the network prefixes, for which the Gatekeeper is responsible.
-	 * If we change the network prefixes, then the Gatekeeper may
-	 * need to restart, so one can ignore deletion of these FIB entries.
-	 */
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		GK_LOG(WARNING,
-			"%s received a request to delete FIB entry %s with prefix action %u; Gatekeeper may need to restart\n",
+		rte_panic("%s(%s): GK_FWD_NEIGHBOR_FRONT_NET and GK_FWD_NEIGHBOR_BACK_NET (action = %u) should have been handled above\n",
 			__func__, ip_prefix->str, prefix_fib->action);
 		ret = -1;
 		break;
 
 	default:
-		rte_panic("Unexpected condition at %s: unsupported prefix action %u\n",
-			__func__, prefix_fib->action);
+		rte_panic("Unexpected condition at %s(%s): unsupported action %u\n",
+			__func__, ip_prefix->str, prefix_fib->action);
 		ret = -1;
 		break;
 	}
