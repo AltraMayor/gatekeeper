@@ -768,6 +768,44 @@ synchronize_gk_instances_with_fib(struct gk_config *gk_conf,
 }
 
 /*
+ * Returns:
+ *    >= 0 if the prefix already exists, the return is the FIB ID.
+ * -ENOENT if the prefix does not exist.
+ *     < 0 if an error occurred.
+ */
+static int
+check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
+	struct gk_fib **p_fib)
+{
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	uint32_t fib_id;
+	int ret;
+
+	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
+		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
+			prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl[fib_id];
+	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+		ret = lpm6_is_rule_present(ltbl->lpm6,
+			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl6[fib_id];
+	} else {
+		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
+			__func__, prefix->addr.proto, prefix->str);
+		return -EINVAL;
+	}
+
+	if (ret == 1)
+	       return fib_id;
+	if (ret == 0)
+		return -ENOENT;
+	RTE_VERIFY(ret < 0 && ret != -ENOENT);
+	return ret;
+}
+
+/*
  * This function is called by del_fib_entry_locked().
  * Notice that, it doesn't stand on its own, and it's only
  * a construct to make del_fib_entry_locked() readable.
@@ -776,62 +814,31 @@ static struct gk_fib *
 remove_prefix_from_lpm_locked(
 	struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 {
-	int ret = 0;
-	int ip_prefix_present;
-	struct gk_fib *ip_prefix_fib;
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	struct gk_fib *prefix_fib;
 
-	if (ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		uint32_t fib_id;
-
-		ip_prefix_present = lpm_is_rule_present(ltbl->lpm,
-			ip_prefix->addr.ip.v4.s_addr, ip_prefix->len, &fib_id);
-		if (ip_prefix_present == 0) {
-			GK_LOG(WARNING,
-				"Delete an non-existent IP prefix (%s)\n",
-				ip_prefix->str);
-			return NULL;
-		} else if (ip_prefix_present < 0) {
-			GK_LOG(ERR,
-				"Failed to call lpm_is_rule_present() for IP prefix (%s)\n",
-				ip_prefix->str);
-			return NULL;
-		}
-
-		ip_prefix_fib = &ltbl->fib_tbl[fib_id];
-	} else if (likely(ip_prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		uint32_t fib_id;
-
-		ip_prefix_present = lpm6_is_rule_present(ltbl->lpm6,
-			ip_prefix->addr.ip.v6.s6_addr, ip_prefix->len, &fib_id);
-		if (ip_prefix_present == 0) {
-			GK_LOG(WARNING,
-				"Delete an non-existent IP prefix (%s)\n",
-				ip_prefix->str);
-			return NULL;
-		} else if (ip_prefix_present < 0) {
-			GK_LOG(ERR,
-				"Failed to call lpm6_is_rule_present() for IP prefix (%s)\n",
-				ip_prefix->str);
-			return NULL;
-		}
-
-		ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
-	} else {
+	int ret = check_prefix_exists_locked(ip_prefix, gk_conf, &prefix_fib);
+	if (unlikely(ret == -ENOENT)) {
 		GK_LOG(WARNING,
-			"Delete an IP prefix (%s) with unknown IP type %hu\n",
-			ip_prefix->str, ip_prefix->addr.proto);
+			"Tried to delete a non-existent IP prefix (%s)\n",
+			ip_prefix->str);
 		return NULL;
 	}
 
-	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len, ltbl);
+	if (unlikely(ret < 0)) {
+		GK_LOG(ERR, "check_prefix_exists_locked(%s) failed, error = %i: %s\n",
+			ip_prefix->str, -ret, strerror(-ret));
+		return NULL;
+	}
+
+	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
+		&gk_conf->lpm_tbl);
 	if (ret < 0) {
 		GK_LOG(ERR, "Cannot remove the IP prefix %s from LPM table\n",
 			ip_prefix->str);
 		return NULL;
 	}
 
-	return ip_prefix_fib;
+	return prefix_fib;
 }
 
 /*
@@ -1546,44 +1553,6 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	}
 
 	return 0;
-}
-
-/*
- * Returns:
- *    >= 0 if the prefix already exists, the return is the FIB ID.
- * -ENOENT if the prefix does not exist.
- *     < 0 if an error occurred.
- */
-static int
-check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
-	struct gk_fib **p_fib)
-{
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-	uint32_t fib_id;
-	int ret;
-
-	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
-			prefix->len, &fib_id);
-		if (ret == 1 && p_fib != NULL)
-			*p_fib = &ltbl->fib_tbl[fib_id];
-	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = lpm6_is_rule_present(ltbl->lpm6,
-			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
-		if (ret == 1 && p_fib != NULL)
-			*p_fib = &ltbl->fib_tbl6[fib_id];
-	} else {
-		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
-			__func__, prefix->addr.proto, prefix->str);
-		return -EINVAL;
-	}
-
-	if (ret == 1)
-	       return fib_id;
-	if (ret == 0)
-		return -ENOENT;
-	RTE_VERIFY(ret < 0 && ret != -ENOENT);
-	return ret;
 }
 
 /*
