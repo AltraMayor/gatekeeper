@@ -768,80 +768,6 @@ synchronize_gk_instances_with_fib(struct gk_config *gk_conf,
 }
 
 /*
- * Returns:
- *    >= 0 if the prefix already exists, the return is the FIB ID.
- * -ENOENT if the prefix does not exist.
- *     < 0 if an error occurred.
- */
-static int
-check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
-	struct gk_fib **p_fib)
-{
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-	uint32_t fib_id;
-	int ret;
-
-	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
-			prefix->len, &fib_id);
-		if (ret == 1 && p_fib != NULL)
-			*p_fib = &ltbl->fib_tbl[fib_id];
-	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = lpm6_is_rule_present(ltbl->lpm6,
-			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
-		if (ret == 1 && p_fib != NULL)
-			*p_fib = &ltbl->fib_tbl6[fib_id];
-	} else {
-		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
-			__func__, prefix->addr.proto, prefix->str);
-		return -EINVAL;
-	}
-
-	if (ret == 1)
-	       return fib_id;
-	if (ret == 0)
-		return -ENOENT;
-	RTE_VERIFY(ret < 0 && ret != -ENOENT);
-	return ret;
-}
-
-/*
- * This function is called by del_fib_entry_locked().
- * Notice that, it doesn't stand on its own, and it's only
- * a construct to make del_fib_entry_locked() readable.
- */
-static struct gk_fib *
-remove_prefix_from_lpm_locked(
-	struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
-{
-	struct gk_fib *prefix_fib;
-
-	int ret = check_prefix_exists_locked(ip_prefix, gk_conf, &prefix_fib);
-	if (unlikely(ret == -ENOENT)) {
-		GK_LOG(WARNING,
-			"Tried to delete a non-existent IP prefix (%s)\n",
-			ip_prefix->str);
-		return NULL;
-	}
-
-	if (unlikely(ret < 0)) {
-		GK_LOG(ERR, "check_prefix_exists_locked(%s) failed, error = %i: %s\n",
-			ip_prefix->str, -ret, strerror(-ret));
-		return NULL;
-	}
-
-	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
-		&gk_conf->lpm_tbl);
-	if (ret < 0) {
-		GK_LOG(ERR, "Cannot remove the IP prefix %s from LPM table\n",
-			ip_prefix->str);
-		return NULL;
-	}
-
-	return prefix_fib;
-}
-
-/*
  * Note that, @action should be either GK_FWD_GATEWAY_FRONT_NET
  * or GK_FWD_GATEWAY_BACK_NET.
  */
@@ -1026,42 +952,99 @@ clear_grantor_set(struct ip_prefix *ip_prefix, struct grantor_set *set,
 }
 
 /*
+ * Returns:
+ *    >= 0 if the prefix already exists, the return is the FIB ID.
+ * -ENOENT if the prefix does not exist.
+ *     < 0 if an error occurred.
+ */
+static int
+check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
+	struct gk_fib **p_fib)
+{
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	uint32_t fib_id;
+	int ret;
+
+	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
+		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
+			prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl[fib_id];
+	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+		ret = lpm6_is_rule_present(ltbl->lpm6,
+			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
+		if (ret == 1 && p_fib != NULL)
+			*p_fib = &ltbl->fib_tbl6[fib_id];
+	} else {
+		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
+			__func__, prefix->addr.proto, prefix->str);
+		return -EINVAL;
+	}
+
+	if (ret == 1)
+	       return fib_id;
+	if (ret == 0)
+		return -ENOENT;
+	RTE_VERIFY(ret < 0 && ret != -ENOENT);
+	return ret;
+}
+
+/*
  * For removing FIB entries, it needs to notify the GK instances
  * about the removal of the FIB entry.
  */
 static int
 del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 {
-	int ret = 0;
-	struct gk_fib *ip_prefix_fib;
+	struct gk_fib *prefix_fib;
 
-	ip_prefix_fib = remove_prefix_from_lpm_locked(ip_prefix, gk_conf);
-	if (ip_prefix_fib == NULL)
+	int ret = check_prefix_exists_locked(ip_prefix, gk_conf, &prefix_fib);
+	if (unlikely(ret == -ENOENT)) {
+		GK_LOG(WARNING,
+			"Tried to delete a non-existent IP prefix (%s)\n",
+			ip_prefix->str);
 		return -1;
+	}
+
+	if (unlikely(ret < 0)) {
+		GK_LOG(ERR, "check_prefix_exists_locked(%s) failed, error = %i: %s\n",
+			ip_prefix->str, -ret, strerror(-ret));
+		return -1;
+	}
+
+	RTE_VERIFY(prefix_fib != NULL);
+
+	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
+		&gk_conf->lpm_tbl);
+	if (ret < 0) {
+		GK_LOG(ERR, "Cannot remove the IP prefix %s from LPM table\n",
+			ip_prefix->str);
+		return -1;
+	}
 
 	/*
 	 * We need to notify the GK blocks whenever we remove
 	 * a FIB entry that is accessible through a prefix.
 	 */
-	synchronize_gk_instances_with_fib(gk_conf, ip_prefix_fib, false);
+	synchronize_gk_instances_with_fib(gk_conf, prefix_fib, false);
 
 	/*
 	 * From now on, GK blocks must not have a reference
-	 * to @ip_prefix_fib.
+	 * to @prefix_fib.
 	 */
 
-	switch (ip_prefix_fib->action) {
+	switch (prefix_fib->action) {
 	case GK_FWD_GRANTOR:
 		ret = clear_grantor_set(ip_prefix,
-			ip_prefix_fib->u.grantor.set, gk_conf);
+			prefix_fib->u.grantor.set, gk_conf);
 		break;
 
 	case GK_FWD_GATEWAY_FRONT_NET:
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET: {
 		ret = del_gateway_from_neigh_table_locked(
-			ip_prefix, ip_prefix_fib->action,
-			ip_prefix_fib->u.gateway.eth_cache, gk_conf);
+			ip_prefix, prefix_fib->action,
+			prefix_fib->u.gateway.eth_cache, gk_conf);
 
 		break;
 	}
@@ -1081,19 +1064,19 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		GK_LOG(WARNING,
 			"%s received a request to delete FIB entry %s with prefix action %u; Gatekeeper may need to restart\n",
-			__func__, ip_prefix->str, ip_prefix_fib->action);
+			__func__, ip_prefix->str, prefix_fib->action);
 		ret = -1;
 		break;
 
 	default:
 		rte_panic("Unexpected condition at %s: unsupported prefix action %u\n",
-			__func__, ip_prefix_fib->action);
+			__func__, prefix_fib->action);
 		ret = -1;
 		break;
 	}
 
 	/* Reset the fields of the deleted FIB entry. */
-	initialize_fib_entry(ip_prefix_fib);
+	initialize_fib_entry(prefix_fib);
 
 	return ret;
 }
