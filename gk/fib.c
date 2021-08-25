@@ -978,12 +978,16 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	} else {
 		GK_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
 			__func__, prefix->addr.proto, prefix->str);
+		if (p_fib != NULL)
+			*p_fib = NULL;
 		return -EINVAL;
 	}
 
 	if (ret == 1)
 	       return fib_id;
-	if (ret == 0)
+	if (p_fib != NULL)
+		*p_fib = NULL;
+	if (likely(ret == 0))
 		return -ENOENT;
 	RTE_VERIFY(ret < 0 && ret != -ENOENT);
 	return ret;
@@ -1643,7 +1647,7 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 {
 	int ret, fib_id;
 	unsigned int i;
-	struct gk_fib *cur_fib = NULL;
+	struct gk_fib *cur_fib;
 
 	if (prefix_info->len < 0)
 		return -1;
