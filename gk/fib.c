@@ -1595,7 +1595,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		return -1;
 	} else {
 		/* Clarify LPM lookup miss that will occur in log. */
-		GK_LOG(NOTICE, "Prefix lookup did not find existing neighbor FIB on front interface, as expected\n");
+		GK_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on front interface, as expected\n");
 	}
 
 	neigh_fib = find_fib_entry_for_neighbor_locked(
@@ -1605,7 +1605,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		return -1;
 	} else {
 		/* Clarify LPM lookup miss that will occur in log. */
-		GK_LOG(NOTICE, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
+		GK_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
 	}
 
 	for (i = 0; i < num_addrs; i++) {
