@@ -572,7 +572,17 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			 */
 
 		default:
-			LLS_LOG(ERR, "%s interface should not be seeing a packet with EtherType 0x%04hx\n",
+			/*
+			 * The log level of the following log entry cannot be
+			 * ERR because NICs typically send unmatched patckets
+			 * to queue 0, which the LLS block often serves.
+			 *
+			 * The log level cannot be WARNING either because
+			 * Gatekeeper servers have to tolerate unwanted
+			 * traffic at some vantage points and LLS blocks
+			 * typically run at WARNING level.
+			 */
+			LLS_LOG(NOTICE, "%s interface should not be seeing a packet with EtherType 0x%04hx\n",
 				iface->name, ether_type);
 			goto free_buf;
 		}
