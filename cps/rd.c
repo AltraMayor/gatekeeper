@@ -289,20 +289,31 @@ static int
 del_route(struct route_update *update, const struct cps_config *cps_conf)
 {
 	struct gk_fib *prefix_fib;
-	int ret;
 
-	ret = get_prefix_fib(update, &cps_conf->gk->lpm_tbl, &prefix_fib);
+	int ret = get_prefix_fib(update, &cps_conf->gk->lpm_tbl, &prefix_fib);
 	if (ret < 0)
-		return ret;
+		goto error;
 
-	if (prefix_fib == NULL)
-		return -ENOENT;
+	if (prefix_fib == NULL) {
+		ret = -ENOENT;
+		goto error;
+	}
 
 	ret = can_rd_del_route(update, prefix_fib);
 	if (ret < 0)
-		return ret;
+		goto error;
 
-	return del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
+	ret = del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
+
+error:
+	/*
+	 * Although the Linux kernel uses ENOENT for similar situations (e.g.
+	 * when RTM_NEWROUTE tries to replace an entry that does not exist),
+	 * it uses ESRCH for RTM_DELROUTE.
+	 */
+	if (ret == -ENOENT)
+		return -ESRCH;
+	return ret;
 }
 
 /*
