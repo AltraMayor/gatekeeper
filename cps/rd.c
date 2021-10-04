@@ -733,16 +733,27 @@ rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 	return ret;
 }
 
+static void
+spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
+{
+	int ret;
+	while ((ret = rte_spinlock_trylock_tm(sl)) == 0)
+		rd_yield(cps_conf);
+	RTE_VERIFY(ret == 1);
+}
+
 static int
-rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv4(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm_iterator_state state;
 	const struct rte_lpm_rule *re4;
-	int index;
+	int index, ret;
 
-	int ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
+	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
+	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
 	if (ret < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		CPS_LOG(ERR, "Failed to initialize the IPv4 LPM rule iterator state in %s\n",
 			__func__);
 		return ret;
@@ -776,28 +787,42 @@ rd_getroute_ipv4_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
+			/*
+			 * Do not access @fib or any FIB-related variable
+			 * without the lock.
+			 */
+			rte_spinlock_unlock_tm(&ltbl->lock);
 			ret = rd_send_batch(cps_conf, batch, "IPv4",
 				req->nlmsg_seq, req->nlmsg_pid, false);
 			if (ret < 0)
 				return ret;
+			/*
+			 * Obtain the lock when starting a new Netlink batch.
+			 * For the last batch that won't be sent in this function,
+			 * the lock will be released at the end.
+			 */
+			spinlock_lock_with_yield(&ltbl->lock, cps_conf);
 		}
 
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
 
+	rte_spinlock_unlock_tm(&ltbl->lock);
 	return 0;
 }
 
 static int
-rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
+rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
 {
 	struct rte_lpm6_iterator_state state6;
 	struct rte_lpm6_rule re6;
-	int index;
+	int index, ret;
 
-	int ret = rte_lpm6_iterator_state_init(ltbl->lpm6, 0, 0, &state6);
+	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
+	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, 0, 0, &state6);
 	if (ret < 0) {
+		rte_spinlock_unlock_tm(&ltbl->lock);
 		CPS_LOG(ERR, "Failed to initialize the IPv6 LPM rule iterator state in %s\n",
 			__func__);
 		return ret;
@@ -833,25 +858,27 @@ rd_getroute_ipv6_locked(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
+			/*
+			 * Do not access @fib or any FIB-related variable
+			 * without the lock.
+			 */
+			rte_spinlock_unlock_tm(&ltbl->lock);
 			ret = rd_send_batch(cps_conf, batch, "IPv6",
 				req->nlmsg_seq, req->nlmsg_pid, false);
 			if (ret < 0)
 				return ret;
+			/*
+			 * Obtain the lock when starting a new Netlink batch.
+			 * For the last batch that won't be sent in this function,
+			 * the lock will be released at the end.
+			 */
+			spinlock_lock_with_yield(&ltbl->lock, cps_conf);
 		}
 
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
 
 	return 0;
-}
-
-static void
-spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
-{
-	int ret;
-	while ((ret = rte_spinlock_trylock_tm(sl)) == 0)
-		rd_yield(cps_conf);
-	RTE_VERIFY(ret == 1);
 }
 
 static int
@@ -916,9 +943,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 			}
 		}
 
-		spinlock_lock_with_yield(&ltbl->lock, cps_conf);
-		*err = rd_getroute_ipv4_locked(cps_conf, ltbl, batch, req);
-		rte_spinlock_unlock_tm(&ltbl->lock);
+		*err = rd_getroute_ipv4(cps_conf, ltbl, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}
@@ -933,9 +958,7 @@ ipv6:
 			}
 		}
 
-		spinlock_lock_with_yield(&ltbl->lock, cps_conf);
-		*err = rd_getroute_ipv6_locked(cps_conf, ltbl, batch, req);
-		rte_spinlock_unlock_tm(&ltbl->lock);
+		*err = rd_getroute_ipv6(cps_conf, ltbl, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}
