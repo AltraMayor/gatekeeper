@@ -113,41 +113,45 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
 }
 
+#define INVALID_IP_ADDR_STRING "<ERROR>"
+
 void
-print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
+print_flow_err_msg(const struct ip_flow *flow, const char *err_msg)
 {
 	char src[INET6_ADDRSTRLEN];
 	char dst[INET6_ADDRSTRLEN];
 
 	RTE_BUILD_BUG_ON(INET6_ADDRSTRLEN < INET_ADDRSTRLEN);
+	RTE_BUILD_BUG_ON(sizeof(src) < sizeof(INVALID_IP_ADDR_STRING));
+	RTE_BUILD_BUG_ON(sizeof(dst) < sizeof(INVALID_IP_ADDR_STRING));
 
 	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
 		if (inet_ntop(AF_INET, &flow->f.v4.src,
 				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "flow: %s(): failed to convert source IPv4 address to a string errno=%i: %s\n",
+			G_LOG(ERR, "%s(): failed to convert source IPv4 address to a string errno=%i: %s\n",
 				__func__, errno, strerror(errno));
-			return;
+			strcpy(src, INVALID_IP_ADDR_STRING);
 		}
 
 		if (inet_ntop(AF_INET, &flow->f.v4.dst,
 				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "flow: %s(): failed to convert destination IPv4 address to a string errno=%i: %s\n",
+			G_LOG(ERR, "%s(): failed to convert destination IPv4 address to a string errno=%i: %s\n",
 				__func__, errno, strerror(errno));
-			return;
+			strcpy(dst, INVALID_IP_ADDR_STRING);
 		}
 	} else if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
 		if (inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
 				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "flow: %s(): failed to convert source IPv6 address to a string errno=%i: %s\n",
+			G_LOG(ERR, "%s(): failed to convert source IPv6 address to a string errno=%i: %s\n",
 				__func__, errno, strerror(errno));
-			return;
+			strcpy(src, INVALID_IP_ADDR_STRING);
 		}
 
 		if (inet_ntop(AF_INET6, flow->f.v6.dst.s6_addr,
 				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "flow: %s(): failed to convert destination IPv6 address to a string errno=%i: %s\n",
+			G_LOG(ERR, "%s(): failed to convert destination IPv6 address to a string errno=%i: %s\n",
 				__func__, errno, strerror(errno));
-			return;
+			strcpy(dst, INVALID_IP_ADDR_STRING);
 		}
 	} else {
 		G_LOG(ERR,
@@ -156,7 +160,6 @@ print_flow_err_msg(struct ip_flow *flow, const char *err_msg)
 		return;
 	}
 
-	G_LOG(ERR,
-		"flow: %s for the flow with IP source address %s, and destination address %s\n",
-		err_msg, src, dst);
+	G_LOG(ERR, "Flow (src: %s, dst: %s) at lcore %u: %s\n",
+		src, dst, rte_lcore_id(), err_msg);
 }
