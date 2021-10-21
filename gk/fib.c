@@ -28,6 +28,8 @@
 #include "gatekeeper_main.h"
 #include "luajit-ffi-cdata.h"
 
+#define FIB_DUMP_BATCH_SIZE (32)
+
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
 {
@@ -1972,6 +1974,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	size_t dentry_size = 0;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
+	uint8_t current_batch_size = 0;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
 	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
@@ -2041,6 +2044,22 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		if (unlikely(done))
 			break;
 
+		if (++current_batch_size >= FIB_DUMP_BATCH_SIZE) {
+			/* Release the lock after dumping the full batch. */
+			rte_spinlock_unlock_tm(&ltbl->lock);
+
+			current_batch_size = 0;
+
+			/* Give other lcores a chance to acquire the lock. */
+			rte_pause();
+
+			/*
+			 * Obtain the lock when starting a new dumping batch.
+			 * For the last batch, the lock will be released at the end.
+			 */
+			rte_spinlock_lock_tm(&ltbl->lock);
+		}
+
 		index = rte_lpm_rule_iterate(&state, &re4);
 	}
 	rte_free(dentry);
@@ -2057,6 +2076,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	size_t dentry_size = 0;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
+	uint8_t current_batch_size = 0;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
 	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
@@ -2126,6 +2146,22 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		lua_remove(l, -2);
 		if (unlikely(done))
 			break;
+
+		if (++current_batch_size >= FIB_DUMP_BATCH_SIZE) {
+			/* Release the lock after dumping the full batch. */
+			rte_spinlock_unlock_tm(&ltbl->lock);
+
+			current_batch_size = 0;
+
+			/* Give other lcores a chance to acquire the lock. */
+			rte_pause();
+
+			/*
+			 * Obtain the lock when starting a new dumping batch.
+			 * For the last batch, the lock will be released at the end.
+			 */
+			rte_spinlock_lock_tm(&ltbl->lock);
+		}
 
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
