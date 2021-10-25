@@ -933,7 +933,12 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	return ret;
 }
 
-typedef bool (*test_flow_entry_t)(void *arg, struct flow_entry *fe);
+/*
+ * If the test can be done only on @flow, do not access @fe to minimize
+ * pressure on the processor cache of the lcore.
+ */
+typedef bool (*test_flow_entry_t)(void *arg, const struct ip_flow *flow,
+	struct flow_entry *fe);
 
 static void
 flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
@@ -951,7 +956,7 @@ flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
 		struct flow_entry *fe =
 			&instance->ip_flow_entry_table[index];
 
-		if (test(arg, fe)) {
+		if (test(arg, key, fe)) {
 			gk_del_flow_entry_with_key(instance, key, index);
 			num_flushed_flows++;
 		}
@@ -977,26 +982,27 @@ struct flush_net_prefixes {
 };
 
 static bool
-test_net_prefixes(void *arg, struct flow_entry *fe)
+test_net_prefixes(void *arg, const struct ip_flow *flow,
+	__attribute__((unused)) struct flow_entry *fe)
 {
 	struct flush_net_prefixes *info = arg;
 	bool matched = true;
 
-	if (info->proto != fe->flow.proto)
+	if (info->proto != flow->proto)
 		return false;
 
 	if (info->proto == RTE_ETHER_TYPE_IPV4) {
 		if (info->src->len != 0) {
 			matched = ip4_same_subnet(
 				info->src->addr.ip.v4.s_addr,
-				fe->flow.f.v4.src.s_addr,
+				flow->f.v4.src.s_addr,
 				info->ip4_src_mask.s_addr);
 		}
 
 		if (matched && info->dst->len != 0) {
 			matched = ip4_same_subnet(
 				info->dst->addr.ip.v4.s_addr,
-				fe->flow.f.v4.dst.s_addr,
+				flow->f.v4.dst.s_addr,
 				info->ip4_dst_mask.s_addr);
 		}
 
@@ -1005,12 +1011,12 @@ test_net_prefixes(void *arg, struct flow_entry *fe)
 
 	if (info->src->len != 0) {
 		matched = ip6_same_subnet(&info->src->addr.ip.v6,
-			&fe->flow.f.v6.src, &info->ip6_src_mask);
+			&flow->f.v6.src, &info->ip6_src_mask);
 	}
 
 	if (matched && info->dst->len != 0) {
 		matched = ip6_same_subnet(&info->dst->addr.ip.v6,
-			&fe->flow.f.v6.dst, &info->ip6_dst_mask);
+			&flow->f.v6.dst, &info->ip6_dst_mask);
 	}
 
 	return matched;
@@ -1068,7 +1074,8 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 }
 
 static bool
-test_fib(void *arg, struct flow_entry *fe)
+test_fib(void *arg, __attribute__((unused)) const struct ip_flow *flow,
+	struct flow_entry *fe)
 {
 	return fe->grantor_fib == arg;
 }
@@ -1111,7 +1118,8 @@ done:
 }
 
 static bool
-test_bpf(void *arg, struct flow_entry *fe)
+test_bpf(void *arg, __attribute__((unused)) const struct ip_flow *flow,
+	struct flow_entry *fe)
 {
 	return fe->state == GK_BPF && fe->program_index == (uintptr_t)arg;
 }
