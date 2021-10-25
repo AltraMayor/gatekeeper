@@ -629,6 +629,20 @@ reset_fe(struct gk_instance *instance, struct flow_entry *fe)
 static void gk_del_flow_entry_with_key(struct gk_instance *instance,
 	const struct ip_flow *flow_key, uint32_t entry_idx);
 
+static void
+found_corruption_in_flow_table(struct gk_instance *instance)
+{
+	if (likely(instance->scan_waiting_eoc)) {
+		/*
+		 * This condition is likely because once corruption is found,
+		 * a number of other corruptions are often found.
+		 */
+		return;
+	}
+	instance->scan_waiting_eoc = true;
+	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
+}
+
 /*
  * This function is way more complex than necessary because
  * it heals the flow table in case the table is corrupted.
@@ -676,7 +690,8 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	if (likely(ret >= 0)) {
 		if (likely(entry_idx == (typeof(entry_idx))ret)) {
 			/* This is the ONLY normal outcome of this function. */
-			goto del;
+			reset_fe(instance, fe);
+			return;
 		}
 
 		ret2 = snprintf(err_msg, sizeof(err_msg),
@@ -773,6 +788,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 
 del:
 	reset_fe(instance, fe);
+	found_corruption_in_flow_table(instance);
 }
 
 /*
@@ -796,6 +812,8 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 
 	if (likely(flow_key_eq(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
+
+	found_corruption_in_flow_table(instance);
 
 	ret2 = snprintf(err_msg, sizeof(err_msg),
 		"%s(): the flow entry does not correspond to the flow key at postion %u; logging entry and releasing both flow keys...",
@@ -2389,6 +2407,27 @@ process_cmds_from_mailbox(
 	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
+static uint32_t
+next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
+{
+	instance->scan_cur_flow_idx = (instance->scan_cur_flow_idx + 1)
+		% gk_conf->flow_ht_size;
+	if (likely(!instance->scan_waiting_eoc ||
+			instance->scan_cur_flow_idx !=
+			instance->scan_end_cycle_idx))
+		return instance->scan_cur_flow_idx;
+
+	/* TODO Scan keys of the flow table. */
+
+	/*
+	 * Only clear @scan_waiting_eoc after scanning the keys of
+	 * the flow table to avoid fixes of the flow table to be counted
+	 * as a newly found corruption.
+	 */
+	instance->scan_waiting_eoc = false;
+	return instance->scan_cur_flow_idx;
+}
+
 static int
 gk_proc(void *arg)
 {
@@ -2411,7 +2450,6 @@ gk_proc(void *arg)
 	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
 	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
 
-	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
@@ -2431,12 +2469,13 @@ gk_proc(void *arg)
 
 	while (likely(!exiting)) {
 		struct flow_entry *fe = NULL;
+		uint32_t entry_idx = 0;
 
 		tx_front_num_pkts = 0;
 		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
-			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
+			entry_idx = next_flow_index(gk_conf, instance);
 			fe = &instance->ip_flow_entry_table[entry_idx];
 			/*
 			 * Only one prefetch is needed here because we only
