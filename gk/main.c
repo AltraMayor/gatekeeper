@@ -2415,6 +2415,30 @@ process_cmds_from_mailbox(
 	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
+static bool
+test_invalid_flow(__attribute__((unused)) void *arg,
+	const struct ip_flow *flow, struct flow_entry *fe)
+{
+	if (unlikely(!fe->in_use))
+		return true;
+
+	switch (fe->state) {
+	case GK_REQUEST:
+	case GK_GRANTED:
+	case GK_DECLINED:
+	case GK_BPF:
+		break;
+	default:
+		return true;
+	}
+
+	if (unlikely(fe->grantor_fib == NULL ||
+			fe->grantor_fib->action != GK_FWD_GRANTOR))
+		return true;
+
+	return !flow_key_eq(flow, &fe->flow);
+}
+
 static uint32_t
 next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 {
@@ -2425,7 +2449,8 @@ next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 			instance->scan_end_cycle_idx))
 		return instance->scan_cur_flow_idx;
 
-	/* TODO Scan keys of the flow table. */
+	/* Scan keys of the flow table. */
+	flush_flow_table(instance, test_invalid_flow, NULL, __func__);
 
 	/*
 	 * Only clear @scan_waiting_eoc after scanning the keys of
