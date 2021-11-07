@@ -40,6 +40,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	local back_icmp_msgs_per_sec = 1000
 	local back_icmp_msgs_burst = 50
 
+	local fib_dump_batch_size = 32
+
 	-- These variables are unlikely to need to be changed.
 	local bpf_enable_jit = true
 
@@ -86,6 +88,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 		staticlib.get_front_burst_config(max_pkt_burst_front, net_conf)
 	gk_conf.back_max_pkt_burst =
 		staticlib.get_back_burst_config(max_pkt_burst_back, net_conf)
+
+	gk_conf.fib_dump_batch_size = fib_dump_batch_size
 
 	-- The maximum number of ARP or ND packets in LLS submitted by
 	-- GK or GT. The code below makes sure that the parameter should
