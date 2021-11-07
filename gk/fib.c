@@ -28,8 +28,6 @@
 #include "gatekeeper_main.h"
 #include "luajit-ffi-cdata.h"
 
-#define FIB_DUMP_BATCH_SIZE (32)
-
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
 {
@@ -1965,7 +1963,7 @@ num_addrs_entry_type(struct gk_fib *fib)
 }
 
 static void
-list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
+list_ipv4_fib_entries(lua_State *l, struct gk_config *gk_conf)
 {
 	int ret, index;
 	const struct rte_lpm_rule *re4;
@@ -1975,6 +1973,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 	uint8_t current_batch_size = 0;
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
 	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
@@ -2044,7 +2043,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		if (unlikely(done))
 			break;
 
-		if (++current_batch_size >= FIB_DUMP_BATCH_SIZE) {
+		if (++current_batch_size >= gk_conf->fib_dump_batch_size) {
 			/* Release the lock after dumping the full batch. */
 			rte_spinlock_unlock_tm(&ltbl->lock);
 
@@ -2067,7 +2066,7 @@ list_ipv4_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 }
 
 static void
-list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
+list_ipv6_fib_entries(lua_State *l, struct gk_config *gk_conf)
 {
 	int ret, index;
 	struct rte_lpm6_rule re6;
@@ -2077,6 +2076,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 	uint8_t current_batch_size = 0;
+	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
 	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
@@ -2147,7 +2147,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 		if (unlikely(done))
 			break;
 
-		if (++current_batch_size >= FIB_DUMP_BATCH_SIZE) {
+		if (++current_batch_size >= gk_conf->fib_dump_batch_size) {
 			/* Release the lock after dumping the full batch. */
 			rte_spinlock_unlock_tm(&ltbl->lock);
 
@@ -2169,7 +2169,7 @@ list_ipv6_fib_entries(lua_State *l, struct gk_lpm *ltbl)
 	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
-typedef void (*list_fib_entries)(lua_State *l, struct gk_lpm *ltbl);
+typedef void (*list_fib_entries)(lua_State *l, struct gk_config *gk_conf);
 
 #define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 
@@ -2198,7 +2198,7 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 
 	gk_conf = *(struct gk_config **)cdata;
 
-	f(l, &gk_conf->lpm_tbl);
+	f(l, gk_conf);
 
 	lua_remove(l, 1);
 	lua_remove(l, 1);

@@ -304,6 +304,7 @@ struct gk_config {
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
 	unsigned int basic_measurement_logging_ms;
+	uint8_t      fib_dump_batch_size;
 	/* This struct has hidden fields. */
 };
 

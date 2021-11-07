@@ -200,6 +200,9 @@ struct gk_config {
 	/* Time for logging the basic measurements in ms. */
 	unsigned int       basic_measurement_logging_ms;
 
+	/* Batch size for dumping GK FIB. */
+	uint8_t            fib_dump_batch_size;
+
 	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
