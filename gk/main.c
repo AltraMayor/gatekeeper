@@ -530,26 +530,311 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 	return 0;
 }
 
-static int
-gk_del_flow_entry_from_hash(struct gk_instance *instance,
-	struct flow_entry *fe)
+static void
+print_flow_state(struct flow_entry *fe)
 {
-	struct rte_hash *h = instance->ip_flow_hash_table;
-	int ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
-	if (likely(ret >= 0)) {
-		memset(fe, 0, sizeof(*fe));
-		if (instance->num_scan_del > 0)
-			instance->num_scan_del--;
-	} else {
-		char err_msg[256];
-		int ret2 = snprintf(err_msg, sizeof(err_msg),
-			"The GK block failed to delete a key from hash table at %s: %s\n",
-			__func__, strerror(-ret));
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+	int ret;
+	char grantor_ip[RTE_MAX(MAX_INET_ADDRSTRLEN, 128)];
+	char state_msg[1024];
+	const char *s_in_use = likely(fe->in_use) ? "" : "NOT in use ";
+
+	if (unlikely(fe->grantor_fib == NULL)) {
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"NULL FIB entry");
+		goto fib_error;
 	}
 
-	return ret;
+	if (unlikely(fe->grantor_fib->action != GK_FWD_GRANTOR)) {
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"INVALID FIB entry [FIB action: %hhu]",
+			fe->grantor_fib->action);
+		goto fib_error;
+	}
+
+	ret = convert_ip_to_str(&choose_grantor_per_flow(fe)->gt_addr,
+		grantor_ip, sizeof(grantor_ip));
+	if (ret < 0) {
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"GRANTOR FIB entry with INVALID IP address");
+		goto fib_error;
+	}
+
+	goto dump;
+
+fib_error:
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(grantor_ip));
+dump:
+	switch (fe->state) {
+	case GK_REQUEST:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"%s[state: GK_REQUEST (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", last_packet_seen_at: 0x%"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			fe->u.request.last_packet_seen_at,
+			fe->u.request.last_priority, fe->u.request.allowance,
+			grantor_ip);
+		break;
+	case GK_GRANTED:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"%s[state: GK_GRANTED (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", budget_renew_at: 0x%"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIu64", send_next_renewal_at: 0x%"PRIx64", renewal_step_cycle: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			fe->u.granted.budget_renew_at,
+			fe->u.granted.tx_rate_kib_cycle,
+			fe->u.granted.budget_byte,
+			fe->u.granted.send_next_renewal_at,
+			fe->u.granted.renewal_step_cycle,
+			grantor_ip);
+		break;
+	case GK_DECLINED:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"%s[state: GK_DECLINED (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			grantor_ip);
+		break;
+	case GK_BPF: {
+		uint64_t *c = fe->u.bpf.cookie.mem;
+
+		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
+
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"%s[state: GK_BPF (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", program_index=%u, cookie=%016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			fe->program_index,
+			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
+			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
+			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
+			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]),
+			grantor_ip);
+		break;
+	}
+	default:
+		ret = snprintf(state_msg, sizeof(state_msg),
+			"%s[state: UNKNOWN (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			grantor_ip);
+		break;
+	}
+
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(state_msg));
+	print_flow_err_msg(&fe->flow, state_msg);
+}
+
+static inline void
+reset_fe(struct gk_instance *instance, struct flow_entry *fe)
+{
+	memset(fe, 0, sizeof(*fe));
+	if (instance->num_scan_del > 0)
+		instance->num_scan_del--;
+}
+
+static void gk_del_flow_entry_with_key(struct gk_instance *instance,
+	const struct ip_flow *flow_key, uint32_t entry_idx);
+
+static void
+found_corruption_in_flow_table(struct gk_instance *instance)
+{
+	if (likely(instance->scan_waiting_eoc)) {
+		/*
+		 * This condition is likely because once corruption is found,
+		 * a number of other corruptions are often found.
+		 */
+		return;
+	}
+	instance->scan_waiting_eoc = true;
+	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
+}
+
+/*
+ * This function is way more complex than necessary because
+ * it heals the flow table in case the table is corrupted.
+ * Thus, GK blocks can recover and keep going. Moreover, this function logs
+ * lots of information to hopefully enable one to identify the source of
+ * corruption.
+ *
+ * While editing the code of this function, preserve the following constraints:
+ *
+ * 1. There should be NO significant performance impact when
+ *    the flow table is not corrupted;
+ *
+ * 2. The code should be robust enough to handle any recoverable corruption;
+ *
+ * 3. The code should minimally rely on the internals of
+ *    the hash table library used.
+ *
+ * Non-exhaustive list of possible corruptions that this function fixes:
+ *
+ * 1. Two flow keys pointing to the same flow entry.
+ *
+ * 2. A flow entry without a flow key pointing to it.
+ *
+ * 3. Two flow entries with the same flow key.
+ *
+ * 4. A flow entry with a wrong hash value.
+ */
+static void
+gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
+{
+	struct rte_hash *h = instance->ip_flow_hash_table;
+	struct flow_entry *fe = &instance->ip_flow_entry_table[entry_idx];
+	struct flow_entry *fe2;
+	int ret, ret2;
+	char err_msg[256];
+	hash_sig_t recomp_hash;
+
+	/*
+	 * Do NOT check if @fe->in_use is true to enable the code below
+	 * to identify any corruption; including flow entries that are invalid
+	 * only because @fe->in_use is false.
+	 */
+
+	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
+	if (likely(ret >= 0)) {
+		if (likely(entry_idx == (typeof(entry_idx))ret)) {
+			/* This is the ONLY normal outcome of this function. */
+			reset_fe(instance, fe);
+			return;
+		}
+
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): there are two flow entries for the same flow; the main entry is at position %i and the duplicate at position %u; logging and removing both entries...",
+			__func__, ret, entry_idx);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		fe2 = &instance->ip_flow_entry_table[ret];
+		print_flow_state(fe2);
+		reset_fe(instance, fe2);
+		print_flow_state(fe);
+		goto del;
+	}
+
+	if (unlikely(ret != -ENOENT)) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): failed to delete a flow (errno=%i): %s; logging flow and dropping it...",
+			__func__, -ret, strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		goto del;
+	}
+
+	RTE_VERIFY(ret == -ENOENT);
+
+	/*
+	 * The flow entry cannot be found in the flow table.
+	 */
+
+	recomp_hash = rte_hash_hash(h, &fe->flow);
+
+	if (fe->flow_hash_val == recomp_hash) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow was not indexed; logging and dropping flow...",
+			__func__);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		goto del;
+	}
+
+	ret2 = snprintf(err_msg, sizeof(err_msg),
+		"%s(): flow had wrong hash value (0x%x); fixed hash value to 0x%x; correcting, logging, and dropping flow entry...",
+		__func__, fe->flow_hash_val, recomp_hash);
+	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+	print_flow_err_msg(&fe->flow, err_msg);
+	fe->flow_hash_val = recomp_hash;
+	print_flow_state(fe);
+
+	ret = rte_hash_lookup_with_hash(h, &fe->flow, fe->flow_hash_val);
+	if (ret < 0) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): failed to look flow up even after fixing its hash value errno=%i: %s",
+			__func__, -ret, strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		/*
+		 * Although the hash was wrong, the entry was not indexed.
+		 * So it is safe to release it.
+		 */
+		goto del;
+	}
+
+	if (entry_idx != (typeof(entry_idx))ret) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): there is a duplicate flow entry at %i for entry at %u; logging and releasing duplicate entry...",
+			__func__, ret, entry_idx);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		fe2 = &instance->ip_flow_entry_table[ret];
+		print_flow_state(fe2);
+		gk_del_flow_entry_with_key(instance, &fe->flow, ret);
+		goto del;
+	}
+
+	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
+	if (unlikely(ret < 0)) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): failed to remove flow entry even after fixing its hash value errno=%i: %s",
+			__func__, -ret, strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+	} else if (unlikely(entry_idx != (typeof(entry_idx))ret)) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): there is bug in the hash table library of DPDK: a lookup for a flow returned position %u, but, while removing the flow, rte_hash_del_key_with_hash() returned position %i; logging this second flow enty and releasing both entries...",
+			__func__, entry_idx, ret);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		fe2 = &instance->ip_flow_entry_table[ret];
+		print_flow_state(fe2);
+		reset_fe(instance, fe2);
+	}
+
+del:
+	reset_fe(instance, fe);
+	found_corruption_in_flow_table(instance);
+}
+
+/*
+ * ATTENTION
+ * This function should only be called when a lookup of @flow_key has
+ * returned @entry_idx. If this is not the case, you may want to call
+ * gk_del_flow_entry_at_pos() instead.
+ */
+static void
+gk_del_flow_entry_with_key(struct gk_instance *instance,
+	const struct ip_flow *flow_key, uint32_t entry_idx)
+{
+	struct flow_entry *fe = &instance->ip_flow_entry_table[entry_idx];
+	struct ip_flow copy_flow_key;
+	/*
+	 * Use @ret2 instead of @ret to pair this function with its sister
+	 * function gk_del_flow_entry_at_pos().
+	 */
+	int ret2;
+	char err_msg[256];
+
+	if (likely(flow_key_eq(flow_key, &fe->flow)))
+		return gk_del_flow_entry_at_pos(instance, entry_idx);
+
+	found_corruption_in_flow_table(instance);
+
+	ret2 = snprintf(err_msg, sizeof(err_msg),
+		"%s(): the flow entry does not correspond to the flow key at postion %u; logging entry and releasing both flow keys...",
+		__func__, entry_idx);
+	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+	print_flow_err_msg(flow_key, err_msg);
+	print_flow_state(fe);
+
+	/*
+	 * Back up the value of @*flow_key because if it is contained in @fe,
+	 * the following call of gk_del_flow_entry_at_pos() below may modify it.
+	 */
+	copy_flow_key = *flow_key;
+	/* Remove the wrong entry. */
+	gk_del_flow_entry_at_pos(instance, entry_idx);
+
+	/* Remove the key that originated this call. */
+	fe->flow = copy_flow_key;
+	fe->flow_hash_val = rte_hash_hash(instance->ip_flow_hash_table,
+		&fe->flow);
+	gk_del_flow_entry_at_pos(instance, entry_idx);
 }
 
 static int
@@ -648,7 +933,12 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 	return ret;
 }
 
-typedef bool (*test_flow_entry_t)(void *arg, struct flow_entry *fe);
+/*
+ * If the test can be done only on @flow, do not access @fe to minimize
+ * pressure on the processor cache of the lcore.
+ */
+typedef bool (*test_flow_entry_t)(void *arg, const struct ip_flow *flow,
+	struct flow_entry *fe);
 
 static void
 flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
@@ -666,8 +956,8 @@ flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
 		struct flow_entry *fe =
 			&instance->ip_flow_entry_table[index];
 
-		if (test(arg, fe) &&
-			(gk_del_flow_entry_from_hash(instance, fe) >= 0)) {
+		if (test(arg, key, fe)) {
+			gk_del_flow_entry_with_key(instance, key, index);
 			num_flushed_flows++;
 		}
 
@@ -692,26 +982,27 @@ struct flush_net_prefixes {
 };
 
 static bool
-test_net_prefixes(void *arg, struct flow_entry *fe)
+test_net_prefixes(void *arg, const struct ip_flow *flow,
+	__attribute__((unused)) struct flow_entry *fe)
 {
 	struct flush_net_prefixes *info = arg;
 	bool matched = true;
 
-	if (info->proto != fe->flow.proto)
+	if (info->proto != flow->proto)
 		return false;
 
 	if (info->proto == RTE_ETHER_TYPE_IPV4) {
 		if (info->src->len != 0) {
 			matched = ip4_same_subnet(
 				info->src->addr.ip.v4.s_addr,
-				fe->flow.f.v4.src.s_addr,
+				flow->f.v4.src.s_addr,
 				info->ip4_src_mask.s_addr);
 		}
 
 		if (matched && info->dst->len != 0) {
 			matched = ip4_same_subnet(
 				info->dst->addr.ip.v4.s_addr,
-				fe->flow.f.v4.dst.s_addr,
+				flow->f.v4.dst.s_addr,
 				info->ip4_dst_mask.s_addr);
 		}
 
@@ -720,12 +1011,12 @@ test_net_prefixes(void *arg, struct flow_entry *fe)
 
 	if (info->src->len != 0) {
 		matched = ip6_same_subnet(&info->src->addr.ip.v6,
-			&fe->flow.f.v6.src, &info->ip6_src_mask);
+			&flow->f.v6.src, &info->ip6_src_mask);
 	}
 
 	if (matched && info->dst->len != 0) {
 		matched = ip6_same_subnet(&info->dst->addr.ip.v6,
-			&fe->flow.f.v6.dst, &info->ip6_dst_mask);
+			&flow->f.v6.dst, &info->ip6_dst_mask);
 	}
 
 	return matched;
@@ -761,93 +1052,6 @@ flush_net_prefixes(struct ip_prefix *src,
 }
 
 static void
-print_flow_state(struct flow_entry *fe)
-{
-	int ret;
-	char ip[MAX_INET_ADDRSTRLEN];
-	char state_msg[1024];
-
-	if (unlikely(fe->grantor_fib == NULL)) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow entry points to an NULL FIB entry in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			__func__, rte_lcore_id());
-		goto out;
-	} else if (unlikely(fe->grantor_fib->action !=
-			GK_FWD_GRANTOR)) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			fe->grantor_fib->action, __func__, rte_lcore_id());
-		goto out;
-	}
-
-	ret = convert_ip_to_str(&choose_grantor_per_flow(fe)->gt_addr,
-		ip, sizeof(ip));
-	if (ret < 0) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u - failed to convert the Grantor IP address to string",
-			fe->grantor_fib->action, __func__, rte_lcore_id());
-		goto out;
-	}
-
-	switch (fe->state) {
-	case GK_REQUEST:
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_REQUEST (%hhu), flow hash value: %u, last_packet_seen_at: %"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
-			fe->u.request.last_packet_seen_at,
-			fe->u.request.last_priority, fe->u.request.allowance,
-			ip, __func__, rte_lcore_id());
-		break;
-	case GK_GRANTED:
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_GRANTED (%hhu), flow hash value: %u, expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
-			fe->expire_at,
-			fe->u.granted.budget_renew_at,
-			fe->u.granted.tx_rate_kib_cycle,
-			fe->u.granted.budget_byte,
-			fe->u.granted.send_next_renewal_at,
-			fe->u.granted.renewal_step_cycle,
-			ip, __func__, rte_lcore_id());
-		break;
-	case GK_DECLINED:
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_DECLINED (%hhu), flow hash value: %u, expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val, fe->expire_at,
-			ip, __func__, rte_lcore_id());
-		break;
-	case GK_BPF: {
-		uint64_t *c = fe->u.bpf.cookie.mem;
-
-		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
-
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_BPF (%hhu), flow hash value: %u, expire_at: 0x%"PRIx64", program_index=%u, cookie="
-			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
-			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
-			fe->expire_at, fe->program_index,
-			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
-			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
-			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
-			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]),
-			ip, __func__, rte_lcore_id());
-		break;
-	}
-	default:
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: unknown flow with state %hhu and flow hash value %u in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			fe->state, fe->flow_hash_val,
-			__func__, rte_lcore_id());
-		break;
-	}
-
-out:
-	RTE_VERIFY(ret > 0 && ret < (int)sizeof(state_msg));
-	print_flow_err_msg(&fe->flow, state_msg);
-}
-
-static void
 log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 {
 	struct flow_entry *fe;
@@ -870,7 +1074,8 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 }
 
 static bool
-test_fib(void *arg, struct flow_entry *fe)
+test_fib(void *arg, __attribute__((unused)) const struct ip_flow *flow,
+	struct flow_entry *fe)
 {
 	return fe->grantor_fib == arg;
 }
@@ -913,7 +1118,8 @@ done:
 }
 
 static bool
-test_bpf(void *arg, struct flow_entry *fe)
+test_bpf(void *arg, __attribute__((unused)) const struct ip_flow *flow,
+	struct flow_entry *fe)
 {
 	return fe->state == GK_BPF && fe->program_index == (uintptr_t)arg;
 }
@@ -2209,6 +2415,52 @@ process_cmds_from_mailbox(
 	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
+static bool
+test_invalid_flow(__attribute__((unused)) void *arg,
+	const struct ip_flow *flow, struct flow_entry *fe)
+{
+	if (unlikely(!fe->in_use))
+		return true;
+
+	switch (fe->state) {
+	case GK_REQUEST:
+	case GK_GRANTED:
+	case GK_DECLINED:
+	case GK_BPF:
+		break;
+	default:
+		return true;
+	}
+
+	if (unlikely(fe->grantor_fib == NULL ||
+			fe->grantor_fib->action != GK_FWD_GRANTOR))
+		return true;
+
+	return !flow_key_eq(flow, &fe->flow);
+}
+
+static uint32_t
+next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
+{
+	instance->scan_cur_flow_idx = (instance->scan_cur_flow_idx + 1)
+		% gk_conf->flow_ht_size;
+	if (likely(!instance->scan_waiting_eoc ||
+			instance->scan_cur_flow_idx !=
+			instance->scan_end_cycle_idx))
+		return instance->scan_cur_flow_idx;
+
+	/* Scan keys of the flow table. */
+	flush_flow_table(instance, test_invalid_flow, NULL, __func__);
+
+	/*
+	 * Only clear @scan_waiting_eoc after scanning the keys of
+	 * the flow table to avoid fixes of the flow table to be counted
+	 * as a newly found corruption.
+	 */
+	instance->scan_waiting_eoc = false;
+	return instance->scan_cur_flow_idx;
+}
+
 static int
 gk_proc(void *arg)
 {
@@ -2231,7 +2483,6 @@ gk_proc(void *arg)
 	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
 	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
 
-	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
@@ -2251,12 +2502,13 @@ gk_proc(void *arg)
 
 	while (likely(!exiting)) {
 		struct flow_entry *fe = NULL;
+		uint32_t entry_idx = 0;
 
 		tx_front_num_pkts = 0;
 		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
-			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
+			entry_idx = next_flow_index(gk_conf, instance);
 			fe = &instance->ip_flow_entry_table[entry_idx];
 			/*
 			 * Only one prefetch is needed here because we only
@@ -2295,7 +2547,7 @@ gk_proc(void *arg)
 		process_cmds_from_mailbox(instance, gk_conf);
 
 		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at)
-			gk_del_flow_entry_from_hash(instance, fe);
+			gk_del_flow_entry_at_pos(instance, entry_idx);
 
 		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {

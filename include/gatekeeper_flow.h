@@ -45,6 +45,12 @@ uint32_t rss_ip_flow_hf(const void *data,
 
 int ip_flow_cmp_eq(const void *key1, const void *key2, size_t key_len);
 
-void print_flow_err_msg(struct ip_flow *flow, const char *err_msg);
+static inline bool
+flow_key_eq(const struct ip_flow *f1, const struct ip_flow *f2)
+{
+	return ip_flow_cmp_eq(f1, f2, sizeof(*f1)) == 0;
+}
+
+void print_flow_err_msg(const struct ip_flow *flow, const char *err_msg);
 
 #endif /* _GATEKEEPER_FLOW_H_ */
