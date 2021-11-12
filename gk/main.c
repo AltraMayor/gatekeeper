@@ -764,57 +764,61 @@ static void
 print_flow_state(struct flow_entry *fe)
 {
 	int ret;
-	char ip[MAX_INET_ADDRSTRLEN];
+	char grantor_ip[RTE_MAX(MAX_INET_ADDRSTRLEN, 128)];
 	char state_msg[1024];
+	const char *s_in_use = likely(fe->in_use) ? "" : "NOT in use ";
 
 	if (unlikely(fe->grantor_fib == NULL)) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow entry points to an NULL FIB entry in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			__func__, rte_lcore_id());
-		goto out;
-	} else if (unlikely(fe->grantor_fib->action !=
-			GK_FWD_GRANTOR)) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			fe->grantor_fib->action, __func__, rte_lcore_id());
-		goto out;
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"NULL FIB entry");
+		goto fib_error;
+	}
+
+	if (unlikely(fe->grantor_fib->action != GK_FWD_GRANTOR)) {
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"INVALID FIB entry [FIB action: %hhu]",
+			fe->grantor_fib->action);
+		goto fib_error;
 	}
 
 	ret = convert_ip_to_str(&choose_grantor_per_flow(fe)->gt_addr,
-		ip, sizeof(ip));
+		grantor_ip, sizeof(grantor_ip));
 	if (ret < 0) {
-		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: flow with invalid FIB entry [action: %hhu] in the flow table at %s with lcore %u - failed to convert the Grantor IP address to string",
-			fe->grantor_fib->action, __func__, rte_lcore_id());
-		goto out;
+		ret = snprintf(grantor_ip, sizeof(grantor_ip),
+			"GRANTOR FIB entry with INVALID IP address");
+		goto fib_error;
 	}
 
+	goto dump;
+
+fib_error:
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(grantor_ip));
+dump:
 	switch (fe->state) {
 	case GK_REQUEST:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_REQUEST (%hhu), flow hash value: %u, last_packet_seen_at: %"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
+			"%s[state: GK_REQUEST (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", last_packet_seen_at: 0x%"PRIx64", last_priority: %hhu, allowance: %hhu, grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
 			fe->u.request.last_packet_seen_at,
 			fe->u.request.last_priority, fe->u.request.allowance,
-			ip, __func__, rte_lcore_id());
+			grantor_ip);
 		break;
 	case GK_GRANTED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_GRANTED (%hhu), flow hash value: %u, expire_at: %"PRIx64", budget_renew_at: %"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIx64", send_next_renewal_at: %"PRIx64", renewal_step_cycle: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
-			fe->expire_at,
+			"%s[state: GK_GRANTED (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", budget_renew_at: 0x%"PRIx64", tx_rate_kib_cycle: %u, budget_byte: %"PRIu64", send_next_renewal_at: 0x%"PRIx64", renewal_step_cycle: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
 			fe->u.granted.budget_renew_at,
 			fe->u.granted.tx_rate_kib_cycle,
 			fe->u.granted.budget_byte,
 			fe->u.granted.send_next_renewal_at,
 			fe->u.granted.renewal_step_cycle,
-			ip, __func__, rte_lcore_id());
+			grantor_ip);
 		break;
 	case GK_DECLINED:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_DECLINED (%hhu), flow hash value: %u, expire_at: %"PRIx64", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val, fe->expire_at,
-			ip, __func__, rte_lcore_id());
+			"%s[state: GK_DECLINED (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			grantor_ip);
 		break;
 	case GK_BPF: {
 		uint64_t *c = fe->u.bpf.cookie.mem;
@@ -822,27 +826,24 @@ print_flow_state(struct flow_entry *fe)
 		RTE_BUILD_BUG_ON(RTE_DIM(fe->u.bpf.cookie.mem) != 8);
 
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: log the flow state [state: GK_BPF (%hhu), flow hash value: %u, expire_at: 0x%"PRIx64", program_index=%u, cookie="
-			"%016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64
-			", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", %016" PRIx64 ", grantor_ip: %s] in the flow table at %s with lcore %u",
-			fe->state, fe->flow_hash_val,
-			fe->expire_at, fe->program_index,
+			"%s[state: GK_BPF (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", program_index=%u, cookie=%016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			fe->program_index,
 			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
 			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
 			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
 			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]),
-			ip, __func__, rte_lcore_id());
+			grantor_ip);
 		break;
 	}
 	default:
 		ret = snprintf(state_msg, sizeof(state_msg),
-			"gk: unknown flow with state %hhu and flow hash value %u in the flow table at %s with lcore %u, there is a bug in the GK block\n",
-			fe->state, fe->flow_hash_val,
-			__func__, rte_lcore_id());
+			"%s[state: UNKNOWN (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", grantor_ip: %s]",
+			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
+			grantor_ip);
 		break;
 	}
 
-out:
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(state_msg));
 	print_flow_err_msg(&fe->flow, state_msg);
 }
