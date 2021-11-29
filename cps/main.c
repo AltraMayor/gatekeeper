@@ -1071,7 +1071,8 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	log_ratelimit_state_init(cps_conf->lcore_id,
 		cps_conf->log_ratelimit_interval_ms,
-		cps_conf->log_ratelimit_burst);
+		cps_conf->log_ratelimit_burst,
+		cps_conf->log_level, "CPS");
 
 	front_inc = cps_conf->front_max_pkt_burst;
 	net_conf->front.total_pkt_burst += front_inc;

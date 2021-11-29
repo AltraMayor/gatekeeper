@@ -955,7 +955,8 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 
 	log_ratelimit_state_init(lls_conf->lcore_id,
 		lls_conf->log_ratelimit_interval_ms,
-		lls_conf->log_ratelimit_burst);
+		lls_conf->log_ratelimit_burst,
+		lls_conf->log_level, "LLS");
 
 	tb_ratelimit_state_init(&lls_conf->front_icmp_rs,
 		lls_conf->front_icmp_msgs_per_sec,

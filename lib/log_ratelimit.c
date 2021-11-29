@@ -17,6 +17,7 @@
  */
 
 #include <stdbool.h>
+#include <string.h>
 
 #include <rte_cycles.h>
 #include <rte_lcore.h>
@@ -26,11 +27,13 @@
 #include "gatekeeper_log_ratelimit.h"
 
 struct log_ratelimit_state {
-	uint64_t interval_cycles;
-	uint32_t burst;
-	uint32_t printed;
-	uint32_t suppressed;
-	uint64_t end;
+	uint64_t       interval_cycles;
+	uint32_t       burst;
+	uint32_t       printed;
+	uint32_t       suppressed;
+	uint64_t       end;
+	rte_atomic32_t log_level;
+	char           block_name[16];
 } __rte_cache_aligned;
 
 static struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
@@ -49,24 +52,30 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
 		rte_log(RTE_LOG_NOTICE, gatekeeper_logtype,
-			"GATEKEEPER: %u log entries were suppressed at lcore %u during the last ratelimit interval\n",
-			lrs->suppressed, rte_lcore_id());
+			"GATEKEEPER %s: %u log entries were suppressed at lcore %u during the last ratelimit interval\n",
+			lrs->block_name, lrs->suppressed, rte_lcore_id());
 	}
 	lrs->suppressed = 0;
 	lrs->end = now + lrs->interval_cycles;
 }
 
 void
-log_ratelimit_state_init(unsigned lcore_id, uint32_t interval, uint32_t burst)
+log_ratelimit_state_init(unsigned lcore_id, uint32_t interval, uint32_t burst,
+	uint32_t log_level, const char *block_name)
 {
 	struct log_ratelimit_state *lrs;
 
 	RTE_VERIFY(lcore_id < RTE_MAX_LCORE);
 
 	lrs = &log_ratelimit_states[lcore_id];
+
+	RTE_VERIFY(strlen(block_name) < sizeof(lrs->block_name));
+
 	lrs->interval_cycles = interval * cycles_per_ms;
 	lrs->burst = burst;
 	lrs->suppressed = 0;
+	rte_atomic32_set(&lrs->log_level, log_level);
+	strcpy(lrs->block_name, block_name);
 	log_ratelimit_reset(lrs, rte_rdtsc());
 }
 
@@ -112,13 +121,8 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 int
 rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 {
-	struct log_ratelimit_state *lrs;
-	int ratelimit_level = rte_log_get_level(logtype);
-	if (unlikely(ratelimit_level < 0))
-		return -1;
-
-	lrs = &log_ratelimit_states[rte_lcore_id()];
-	if (level <= (typeof(level))ratelimit_level &&
+	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
+	if (level <= (uint32_t)rte_atomic32_read(&lrs->log_level) &&
 			log_ratelimit_allow(lrs)) {
 		int ret;
 		va_list ap;
@@ -131,4 +135,35 @@ rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 	}
 
 	return 0;
+}
+
+void
+set_log_level_per_block(const char *block_name, uint32_t log_level)
+{
+	for (int i = 0; i < RTE_MAX_LCORE; i++) {
+		if(strcmp(log_ratelimit_states[i].block_name,
+				block_name) == 0) {
+			rte_atomic32_set(&log_ratelimit_states[i].log_level,
+				log_level);
+		}
+	}
+}
+
+int
+set_log_level_per_lcore(unsigned lcore_id, uint32_t log_level)
+{
+	if (lcore_id >= RTE_MAX_LCORE) {
+		return -1;
+	}
+	rte_atomic32_set(&log_ratelimit_states[lcore_id].log_level, log_level);
+	return 0;
+}
+
+const char *
+get_block_name(unsigned int lcore_id)
+{
+	if (lcore_id >= RTE_MAX_LCORE) {
+		return "invalid lcore";
+	}
+	return log_ratelimit_states[lcore_id].block_name;
 }

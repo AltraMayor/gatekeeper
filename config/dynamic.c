@@ -771,7 +771,8 @@ run_dynamic_config(struct net_config *net_conf,
 
 	log_ratelimit_state_init(dy_conf->lcore_id,
 		dy_conf->log_ratelimit_interval_ms,
-		dy_conf->log_ratelimit_burst);
+		dy_conf->log_ratelimit_burst,
+		dy_conf->log_level, "DYC");
 
 	ret = init_mailbox("dy_conf", dy_conf->mailbox_max_entries_exp,
 		sizeof(struct dy_cmd_entry), dy_conf->mailbox_mem_cache_size,
