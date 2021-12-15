@@ -4,7 +4,8 @@
 	branch = lpm6-paras
 [submodule "dependencies/luajit-2.0"]
 	path = dependencies/luajit-2.0
-	url = http://luajit.org/git/luajit-2.0.git
+	url = https://github.com/AltraMayor/luajit.git
+	branch = gkv1.1.0
 [submodule "dependencies/bird"]
 	path = dependencies/bird
 	url = http://github.com/cjdoucette/bird.git

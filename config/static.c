@@ -30,7 +30,6 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_gt.h"
-#include "luajit-ffi-cdata.h"
 
 /* Return a table with all lcore ids. Function to be called from Lua. */
 static int

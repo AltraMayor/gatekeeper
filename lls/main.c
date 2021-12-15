@@ -32,7 +32,6 @@
 #include "arp.h"
 #include "cache.h"
 #include "nd.h"
-#include "luajit-ffi-cdata.h"
 
 /*
  * When using LACP, the requirement must be met:

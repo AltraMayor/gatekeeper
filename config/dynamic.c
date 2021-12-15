@@ -37,7 +37,6 @@
 #include "gatekeeper_config.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_log_ratelimit.h"
-#include "luajit-ffi-cdata.h"
 
 /*
  * The cast "(uint16_t)" is needed because of
