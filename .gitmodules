@@ -8,5 +8,5 @@
 	branch = gkv1.1.0
 [submodule "dependencies/bird"]
 	path = dependencies/bird
-	url = http://github.com/cjdoucette/bird.git
+	url = https://github.com/cjdoucette/bird.git
 	branch = gatekeeper
