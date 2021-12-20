@@ -60,7 +60,7 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 }
 
 void
-log_ratelimit_state_init(unsigned lcore_id, uint32_t interval, uint32_t burst,
+log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval, uint32_t burst,
 	uint32_t log_level, const char *block_name)
 {
 	struct log_ratelimit_state *lrs;
