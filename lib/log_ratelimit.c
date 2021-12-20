@@ -150,7 +150,7 @@ set_log_level_per_block(const char *block_name, uint32_t log_level)
 }
 
 int
-set_log_level_per_lcore(unsigned lcore_id, uint32_t log_level)
+set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level)
 {
 	if (lcore_id >= RTE_MAX_LCORE) {
 		return -1;
