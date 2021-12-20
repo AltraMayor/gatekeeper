@@ -57,8 +57,8 @@ check_log_allowed(uint32_t level, uint32_t logtype)
   * implementation assumes that each lcore will maintain a separate
   * struct log_ratelimit_state to rate limit the log entries.
   */
-void log_ratelimit_state_init(unsigned lcore_id,
-	uint32_t interval, uint32_t burst);
+void log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
+	uint32_t burst, uint32_t log_level, const char *block_name);
 
 /**
  * Generates and ratelimits a log message.
@@ -87,5 +87,12 @@ int rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 #endif
 #endif
 	__attribute__((format(printf, 3, 4)));
+
+/* Functions to set the log level for each functional block as well as lcore. */
+void set_log_level_per_block(const char *block_name, uint32_t log_level);
+int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
+
+/* Get the block name for the corresponding lcore. */
+const char *get_block_name(unsigned int lcore_id);
 
 #endif /* _GATEKEEPER_LOG_RATELIMIT_H_ */

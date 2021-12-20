@@ -660,7 +660,8 @@ run_sol(struct net_config *net_conf, struct sol_config *sol_conf)
 	for (i = 0; i < sol_conf->num_lcores; i++) {
 		log_ratelimit_state_init(sol_conf->lcores[i],
 			sol_conf->log_ratelimit_interval_ms,
-			sol_conf->log_ratelimit_burst);
+			sol_conf->log_ratelimit_burst,
+			sol_conf->log_level, "SOL");
 	}
 
 	if (!net_conf->back_iface_enabled) {

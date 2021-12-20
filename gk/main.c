@@ -2821,7 +2821,8 @@ run_gk(struct net_config *net_conf, struct gk_config *gk_conf,
 	for (i = 0; i < gk_conf->num_lcores; i++) {
 		log_ratelimit_state_init(gk_conf->lcores[i],
 			gk_conf->log_ratelimit_interval_ms,
-			gk_conf->log_ratelimit_burst);
+			gk_conf->log_ratelimit_burst,
+			gk_conf->log_level, "GK");
 	}
 
 	if (!net_conf->back_iface_enabled) {

@@ -2141,7 +2141,8 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 	for (i = 0; i < gt_conf->num_lcores; i++) {
 		log_ratelimit_state_init(gt_conf->lcores[i],
 			gt_conf->log_ratelimit_interval_ms,
-			gt_conf->log_ratelimit_burst);
+			gt_conf->log_ratelimit_burst,
+			gt_conf->log_level, "GT");
 	}
 
 	gt_conf->lua_base_directory = rte_strdup("lua_base_directory",

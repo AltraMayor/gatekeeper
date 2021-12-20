@@ -762,7 +762,8 @@ run_ggu(struct net_config *net_conf,
 
 	log_ratelimit_state_init(ggu_conf->lcore_id,
 		ggu_conf->log_ratelimit_interval_ms,
-		ggu_conf->log_ratelimit_burst);
+		ggu_conf->log_ratelimit_burst,
+		ggu_conf->log_level, "GGU");
 
 	back_inc = ggu_conf->max_pkt_burst;
 	net_conf->back.total_pkt_burst += back_inc;
