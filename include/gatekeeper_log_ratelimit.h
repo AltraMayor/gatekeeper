@@ -90,7 +90,7 @@ int rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 
 /* Functions to set the log level for each functional block as well as lcore. */
 void set_log_level_per_block(const char *block_name, uint32_t log_level);
-int set_log_level_per_lcore(unsigned lcore_id, uint32_t log_level);
+int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
 
 /* Get the block name for the corresponding lcore. */
 const char *get_block_name(unsigned int lcore_id);
