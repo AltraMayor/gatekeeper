@@ -57,7 +57,7 @@ check_log_allowed(uint32_t level, uint32_t logtype)
   * implementation assumes that each lcore will maintain a separate
   * struct log_ratelimit_state to rate limit the log entries.
   */
-void log_ratelimit_state_init(unsigned lcore_id, uint32_t interval,
+void log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
 	uint32_t burst, uint32_t log_level, const char *block_name);
 
 /**
