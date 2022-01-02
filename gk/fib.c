@@ -26,7 +26,6 @@
 #include "gatekeeper_l2.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
-#include "luajit-ffi-cdata.h"
 
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)

@@ -22,7 +22,6 @@
 #include <rte_lcore.h>
 
 #include "lua_lpm.h"
-#include "luajit-ffi-cdata.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_lpm.h"
 #include "gatekeeper_fib.h"

@@ -46,7 +46,6 @@
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 #include "lua_lpm.h"
-#include "luajit-ffi-cdata.h"
 
 int gt_logtype;
 
