@@ -36,15 +36,7 @@ void log_ratelimit_enable(void);
  * Note that even when this test passes, log entries may not occur
  * due to the rate limiting system.
  */
-static inline bool
-check_log_allowed(uint32_t level, uint32_t logtype)
-{
-	int sys_level = rte_log_get_level(logtype);
-	if (unlikely(sys_level < 0))
-		false;
-
-	return level <= (typeof(level))sys_level;
-}
+bool check_log_allowed(uint32_t level);
 
  /*
   * @lcore_id: initialize the log_ratelimit_state data for @lcore_id.

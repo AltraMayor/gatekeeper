@@ -276,7 +276,6 @@ struct net_config {
 	unsigned int num_attempts_link_get;
 	bool         *numa_used;
 	uint32_t     log_level;
-	int          log_type;
 	uint32_t     rotate_log_interval_sec;
 	/* This struct has hidden fields. */
 };

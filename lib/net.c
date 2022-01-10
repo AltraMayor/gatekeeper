@@ -2136,12 +2136,6 @@ gatekeeper_init_network(struct net_config *net_conf)
 	if (net_conf == NULL)
 		return -1;
 
-	net_conf->log_type = gatekeeper_logtype;
-
-	ret = rte_log_set_level(net_conf->log_type, net_conf->log_level);
-	if (ret < 0)
-		return -1;
-
 	if (net_conf->back_iface_enabled) {
 		if (ipv4_if_configured(&net_conf->front) !=
 				ipv4_if_configured(&net_conf->back)) {

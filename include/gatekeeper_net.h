@@ -409,9 +409,6 @@ struct net_config {
 	/* Log level for all non-block related activity. */
 	uint32_t             log_level;
 
-	/* Dynamic logging type, assigned at runtime. */
-	int                  log_type;
-
 	/* How often the log file should be rotated. The unit is second. */
 	uint32_t             rotate_log_interval_sec;
 

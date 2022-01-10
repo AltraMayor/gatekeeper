@@ -31,18 +31,13 @@
 
 #include "gatekeeper_log_ratelimit.h"
 
-/*
- * Custom log type for Gatekeeper-related log entries
- * that are not relevant to a specific block.
- */
-extern int gatekeeper_logtype;
+#define BLOCK_LOGTYPE RTE_LOGTYPE_USER1
 
-#define G_LOG(level, ...)		        \
+#define G_LOG(level, ...)			\
 	rte_log_ratelimit(RTE_LOG_ ## level,	\
-	gatekeeper_logtype, "GATEKEEPER: " __VA_ARGS__)
+	BLOCK_LOGTYPE, "GATEKEEPER: " __VA_ARGS__)
 
-#define G_LOG_CHECK(level)	\
-	check_log_allowed(RTE_LOG_ ## level, gatekeeper_logtype)
+#define G_LOG_CHECK(level) check_log_allowed(RTE_LOG_ ## level)
 
 extern volatile int exiting;
 

@@ -41,9 +41,6 @@
 #include "gatekeeper_net.h"
 #include "gatekeeper_launch.h"
 
-/* Log type for all non-block related Gatekeeper activity. */
-int gatekeeper_logtype;
-
 /* Indicates whether the program needs to exit or not. */
 volatile int exiting = false;
 
@@ -339,9 +336,15 @@ main(int argc, char **argv)
 	};
 	int ret, log_fd;
 
-	gatekeeper_logtype = rte_log_register("gatekeeper");
-	if (gatekeeper_logtype < 0)
-		rte_exit(EXIT_FAILURE, "Error registering gatekeeper log type\n");
+	/*
+	 * Functional blocks have their own log level, and all log entries of
+	 * Gatekeeper use BLOCK_LOGTYPE. Thus, setting BLOCK_LOGTYPE to DEBUG
+	 * level instructs DPDK to log everything that the blocks decide to
+	 * log.
+	 */
+	ret = rte_log_set_level(BLOCK_LOGTYPE, RTE_LOG_DEBUG);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE, "Error with setting log level\n");
 
 	/*
 	 * rte_eal_init(), which is called next, creates all threads that
