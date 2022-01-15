@@ -345,9 +345,6 @@ struct gatekeeper_if {
 	struct acl_state  ipv4_acls;
 	struct acl_state  ipv6_acls;
 
-	/* Whether the ntuple filter can be used on this interface. */
-	bool              hw_filter_ntuple;
-
 	/* Whether this interface supports RSS. */
 	bool              rss;
 
