@@ -861,27 +861,39 @@ lls_stage2(void *arg)
 	int ret;
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
-		if (hw_filter_eth_available(&net_conf->front)) {
-			ret = ethertype_filter_add(&net_conf->front,
-				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
-			if (ret < 0)
-				return ret;
-			lls_conf->rx_method_front |= RX_METHOD_NIC;
-		} else if (lls_conf->rx_queue_front != 0) {
+		ret = ethertype_flow_add(&net_conf->front,
+			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
+		if (ret < 0 && net_conf->front.rss &&
+				lls_conf->rx_queue_front != 0) {
 			/*
-			 * RSS on most NICs seem to default to sending ARP
-			 * (and other non-IP packets) to queue 0, so the LLS
-			 * block should be listening on queue 0.
+			 * If EtherType flows are not supported but RSS is,
+			 * the LLS block should be listening on queue 0. This
+			 * is because RSS on most NICs seems to default to
+			 * sending ARP (and other non-IP packets) to queue 0.
+			 * The LLS block can then simply discard any other
+			 * non-ARP and non-IP packets that it receives.
 			 *
 			 * On the Elastic Network Adapter (ENA) on Amazon,
 			 * non-IP packets seem to be given to the first
 			 * queue configured for RSS. Therefore, LLS does not
 			 * need to run on queue 0 in that case, but there's
-			 * no easy way of deciding whether it is needed
-			 * at runtime.
+			 * no easy way of detecting this case at runtime.
 			 */
 			G_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the front iface\n");
 			return -1;
+		}
+		if (ret >= 0) {
+			/* ARP packets can be received from the NIC. */
+			lls_conf->rx_method_front |= RX_METHOD_NIC;
+		} else {
+			/*
+			 * EtherType flows cannot be used, perhaps because
+			 * they are not supported by hardware, RSS is not
+			 * supported by hardware, or the particular protocol
+			 * (ARP) is not permitted. In this case, ARP packets
+			 * will be received via mailboxes.
+			 */
+			lls_conf->rx_method_front |= RX_METHOD_MB;
 		}
 
 		ret = register_icmp_filter(&net_conf->front,
@@ -892,16 +904,20 @@ lls_stage2(void *arg)
 	}
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
-		if (hw_filter_eth_available(&net_conf->back)) {
-			ret = ethertype_filter_add(&net_conf->back,
-				RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
-			if (ret < 0)
-				return ret;
-			lls_conf->rx_method_back |= RX_METHOD_NIC;
-		} else if (lls_conf->rx_queue_back != 0) {
-			/* See comment above about LLS listening on queue 0. */
-			G_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");
+		/* See comments above about return values. */
+		ret = ethertype_flow_add(&net_conf->back,
+			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
+		if (ret < 0 && net_conf->back.rss &&
+				lls_conf->rx_queue_back != 0) {
+			G_LOG(ERR, "If EtherType flows are not supported, the LLS block must listen on queue 0 on the back iface\n");
 			return -1;
+		}
+		if (ret >= 0) {
+			/* ARP packets can be received from the NIC. */
+			lls_conf->rx_method_back |= RX_METHOD_NIC;
+		} else {
+			/* ARP packets will be received via mailboxes. */
+			lls_conf->rx_method_back |= RX_METHOD_MB;
 		}
 
 		ret = register_icmp_filter(&net_conf->back,

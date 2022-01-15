@@ -95,62 +95,86 @@ randomize_rss_key(int guarantee_random_entropy)
 uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 /*
- * @ether_type should be passed in host ordering, but is converted
- * to little endian ordering before being added as a filter. The
- * EType register's value should be in little endian, according to
- * the 82599 datasheet.
+ * Add a filter that steers packets to queues based on their EtherType.
  *
- * Does the endianness change with other NICs?
- * 	We have checked the source code of three DPDK networking drivers:
- *	i40e, ixgbe, e1000. And all of them use little endian order.
- *	However, we didn't find the parts for other drivers. We tried to
- *	ask help from the DPDK mailinglist, but didn't get reply.
+ * Tecnically, the DPDK rte_flow API allows filters to be specified
+ * on any field in an Ethernet header, but in practice, drivers implement
+ * the RTE_FLOW_ITEM_TYPE_ETH using the EtherType filters available
+ * in hardware. Typically, EtherType filters only support destination
+ * MAC addresses and the EtherType field. We choose to only allow
+ * the EtherType field to be specified, since the destination MAC
+ * address may be extraneous anyway (#74).
+ *
+ * @ether_type should be passed in host ordering, but is converted
+ * to big endian ordering before being added as a filter, as
+ * required by the rte_flow API. Individual device drivers can then
+ * convert it to whatever endianness is needed.
  */
 int
-ethertype_filter_add(struct gatekeeper_if *iface, uint16_t ether_type,
+ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 	uint16_t queue_id)
 {
-	struct rte_eth_ethertype_filter filter = {
-		.ether_type = rte_cpu_to_le_16(ether_type),
-		.flags = 0,
-		.queue = queue_id,
+	struct rte_flow_attr attr = { .ingress = 1 };
+	struct rte_flow_action_queue queue = { .index = queue_id };
+	struct rte_flow_action action[] = {
+		{
+			.type = RTE_FLOW_ACTION_TYPE_QUEUE,
+			.conf = &queue,
+	       	},
+		{
+			.type = RTE_FLOW_ACTION_TYPE_END,
+		}
 	};
-	unsigned int i;
+	struct rte_flow_item_eth eth_spec = {
+		.type = rte_cpu_to_be_16(ether_type),
+	};
+	struct rte_flow_item_eth eth_mask = {
+		.type = 0xFFFF,
+	};
+	struct rte_flow_item pattern[] = {
+		{
+			.type = RTE_FLOW_ITEM_TYPE_ETH,
+			.spec = &eth_spec,
+			.mask = &eth_mask,
+		},
+		{
+			.type = RTE_FLOW_ITEM_TYPE_END,
+		},
+	};
+	struct rte_flow_error error;
+	struct rte_flow *flow;
 	int ret;
 
-	RTE_VERIFY(iface->hw_filter_eth);
-
-	for (i = 0; i < iface->num_ports; i++) {
-		uint16_t port_id = iface->ports[i];
-		ret = rte_eth_dev_filter_ctrl(port_id,
-			RTE_ETH_FILTER_ETHERTYPE,
-			RTE_ETH_FILTER_ADD,
-			&filter);
-		if (ret == -ENOTSUP) {
-			G_LOG(NOTICE,
-				"net: hardware doesn't support adding an EtherType filter for 0x%02hx on port %hhu\n",
-				ether_type, port_id);
-			ret = -1;
-			goto out;
-		} else if (ret == -ENODEV) {
-			G_LOG(NOTICE,
-				"net: port %hhu is invalid for adding an EtherType filter for 0x%02hx\n",
-				port_id, ether_type);
-			ret = -1;
-			goto out;
-		} else if (ret != 0) {
-			G_LOG(NOTICE,
-				"net: other errors that depend on the specific operations implementation on port %hhu for adding an EtherType filter for 0x%02hx\n",
-				port_id, ether_type);
-			ret = -1;
-			goto out;
-		}
+	if (!iface->rss) {
+		/*
+		 * If RSS is not supported, then data plane packets
+		 * could be assigned to RX queues that are serviced
+		 * by non-data plane blocks (e.g., LLS).
+		 */
+		G_LOG(NOTICE, "net: cannot use EtherType filters when RSS is not supported\n");
+		return -1;
 	}
 
-	ret = 0;
+	ret = rte_flow_validate(iface->id, &attr, pattern, action, &error);
+	if (ret < 0) {
+		/*
+		 * A negative errno value was returned
+		 * (and also put in rte_errno).
+		 */
+		G_LOG(NOTICE, "net: could not validate EtherType flow: %s (%s)\n",
+			strerror(-ret), error.message);
+		return -1;
+	}
 
-out:
-	return ret;
+	flow = rte_flow_create(iface->id, &attr, pattern, action, &error);
+	if (flow == NULL) {
+		/* rte_errno is set to a positive errno value. */
+		G_LOG(NOTICE, "net: could not create EtherType flow: %s (%s)\n",
+			strerror(rte_errno), error.message);
+		return -1;
+	}
+
+	return 0;
 }
 
 /*
@@ -1650,23 +1674,14 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 			goto stop_partial;
 	}
 
-	iface->hw_filter_eth = true;
 	iface->hw_filter_ntuple = true;
 	for (i = 0; i < iface->num_ports; i++) {
-		if (iface->hw_filter_eth &&
-				(rte_eth_dev_filter_supported(iface->ports[i],
-					RTE_ETH_FILTER_ETHERTYPE) != 0))
-			iface->hw_filter_eth = false;
-
 		if (iface->hw_filter_ntuple &&
 				(rte_eth_dev_filter_supported(iface->ports[i],
 					RTE_ETH_FILTER_NTUPLE) != 0))
 			iface->hw_filter_ntuple = false;
 	}
 
-	G_LOG(NOTICE,
-		"net: EtherType filters %s supported on the %s iface\n",
-		iface->hw_filter_eth ? "are" : "are NOT", iface->name);
 	G_LOG(NOTICE,
 		"net: ntuple filters %s supported on the %s iface\n",
 		iface->hw_filter_ntuple ? "are" : "are NOT", iface->name);
