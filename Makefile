@@ -19,15 +19,7 @@
 # needed -- you need to explicitly do `make clean`. We probably
 # need to add a directive to look in the subdirectories.
 
-ifeq ($(RTE_SDK),)
-$(error "Please define RTE_SDK environment variable.")
-endif
-
-RTE_TARGET ?= x86_64-native-linuxapp-gcc
 GATEKEEPER := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-
-include $(RTE_SDK)/mk/rte.vars.mk
-
 APP = gatekeeper
 
 SRCS-y := main/main.c
@@ -46,14 +38,34 @@ SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
 	lib/launch.c lib/lpm.c lib/acl.c lib/varip.c \
 	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c lib/coro.c
 
-LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod -lcap
-CFLAGS += $(WERROR_FLAGS) -I${GATEKEEPER}/include -I/usr/local/include/luajit-2.0/
+# Build using pkg-config variables if possible
+ifneq ($(shell pkg-config --exists libdpdk && echo 0),0)
+$(error "no installation of DPDK found")
+endif
+
+PKGCONF ?= pkg-config
+
+PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
+CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk) -DALLOW_EXPERIMENTAL_API -Wno-address-of-packed-member $(WERROR_FLAGS) -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
+LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod -lcap -lrte_net_bond
+LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
+
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
 	-Wno-deprecated-declarations -DCORO_ASM
 
-include $(RTE_SDK)/mk/rte.extapp.mk
+build/$(APP)-shared: $(SRCS-y) Makefile $(PC_FILE) | build
+	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+
+shared: build/$(APP)-shared
+	ln -sf $(APP)-shared build/$(APP)
+
+build:
+	@mkdir -p $@
+
+clean:
+	rm -f build/$(APP) build/$(APP)-shared
+	test -d build && rmdir -p build || true
 
 cscope:
 	cscope -b -R -s.
-
 .PHONY: cscope
