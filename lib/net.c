@@ -1737,7 +1737,7 @@ create_pktmbuf_pool(const char *block_name, unsigned int lcore,
 		block_name, lcore);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(pool_name));
 	mp = rte_pktmbuf_pool_create_by_ops(pool_name, num_mbuf, 0,
-		sizeof(struct list_head), RTE_MBUF_DEFAULT_BUF_SIZE,
+		sizeof(struct sol_mbuf_priv), RTE_MBUF_DEFAULT_BUF_SIZE,
 		rte_lcore_to_socket_id(lcore), "ring_mp_sc");
 	if (mp == NULL) {
 		G_LOG(ERR,

@@ -340,7 +340,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 		return -1;
 
 	req_bufs[*num_reqs] = packet->pkt;
-	req_bufs[*num_reqs]->udata64 = priority;
+	set_prio(req_bufs[*num_reqs], priority);
 	(*num_reqs)++;
 
 	return EINPROGRESS;
