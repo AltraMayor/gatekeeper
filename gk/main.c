@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* For gettid(). */
+#define _GNU_SOURCE
+
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
