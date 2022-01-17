@@ -390,7 +390,6 @@ struct dynamic_config {
 	struct gk_config *gk;
 	struct gt_config *gt;
 	uint32_t         log_level;
-	int              log_type;
 	uint32_t         log_ratelimit_interval_ms;
 	uint32_t         log_ratelimit_burst;
 	unsigned int     mailbox_max_entries_exp;

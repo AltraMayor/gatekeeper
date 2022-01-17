@@ -45,8 +45,6 @@ struct dynamic_config {
 
 	/* Log level for Dynamic Configuration block. */
 	uint32_t         log_level;
-	/* Dynamic logging type, assigned at runtime. */
-	int              log_type;
 	/* Log ratelimit interval in ms for Dynamic Configuration block. */
 	uint32_t         log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for Dynamic Configuration block. */
