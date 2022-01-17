@@ -83,7 +83,7 @@ rd_event_sock_open(struct cps_config *cps_conf)
 
 	nl = mnl_socket_open(NETLINK_ROUTE);
 	if (nl == NULL) {
-		CPS_LOG(ERR, "%s: mnl_socket_open: %s\n",
+		G_LOG(ERR, "%s: mnl_socket_open: %s\n",
 			__func__, strerror(errno));
 		return -1;
 	}
@@ -95,7 +95,7 @@ rd_event_sock_open(struct cps_config *cps_conf)
 	 */
 	ret = mnl_socket_bind(nl, 0, cps_conf->nl_pid);
 	if (ret < 0) {
-		CPS_LOG(ERR, "%s: mnl_socket_bind: %s\n",
+		G_LOG(ERR, "%s: mnl_socket_bind: %s\n",
 			__func__, strerror(errno));
 		goto close;
 	}
@@ -119,7 +119,7 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 			update->prefix_info.addr.ip.v4.s_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			CPS_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed (%i)\n",
+			G_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed (%i)\n",
 				__func__, update->prefix_info.str, ret);
 			return ret;
 		}
@@ -132,7 +132,7 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 			update->prefix_info.addr.ip.v6.s6_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			CPS_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed (%i)\n",
+			G_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed (%i)\n",
 				__func__, update->prefix_info.str, ret);
 			return ret;
 		}
@@ -141,7 +141,7 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 			return 0;
 		}
 	} else {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"cps update: unknown address family %d at %s()\n",
 			update->family, __func__);
 		return -EAFNOSUPPORT;
@@ -160,7 +160,7 @@ can_rd_del_route(struct route_update *update, struct gk_fib *prefix_fib)
 	 * in routing daemons.
 	 */
 	if (prefix_fib->action == GK_FWD_GRANTOR) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Prefix %s cannot be updated via RTNetlink because it is a grantor entry; use the dynamic configuration block to update grantor entries\n",
 			update->prefix_info.str);
 		return -EPERM;
@@ -191,7 +191,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 
 		/* Gatekeeper does not currently support multipath. */
 		if (update->rt_flags & NLM_F_APPEND) {
-			CPS_LOG(WARNING,
+			G_LOG(WARNING,
 				"%s(%s): flag NLM_F_APPEND is NOT supported\n",
 				__func__, update->ip_px_buf);
 			return -EOPNOTSUPP;
@@ -228,7 +228,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				update->gw.ip.v4.s_addr);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
-					CPS_LOG(WARNING,
+					G_LOG(WARNING,
 						"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
 						__func__, update->gw_buf,
 						update->ip_px_buf);
@@ -240,7 +240,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
-					CPS_LOG(WARNING,
+					G_LOG(WARNING,
 						"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
 						__func__, update->gw_buf,
 						update->ip_px_buf);
@@ -259,7 +259,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET))
 			update->oif_index = cps_conf->back_kni_index;
 		else {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"%s(%s): the gateway %s is NOT a neighbor\n",
 				__func__, update->ip_px_buf, update->gw_buf);
 			return -EINVAL;
@@ -278,7 +278,7 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 			&update->rt_props, cps_conf->gk);
 	}
 
-	CPS_LOG(ERR,
+	G_LOG(ERR,
 		"%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
 		__func__, update->ip_px_buf, update->oif_index,
 		cps_conf->front_kni_index, cps_conf->back_kni_index);
@@ -335,7 +335,7 @@ __convert_ip_attr(int family, struct nlattr *tb[], enum rtattr_type_t attr_type,
 		if (unlikely(inet_ntop(AF_INET, addr4, addr_buf,
 				INET_ADDRSTRLEN) == NULL)) {
 			int saved_errno = errno;
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"%s(%s): failed to convert an IPv4 address: %s\n",
 				__func__, attr_name, strerror(errno));
 			return -saved_errno;
@@ -355,7 +355,7 @@ __convert_ip_attr(int family, struct nlattr *tb[], enum rtattr_type_t attr_type,
 		if (unlikely(inet_ntop(AF_INET6, addr6, addr_buf,
 				INET6_ADDRSTRLEN) == NULL)) {
 			int saved_errno = errno;
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"%s(%s): failed to convert an IPv6 address: %s\n",
 				__func__, attr_name, strerror(errno));
 			return -saved_errno;
@@ -364,7 +364,7 @@ __convert_ip_attr(int family, struct nlattr *tb[], enum rtattr_type_t attr_type,
 		return 0;
 	}
 
-	CPS_LOG(WARNING, "%s(%s): unknown address family %d\n",
+	G_LOG(WARNING, "%s(%s): unknown address family %d\n",
 			__func__, attr_name, family);
 	return -EAFNOSUPPORT;
 }
@@ -392,7 +392,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 		 * struct rtnexthop *rt =
 		 *	mnl_attr_get_payload(tb[RTA_MULTIPATH]);
 		 */
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"cps update: the rtnetlink command has information (RTA_MULTIPATH) that we don't need or don't honor\n");
 	}
 
@@ -408,7 +408,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(update->ip_px_buf));
 		update->prefix_info.str = update->ip_px_buf;
 
-		CPS_LOG(DEBUG, "cps update: dst: %s\n", update->ip_px_buf);
+		G_LOG(DEBUG, "cps update: dst: %s\n", update->ip_px_buf);
 		dst_present = true;
 	}
 
@@ -417,18 +417,18 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 		if (ret < 0)
 			return ret;
 
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"cps update: the rtnetlink command has information (RTA_SRC with IP address %s) that we don't need or don't honor\n",
 			addr_buf);
 	}
 
 	if (tb[RTA_OIF]) {
 		update->oif_index = mnl_attr_get_u32(tb[RTA_OIF]);
-		CPS_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
+		G_LOG(DEBUG, "cps update: oif=%u\n", update->oif_index);
 	}
 
 	if (tb[RTA_FLOW]) {
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"cps update: the rtnetlink command has information (RTA_FLOW with flow=%u) that we don't need or don't honor\n",
 			mnl_attr_get_u32(tb[RTA_FLOW]));
 	}
@@ -438,7 +438,7 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 		if (ret < 0)
 			return ret;
 
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"cps update: the rtnetlink command has information (RTA_PREFSRC with IP address %s) that we don't need or don't honor\n",
 			addr_buf);
 	}
@@ -449,13 +449,13 @@ attr_get(struct route_update *update, int family, struct nlattr *tb[])
 		if (ret < 0)
 			return ret;
 
-		CPS_LOG(DEBUG, "cps update: gw: %s\n", update->gw_buf);
+		G_LOG(DEBUG, "cps update: gw: %s\n", update->gw_buf);
 		gw_present = true;
 	}
 
 	if (tb[RTA_PRIORITY]) {
 		update->rt_props.priority = mnl_attr_get_u32(tb[RTA_PRIORITY]);
-		CPS_LOG(DEBUG, "cps update: priority = %u\n",
+		G_LOG(DEBUG, "cps update: priority = %u\n",
 			update->rt_props.priority);
 	}
 
@@ -600,7 +600,7 @@ rd_send_err(const struct nlmsghdr *req, struct cps_config *cps_conf, int err)
 			rep, sizeof(*rep) + errmsg_len,
 			(struct sockaddr *)&rd_sa, sizeof(rd_sa),
 			cps_conf) < 0) {
-		CPS_LOG(ERR, "sendto_with_yield: cannot send NLMSG_ERROR to daemon (pid=%u seq=%u): %s\n",
+		G_LOG(ERR, "sendto_with_yield: cannot send NLMSG_ERROR to daemon (pid=%u seq=%u): %s\n",
 			req->nlmsg_pid, req->nlmsg_seq, strerror(errno));
 	}
 }
@@ -724,7 +724,7 @@ rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 			(struct sockaddr *)&rd_sa, sizeof(rd_sa),
 			cps_conf) < 0) {
 		ret = -errno;
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"sendto_with_yield: cannot dump route batch to %s daemon (pid=%u seq=%u): %s\n",
 			daemon, pid, seq, strerror(errno));
 	}
@@ -754,7 +754,7 @@ rd_getroute_ipv4(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
 	if (ret < 0) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
-		CPS_LOG(ERR, "Failed to initialize the IPv4 LPM rule iterator state in %s\n",
+		G_LOG(ERR, "Failed to initialize the IPv4 LPM rule iterator state in %s\n",
 			__func__);
 		return ret;
 	}
@@ -823,7 +823,7 @@ rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, 0, 0, &state6);
 	if (ret < 0) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
-		CPS_LOG(ERR, "Failed to initialize the IPv6 LPM rule iterator state in %s\n",
+		G_LOG(ERR, "Failed to initialize the IPv6 LPM rule iterator state in %s\n",
 			__func__);
 		return ret;
 	}
@@ -898,7 +898,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	int family;
 
 	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
-		CPS_LOG(ERR, "Not enough room in CPS GETROUTE message from routing daemon in %s\n",
+		G_LOG(ERR, "Not enough room in CPS GETROUTE message from routing daemon in %s\n",
 			__func__);
 		*err = -EINVAL;
 		goto out;
@@ -920,7 +920,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		family_str = "MPLS";
 		break;
 	default:
-		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
+		G_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
 		goto out;
@@ -928,7 +928,7 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
 	if (batch == NULL) {
-		CPS_LOG(ERR, "Failed to allocate a batch for a GETROUTE reply\n");
+		G_LOG(ERR, "Failed to allocate a batch for a GETROUTE reply\n");
 		*err = -ENOMEM;
 		goto out;
 	}
@@ -1007,7 +1007,7 @@ rd_getlink(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
 	if (batch == NULL) {
-		CPS_LOG(ERR, "Failed to allocate a batch for a GETLINK reply\n");
+		G_LOG(ERR, "Failed to allocate a batch for a GETLINK reply\n");
 		*err = -ENOMEM;
 		goto out;
 	}
@@ -1059,13 +1059,13 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		 * Grantor only runs CPS for ECMP support and
 		 * shouldn't be receiving route updates.
 		 */
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"The system is running as Grantor, and there shouldn't be any rtnetlink message processed under this configuration while receiving route update messages\n");
 		*err = -EOPNOTSUPP;
 		goto out;
 	}
 
-	CPS_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
+	G_LOG(DEBUG, "cps update: [%s] family=%u dst_len=%u src_len=%u tos=%u table=%u protocol=%u scope=%u type=%u flags=%x\n",
 		req->nlmsg_type == RTM_NEWROUTE ? "NEW" : "DEL",
 		rm->rtm_family, rm->rtm_dst_len, rm->rtm_src_len,
 		rm->rtm_tos, rm->rtm_table, rm->rtm_protocol,
@@ -1118,7 +1118,7 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 			goto out;
 		break;
 	default:
-		CPS_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
+		G_LOG(NOTICE, "Unrecognized family in netlink event: %u\n",
 			rm->rtm_family);
 		*err = -EAFNOSUPPORT;
 		goto out;
@@ -1130,7 +1130,7 @@ rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
 		} else if (likely(update.type == RTM_DELROUTE)) {
 			*err = del_route(&update, cps_conf);
 		} else {
-			CPS_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
+			G_LOG(WARNING, "Receiving an unexpected update rule with type = %d\n",
 				update.type);
 			*err = -EOPNOTSUPP;
 		}
@@ -1229,7 +1229,7 @@ rd_getaddr(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	const char *family_str;
 
 	if (mnl_nlmsg_get_payload_len(req) < sizeof(struct rtgenmsg)) {
-		CPS_LOG(ERR, "Not enough room in CPS GETADDR message from routing daemon in %s\n",
+		G_LOG(ERR, "Not enough room in CPS GETADDR message from routing daemon in %s\n",
 			__func__);
 		*err = -EINVAL;
 		goto out;
@@ -1248,7 +1248,7 @@ rd_getaddr(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 		family_str = "IPV4/IPv6";
 		break;
 	default:
-		CPS_LOG(ERR, "Unsupported address family type (%d) in %s\n",
+		G_LOG(ERR, "Unsupported address family type (%d) in %s\n",
 			family, __func__);
 		*err = -EAFNOSUPPORT;
 		goto out;
@@ -1256,7 +1256,7 @@ rd_getaddr(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	batch = mnl_nlmsg_batch_start(buf, MNL_SOCKET_BUFFER_SIZE);
 	if (batch == NULL) {
-		CPS_LOG(ERR, "Failed to allocate a batch for a GETADDR reply\n");
+		G_LOG(ERR, "Failed to allocate a batch for a GETADDR reply\n");
 		*err = -ENOMEM;
 		goto out;
 	}
@@ -1312,7 +1312,7 @@ rd_cb(const struct nlmsghdr *req, void *arg)
 		ret = rd_getaddr(req, cps_conf, &err);
 		break;
 	default:
-		CPS_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
+		G_LOG(NOTICE, "Unrecognized netlink message type: %u\n",
 			req->nlmsg_type);
 		err = -EOPNOTSUPP;
 		break;
@@ -1379,7 +1379,7 @@ __rd_process_events(struct cps_config *cps_conf)
 			sizeof(buf), MSG_DONTWAIT);
 		if (ret == -1) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK)
-				CPS_LOG(ERR, "%s: recv: %s\n",
+				G_LOG(ERR, "%s: recv: %s\n",
 					__func__, strerror(errno));
 			break;
 		}
@@ -1413,7 +1413,7 @@ rd_alloc_coro(struct cps_config *cps_conf)
 
 	if (unlikely(coro_stack_alloc(&cps_conf->coro_rd_stack, stack_size_ptr)
 			!= 1)) {
-		CPS_LOG(ERR, "Failed to allocate stack for RD coroutine\n");
+		G_LOG(ERR, "Failed to allocate stack for RD coroutine\n");
 		return -1;
 	}
 

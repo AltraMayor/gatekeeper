@@ -184,17 +184,17 @@ load_string(const struct elf_file *mod, const char *attr,
 	/* Get strings from modinfo section. */
 	strings = get_section(mod, ".modinfo", &secsize);
 	if (strings == NULL) {
-		CPS_LOG(ERR, "Unable to get modinfo section from kernel module\n");
+		G_LOG(ERR, "Unable to get modinfo section from kernel module\n");
 		return -1;
 	}
 
 	if (secsize == 0) {
-		CPS_LOG(ERR, "Returned modinfo section is of length 0\n");
+		G_LOG(ERR, "Returned modinfo section is of length 0\n");
 		return -1;
 	}
 
 	if (strings[secsize - 1] != '\0') {
-		CPS_LOG(ERR, "An unterminated string was found at the end of the modinfo section\n");
+		G_LOG(ERR, "An unterminated string was found at the end of the modinfo section\n");
 		return -1;
 	}
 
@@ -212,7 +212,7 @@ load_string(const struct elf_file *mod, const char *attr,
 				strings[attr_len] == '=') {
 			strings += attr_len + 1;
 			if (strlen(strings) > val_len - 1) {
-				CPS_LOG(ERR, "Found attribute %s in modinfo but value buffer is too short to read in its value (%s)\n",
+				G_LOG(ERR, "Found attribute %s in modinfo but value buffer is too short to read in its value (%s)\n",
 					attr, strings);
 				return -1;
 			}
@@ -260,7 +260,7 @@ get_modinfo_string(const void *file, unsigned long len, const char *attr,
 	int ret;
 
 	if (elf_type != ELFCLASS32 && elf_type != ELFCLASS64) {
-		CPS_LOG(ERR, "Unable to read kernel module header for attribute %s\n",
+		G_LOG(ERR, "Unable to read kernel module header for attribute %s\n",
 			attr);
 		return -1;
 	}
@@ -270,7 +270,7 @@ get_modinfo_string(const void *file, unsigned long len, const char *attr,
 
 	ret = load_string(&mod, attr, val, val_len);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Unable to find %s in modinfo section of kernel module\n",
+		G_LOG(ERR, "Unable to find %s in modinfo section of kernel module\n",
 			attr);
 	}
 

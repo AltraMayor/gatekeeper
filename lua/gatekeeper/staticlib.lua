@@ -368,7 +368,6 @@ struct gt_config {
 struct cps_config {
 	unsigned int lcore_id;
 	uint32_t     log_level;
-	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
 	uint16_t     front_max_pkt_burst;
@@ -420,8 +419,14 @@ ffi.cdef[[
 void rte_log_set_global_level(uint32_t log_level);
 uint32_t rte_log_get_global_level(void);
 
+/*
+ * These functions are meant to help one to investigate issues that
+ * depend on the internals of DPDK.
+ */
 int rte_log_set_level(uint32_t type, uint32_t level);
 int rte_log_get_level(uint32_t type);
+void set_log_level_per_block(const char *block_name, uint32_t log_level);
+int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 	const char **pci_addrs, uint8_t num_pci_addrs, const char **ip_cidrs,
