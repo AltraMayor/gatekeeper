@@ -55,7 +55,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	created_pkt = rte_pktmbuf_alloc(lls_conf->mp);
 	if (created_pkt == NULL) {
-		LLS_LOG(ERR, "Could not alloc a packet for an ARP request\n");
+		G_LOG(ERR, "Could not alloc a packet for an ARP request\n");
 		return;
 	}
 
@@ -92,7 +92,7 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 	ret = rte_eth_tx_burst(iface->id, tx_queue, &created_pkt, 1);
 	if (ret <= 0) {
 		rte_pktmbuf_free(created_pkt);
-		LLS_LOG(ERR, "Could not transmit an ARP request\n");
+		G_LOG(ERR, "Could not transmit an ARP request\n");
 	}
 }
 
@@ -117,7 +117,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	l2_len = pkt_in_l2_hdr_len(buf);
 	pkt_len = rte_pktmbuf_data_len(buf);
 	if (pkt_len < l2_len + sizeof(*arp_hdr)) {
-		LLS_LOG(ERR, "%s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
+		G_LOG(ERR, "%s interface received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
 			iface->name, pkt_len,
 			l2_len + sizeof(*arp_hdr));
 		return -1;
@@ -183,7 +183,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		/* Need to transmit reply. */
 		num_tx = rte_eth_tx_burst(iface->id, tx_queue, &buf, 1);
 		if (unlikely(num_tx != 1)) {
-			LLS_LOG(NOTICE, "ARP reply failed\n");
+			G_LOG(NOTICE, "ARP reply failed\n");
 			return -1;
 		}
 		return 0;
@@ -196,7 +196,7 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 */
 		return -1;
 	default:
-		LLS_LOG(NOTICE, "%s received an ARP packet with an unknown operation (%hu)\n",
+		G_LOG(NOTICE, "%s received an ARP packet with an unknown operation (%hu)\n",
 			__func__, rte_be_to_cpu_16(arp_hdr->arp_opcode));
 		return -1;
 	}

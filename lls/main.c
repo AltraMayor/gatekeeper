@@ -52,8 +52,6 @@
  * link partner does not have LACP configured).
  */
 
-int lls_logtype;
-
 static struct lls_config lls_conf = {
 	.arp_cache = {
 		.name = "arp",
@@ -113,7 +111,7 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
-	LLS_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
+	G_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
 		lcore_id, __func__);
 	return -1;
 }
@@ -133,7 +131,7 @@ put_arp(struct in_addr *ipv4, unsigned int lcore_id)
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 
-	LLS_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
+	G_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
 		lcore_id, __func__);
 	return -1;
 }
@@ -157,7 +155,7 @@ hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ipv6, unsigned int lcore_id)
 		return lls_req(LLS_REQ_HOLD, &hold_req);
 	}
 
-	LLS_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
+	G_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
 		lcore_id, __func__);
 	return -1;
 }
@@ -177,7 +175,7 @@ put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 		return lls_req(LLS_REQ_PUT, &put_req);
 	}
 
-	LLS_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
+	G_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
 		lcore_id, __func__);
 	return -1;
 }
@@ -267,7 +265,7 @@ match_icmp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 
 	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
-		LLS_LOG(WARNING,
+		G_LOG(WARNING,
 			"Received fragmented ICMP packets destined to this server at %s\n",
 			__func__);
 		return -ENOENT;
@@ -345,7 +343,7 @@ match_icmp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 		return -ENOENT;
 
 	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-		LLS_LOG(WARNING,
+		G_LOG(WARNING,
 			"Received fragmented ICMPv6 packets destined to this server at %s\n",
 			__func__);
 		return -ENOENT;
@@ -582,7 +580,7 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 			 * traffic at some vantage points and LLS blocks
 			 * typically run at WARNING level.
 			 */
-			LLS_LOG(NOTICE, "%s interface should not be seeing a packet with EtherType 0x%04hx\n",
+			G_LOG(NOTICE, "%s interface should not be seeing a packet with EtherType 0x%04hx\n",
 				iface->name, ether_type);
 			goto free_buf;
 		}
@@ -605,11 +603,11 @@ lls_proc(void *arg)
 	uint64_t timer_resolution_cycles =
 		net_conf->rotate_log_interval_sec * cycles_per_sec;
 
-	LLS_LOG(NOTICE, "The LLS block is running at: lcore = %u; tid = %u\n",
+	G_LOG(NOTICE, "The LLS block is running at: lcore = %u; tid = %u\n",
 		lls_conf->lcore_id, gettid());
 
 	if (needed_caps("LLS", 0, NULL) < 0) {
-		LLS_LOG(ERR, "Could not set needed capabilities\n");
+		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
 
@@ -624,7 +622,7 @@ lls_proc(void *arg)
 				lls_conf->front_max_pkt_burst);
 			if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
 				if (lacp_timer_reset(lls_conf, front) < 0)
-					LLS_LOG(NOTICE, "Can't reset front LACP timer to skip cycle\n");
+					G_LOG(NOTICE, "Can't reset front LACP timer to skip cycle\n");
 			}
 		}
 
@@ -636,7 +634,7 @@ lls_proc(void *arg)
 				lls_conf->back_max_pkt_burst);
 			if ((num_tx > 0) && lacp_enabled(net_conf, back)) {
 				if (lacp_timer_reset(lls_conf, back) < 0)
-					LLS_LOG(NOTICE, "Can't reset back LACP timer to skip cycle\n");
+					G_LOG(NOTICE, "Can't reset back LACP timer to skip cycle\n");
 			}
 		}
 
@@ -679,7 +677,7 @@ lls_proc(void *arg)
 		}
 	}
 
-	LLS_LOG(NOTICE, "The LLS block at lcore = %u is exiting\n",
+	G_LOG(NOTICE, "The LLS block at lcore = %u is exiting\n",
 		lls_conf->lcore_id);
 
 	return cleanup_lls();
@@ -696,7 +694,7 @@ register_icmp_filter(struct gatekeeper_if *iface, uint16_t rx_queue,
 		submit_icmp, match_icmp,
 		rx_method);
 	if (ret < 0) {
-		LLS_LOG(ERR,
+		G_LOG(ERR,
 			"Could not add IPv4 ICMP filter on %s iface\n",
 			iface->name);
 		return ret;
@@ -732,7 +730,7 @@ register_icmp6_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
 			submit_icmp6, match_icmp6,
 			rx_method);
 		if (ret < 0) {
-			LLS_LOG(ERR,
+			G_LOG(ERR,
 				"Could not add IPv6 ICMP filter on %s iface\n",
 				iface->name);
 			return ret;
@@ -820,7 +818,7 @@ assign_lls_queue_ids(struct lls_config *lls_conf)
 	return 0;
 
 fail:
-	LLS_LOG(ERR, "Cannot assign queues\n");
+	G_LOG(ERR, "Cannot assign queues\n");
 	return ret;
 }
 
@@ -880,7 +878,7 @@ lls_stage2(void *arg)
 			 * no easy way of deciding whether it is needed
 			 * at runtime.
 			 */
-			LLS_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the front iface\n");
+			G_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the front iface\n");
 			return -1;
 		}
 
@@ -900,7 +898,7 @@ lls_stage2(void *arg)
 			lls_conf->rx_method_back |= RX_METHOD_NIC;
 		} else if (lls_conf->rx_queue_back != 0) {
 			/* See comment above about LLS listening on queue 0. */
-			LLS_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");
+			G_LOG(ERR, "If EtherType filters are not supported, the LLS block needs to listen on queue 0 on the back iface\n");
 			return -1;
 		}
 
@@ -940,18 +938,6 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		ret = -1;
 		goto out;
 	}
-
-	lls_logtype = rte_log_register("gatekeeper.lls");
-	if (lls_logtype < 0) {
-		ret = -1;
-		goto out;
-	}
-	ret = rte_log_set_level(lls_logtype, lls_conf->log_level);
-	if (ret < 0) {
-		ret = -1;
-		goto out;
-	}
-	lls_conf->log_type = lls_logtype;
 
 	log_ratelimit_state_init(lls_conf->lcore_id,
 		lls_conf->log_ratelimit_interval_ms,
@@ -1002,7 +988,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		lls_conf->cache_scan_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, lls_conf->lcore_id, lls_scan, lls_conf);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Cannot set LLS scan timer\n");
+		G_LOG(ERR, "Cannot set LLS scan timer\n");
 		goto stage3;
 	}
 
@@ -1012,7 +998,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		net_conf->rotate_log_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, lls_conf->lcore_id, rotate_log, NULL);
 	if (ret < 0) {
-		LLS_LOG(ERR, "Cannot set Gatekeeper log timer\n");
+		G_LOG(ERR, "Cannot set Gatekeeper log timer\n");
 		goto scan_timer;
 	}
 
@@ -1021,7 +1007,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		ret = lls_cache_init(lls_conf, &lls_conf->arp_cache,
 			sizeof(struct in_addr));
 		if (ret < 0) {
-			LLS_LOG(ERR, "ARP cache cannot be started\n");
+			G_LOG(ERR, "ARP cache cannot be started\n");
 			goto log_timer;
 		}
 
@@ -1040,7 +1026,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		ret = lls_cache_init(lls_conf, &lls_conf->nd_cache,
 			sizeof(struct in6_addr));
 		if (ret < 0) {
-			LLS_LOG(ERR, "ND cache cannot be started\n");
+			G_LOG(ERR, "ND cache cannot be started\n");
 			goto arp;
 		}
 
@@ -1059,7 +1045,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		rte_timer_init(&net_conf->front.lacp_timer);
 		ret = lacp_timer_reset(lls_conf, &net_conf->front);
 		if (ret < 0) {
-			LLS_LOG(ERR,
+			G_LOG(ERR,
 				"Cannot set LACP timer on front interface\n");
 			goto nd;
 		}
@@ -1068,7 +1054,7 @@ run_lls(struct net_config *net_conf, struct lls_config *lls_conf)
 		rte_timer_init(&net_conf->back.lacp_timer);
 		ret = lacp_timer_reset(lls_conf, &net_conf->back);
 		if (ret < 0) {
-			LLS_LOG(ERR,
+			G_LOG(ERR,
 				"Cannot set LACP timer on back interface\n");
 			goto lacp;
 		}
