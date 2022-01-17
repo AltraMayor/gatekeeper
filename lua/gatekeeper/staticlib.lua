@@ -357,7 +357,6 @@ struct gt_config {
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
 	uint32_t     log_level;
-	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
 	bool         reassembling_enabled;
