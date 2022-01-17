@@ -46,12 +46,19 @@ log_ratelimit_enable(void)
 	enabled = true;
 }
 
+bool
+check_log_allowed(uint32_t level)
+{
+	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
+	return level <= (uint32_t)rte_atomic32_read(&lrs->log_level);
+}
+
 static inline void
 log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
-		rte_log(RTE_LOG_NOTICE, gatekeeper_logtype,
+		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
 			"GATEKEEPER %s: %u log entries were suppressed at lcore %u during the last ratelimit interval\n",
 			lrs->block_name, lrs->suppressed, rte_lcore_id());
 	}

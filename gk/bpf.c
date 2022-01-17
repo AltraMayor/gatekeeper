@@ -46,7 +46,7 @@ init_ctx_to_frame(struct gk_bpf_init_ctx *ctx)
 
 	frame = container_of(ctx, struct gk_bpf_init_frame, ctx);
 	if (unlikely(frame->password != init_password)) {
-		GK_LOG(WARNING, "%s(): password violation\n", __func__);
+		G_LOG(WARNING, "%s(): password violation\n", __func__);
 		return NULL;
 	}
 
@@ -126,7 +126,7 @@ pkt_ctx_to_frame(struct gk_bpf_pkt_ctx *ctx)
 
 	frame = container_of(ctx, struct gk_bpf_pkt_frame, ctx);
 	if (unlikely(frame->password != pkt_password)) {
-		GK_LOG(WARNING, "%s(): password violation\n", __func__);
+		G_LOG(WARNING, "%s(): password violation\n", __func__);
 		return NULL;
 	}
 
@@ -343,13 +343,13 @@ __bpf_jit_if_possible(struct rte_bpf *bpf, rte_bpf_jitted_func_t *ret_f,
 
 	int rc = rte_bpf_get_jit(bpf, &jit);
 	if (unlikely(rc != 0)) {
-		GK_LOG(ERR, "%s() failed to get JIT program %s at index %u, error code: %i\n",
+		G_LOG(ERR, "%s() failed to get JIT program %s at index %u, error code: %i\n",
 			__func__, name, index, rc);
 		return rc;
 	}
 
 	if (unlikely(jit.func == NULL)) {
-		GK_LOG(WARNING, "%s(): BPF JIT is not available\n", __func__);
+		G_LOG(WARNING, "%s(): BPF JIT is not available\n", __func__);
 		return -ENOTSUP;
 	}
 
@@ -369,13 +369,13 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	struct rte_bpf *bpf_f_init;
 
 	if (gk_conf == NULL) {
-		GK_LOG(ERR, "%s(): parameter gk_conf cannot be NULL\n",
+		G_LOG(ERR, "%s(): parameter gk_conf cannot be NULL\n",
 			__func__);
 		return -1;
 	}
 
 	if (index >= GK_MAX_BPF_FLOW_HANDLERS) {
-		GK_LOG(ERR,
+		G_LOG(ERR,
 			"%s(): parameter index must be in [0, %i], received %u\n",
 			__func__, GK_MAX_BPF_FLOW_HANDLERS, index);
 		return -1;
@@ -383,7 +383,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 
 	handler = &gk_conf->flow_handlers[index];
 	if (handler->f_init != NULL || handler->f_pkt != NULL) {
-		GK_LOG(ERR, "%s(): index %i is already in use\n",
+		G_LOG(ERR, "%s(): index %i is already in use\n",
 			__func__, index);
 		return -1;
 	}
@@ -395,7 +395,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	prm.prog_arg.size = sizeof(struct gk_bpf_init_ctx);
 	bpf_f_init = rte_bpf_elf_load(&prm, filename, "init");
 	if (bpf_f_init == NULL) {
-		GK_LOG(ERR,
+		G_LOG(ERR,
 			"%s(): file \"%s\" does not have the BPF program \"init\"; rte_errno = %i: %s\n",
 			__func__, filename, rte_errno, strerror(rte_errno));
 		return -1;
@@ -406,7 +406,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	prm.prog_arg.size = sizeof(struct gk_bpf_pkt_ctx);
 	handler->f_pkt = rte_bpf_elf_load(&prm, filename, "pkt");
 	if (handler->f_pkt == NULL) {
-		GK_LOG(ERR,
+		G_LOG(ERR,
 			"%s(): file \"%s\" does not have the BPF program \"pkt\"; rte_errno = %i: %s\n",
 			__func__, filename, rte_errno, strerror(rte_errno));
 		goto f_init;
@@ -446,13 +446,13 @@ gk_unload_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index)
 	struct rte_bpf *bpf;
 
 	if (gk_conf == NULL) {
-		GK_LOG(ERR, "%s(): parameter gk_conf cannot be NULL\n",
+		G_LOG(ERR, "%s(): parameter gk_conf cannot be NULL\n",
 			__func__);
 		return -1;
 	}
 
 	if (index >= GK_MAX_BPF_FLOW_HANDLERS) {
-		GK_LOG(ERR,
+		G_LOG(ERR,
 			"%s(): parameter index must be in [0, %i], received %u\n",
 			__func__, GK_MAX_BPF_FLOW_HANDLERS, index);
 		return -1;
@@ -461,7 +461,7 @@ gk_unload_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index)
 	handler = &gk_conf->flow_handlers[index];
 	bpf = handler->f_init;
 	if (bpf == NULL || handler->f_pkt == NULL) {
-		GK_LOG(ERR, "%s(): index %i is NOT in use\n",
+		G_LOG(ERR, "%s(): index %i is NOT in use\n",
 			__func__, index);
 		return -1;
 	}
@@ -505,7 +505,7 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 
 	bpf = handler->f_init;
 	if (bpf == NULL || handler->f_pkt == NULL) {
-		GK_LOG(ERR, "The GK BPF program at index %u is not available\n",
+		G_LOG(ERR, "The GK BPF program at index %u is not available\n",
 			program_index);
 		return -1;
 	}
@@ -518,7 +518,7 @@ gk_init_bpf_cookie(const struct gk_config *gk_conf, uint8_t program_index,
 		? jit(&frame.ctx)
 		: rte_bpf_exec(bpf, &frame.ctx);
 	if (bpf_ret != GK_BPF_INIT_RET_OK) {
-		GK_LOG(ERR, "The function init of the GK BPF program at index %u returned an error\n",
+		G_LOG(ERR, "The function init of the GK BPF program at index %u returned an error\n",
 			program_index);
 		return -1;
 	}
@@ -556,7 +556,7 @@ parse_packet_further(struct ipacket *packet, struct gk_bpf_pkt_ctx *ctx)
 		int l3_len = ipv6_skip_exthdr(ipv6_hdr,
 			pkt->data_len - parsed_len, &ctx->l4_proto);
 		if (l3_len < 0) {
-			GK_LOG(NOTICE, "%s: Failed to parse IPv6 extension headers\n",
+			G_LOG(NOTICE, "%s: Failed to parse IPv6 extension headers\n",
 				__func__);
 			return -1;
 		}
@@ -568,7 +568,7 @@ parse_packet_further(struct ipacket *packet, struct gk_bpf_pkt_ctx *ctx)
 	}
 
 	default:
-		GK_LOG(ERR, "%s: Unknown L3 header %hu\n",
+		G_LOG(ERR, "%s: Unknown L3 header %hu\n",
 			__func__, packet->flow.proto);
 		return -1;
 	}
@@ -601,7 +601,7 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 	rte_bpf_jitted_func_t jit;
 
 	if (unlikely(bpf == NULL)) {
-		GK_LOG(WARNING,
+		G_LOG(WARNING,
 			"The BPF program at index %u does not have function pkt\n",
 			program_index);
 		return -EINVAL;
@@ -617,7 +617,7 @@ gk_bpf_decide_pkt(struct gk_config *gk_conf, uint8_t program_index,
 
 	if (unlikely(*p_bpf_ret == GK_BPF_PKT_RET_FORWARD &&
 			!frame.ready_to_tx)) {
-		GK_LOG(ERR,
+		G_LOG(ERR,
 			"The BPF program at index %u has a bug: it returned GK_BPF_PKT_RET_FORWARD without successfully calling gk_bpf_prep_for_tx()\n",
 			program_index);
 		return -EIO;

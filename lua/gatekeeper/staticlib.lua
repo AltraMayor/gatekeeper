@@ -276,7 +276,6 @@ struct net_config {
 	unsigned int num_attempts_link_get;
 	bool         *numa_used;
 	uint32_t     log_level;
-	int          log_type;
 	uint32_t     rotate_log_interval_sec;
 	/* This struct has hidden fields. */
 };
@@ -300,7 +299,6 @@ struct gk_config {
 	unsigned int mailbox_mem_cache_size;
 	unsigned int mailbox_burst_size;
 	uint32_t     log_level;
-	int          log_type;
 	uint32_t     log_ratelimit_interval_ms;
 	uint32_t     log_ratelimit_burst;
 	unsigned int basic_measurement_logging_ms;
