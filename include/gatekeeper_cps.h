@@ -28,12 +28,6 @@
 #include "list.h"
 #include "coro.h"
 
-extern int cps_logtype;
-
-#define CPS_LOG(level, ...)                              \
-	rte_log_ratelimit(RTE_LOG_ ## level, cps_logtype,\
-		"GATEKEEPER CPS: " __VA_ARGS__)
-
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
 	/* lcore that the CPS block runs on. */
@@ -41,8 +35,6 @@ struct cps_config {
 
 	/* Log level for CPS block. */
 	uint32_t           log_level;
-	/* Dynamic logging type, assigned at runtime. */
-	int                log_type;
 	/* Log ratelimit interval in ms for CPS block. */
 	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for CPS block. */

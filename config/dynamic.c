@@ -47,13 +47,7 @@
  */
 static const uint16_t MSG_MAX_LEN = (uint16_t)~0U;
 
-int dyc_logtype;
-
 static struct dynamic_config config;
-
-#define DYC_LOG(level, ...) 			          \
-	rte_log_ratelimit(RTE_LOG_ ## level, dyc_logtype, \
-	"GATEKEEPER DYN CFG: " __VA_ARGS__)
 
 /*
  * Return values:
@@ -82,12 +76,12 @@ write_nbytes(int conn_fd, const char *msg_buff, int nbytes)
 	 * the connection before getting a response.
 	 */
 	if (send_size == 0) {
-		DYC_LOG(WARNING, "Client disconnected\n");
+		G_LOG(WARNING, "Client disconnected\n");
 		return -1;
 	}
 
 	if (send_size < 0) {
-		DYC_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to write data to the socket connection - (%s)\n",
 			strerror(errno));
 		return -1;
@@ -128,7 +122,7 @@ process_client_message(int conn_fd,
 		"Dynamic configuration: the reply was NULL.";
 
 	if (msg_len == 0) {
-		DYC_LOG(WARNING, "The received message is an empty string\n");
+		G_LOG(WARNING, "The received message is an empty string\n");
 		return reply_client_message(conn_fd,
 			CLIENT_EMPTY_ERROR, strlen(CLIENT_EMPTY_ERROR));
 	}
@@ -145,7 +139,7 @@ process_client_message(int conn_fd,
 		 */
 		RTE_VERIFY(ret == 0);
 
-		DYC_LOG(ERR,
+		G_LOG(ERR,
 			"The client request script returns a NULL string\n");
 		lua_pop(lua_state, 1);
 		return reply_client_message(conn_fd,
@@ -153,7 +147,7 @@ process_client_message(int conn_fd,
 	}
 
 	if (reply_len > MSG_MAX_LEN) {
-		DYC_LOG(WARNING,
+		G_LOG(WARNING,
 			"The reply message length (%lu) exceeds the limit\n",
 			reply_len);
 		reply_len = MSG_MAX_LEN;
@@ -188,12 +182,12 @@ read_nbytes(int conn_fd, char *msg_buff, int nbytes)
 	 * message and then close the connection.
 	 */
 	if (recv_size == 0) {
-		DYC_LOG(DEBUG, "Client disconnected\n");
+		G_LOG(DEBUG, "Client disconnected\n");
 		return -1;
 	}
 
 	if (recv_size < 0) {
-		DYC_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to read data from the socket connection - (%s)\n",
 			strerror(errno));
 		return -1;
@@ -257,7 +251,7 @@ cleanup_dy(struct dynamic_config *dy_conf)
 	if (dy_conf->sock_fd != -1) {
 		ret = close(dy_conf->sock_fd);
 		if (ret < 0) {
-			DYC_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to close the server socket - (%s)\n",
 				strerror(errno));
 		}
@@ -273,7 +267,7 @@ cleanup_dy(struct dynamic_config *dy_conf)
 	if (dy_conf->server_path != NULL) {
 		ret = unlink(dy_conf->server_path);
 		if (ret != 0) {
-			DYC_LOG(WARNING, "Failed to unlink(%s) - (%s)\n",
+			G_LOG(WARNING, "Failed to unlink(%s) - (%s)\n",
 				dy_conf->server_path, strerror(errno));
 		}
 
@@ -318,16 +312,16 @@ process_return_message(lua_State *l, struct dynamic_config *dy_conf,
 				case GT_UPDATE_POLICY_RETURN: {
 
 					if (dy_conf->gt == NULL) {
-						DYC_LOG(ERR, "The command operation %u requires that the server runs as Grantor\n",
+						G_LOG(ERR, "The command operation %u requires that the server runs as Grantor\n",
 							entry->op);
 						break;
 					}
 
 					if (unlikely(entry->u.gt.length > RETURN_MSG_MAX_LEN))
-						DYC_LOG(ERR, "The return message from GT block is too long\n");
+						G_LOG(ERR, "The return message from GT block is too long\n");
 					else if (unlikely(reply_len + entry->u.gt.length >
 							MSG_MAX_LEN))
-						DYC_LOG(ERR, "The aggregated return message from GT blocks is too long\n");
+						G_LOG(ERR, "The aggregated return message from GT blocks is too long\n");
 					else {
 						rte_memcpy(reply_msg + reply_len,
 							entry->u.gt.return_msg,
@@ -339,7 +333,7 @@ process_return_message(lua_State *l, struct dynamic_config *dy_conf,
 					break;
 				}
 				default:
-					DYC_LOG(ERR, "Unknown command operation %u\n",
+					G_LOG(ERR, "Unknown command operation %u\n",
 						entry->op);
 					break;
 			}
@@ -349,7 +343,7 @@ process_return_message(lua_State *l, struct dynamic_config *dy_conf,
 	}
 
 	if (dy_conf->gt != NULL && num_gt_messages != dy_conf->gt->num_lcores) {
-		DYC_LOG(WARNING,
+		G_LOG(WARNING,
 			"%s(): successfully collected only %d/%d instances\n",
 			__func__, num_gt_messages, dy_conf->gt->num_lcores);
 	}
@@ -404,7 +398,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 			len, 0, rte_lcore_to_socket_id(lcore_id));
 		if (lua_bytecode_buff == NULL) {
 			if (num_succ_sent_inst > 0) {
-				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
+				G_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
 					i, lcore_id);
 				continue;
 			} else {
@@ -418,7 +412,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 			rte_free(lua_bytecode_buff);
 
 			if (num_succ_sent_inst > 0) {
-				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+				G_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
 					i, lcore_id);
 				continue;
 			} else {
@@ -438,7 +432,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 			rte_free(lua_bytecode_buff);
 
 			if (num_succ_sent_inst > 0) {
-				DYC_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+				G_LOG(ERR, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
 					i, lcore_id);
 				continue;
 			} else {
@@ -488,13 +482,13 @@ setup_dy_lua(lua_State *lua_state, struct dynamic_config *dy_conf)
 	set_lua_path(lua_state, dy_conf->lua_dy_base_dir);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
-		DYC_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		return -1;
 	}
 
 	ret = lua_pcall(lua_state, 0, 0, 0);
 	if (ret != 0) {
-		DYC_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		return -1;
 	}
 
@@ -517,13 +511,13 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 	conn_fd = accept(server_socket_fd,
 		(struct sockaddr *)&client_addr, &len);
 	if (conn_fd < 0) {
-		DYC_LOG(ERR, "Failed to accept a new connection - (%s)\n",
+		G_LOG(ERR, "Failed to accept a new connection - (%s)\n",
 			strerror(errno));
 		return;
 	}
 
 	if (unlikely(client_addr.sun_family != AF_UNIX)) {
-		DYC_LOG(WARNING,
+		G_LOG(WARNING,
 			"Unexpected condition: unknown client type %d at %s\n",
 			client_addr.sun_family, __func__);
 		goto close_fd;
@@ -536,7 +530,7 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 	ret = setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO,
 		(const char*)&dy_conf->rcv_time_out, sizeof(struct timeval));
 	if (ret < 0) {
-		DYC_LOG(ERR, "Failed to call setsockopt(SO_RCVTIMEO) - (%s)\n",
+		G_LOG(ERR, "Failed to call setsockopt(SO_RCVTIMEO) - (%s)\n",
 			strerror(errno));
 		goto close_fd;
 	}
@@ -545,7 +539,7 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 	ret = setsockopt(conn_fd, SOL_SOCKET,
 		SO_RCVBUF, &rcv_buff_size, sizeof(rcv_buff_size));
 	if (ret < 0) {
-		DYC_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to call setsockopt(SO_RCVBUF) with size = %d - (%s)\n",
 			rcv_buff_size, strerror(errno));
 		goto close_fd;
@@ -553,14 +547,14 @@ handle_client(int server_socket_fd, struct dynamic_config *dy_conf)
 
 	lua_state = luaL_newstate();
 	if (lua_state == NULL) {
-		DYC_LOG(ERR, "Failed to create new Lua state\n");
+		G_LOG(ERR, "Failed to create new Lua state\n");
 		goto close_fd;
 	}
 
 	/* Set up the Lua state while there is a connection. */
 	ret = setup_dy_lua(lua_state, dy_conf);
 	if (ret < 0) {
-		DYC_LOG(ERR, "Failed to set up the lua state\n");
+		G_LOG(ERR, "Failed to set up the lua state\n");
 		goto close_lua;
 	}
 
@@ -576,7 +570,7 @@ close_lua:
 close_fd:
 	ret = close(conn_fd);
 	if (ret < 0) {
-		DYC_LOG(ERR, "Failed to close the connection socket - (%s)\n",
+		G_LOG(ERR, "Failed to close the connection socket - (%s)\n",
 			strerror(errno));
 	}
 }
@@ -586,12 +580,12 @@ process_dy_cmd(struct dy_cmd_entry *entry)
 {
 	switch (entry->op) {
 		case GT_UPDATE_POLICY_RETURN:
-			DYC_LOG(WARNING,
+			G_LOG(WARNING,
 				"Synchronization timeout: the return message (%s) with command operation %u from GT instance running at lcore %u did not get aggregated\n",
 				entry->u.gt.return_msg, entry->op, entry->u.gt.gt_lcore);
 			break;
 		default:
-			DYC_LOG(ERR, "Unknown command operation %u\n",
+			G_LOG(ERR, "Unknown command operation %u\n",
 				entry->op);
 			break;
 	}
@@ -625,7 +619,7 @@ dyn_cfg_proc(void *arg)
 	struct dynamic_config *dy_conf = arg;
 	uint32_t lcore = dy_conf->lcore_id;
 
-	DYC_LOG(NOTICE,
+	G_LOG(NOTICE,
 		"The Dynamic Config block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
@@ -661,12 +655,12 @@ dyn_cfg_proc(void *arg)
 		 */
 		cap_value_t caps[] = {CAP_DAC_OVERRIDE, CAP_SYS_ADMIN};
 		if (needed_caps("DYC", RTE_DIM(caps), caps) < 0) {
-			DYC_LOG(ERR, "Could not set needed capabilities for Grantor\n");
+			G_LOG(ERR, "Could not set needed capabilities for Grantor\n");
 			exiting = true;
 		}
 	} else {
 		if (needed_caps("DYC", 0, NULL) < 0) {
-			DYC_LOG(ERR, "Could not set needed capabilities\n");
+			G_LOG(ERR, "Could not set needed capabilities\n");
 			exiting = true;
 		}
 	}
@@ -691,7 +685,7 @@ dyn_cfg_proc(void *arg)
 
 		ret = select(dy_conf->sock_fd + 1, &fds, NULL, NULL, &stv);
 		if (ret < 0 && errno != EINTR) {
-			DYC_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to call the select() function - (%s)\n",
 				strerror(errno));
 			break;
@@ -708,7 +702,7 @@ dyn_cfg_proc(void *arg)
 		handle_client(dy_conf->sock_fd, dy_conf);
 	}
 
-	DYC_LOG(NOTICE,
+	G_LOG(NOTICE,
 		"The Dynamic Config block at lcore = %u is exiting\n", lcore);
 
 	cleanup_dy(dy_conf);
@@ -756,18 +750,6 @@ run_dynamic_config(struct net_config *net_conf,
 		goto out;
 	}
 
-	dyc_logtype = rte_log_register("gatekeeper.dyc");
-	if (dyc_logtype < 0) {
-		ret = -1;
-		goto out;
-	}
-	ret = rte_log_set_level(dyc_logtype, dy_conf->log_level);
-	if (ret < 0) {
-		ret = -1;
-		goto out;
-	}
-	dy_conf->log_type = dyc_logtype;
-
 	log_ratelimit_state_init(dy_conf->lcore_id,
 		dy_conf->log_ratelimit_interval_ms,
 		dy_conf->log_ratelimit_burst,
@@ -792,7 +774,7 @@ run_dynamic_config(struct net_config *net_conf,
 	 */
 	ret = unlink(dy_conf->server_path);
 	if (ret != 0 && errno != ENOENT) {
-		DYC_LOG(ERR, "Failed to unlink(%s) - (%s)\n",
+		G_LOG(ERR, "Failed to unlink(%s) - (%s)\n",
 			dy_conf->server_path, strerror(errno));
 		ret = -1;
 		goto free_server_path;
@@ -815,7 +797,7 @@ run_dynamic_config(struct net_config *net_conf,
 	/* Init the server socket. */
 	dy_conf->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (dy_conf->sock_fd < 0) {
-		DYC_LOG(ERR, "Failed to initialize the server socket - (%s)\n",
+		G_LOG(ERR, "Failed to initialize the server socket - (%s)\n",
 			strerror(errno));
 		ret = -1;
 		goto free_dynamic_config_file;
@@ -826,7 +808,7 @@ run_dynamic_config(struct net_config *net_conf,
 	server_addr.sun_family = AF_UNIX;
 
 	if (sizeof(server_addr.sun_path) <= strlen(dy_conf->server_path)) {
-		DYC_LOG(ERR,
+		G_LOG(ERR,
 			"The server path (%s) exceeds the length limit %lu\n",
 			dy_conf->server_path, sizeof(server_addr.sun_path));
 		ret = -1;
@@ -838,7 +820,7 @@ run_dynamic_config(struct net_config *net_conf,
 	ret = bind(dy_conf->sock_fd,
 		(struct sockaddr *)&server_addr, sizeof(server_addr));
 	if (ret < 0) {
-		DYC_LOG(ERR, "Failed to bind the server socket - (%s)\n",
+		G_LOG(ERR, "Failed to bind the server socket - (%s)\n",
 			strerror(errno));
 		ret = -1;
 		goto free_sock;
@@ -850,7 +832,7 @@ run_dynamic_config(struct net_config *net_conf,
 	 */
 	ret = listen(dy_conf->sock_fd, 10);
 	if (ret < 0) {
-		DYC_LOG(ERR, "Failed to listen on the server socket - (%s)\n",
+		G_LOG(ERR, "Failed to listen on the server socket - (%s)\n",
 			strerror(errno));
 		ret = -1;
 		goto free_sock;
@@ -868,7 +850,7 @@ run_dynamic_config(struct net_config *net_conf,
 		ret = fchown(dy_conf->sock_fd,
 			net_conf->pw_uid, net_conf->pw_gid);
 		if (ret < 0) {
-			DYC_LOG(ERR, "Failed to change the owner of the file (%s) to user with uid %u and gid %u - %s\n",
+			G_LOG(ERR, "Failed to change the owner of the file (%s) to user with uid %u and gid %u - %s\n",
 				dy_conf->server_path, net_conf->pw_uid,
 				net_conf->pw_gid, strerror(errno));
 			goto put_gk_gt_config;
@@ -877,7 +859,7 @@ run_dynamic_config(struct net_config *net_conf,
 
 	ret = fchmod(dy_conf->sock_fd, mode);
 	if (ret != 0) {
-		DYC_LOG(ERR, "Failed to change the mode of the file (%s) - %s\n",
+		G_LOG(ERR, "Failed to change the mode of the file (%s) - %s\n",
 			dy_conf->server_path, strerror(errno));
 		goto put_gk_gt_config;
 	}

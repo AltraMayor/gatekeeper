@@ -44,17 +44,7 @@ dylib.update_grantor_entry_lb("198.51.100.0/25", addrs, dyc.gk)
 local old_log_level = staticlib.c.rte_log_get_global_level()
 staticlib.c.rte_log_set_global_level(staticlib.c.RTE_LOG_ERR)
 
-local cpsc = staticlib.c.get_cps_conf()
-if cpsc == nil then
-	return "cps: failed to fetch config to update log level"
-end
-
-local old_cps_log_level = staticlib.c.rte_log_get_level(cpsc.log_type)
-if old_cps_log_level < 0 then
-	return "cps: failed to fetch log level"
-end
-
-ret = staticlib.c.rte_log_set_level(cpsc.log_type, staticlib.c.RTE_LOG_ERR)
+ret = staticlib.c.set_log_level_per_block("CPS", staticlib.c.RTE_LOG_ERR)
 if ret < 0 then
 	return "cps: failed to set new log level"
 end
@@ -74,6 +64,7 @@ end
 -- Revert log levels.
 staticlib.c.rte_log_set_global_level(old_log_level)
 ret = staticlib.c.rte_log_set_level(cpsc.log_type, old_cps_log_level)
+ret = staticlib.c.set_log_level_per_block("CPS", staticlib.c.RTE_LOG_DEBUG)
 if ret < 0 then
 	return "cps: failed to revert to old log level"
 end
@@ -158,7 +149,7 @@ reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
 	dylib.print_neighbor_dump_entry, acc_start)
 
 local llsc = staticlib.c.get_lls_conf()
-if cpsc == nil then
+if llsc == nil then
 	return "lls: failed to fetch config to dump caches"
 end
 reply_msg = reply_msg .. dylib.list_lls_arp(llsc,

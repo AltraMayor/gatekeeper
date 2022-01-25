@@ -44,8 +44,6 @@ struct ggu_config {
 
 	/* Log level for GK-GT Unit block. */
 	uint32_t           log_level;
-	/* Dynamic logging type, assigned at runtime. */
-	int                log_type;
 	/* Log ratelimit interval in ms for GK-GT Unit block. */
 	uint32_t           log_ratelimit_interval_ms;
 	/* Log ratelimit burst size for GK-GT Unit block. */

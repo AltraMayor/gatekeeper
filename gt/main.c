@@ -47,12 +47,6 @@
 #include "gatekeeper_varip.h"
 #include "lua_lpm.h"
 
-int gt_logtype;
-
-#define GT_LOG(level, ...)                               \
-	rte_log_ratelimit(RTE_LOG_ ## level, gt_logtype, \
-		"GATEKEEPER GT: " __VA_ARGS__)
-
 static int
 get_block_idx(struct gt_config *gt_conf, unsigned int lcore_id)
 {
@@ -123,7 +117,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		outer_ipv6_hdr_len = ipv6_skip_exthdr(outer_ipv6_hdr,
 			pkt->data_len - parsed_len, &encapsulated_proto);
 		if (outer_ipv6_hdr_len < 0) {
-			GT_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to parse the packet's outer IPv6 extension headers\n");
 			return -1;
 		}
@@ -178,7 +172,7 @@ gt_parse_incoming_pkt(struct rte_mbuf *pkt, struct gt_packet_headers *info)
 		inner_ipv6_len = ipv6_skip_exthdr(inner_ipv6_hdr,
 			pkt->data_len - parsed_len, &info->l4_proto);
 		if (inner_ipv6_len < 0) {
-			GT_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to parse the packet's inner IPv6 extension headers\n");
 			return -1;
 		}
@@ -260,7 +254,7 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",
 			rte_lcore_id(), __func__);
 		return -1;
@@ -276,7 +270,7 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 2, 1, 0) != 0) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Error running function `lookup_policy': %s, at lcore %u\n",
 			lua_tostring(instance->lua_state, -1), rte_lcore_id());
 		return -1;
@@ -309,7 +303,7 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",
 			rte_lcore_id(), __func__);
 		return -1;
@@ -321,7 +315,7 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 1, 0, 0) != 0) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Error running function `lookup_frag_punish_policy': %s, at lcore %u\n",
 			lua_tostring(instance->lua_state, -1), rte_lcore_id());
 		return -1;
@@ -356,7 +350,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		if (inet_ntop(AF_INET, &((struct rte_ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
 				src, sizeof(src)) == NULL) {
-			GT_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
+			G_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
 				__func__, strerror(errno));
 			return;
 		}
@@ -364,7 +358,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		if (inet_ntop(AF_INET, &((struct rte_ipv4_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
 				dst, sizeof(dst)) == NULL) {
-			GT_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
+			G_LOG(ERR, "%s: failed to convert a number to an IPv4 address (%s)\n",
 				__func__, strerror(errno));
 			return;
 		}
@@ -372,7 +366,7 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		if (inet_ntop(AF_INET6, &((struct rte_ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->src_addr,
 				src, sizeof(src)) == NULL) {
-			GT_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
+			G_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
 			return;
 		}
@@ -380,13 +374,13 @@ print_ip_err_msg(struct gt_packet_headers *pkt_info)
 		if (inet_ntop(AF_INET6, &((struct rte_ipv6_hdr *)
 				pkt_info->outer_l3_hdr)->dst_addr,
 				dst, sizeof(dst)) == NULL) {
-			GT_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
+			G_LOG(ERR, "%s: failed to convert a number to an IPv6 address (%s)\n",
 				__func__, strerror(errno));
 			return;
 		}
 	}
 
-	GT_LOG(ALERT,
+	G_LOG(ALERT,
 		"Receiving a packet with IP source address %s, and destination address %s, whose destination IP address is not the Grantor server itself\n",
 		src, dst);
 }
@@ -495,7 +489,7 @@ drop_cache_entry_randomly(struct neighbor_hash_table *neigh, uint16_t ip_ver)
 		ret = rte_hash_del_key(neigh->hash_table,
 			&eth_cache->ip_addr.ip.v4);
 		if (ret < 0) {
-			GT_LOG(CRIT,
+			G_LOG(CRIT,
 				"Failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure\n",
 				__func__);
 		}
@@ -510,7 +504,7 @@ drop_cache_entry_randomly(struct neighbor_hash_table *neigh, uint16_t ip_ver)
 		ret = rte_hash_del_key(neigh->hash_table,
 			&eth_cache->ip_addr.ip.v6);
 		if (ret < 0) {
-			GT_LOG(CRIT,
+			G_LOG(CRIT,
 				"Failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure\n",
 				__func__);
 		}
@@ -549,7 +543,7 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 
 		eth_cache = get_new_ether_cache(neigh);
 		if (eth_cache == NULL) {
-			GT_LOG(WARNING,
+			G_LOG(WARNING,
 				"Failed to get a new Ethernet cache entry from the neighbor hash table at %s, the cache is overflowing\n",
 				__func__);
 			return NULL;
@@ -565,7 +559,7 @@ gt_neigh_get_ether_cache(struct neighbor_hash_table *neigh,
 	if (ret == 0)
 		return eth_cache;
 
-	GT_LOG(ERR,
+	G_LOG(ERR,
 		"Failed to add a cache entry to the neighbor hash table at %s\n",
 		__func__);
 
@@ -645,7 +639,7 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 		: -sizeof(struct rte_ipv6_hdr);
 
 	if (adjust_pkt_len(m, iface, bytes_to_add) == NULL) {
-		GT_LOG(ERR, "Could not adjust packet length\n");
+		G_LOG(ERR, "Could not adjust packet length\n");
 		return -1;
 	}
 
@@ -1101,7 +1095,7 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 
 	ggu_pkt->buf = rte_pktmbuf_alloc(instance->mp);
 	if (ggu_pkt->buf == NULL) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to allocate notification packet on lcore %u\n",
 			lcore_id);
 		return NULL;
@@ -1162,7 +1156,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 
 	if (unlikely(policy->flow.proto != RTE_ETHER_TYPE_IPV4
 			&& policy->flow.proto != RTE_ETHER_TYPE_IPV6)) {
-		GT_LOG(ERR, "Policy decision with unknown protocol %u\n",
+		G_LOG(ERR, "Policy decision with unknown protocol %u\n",
 			policy->flow.proto);
 		return;
 	}
@@ -1174,7 +1168,7 @@ fill_notify_pkt(struct ggu_policy *policy,
 	case GK_BPF:
 		if (unlikely(policy->params.bpf.cookie_len >
 				sizeof(policy->params.bpf.cookie))) {
-			GT_LOG(ERR, "Policy BPF decision with cookie length too long: %u\n",
+			G_LOG(ERR, "Policy BPF decision with cookie length too long: %u\n",
 				policy->params.bpf.cookie_len);
 			print_unsent_policy(policy, NULL);
 			return;
@@ -1349,7 +1343,7 @@ process_death_row(int punish, struct rte_ip_frag_death_row *death_row,
 
 		ret = gt_parse_incoming_pkt(death_row->row[i], &pkt_info);
 		if (ret < 0) {
-			GT_LOG(WARNING,
+			G_LOG(WARNING,
 				"Failed to parse the fragments at %s, and the packet doesn't trigger any policy consultation at all\n",
 				__func__);
 			rte_pktmbuf_free(death_row->row[i]);
@@ -1369,7 +1363,7 @@ process_death_row(int punish, struct rte_ip_frag_death_row *death_row,
 		if (ret < 0) {
 			policy.state = GK_DECLINED;
 			policy.params.declined.expire_sec = 600;
-			GT_LOG(WARNING,
+			G_LOG(WARNING,
 				"Failed to lookup the punishment policy for the packet fragment! Our failsafe action is to decline the flow for 10 minutes\n");
 		}
 
@@ -1417,20 +1411,20 @@ return_message(struct gt_instance *instance)
 	struct dy_cmd_entry *entry;
 	const char *reply_msg = lua_tolstring(instance->lua_state, -1, &reply_len);
 	if (reply_msg == NULL) {
-		GT_LOG(WARNING, "gt: new lua update returned a NULL message at lcore %u\n",
+		G_LOG(WARNING, "gt: new lua update returned a NULL message at lcore %u\n",
 			lcore_id);
 		goto out;
 	}
 
 	entry = mb_alloc_entry(&dy_conf->mb);
 	if (entry == NULL) {
-		GT_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+		G_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
 			dy_conf->lcore_id);
 		goto out;
 	}
 
 	if (unlikely(reply_len > RETURN_MSG_MAX_LEN)) {
-		GT_LOG(WARNING,
+		G_LOG(WARNING,
 			"gt: the return message length (%lu) exceeds the limit (%d) at lcore %u\n",
 			reply_len, RETURN_MSG_MAX_LEN, lcore_id);
 
@@ -1444,7 +1438,7 @@ return_message(struct gt_instance *instance)
 
 	ret = mb_send_entry(&dy_conf->mb, entry);
 	if (ret != 0) {
-		GT_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+		G_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
 			dy_conf->lcore_id);
 	}
 
@@ -1460,7 +1454,7 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 		lua_close(instance->lua_state);
 		instance->lua_state = entry->u.lua_state;
 
-		GT_LOG(NOTICE,
+		G_LOG(NOTICE,
 			"Successfully updated the lua state at lcore %u\n",
 			rte_lcore_id());
 		break;
@@ -1472,11 +1466,11 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 				"incremental_update_of_gt_lua_state") != 0) ||
 				(lua_pcall(instance->lua_state, 0,
 					!!entry->u.bc.is_returned, 0) != 0)) {
-			GT_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
+			G_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
 				rte_lcore_id(),
 				lua_tostring(instance->lua_state, -1));
 		} else {
-			GT_LOG(NOTICE,
+			G_LOG(NOTICE,
 				"Successfully updated the lua state incrementally at lcore %u\n",
 				rte_lcore_id());
 		}
@@ -1490,7 +1484,7 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 		break;
 
 	default:
-		GT_LOG(ERR, "Unknown command operation %u\n", entry->op);
+		G_LOG(ERR, "Unknown command operation %u\n", entry->op);
 		break;
 	}
 }
@@ -1561,11 +1555,11 @@ gt_proc(void *arg)
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
 
-	GT_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
+	G_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
 	if (needed_caps("GT", RTE_DIM(caps), caps) < 0) {
-		GT_LOG(ERR, "Could not set needed capabilities\n");
+		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
 
@@ -1747,7 +1741,7 @@ gt_proc(void *arg)
 			flush_notify_pkts(gt_conf, instance);
 	}
 
-	GT_LOG(NOTICE, "The GT block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The GT block at lcore = %u is exiting\n", lcore);
 
 	return gt_conf_put(gt_conf);
 }
@@ -1851,7 +1845,7 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
 	 */
 	lua_state = luaL_newstate();
 	if (lua_state == NULL) {
-		GT_LOG(ERR, "Failed to create new Lua state at %s\n",
+		G_LOG(ERR, "Failed to create new Lua state at %s\n",
 			__func__);
 		goto out;
 	}
@@ -1866,14 +1860,14 @@ alloc_and_setup_lua_state(struct gt_config *gt_conf, unsigned int lcore_id)
 	set_lua_path(lua_state, gt_conf->lua_base_directory);
 	ret = luaL_loadfile(lua_state, lua_entry_path);
 	if (ret != 0) {
-		GT_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		goto clean_lua_state;
 	}
 
 	/* Run the loaded chunk. */
 	ret = lua_pcall(lua_state, 0, 0, 0);
 	if (ret != 0) {
-		GT_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
 		goto clean_lua_state;
 	}
 
@@ -1898,7 +1892,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 
 	instance->lua_state = alloc_and_setup_lua_state(gt_conf, lcore_id);
 	if (instance->lua_state == NULL) {
-		GT_LOG(ERR, "Failed to create new Lua state at lcore %u\n",
+		G_LOG(ERR, "Failed to create new Lua state at lcore %u\n",
 			lcore_id);
 		ret = -1;
 		goto out;
@@ -1925,7 +1919,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 	}
 
 	if (!rte_is_power_of_2(gt_conf->frag_bucket_entries)) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Configuration error - the number of entries per bucket should be a power of 2, while it is %u\n",
 			gt_conf->frag_bucket_entries);
 		ret = -1;
@@ -1934,7 +1928,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 
 	if (gt_conf->frag_max_entries > gt_conf->frag_bucket_num *
 			gt_conf->frag_bucket_entries) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Configuration error - the maximum number of entries should be less than or equal to %u, while it is %u\n",
 			gt_conf->frag_bucket_num *
 			gt_conf->frag_bucket_entries,
@@ -1950,7 +1944,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 			gt_conf->frag_bucket_entries, gt_conf->frag_max_entries,
 			frag_cycles, rte_lcore_to_socket_id(lcore_id));
 		if (instance->frag_tbl == NULL) {
-			GT_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to create fragmentation table at lcore %u\n",
 				lcore_id);
 			ret = -1;
@@ -1963,7 +1957,7 @@ config_gt_instance(struct gt_config *gt_conf, unsigned int lcore_id)
 		gt_conf->max_ggu_notify_pkts, sizeof(struct ggu_notify_pkt), 0,
 		rte_lcore_to_socket_id(lcore_id));
 	if (instance->ggu_pkts == NULL) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to allocate fixed array of Gatekeeper notification packets on lcore %u\n",
 			lcore_id);
 		ret = -1;
@@ -2029,7 +2023,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_RX, lcore,
 			inst_ptr->mp);
 		if (ret < 0) {
-			GT_LOG(ERR, "Cannot assign an RX queue for the front interface for lcore %u\n",
+			G_LOG(ERR, "Cannot assign an RX queue for the front interface for lcore %u\n",
 				lcore);
 			goto free_gt_instance;
 		}
@@ -2038,7 +2032,7 @@ init_gt_instances(struct gt_config *gt_conf)
 		ret = get_queue_id(&gt_conf->net->front, QUEUE_TYPE_TX, lcore,
 			NULL);
 		if (ret < 0) {
-			GT_LOG(ERR, "Cannot assign a TX queue for the front interface for lcore %u\n",
+			G_LOG(ERR, "Cannot assign a TX queue for the front interface for lcore %u\n",
 				lcore);
 			goto free_gt_instance;
 		}
@@ -2125,18 +2119,6 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 			lua_policy_file == NULL)
 		goto out;
 
-	gt_logtype = rte_log_register("gatekeeper.gt");
-	if (gt_logtype < 0) {
-		ret = -1;
-		goto out;
-	}
-	ret = rte_log_set_level(gt_logtype, gt_conf->log_level);
-	if (ret < 0) {
-		ret = -1;
-		goto out;
-	}
-	gt_conf->log_type = gt_logtype;
-
 	for (i = 0; i < gt_conf->num_lcores; i++) {
 		log_ratelimit_state_init(gt_conf->lcores[i],
 			gt_conf->log_ratelimit_interval_ms,
@@ -2160,13 +2142,13 @@ run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 		goto gt_config_file;
 
 	if (gt_conf->batch_interval == 0) {
-		GT_LOG(ERR, "Batch interval (%u) must be greater than 0\n",
+		G_LOG(ERR, "Batch interval (%u) must be greater than 0\n",
 			gt_conf->batch_interval);
 		goto gt_config_file;
 	}
 
 	if (gt_conf->max_ggu_notify_pkts == 0) {
-		GT_LOG(ERR,
+		G_LOG(ERR,
 			"Max number of GGU notification packets (%u) must be greater than 0\n",
 			gt_conf->max_ggu_notify_pkts);
 		goto gt_config_file;

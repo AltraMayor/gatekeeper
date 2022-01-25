@@ -30,8 +30,6 @@
 
 static struct cps_config cps_conf;
 
-int cps_logtype;
-
 struct cps_config *
 get_cps_conf(void)
 {
@@ -101,7 +99,7 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 
 	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
 	if (created_pkt == NULL) {
-		CPS_LOG(ERR, "Could not allocate an ARP reply on the %s KNI\n",
+		G_LOG(ERR, "Could not allocate an ARP reply on the %s KNI\n",
 			iface->name);
 		return;
 	}
@@ -141,7 +139,7 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
 	if (ret <= 0) {
 		rte_pktmbuf_free(created_pkt);
-		CPS_LOG(ERR, "Could not transmit an ARP reply to the %s KNI\n",
+		G_LOG(ERR, "Could not transmit an ARP reply to the %s KNI\n",
 			iface->name);
 		return;
 	}
@@ -162,7 +160,7 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 
 	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
 	if (created_pkt == NULL) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Could not allocate an ND advertisement on the %s KNI\n",
 			iface->name);
 		return;
@@ -223,7 +221,7 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
 	if (ret <= 0) {
 		rte_pktmbuf_free(created_pkt);
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Could not transmit an ND advertisement to the %s KNI\n",
 			iface->name);
 		return;
@@ -255,7 +253,7 @@ kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
 
 		if (unlikely(eth_hdr->ether_type !=
 				rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN))) {
-			CPS_LOG(WARNING,
+			G_LOG(WARNING,
 				"%s iface is configured for VLAN but received a non-VLAN packet\n",
 				iface->name);
 			goto to_kni;
@@ -270,7 +268,7 @@ kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
 		/* Remove the unneeded bytes from the front of the buffer. */
 		if (unlikely(rte_pktmbuf_adj(pkts[i],
 				sizeof(struct rte_vlan_hdr)) == NULL)) {
-			CPS_LOG(ERR, "Can't remove VLAN header\n");
+			G_LOG(ERR, "Can't remove VLAN header\n");
 			rte_pktmbuf_free(pkts[i]);
 			continue;
 		}
@@ -340,7 +338,7 @@ process_reqs(struct cps_config *cps_conf)
 			break;
 		}
 		default:
-			CPS_LOG(ERR, "Unrecognized request type (%d)\n",
+			G_LOG(ERR, "Unrecognized request type (%d)\n",
 				reqs[i]->ty);
 			break;
 		}
@@ -358,7 +356,7 @@ process_kni_request(struct rte_kni *kni)
 	 * requests and allows them to be processed.
 	 */
 	if (rte_kni_handle_request(kni) < 0)
-		CPS_LOG(WARNING,
+		G_LOG(WARNING,
 			"%s: error in handling userspace request on KNI %s\n",
 			__func__, rte_kni_get_name(kni));
 }
@@ -455,7 +453,7 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 				rte_pktmbuf_prepend(bufs[i],
 					sizeof(struct rte_vlan_hdr));
 			if (unlikely(new_eth_hdr == NULL)) {
-				CPS_LOG(ERR, "Can't add a VLAN header\n");
+				G_LOG(ERR, "Can't add a VLAN header\n");
 				rte_pktmbuf_free(bufs[i]);
 				continue;
 			}
@@ -497,11 +495,11 @@ cps_proc(void *arg)
 	 */
 	cap_value_t caps[] = {CAP_NET_ADMIN, CAP_SYS_MODULE};
 
-	CPS_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
+	G_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
 		cps_conf->lcore_id, gettid());
 
 	if (needed_caps("CPS", RTE_DIM(caps), caps) < 0) {
-		CPS_LOG(ERR, "Could not set needed capabilities\n");
+		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
 
@@ -553,7 +551,7 @@ cps_proc(void *arg)
 		rd_process_events(cps_conf);
 	}
 
-	CPS_LOG(NOTICE, "The CPS block at lcore = %u is exiting\n",
+	G_LOG(NOTICE, "The CPS block at lcore = %u is exiting\n",
 		cps_conf->lcore_id);
 
 	return cleanup_cps();
@@ -571,7 +569,7 @@ cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 	RTE_VERIFY(num_pkts <= cps_conf->mailbox_max_pkt_burst);
 
 	if (req == NULL) {
-		CPS_LOG(ERR, "%s: allocation of mailbox message failed\n",
+		G_LOG(ERR, "%s: allocation of mailbox message failed\n",
 			__func__);
 		ret = -ENOMEM;
 		goto free_pkts;
@@ -585,7 +583,7 @@ cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	ret = mb_send_entry(&cps_conf->mailbox, req);
 	if (ret < 0) {
-		CPS_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
+		G_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
 			__func__);
 		goto free_pkts;
 	}
@@ -689,7 +687,7 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 	return 0;
 
 fail:
-	CPS_LOG(ERR, "Cannot assign queues\n");
+	G_LOG(ERR, "Cannot assign queues\n");
 	return ret;
 }
 
@@ -752,7 +750,7 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 
 	*kni = rte_kni_alloc(mp, &conf, &ops);
 	if (*kni == NULL) {
-		CPS_LOG(ERR, "Could not allocate KNI for %s iface\n",
+		G_LOG(ERR, "Could not allocate KNI for %s iface\n",
 			iface->name);
 		return -1;
 	}
@@ -817,19 +815,19 @@ cps_stage1(void *arg)
 	ret = kni_create(&cps_conf->front_kni, name,
 		cps_conf->mp, &cps_conf->net->front);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to create KNI for the front iface\n");
+		G_LOG(ERR, "Failed to create KNI for the front iface\n");
 		goto error;
 	}
 
 	ret = kni_config_link(cps_conf->front_kni);
 	if (ret < 0) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to configure KNI link on the front iface\n");
 		goto error;
 	}
 	ret = rte_kni_update_link(cps_conf->front_kni, true);
 	if (ret < 0) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Failed to set KNI link up on the front iface\n");
 		goto error;
 	}
@@ -837,7 +835,7 @@ cps_stage1(void *arg)
 	cps_conf->front_kni_index = if_nametoindex(name);
 	if (cps_conf->front_kni_index == 0) {
 		ret = -errno;
-		CPS_LOG(ERR, "Failed to get front KNI index: %s\n",
+		G_LOG(ERR, "Failed to get front KNI index: %s\n",
 			strerror(errno));
 		goto error;
 	}
@@ -850,20 +848,20 @@ cps_stage1(void *arg)
 		ret = kni_create(&cps_conf->back_kni, name,
 			cps_conf->mp, &cps_conf->net->back);
 		if (ret < 0) {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to create KNI for the back iface\n");
 			goto error;
 		}
 
 		ret = kni_config_link(cps_conf->back_kni);
 		if (ret < 0) {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to configure KNI link on the back iface\n");
 			goto error;
 		}
 		ret = rte_kni_update_link(cps_conf->back_kni, true);
 		if (ret < 0) {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"Failed to set KNI link up on the back iface\n");
 			goto error;
 		}
@@ -871,7 +869,7 @@ cps_stage1(void *arg)
 		cps_conf->back_kni_index = if_nametoindex(name);
 		if (cps_conf->back_kni_index == 0) {
 			ret = -errno;
-			CPS_LOG(ERR, "Failed to get back KNI index: %s\n",
+			G_LOG(ERR, "Failed to get back KNI index: %s\n",
 				strerror(errno));
 			goto error;
 		}
@@ -969,7 +967,7 @@ add_tcp_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
 			0, 0, 0, 0, IPPROTO_TCP, rx_queue,
 			cps_submit_direct, match_tcp4, rx_method);
 		if (ret < 0) {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"Could not add IPv4 TCP filter on %s iface\n",
 				iface->name);
 			return ret;
@@ -982,7 +980,7 @@ add_tcp_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
 			0, 0, 0, 0, IPPROTO_TCP, rx_queue,
 			cps_submit_direct, match_tcp6, rx_method);
 		if (ret < 0) {
-			CPS_LOG(ERR,
+			G_LOG(ERR,
 				"Could not add IPv6 TCP filter on %s iface\n",
 				iface->name);
 			return ret;
@@ -1001,14 +999,14 @@ cps_stage2(void *arg)
 	ret = add_tcp_filters(&cps_conf->net->front, cps_conf->rx_queue_front,
 		&cps_conf->rx_method_front);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to add TCP filters on the front iface");
+		G_LOG(ERR, "Failed to add TCP filters on the front iface");
 		goto error;
 	}
 
 	ret = kni_config_ip_addrs(cps_conf->front_kni,
 		cps_conf->front_kni_index, &cps_conf->net->front);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to configure KNI IP addresses on the front iface\n");
+		G_LOG(ERR, "Failed to configure KNI IP addresses on the front iface\n");
 		goto error;
 	}
 
@@ -1016,21 +1014,21 @@ cps_stage2(void *arg)
 		ret = add_tcp_filters(&cps_conf->net->back,
 			cps_conf->rx_queue_back, &cps_conf->rx_method_back);
 		if (ret < 0) {
-			CPS_LOG(ERR, "Failed to add TCP filters on the back iface");
+			G_LOG(ERR, "Failed to add TCP filters on the back iface");
 			goto error;
 		}
 
 		ret = kni_config_ip_addrs(cps_conf->back_kni,
 			cps_conf->back_kni_index, &cps_conf->net->back);
 		if (ret < 0) {
-			CPS_LOG(ERR, "Failed to configure KNI IP addresses on the back iface\n");
+			G_LOG(ERR, "Failed to configure KNI IP addresses on the back iface\n");
 			goto error;
 		}
 	}
 
 	ret = rd_event_sock_open(cps_conf);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to open routing daemon event socket\n");
+		G_LOG(ERR, "Failed to open routing daemon event socket\n");
 		goto error;
 	}
 
@@ -1056,18 +1054,6 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		ret = -1;
 		goto out;
 	}
-
-	cps_logtype = rte_log_register("gatekeeper.cps");
-	if (cps_logtype < 0) {
-		ret = -1;
-		goto out;
-	}
-	ret = rte_log_set_level(cps_logtype, cps_conf->log_level);
-	if (ret < 0) {
-		ret = -1;
-		goto out;
-	}
-	cps_conf->log_type = cps_logtype;
 
 	log_ratelimit_state_init(cps_conf->lcore_id,
 		cps_conf->log_ratelimit_interval_ms,
@@ -1098,7 +1084,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	cps_conf->lls = lls_conf;
 
 	if (cps_conf->nl_pid == 0) {
-		CPS_LOG(ERR, "Option nl_pid must be greater than 0\n");
+		G_LOG(ERR, "Option nl_pid must be greater than 0\n");
 		goto stage3;
 	}
 
@@ -1107,7 +1093,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		sizeof(struct arp_request), 0, 0, NULL, NULL, NULL, NULL,
 		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
 	if (cps_conf->arp_mp == NULL) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Can't create mempool arp_request_pool at lcore %u\n",
 			cps_conf->lcore_id);
 		ret = -1;
@@ -1119,7 +1105,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		sizeof(struct nd_request), 0, 0, NULL, NULL, NULL, NULL,
 		socket_id, MEMPOOL_F_SP_PUT | MEMPOOL_F_SC_GET);
 	if (cps_conf->nd_mp == NULL) {
-		CPS_LOG(ERR,
+		G_LOG(ERR,
 			"Can't create mempool nd_request_pool at lcore %u\n",
 			cps_conf->lcore_id);
 		ret = -1;
@@ -1128,7 +1114,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	ret = init_kni(kni_kmod_path, net_conf->back_iface_enabled ? 2 : 1);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Couldn't initialize KNI\n");
+		G_LOG(ERR, "Couldn't initialize KNI\n");
 		goto nd_mp;
 	}
 
@@ -1157,7 +1143,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 
 	ret = rd_alloc_coro(cps_conf);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Failed to allocate coroutines\n");
+		G_LOG(ERR, "Failed to allocate coroutines\n");
 		goto mailbox;
 	}
 
@@ -1171,7 +1157,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		cps_conf->scan_interval_sec * rte_get_timer_hz(),
 		PERIODICAL, cps_conf->lcore_id, cps_scan, cps_conf);
 	if (ret < 0) {
-		CPS_LOG(ERR, "Cannot set CPS scan timer\n");
+		G_LOG(ERR, "Cannot set CPS scan timer\n");
 		goto coro;
 	}
 
