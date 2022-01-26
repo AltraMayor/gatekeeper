@@ -98,10 +98,6 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 {
 	uint64_t now;
 
-	/* unlikely() reason: @enabled is only false during startup. */
-	if (unlikely(!enabled))
-		return true;
-
 	/* unlikely() reason: all logs are rate-limited in production. */
 	if (unlikely(lrs->interval_cycles == 0))
 		return true;
@@ -128,20 +124,26 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 int
 rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 {
-	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
+	struct log_ratelimit_state *lrs;
+	int ret;
+	va_list ap;
+
+	/* unlikely() reason: @enabled is only false during startup. */
+	if (unlikely(!enabled))
+		goto log;
+
+	lrs = &log_ratelimit_states[rte_lcore_id()];
 	if (level <= (uint32_t)rte_atomic32_read(&lrs->log_level) &&
-			log_ratelimit_allow(lrs)) {
-		int ret;
-		va_list ap;
-
-		va_start(ap, format);
-		ret = rte_vlog(level, logtype, format, ap);
-		va_end(ap);
-
-		return ret;
-	}
+			log_ratelimit_allow(lrs))
+		goto log;
 
 	return 0;
+
+log:
+	va_start(ap, format);
+	ret = rte_vlog(level, logtype, format, ap);
+	va_end(ap);
+	return ret;
 }
 
 void
