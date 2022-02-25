@@ -61,12 +61,17 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
--- Revert log levels.
+-- Revert global log level.
 staticlib.c.rte_log_set_global_level(old_log_level)
-ret = staticlib.c.rte_log_set_level(cpsc.log_type, old_cps_log_level)
-ret = staticlib.c.set_log_level_per_block("CPS", staticlib.c.RTE_LOG_DEBUG)
+
+-- Revert CPS log level.
+local cpsc = staticlib.c.get_cps_conf()
+if cpsc == nil then
+	return "cps: failed to fetch config to revert log level"
+end
+ret = staticlib.c.set_log_level_per_block("CPS", cpsc.log_level)
 if ret < 0 then
-	return "cps: failed to revert to old log level"
+	return "cps: failed to revert to original log level"
 end
 
 ret = dylib.c.add_fib_entry("198.18.0.0/15", nil,

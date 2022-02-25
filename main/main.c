@@ -344,7 +344,7 @@ main(int argc, char **argv)
 	 */
 	ret = rte_log_set_level(BLOCK_LOGTYPE, RTE_LOG_DEBUG);
 	if (ret < 0)
-		rte_exit(EXIT_FAILURE, "Error with setting log level\n");
+		rte_exit(EXIT_FAILURE, "Error while setting log level of BLOCK_LOGTYPE\n");
 
 	/*
 	 * rte_eal_init(), which is called next, creates all threads that
