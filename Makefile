@@ -51,7 +51,7 @@ LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod -lcap -lrte_n
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
 
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
-	-Wno-deprecated-declarations -DCORO_ASM
+	-DCORO_ASM
 
 build/$(APP)-shared: $(SRCS-y) Makefile $(PC_FILE) | build
 	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
