@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* For gettid(). */
+#define _GNU_SOURCE
+
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
@@ -337,7 +340,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 		return -1;
 
 	req_bufs[*num_reqs] = packet->pkt;
-	req_bufs[*num_reqs]->udata64 = priority;
+	set_prio(req_bufs[*num_reqs], priority);
 	(*num_reqs)++;
 
 	return EINPROGRESS;
@@ -675,7 +678,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	struct flow_entry *fe = &instance->ip_flow_entry_table[entry_idx];
 	struct flow_entry *fe2;
 	int ret, ret2;
-	char err_msg[256];
+	char err_msg[512];
 	hash_sig_t recomp_hash;
 
 	/*
@@ -775,7 +778,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 		print_flow_err_msg(&fe->flow, err_msg);
 	} else if (unlikely(entry_idx != (typeof(entry_idx))ret)) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): there is bug in the hash table library of DPDK: a lookup for a flow returned position %u, but, while removing the flow, rte_hash_del_key_with_hash() returned position %i; logging this second flow enty and releasing both entries...",
+			"%s(): there is bug in the hash table library of DPDK: a lookup for a flow returned position %u, but, while removing the flow, rte_hash_del_key_with_hash() returned position %i; logging this second flow entry and releasing both entries...",
 			__func__, entry_idx, ret);
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 		print_flow_err_msg(&fe->flow, err_msg);

@@ -345,12 +345,6 @@ struct gatekeeper_if {
 	struct acl_state  ipv4_acls;
 	struct acl_state  ipv6_acls;
 
-	/* Whether the EtherType filter can be used on this interface. */
-	bool              hw_filter_eth;
-
-	/* Whether the ntuple filter can be used on this interface. */
-	bool              hw_filter_ntuple;
-
 	/* Whether this interface supports RSS. */
 	bool              rss;
 
@@ -465,7 +459,7 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
 int convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n);
-int ethertype_filter_add(struct gatekeeper_if *iface, uint16_t ether_type,
+int ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 	uint16_t queue_id);
 
 /*
@@ -600,17 +594,6 @@ static inline bool
 ipv6_if_configured(const struct gatekeeper_if *iface)
 {
 	return !!(iface->configured_proto & CONFIGURED_IPV6);
-}
-
-/*
- * EtherType filters can only be used if supported by the NIC
- * (to steer matching packets) and if RSS is supported
- * (to steer non-matching packets elsewhere).
- */
-static inline bool
-hw_filter_eth_available(const struct gatekeeper_if *iface)
-{
-	return iface->hw_filter_eth && iface->rss;
 }
 
 /*

@@ -191,18 +191,18 @@ free_stage3_entry(struct stage3_entry *entry)
 static int
 launch_stage3(void)
 {
-	unsigned int master_id = rte_get_master_lcore();
+	unsigned int main_id = rte_get_main_lcore();
 	struct stage3_entry *entry, *next;
 
-	RTE_VERIFY(master_id == rte_lcore_id());
+	RTE_VERIFY(main_id == rte_lcore_id());
 
 	list_for_each_entry_safe(entry, next, &launch_heads.stage3, list) {
 		int ret;
 
-		if (entry->lcore_id == master_id) {
+		if (entry->lcore_id == main_id) {
 			/*
 			 * Postpone the execution of this call since
-			 * this thread is running on the master lcore.
+			 * this thread is running on the main lcore.
 			 */
 			continue;
 		}
@@ -222,26 +222,26 @@ launch_stage3(void)
 }
 
 static int
-run_master_if_applicable(void)
+run_main_if_applicable(void)
 {
-	unsigned int master_id = rte_get_master_lcore();
+	unsigned int main_id = rte_get_main_lcore();
 	struct stage3_entry *first;
 	int ret;
 
-	RTE_VERIFY(master_id == rte_lcore_id());
+	RTE_VERIFY(main_id == rte_lcore_id());
 
 	if (list_empty(&launch_heads.stage3))
 		return 0;
 
 	if (!list_is_singular(&launch_heads.stage3)) {
-		G_LOG(ERR, "launch: list of stage 3 functions should not contain multiple master lcore entries\n");
+		G_LOG(ERR, "launch: list of stage 3 functions should not contain multiple main lcore entries\n");
 		return -1;
 	}
 
 	first = list_first_entry(&launch_heads.stage3, struct stage3_entry,
 		list);
-	if (first->lcore_id != master_id) {
-		G_LOG(ERR, "launch: list of stage 3 functions should not contain non-master lcore entries in %s\n",
+	if (first->lcore_id != main_id) {
+		G_LOG(ERR, "launch: list of stage 3 functions should not contain non-main lcore entries in %s\n",
 			__func__);
 		return -1;
 	}
@@ -282,5 +282,5 @@ launch_gatekeeper(void)
 	if (ret != 0)
 		return -1;
 
-	return run_master_if_applicable();
+	return run_main_if_applicable();
 }

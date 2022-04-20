@@ -30,6 +30,7 @@
 #endif
 
 #include "gatekeeper_log_ratelimit.h"
+#include "list.h"
 
 #define BLOCK_LOGTYPE RTE_LOGTYPE_USER1
 
@@ -46,6 +47,11 @@ extern uint64_t cycles_per_ms;
 extern uint64_t picosec_per_cycle;
 
 extern FILE *log_file;
+
+struct sol_mbuf_priv {
+	uint8_t priority;
+	struct list_head list;
+};
 
 char *rte_strdup(const char *type, const char *s);
 int gatekeeper_log_init(void);

@@ -175,4 +175,16 @@ sol_conf_hold(struct sol_config *sol_conf)
 
 int sol_conf_put(struct sol_config *sol_conf);
 
+static inline struct sol_mbuf_priv *
+mbuf_to_sol_priv(struct rte_mbuf *pkt)
+{
+	return rte_mbuf_to_priv(pkt);
+}
+
+static inline void
+set_prio(struct rte_mbuf *pkt, uint8_t priority)
+{
+	((struct sol_mbuf_priv *)rte_mbuf_to_priv(pkt))->priority = priority;
+}
+
 #endif /* _GATEKEEPER_SOL_H_ */

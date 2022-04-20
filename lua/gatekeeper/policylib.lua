@@ -180,14 +180,6 @@ struct in6_addr {
 	unsigned char s6_addr[16];
 };
 
-struct rte_lpm {
-	/* This struct has hidden fields. */
-};
-
-struct rte_lpm6 {
-	/* This struct has hidden fields. */
-};
-
 uint16_t gt_cpu_to_be_16(uint16_t x);
 uint32_t gt_cpu_to_be_32(uint32_t x);
 uint16_t gt_be_to_cpu_16(uint16_t x);

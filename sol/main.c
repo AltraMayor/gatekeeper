@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* For gettid(). */
+#define _GNU_SOURCE
+
 #include <math.h>
 #include <unistd.h>
 
@@ -41,7 +44,7 @@
 static inline struct list_head *
 mbuf_to_list(struct rte_mbuf *m)
 {
-	return rte_mbuf_to_priv(m);
+	return &mbuf_to_sol_priv(m)->list;
 }
 
 /*
@@ -110,9 +113,9 @@ rte_priv_to_mbuf(void *ptr)
 }
 
 static inline struct rte_mbuf *
-list_to_mbuf(struct list_head *list)
+list_to_mbuf(struct list_head *ptr)
 {
-	return rte_priv_to_mbuf(list);
+	return rte_priv_to_mbuf(list_entry(ptr, struct sol_mbuf_priv, list));
 }
 
 /*
@@ -149,35 +152,44 @@ list_next_entry_m(struct rte_mbuf *pos)
 	return list_to_mbuf(mbuf_to_list(pos)->next);
 }
 
+static inline uint8_t
+get_prio(struct rte_mbuf *pkt)
+{
+	return mbuf_to_sol_priv(pkt)->priority;
+}
+
 static void
 drop_lowest_priority_pkt(struct req_queue *req_queue)
 {
-	struct rte_mbuf *lowest_pr = list_last_entry_m(&req_queue->head);
-	struct rte_mbuf *next_lowest_pr;
+	struct rte_mbuf *lowest_pr_pkt = list_last_entry_m(&req_queue->head);
+	struct rte_mbuf *next_lowest_pr_pkt;
+	uint8_t lowest_prio = get_prio(lowest_pr_pkt);
+	uint8_t next_lowest_prio;
 
 	RTE_VERIFY(req_queue->len > 0);
 
 	if (unlikely(req_queue->len == 1)) {
-		req_queue->priorities[lowest_pr->udata64] = NULL;
+		req_queue->priorities[lowest_prio] = NULL;
 		req_queue->highest_priority = 0;
 		req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
 		goto drop;
 	}
 
-	next_lowest_pr = list_prev_entry_m(lowest_pr);
+	next_lowest_pr_pkt = list_prev_entry_m(lowest_pr_pkt);
+	next_lowest_prio = get_prio(next_lowest_pr_pkt);
 
 	/* The lowest priority packet was the only one of that priority. */
-	if (lowest_pr->udata64 != next_lowest_pr->udata64) {
-		req_queue->priorities[lowest_pr->udata64] = NULL;
-		req_queue->lowest_priority = next_lowest_pr->udata64;
+	if (lowest_prio != next_lowest_prio) {
+		req_queue->priorities[lowest_prio] = NULL;
+		req_queue->lowest_priority = next_lowest_prio;
 		goto drop;
 	}
 
-	req_queue->priorities[lowest_pr->udata64] = next_lowest_pr;
+	req_queue->priorities[lowest_prio] = next_lowest_pr_pkt;
 
 drop:
-	list_del(mbuf_to_list(lowest_pr));
-	rte_pktmbuf_free(lowest_pr);
+	list_del(mbuf_to_list(lowest_pr_pkt));
+	rte_pktmbuf_free(lowest_pr_pkt);
 	req_queue->len--;
 }
 
@@ -190,12 +202,12 @@ enqueue_req(struct sol_config *sol_conf, struct sol_instance *instance,
 	struct rte_mbuf *req)
 {
 	struct req_queue *req_queue = &instance->req_queue;
-	uint8_t priority = req->udata64;
+	uint8_t priority = get_prio(req);
 
 	if (unlikely(priority > GK_MAX_REQ_PRIORITY)) {
 		G_LOG(WARNING, "Trying to enqueue a request with priority %hhu, but should be in range [0, %d]. Overwrite the priority to PRIORITY_REQ_MIN (%hhu)\n",
 			priority, GK_MAX_REQ_PRIORITY, PRIORITY_REQ_MIN);
-		req->udata64 = PRIORITY_REQ_MIN;
+		set_prio(req, PRIORITY_REQ_MIN);
 		priority = PRIORITY_REQ_MIN;
 	}
 
@@ -307,6 +319,7 @@ dequeue_reqs(struct sol_config *sol_conf,
 	credits_update(req_queue);
 
 	list_for_each_entry_safe_m(entry, next, &req_queue->head) {
+		uint8_t entry_prio;
 		if (!credits_check(req_queue, entry)) {
 			/*
 			 * The library log_ratelimit will throtle
@@ -317,8 +330,9 @@ dequeue_reqs(struct sol_config *sol_conf,
 			goto out;
 		}
 
-		if (req_queue->len == 1 || (entry->udata64 != next->udata64))
-			req_queue->priorities[entry->udata64] = NULL;
+		entry_prio = get_prio(entry);
+		if (req_queue->len == 1 || (entry_prio != get_prio(next)))
+			req_queue->priorities[entry_prio] = NULL;
 		list_del(mbuf_to_list(entry));
 		req_queue->len--;
 
@@ -334,7 +348,7 @@ out:
 		req_queue->lowest_priority = GK_MAX_REQ_PRIORITY;
 	} else {
 		struct rte_mbuf *first = list_first_entry_m(&req_queue->head);
-		req_queue->highest_priority = first->udata64;
+		req_queue->highest_priority = get_prio(first);
 	}
 
 	/* We cannot drop the packets, so re-send. */
