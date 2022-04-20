@@ -376,16 +376,22 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 {
 	uint64_t link_speed_mbits = 0;
 	uint8_t i;
+	int ret;
 
 	RTE_VERIFY(link_speed_bytes != NULL);
 
 	for (i = 0; i < iface->num_ports; i++) {
 		struct rte_eth_link link;
-		rte_eth_link_get(iface->ports[i], &link);
+		ret = rte_eth_link_get(iface->ports[i], &link);
+		if (ret < 0) {
+			G_LOG(ERR, "net: querying port %hhu failed with err - %s\n",
+				iface->ports[i], rte_strerror(-ret));
+			goto err;
+		}
 
 		if (link.link_speed == ETH_SPEED_NUM_NONE) {
-			*link_speed_bytes = 0;
-			return -1;
+			ret = -ENOTSUP;
+			goto err;
 		}
 
 		link_speed_mbits += link.link_speed;
@@ -394,6 +400,10 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 	/* Convert to bytes per second. */
 	*link_speed_bytes = mbits_to_bytes(link_speed_mbits);
 	return 0;
+
+err:
+	*link_speed_bytes = 0;
+	return ret;
 }
 
 /*
