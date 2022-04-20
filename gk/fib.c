@@ -1159,9 +1159,6 @@ put_ether_cache:
 	return -1;
 }
 
-/* #450 Replace this definition with one from DPDK library. */
-#define RTE_SIZEOF_FIELD(type, field) (sizeof(((type *)0)->field))
-
 #define MAX_NUM_GRANTORS_PER_ENTRY \
 	((1 << (RTE_SIZEOF_FIELD(struct gk_fib, u.grantor.set->num_entries) * 8)) - 1)
 
