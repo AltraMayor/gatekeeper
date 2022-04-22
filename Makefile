@@ -14,11 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# XXX This Makefile (in combination with the DPDK Makefiles) does
-# not recognize when a file has changed and re-compilation is
-# needed -- you need to explicitly do `make clean`. We probably
-# need to add a directive to look in the subdirectories.
-
 GATEKEEPER := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 APP = gatekeeper
 
@@ -38,6 +33,11 @@ SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
 	lib/launch.c lib/lpm.c lib/acl.c lib/varip.c \
 	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c lib/coro.c
 
+BUILD_DIR := build
+
+OBJS-y := $(SRCS-y:%.c=$(BUILD_DIR)/%.o)
+DEPS-y := $(OBJS-y:%.o=%.d)
+
 # Build using pkg-config variables if possible
 ifneq ($(shell pkg-config --exists libdpdk && echo 0),0)
 $(error "no installation of DPDK found")
@@ -53,19 +53,27 @@ LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
 	-DCORO_ASM
 
-build/$(APP)-shared: $(SRCS-y) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+$(BUILD_DIR)/$(APP)-shared: $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
+	@echo "LINK\t$@"
+	@$(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_SHARED)
 
-shared: build/$(APP)-shared
-	ln -sf $(APP)-shared build/$(APP)
+$(BUILD_DIR)/%.o: %.c
+	@echo "CC\t$@"
+	@[ -d $(@D) ] || mkdir -p $(@D)
+	@$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -c $< -o $@
 
-build:
+shared: $(BUILD_DIR)/$(APP)-shared
+	ln -sf $(APP)-shared $(BUILD_DIR)/$(APP)
+
+$(BUILD_DIR):
 	@mkdir -p $@
 
 clean:
-	rm -f build/$(APP) build/$(APP)-shared
-	test -d build && rmdir -p build || true
+	rm -rf $(BUILD_DIR)
 
 cscope:
 	cscope -b -R -s.
 .PHONY: cscope
+
+# Include dependencies on header files.
+-include $(DEPS-y)
