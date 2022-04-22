@@ -158,19 +158,7 @@ kernel modules. Additionally, it saves the interface names and their
 respective PCI addresses in the file `lua/if_map.lua` so that interface
 names can be used in the Gatekeeper configuration files.
 
-It also sets two environmental variables: `RTE_SDK` and `RTE_TARGET`.
-They must be set before `gatekeeper` will compile.
-
-After running the setup script, you may want to save
-the environmental variables in your shell's preferences file.
-For example, in Bash, you can do:
-
-    $ echo "export RTE_SDK=${RTE_SDK}" >> ${HOME}/.profile
-    $ echo "export RTE_TARGET=${RTE_TARGET}" >> ${HOME}/.profile
-
-Otherwise, each time you login you will need to set these environmental variables again.
-
-Once DPDK is compiled and the variables are set, `gatekeeper` can be compiled:
+Once DPDK and LuaJIT are compiled, `gatekeeper` can be compiled:
 
     $ make
 
