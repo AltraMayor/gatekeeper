@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 GATEKEEPER := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-APP = gatekeeper
+APP := gatekeeper
 
 SRCS-y := main/main.c
 
@@ -53,7 +53,7 @@ LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
 	-DCORO_ASM
 
-$(BUILD_DIR)/$(APP)-shared: $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
+$(BUILD_DIR)/$(APP): $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
 	@echo "LINK\t$@"
 	@$(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_SHARED)
 
@@ -61,9 +61,6 @@ $(BUILD_DIR)/%.o: %.c
 	@echo "CC\t$@"
 	@[ -d $(@D) ] || mkdir -p $(@D)
 	@$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -c $< -o $@
-
-shared: $(BUILD_DIR)/$(APP)-shared
-	ln -sf $(APP)-shared $(BUILD_DIR)/$(APP)
 
 $(BUILD_DIR):
 	@mkdir -p $@
