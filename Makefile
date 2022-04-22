@@ -50,13 +50,14 @@ CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk) -DALLOW_EXPERIMENTAL_API -Wno
 LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
 	-lm -lmnl -lkmod -lcap -lrte_net_bond
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
+LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk) $(LDLIBS)
 
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
 	-DCORO_ASM
 
 $(BUILD_DIR)/$(APP): $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
 	@echo "LINK\t$@"
-	@$(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_SHARED)
+	@$(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_STATIC)
 
 $(BUILD_DIR)/%.o: %.c
 	@echo "CC\t$@"

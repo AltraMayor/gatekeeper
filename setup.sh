@@ -24,7 +24,10 @@ meson build
 cd build
 ninja
 sudo ninja install
-ldconfig
+
+# Gatekeeper is being staticly linked with DPDK, so
+# ldconfig(8) is not needed to make DPDK's libraries available system wide.
+# sudo ldconfig
 
 # Install kernel modules.
 sudo modprobe uio
