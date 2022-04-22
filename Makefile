@@ -65,12 +65,13 @@ $(BUILD_DIR)/%.o: %.c
 $(BUILD_DIR):
 	@mkdir -p $@
 
+.PHONY: clean
 clean:
 	rm -rf $(BUILD_DIR)
 
+.PHONY: cscope
 cscope:
 	cscope -b -R -s.
-.PHONY: cscope
 
 # Include dependencies on header files.
 -include $(DEPS-y)
