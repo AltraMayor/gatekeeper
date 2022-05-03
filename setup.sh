@@ -45,7 +45,7 @@ fi
 cd ../../luajit-2.0
 
 # Build and install.
-make CFLAGS=-fPIC
+make
 sudo make install
 
 # Setup BIRD.

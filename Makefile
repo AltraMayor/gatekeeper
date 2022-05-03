@@ -47,7 +47,8 @@ PKGCONF ?= pkg-config
 
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
 CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk) -DALLOW_EXPERIMENTAL_API -Wno-address-of-packed-member $(WERROR_FLAGS) -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
-LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod -lcap -lrte_net_bond
+LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
+	-lm -lmnl -lkmod -lcap -lrte_net_bond
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
 
 EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
