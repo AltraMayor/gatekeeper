@@ -2,7 +2,7 @@
 -- C functions statically linked.
 -- Unsetting its package.loaded entry allows Lua to load
 -- the Lua functions of the module.
-package.loaded["gatekeeper/staticlib"] = nil
+package.loaded["staticlib"] = nil
 require "gatekeeper/staticlib"
 
 function gatekeeper_init()

@@ -1,4 +1,3 @@
-require "gatekeeper/staticlib"
 return function (gatekeeper_server)
 
 	--
