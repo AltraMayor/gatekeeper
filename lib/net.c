@@ -1517,7 +1517,13 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
 	 * are activated on a timer, so this can take some time.
 	 */
 	do {
-		rte_eth_link_get(port_id, &link);
+		ret = rte_eth_link_get(port_id, &link);
+		if (ret < 0) {
+			G_LOG(ERR, "net: querying port %hhu failed with err - %s\n",
+				port_id, rte_strerror(-ret));
+			return ret;
+		}
+		RTE_VERIFY(ret == 0);
 
 		/* Link is up. */
 		if (link.link_status)
@@ -1528,8 +1534,7 @@ start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
 
 		if (attempts > num_attempts_link_get) {
 			G_LOG(ERR, "net: giving up on port %hhu\n", port_id);
-			ret = -1;
-			return ret;
+			return -1;
 		}
 
 		attempts++;
