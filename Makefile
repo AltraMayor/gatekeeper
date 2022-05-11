@@ -46,14 +46,14 @@ endif
 PKGCONF ?= pkg-config
 
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
-CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk) -DALLOW_EXPERIMENTAL_API -Wno-address-of-packed-member $(WERROR_FLAGS) -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
+CFLAGS += -O3 -g $(shell $(PKGCONF) --cflags libdpdk) \
+	  -DALLOW_EXPERIMENTAL_API -DCORO_ASM \
+	  -Wno-address-of-packed-member -Wfatal-errors $(WERROR_FLAGS) \
+	  -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
 LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
 	-lm -lmnl -lkmod -lcap -lrte_net_bond
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
 LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk) $(LDLIBS)
-
-EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
-	-DCORO_ASM
 
 $(BUILD_DIR)/$(APP): $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
 	@echo "LINK\t$@"
