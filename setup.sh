@@ -20,7 +20,7 @@ cd dependencies
 # Setup DPDK.
 cd dpdk
 
-meson build
+meson -Denable_kmods=true build
 cd build
 ninja
 sudo ninja install
