@@ -29,19 +29,18 @@ sudo ninja install
 # ldconfig(8) is not needed to make DPDK's libraries available system wide.
 # sudo ldconfig
 
+# The depmod(8) below is needed, so modprobe(8) and similar tools can load
+# the kernel module rte_kni included in DPDK.
+sudo depmod -a
+
 # Install kernel modules.
-sudo modprobe uio
-sudo modprobe uio_pci_generic
+sudo modprobe vfio-pci
 
 # Make modules persist across reboots. Since multiple
 # users can run this script, don't re-add these modules
 # if someone else already made them persistent.
-sudo depmod -a
-if ! grep -q "uio" /etc/modules; then
-  sudo echo "uio" | sudo tee -a /etc/modules
-fi
-if ! grep -q "uio_pci_generic" /etc/modules; then
-  sudo echo "uio_pci_generic" | sudo tee -a /etc/modules
+if ! grep -q "vfio-pci" /etc/modules; then
+  echo "vfio-pci" | sudo tee -a /etc/modules
 fi
 
 # Setup LuaJIT.

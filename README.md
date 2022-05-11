@@ -32,6 +32,73 @@ On many systems, the following hugepages setup is sufficient:
 
     $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
+### Enable the kernel module `vfio-pci`
+
+Starting with Gatekeeper v1.1, the Linux kernel module `vfio-pci` is
+the prefered way to bind NICs to DPDK/Gatekeeper.
+In case you cannot get the kernel module `vfio-pci` running on your machine,
+you may tray an alternative to `vfio-pci` as documented on [this page](https://github.com/AltraMayor/gatekeeper/wiki/Alternatives-to-kernel-module-vfio%E2%80%90pci).
+
+In order for `vfio-pci` to work, both the BIOS and the kernel must support it.
+BIOSes must have VT-d enabled.
+BIOSes may identify VT-d as "Intel (R) VT for Directed I/O",
+"Intel (R) VT-d Feature", "Intel VT-d", "VT-d", or similar variations;
+for more examples, search "BIOS VT-d" on
+[Google Images](https://images.google.com/).
+Some BIOS may require that an option called
+"Intel (R) Virtualization Technology" (or variations of this string) to be
+enabled before VT-d can be enabled.
+
+To check that VT-d is enabled at the BIOS, run the following command after
+Linux boots up:
+
+    $ dmesg | grep -e DMAR
+
+If the command above returns some lines, VT-d should be enabled.
+Otherwise, one has to go back to the BIOS to enable it.
+More information on how to check that VT-d is enabled at the BIOS is
+available on [this page](https://stackoverflow.com/questions/51261999/check-if-vt-d-iommu-has-been-enabled-in-the-bios-uefi).
+
+Once VT-d is enabled at the BIOS, one must ensure that the kernel supports
+IOMMU.
+Notice that one needs a kernel version greater than 3.6 to support IOMMU.
+One can verify if the running kernel has IOMMU enabled by default with
+the following command:
+
+    $ grep CONFIG_INTEL_IOMMU_DEFAULT_ON /boot/config-`uname -r`
+
+Most likely, the command above will output
+`# CONFIG_INTEL_IOMMU_DEFAULT_ON is not set`, that is,
+the running kernel does not have IOMMU enabled by default.
+Alternatives ways to check for kernel build options
+(i.e. `CONFIG_INTEL_IOMMU_DEFAULT_ON`) is available on
+[this page](https://unix.stackexchange.com/questions/83319/where-are-the-current-kernel-build-options-stored).
+
+If the kernel does not have IOMMU enabled by default,
+one has to pass the kernel boot parameter `intel_iommu=on` via GRUB.
+For information on the why the boot parameter `intel_iommu=on` is needed,
+see [this page](https://unix.stackexchange.com/questions/595353/vt-d-support-enabled-but-iommu-groups-are-missing).
+One can check if the running kernel received this parameter with
+the command below:
+
+    $ cat /proc/cmdline | grep intel_iommu=on
+
+If the running kernel has not received the parameter `intel_iommu=on`,
+add it to GRUB, and reboot the machine.
+Information on how to add a boot parameter to GRUB is found
+[here](https://askubuntu.com/questions/19486/how-do-i-add-a-kernel-boot-parameter).
+
+Once VT-d is enabled at the BIOS and the kernel supports IOMMU,
+one can verify that everything is all set with one of the following commands:
+
+   $ ls /sys/kernel/iommu_groups
+
+OR
+
+   $ dmesg | grep -ie 'IOMMU\s\+enabled'
+
+Everything is all set if the outputs of the commands above are not empty.
+
 ### Option 1: Obtain Packages
 
 Gatekeeper Debian packages are available for Ubuntu 20.04 LTS at the project's
@@ -168,9 +235,9 @@ Before `gatekeeper` can be used, the network adapters must be bound to DPDK.
 For this, you can use the script `dependencies/dpdk/usertools/dpdk-devbind.py`.
 For example:
 
-    $ sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=uio_pci_generic enp131s0f0
+    $ sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=vfio-pci enp131s0f0
 
-This command binds the interface `enp131s0f0` to the `uio_pci_generic` driver
+This command binds the interface `enp131s0f0` to the `vfio-pci` driver
 so that frames can be passed directly to DPDK instead of the kernel. Note
 that this binding must take place after Gatekeeper is setup in the steps
 above so that the bound interface appears in the list of interfaces in
