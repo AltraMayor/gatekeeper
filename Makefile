@@ -14,13 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# XXX This Makefile (in combination with the DPDK Makefiles) does
-# not recognize when a file has changed and re-compilation is
-# needed -- you need to explicitly do `make clean`. We probably
-# need to add a directive to look in the subdirectories.
-
 GATEKEEPER := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-APP = gatekeeper
+APP := gatekeeper
 
 SRCS-y := main/main.c
 
@@ -38,6 +33,11 @@ SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
 	lib/launch.c lib/lpm.c lib/acl.c lib/varip.c \
 	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c lib/coro.c
 
+BUILD_DIR := build
+
+OBJS-y := $(SRCS-y:%.c=$(BUILD_DIR)/%.o)
+DEPS-y := $(OBJS-y:%.o=%.d)
+
 # Build using pkg-config variables if possible
 ifneq ($(shell pkg-config --exists libdpdk && echo 0),0)
 $(error "no installation of DPDK found")
@@ -46,26 +46,39 @@ endif
 PKGCONF ?= pkg-config
 
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
-CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk) -DALLOW_EXPERIMENTAL_API -Wno-address-of-packed-member $(WERROR_FLAGS) -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
-LDLIBS += $(LDIR) -Bstatic -lluajit-5.1 -Bdynamic -lm -lmnl -lkmod -lcap -lrte_net_bond
-LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
+CFLAGS += -O3 -g $(shell $(PKGCONF) --cflags libdpdk) \
+	  -DALLOW_EXPERIMENTAL_API -DCORO_ASM \
+	  -Wno-address-of-packed-member -Wfatal-errors $(WERROR_FLAGS) \
+	  -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
+LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
+	-lm -lmnl -lkmod -lcap -lrte_net_bond
+LDFLAGS_SHARED := $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
+LDFLAGS_STATIC := $(shell $(PKGCONF) --static --libs libdpdk) $(LDLIBS)
 
-EXTRA_CFLAGS += -O3 -g -Wfatal-errors -DALLOW_EXPERIMENTAL_API \
-	-DCORO_ASM
+LINK = $(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_STATIC)
+COMPILE = $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -c $< -o $@
 
-build/$(APP)-shared: $(SRCS-y) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(SRCS-y) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+$(BUILD_DIR)/$(APP): $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
+	@echo "LINK\t$@"
+	@echo $(LINK) > $@.cc
+	@$(LINK)
 
-shared: build/$(APP)-shared
-	ln -sf $(APP)-shared build/$(APP)
+$(BUILD_DIR)/%.o: %.c
+	@echo "CC\t$@"
+	@[ -d $(@D) ] || mkdir -p $(@D)
+	@echo $(COMPILE) > $(patsubst %.o,%.cc,$@)
+	@$(COMPILE)
 
-build:
+$(BUILD_DIR):
 	@mkdir -p $@
 
+.PHONY: clean
 clean:
-	rm -f build/$(APP) build/$(APP)-shared
-	test -d build && rmdir -p build || true
+	rm -rf $(BUILD_DIR)
 
+.PHONY: cscope
 cscope:
 	cscope -b -R -s.
-.PHONY: cscope
+
+# Include dependencies on header files.
+-include $(DEPS-y)

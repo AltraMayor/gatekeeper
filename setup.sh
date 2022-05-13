@@ -20,32 +20,34 @@ cd dependencies
 # Setup DPDK.
 cd dpdk
 
-meson build
+meson -Denable_kmods=true build
 cd build
 ninja
 sudo ninja install
-ldconfig
+
+# Gatekeeper is being staticly linked with DPDK, so
+# ldconfig(8) is not needed to make DPDK's libraries available system wide.
+# sudo ldconfig
+
+# The depmod(8) below is needed, so modprobe(8) and similar tools can load
+# the kernel module rte_kni included in DPDK.
+sudo depmod -a
 
 # Install kernel modules.
-sudo modprobe uio
-sudo modprobe uio_pci_generic
+sudo modprobe vfio-pci
 
 # Make modules persist across reboots. Since multiple
 # users can run this script, don't re-add these modules
 # if someone else already made them persistent.
-sudo depmod -a
-if ! grep -q "uio" /etc/modules; then
-  sudo echo "uio" | sudo tee -a /etc/modules
-fi
-if ! grep -q "uio_pci_generic" /etc/modules; then
-  sudo echo "uio_pci_generic" | sudo tee -a /etc/modules
+if ! grep -q "vfio-pci" /etc/modules; then
+  echo "vfio-pci" | sudo tee -a /etc/modules
 fi
 
 # Setup LuaJIT.
 cd ../../luajit-2.0
 
 # Build and install.
-make CFLAGS=-fPIC
+make
 sudo make install
 
 # Setup BIRD.
@@ -77,5 +79,3 @@ cd ..
 sudo mkdir -p /var/run/gatekeeper/
 sudo chown -R $USER:$GROUPS /var/run/gatekeeper/
 sudo chmod -R 700 /var/run/gatekeeper/
-
-echo "Environmental variables RTE_SDK and RTE_TARGET have been set, but not saved for future logins. You should save them to your shell's preferences file or set them after every login."

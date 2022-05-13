@@ -184,7 +184,7 @@ mbuf_to_sol_priv(struct rte_mbuf *pkt)
 static inline void
 set_prio(struct rte_mbuf *pkt, uint8_t priority)
 {
-	((struct sol_mbuf_priv *)rte_mbuf_to_priv(pkt))->priority = priority;
+	mbuf_to_sol_priv(pkt)->priority = priority;
 }
 
 #endif /* _GATEKEEPER_SOL_H_ */
