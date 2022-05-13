@@ -33,10 +33,20 @@
 #include "list.h"
 
 #define BLOCK_LOGTYPE RTE_LOGTYPE_USER1
+#define G_LOG_PREFIX "%s/%u: "
 
-#define G_LOG(level, ...)			\
-	rte_log_ratelimit(RTE_LOG_ ## level,	\
-	BLOCK_LOGTYPE, "GATEKEEPER: " __VA_ARGS__)
+#define G_LOG(level, fmt, ...)						\
+	do {								\
+		unsigned int __g_log_lcore_id = rte_lcore_id();		\
+		const char *__g_log_block_name =			\
+			likely(log_ratelimit_enabled)			\
+			? log_ratelimit_states[__g_log_lcore_id]	\
+				.block_name				\
+			: "Main";					\
+		rte_log_ratelimit(RTE_LOG_ ## level, BLOCK_LOGTYPE,	\
+			G_LOG_PREFIX fmt, __g_log_block_name,		\
+			__g_log_lcore_id __VA_OPT__(,) __VA_ARGS__);	\
+	} while (0)
 
 #define G_LOG_CHECK(level) check_log_allowed(RTE_LOG_ ## level)
 

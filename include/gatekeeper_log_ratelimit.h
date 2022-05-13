@@ -87,4 +87,18 @@ int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
 /* Get the block name for the corresponding lcore. */
 const char *get_block_name(unsigned int lcore_id);
 
+struct log_ratelimit_state {
+	uint64_t       interval_cycles;
+	uint32_t       burst;
+	uint32_t       printed;
+	uint32_t       suppressed;
+	uint64_t       end;
+	rte_atomic32_t log_level;
+	char           block_name[16];
+} __rte_cache_aligned;
+
+/* Only use these variables in file lib/log_ratelimit.c and in macro G_LOG(). */
+extern struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
+extern bool log_ratelimit_enabled;
+
 #endif /* _GATEKEEPER_LOG_RATELIMIT_H_ */
