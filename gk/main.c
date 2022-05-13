@@ -2491,8 +2491,7 @@ gk_proc(void *arg)
 	uint32_t scan_iter = gk_conf->flow_table_scan_iter;
 	uint32_t iter_count = 0;
 
-	G_LOG(NOTICE, "The GK block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+	G_LOG(NOTICE, "The GK block is running at tid = %u\n", gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
@@ -2576,7 +2575,7 @@ gk_proc(void *arg)
 		}
 	}
 
-	G_LOG(NOTICE, "The GK block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The GK block is exiting\n");
 
 	return gk_conf_put(gk_conf);
 }

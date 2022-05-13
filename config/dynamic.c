@@ -623,8 +623,7 @@ dyn_cfg_proc(void *arg)
 	uint32_t lcore = dy_conf->lcore_id;
 
 	G_LOG(NOTICE,
-		"The Dynamic Config block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+		"The Dynamic Config block is running at tid = %u\n", gettid());
 
 	if (dy_conf->gt != NULL) {
 		/*
@@ -705,8 +704,7 @@ dyn_cfg_proc(void *arg)
 		handle_client(dy_conf->sock_fd, dy_conf);
 	}
 
-	G_LOG(NOTICE,
-		"The Dynamic Config block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The Dynamic Config block is exiting\n");
 
 	cleanup_dy(dy_conf);
 

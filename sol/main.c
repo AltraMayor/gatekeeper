@@ -563,9 +563,7 @@ sol_proc(void *arg)
 	struct sol_instance *instance = &sol_conf->instances[block_idx];
 	uint8_t tx_port_back = sol_conf->net->back.id;
 
-	G_LOG(NOTICE,
-		"The Solicitor block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+	G_LOG(NOTICE, "The Solicitor block is running at tid = %u\n", gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
@@ -579,8 +577,7 @@ sol_proc(void *arg)
 		dequeue_reqs(sol_conf, instance, tx_port_back);
 	}
 
-	G_LOG(NOTICE,
-		"The Solicitor block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The Solicitor block is exiting\n");
 
 	return sol_conf_put(sol_conf);
 }

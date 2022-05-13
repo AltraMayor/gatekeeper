@@ -606,8 +606,7 @@ ggu_proc(void *arg)
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
-	G_LOG(NOTICE, "The GT-GK unit is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+	G_LOG(NOTICE, "The GT-GK unit is running at tid = %u\n", gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
@@ -628,7 +627,7 @@ ggu_proc(void *arg)
 			process_mb(ggu_conf);
 	}
 
-	G_LOG(NOTICE, "The GT-GK unit at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The GT-GK unit is exiting\n");
 	return cleanup_ggu(ggu_conf);
 }
 
