@@ -2494,7 +2494,7 @@ gk_proc(void *arg)
 	G_LOG(NOTICE, "The GK block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
-	if (needed_caps("GK", 0, NULL) < 0) {
+	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}

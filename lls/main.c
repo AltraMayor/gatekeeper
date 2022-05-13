@@ -608,7 +608,7 @@ lls_proc(void *arg)
 	G_LOG(NOTICE, "The LLS block is running at: lcore = %u; tid = %u\n",
 		lls_conf->lcore_id, gettid());
 
-	if (needed_caps("LLS", 0, NULL) < 0) {
+	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}

@@ -501,7 +501,7 @@ cps_proc(void *arg)
 	G_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
 		cps_conf->lcore_id, gettid());
 
-	if (needed_caps("CPS", RTE_DIM(caps), caps) < 0) {
+	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}

@@ -567,7 +567,7 @@ sol_proc(void *arg)
 		"The Solicitor block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
-	if (needed_caps("SOL", 0, NULL) < 0) {
+	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}

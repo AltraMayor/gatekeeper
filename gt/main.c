@@ -1561,7 +1561,7 @@ gt_proc(void *arg)
 	G_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
 		lcore, gettid());
 
-	if (needed_caps("GT", RTE_DIM(caps), caps) < 0) {
+	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}

@@ -657,12 +657,12 @@ dyn_cfg_proc(void *arg)
 		 * its Unix socket while exiting.
 		 */
 		cap_value_t caps[] = {CAP_DAC_OVERRIDE, CAP_SYS_ADMIN};
-		if (needed_caps("DYC", RTE_DIM(caps), caps) < 0) {
+		if (needed_caps(RTE_DIM(caps), caps) < 0) {
 			G_LOG(ERR, "Could not set needed capabilities for Grantor\n");
 			exiting = true;
 		}
 	} else {
-		if (needed_caps("DYC", 0, NULL) < 0) {
+		if (needed_caps(0, NULL) < 0) {
 			G_LOG(ERR, "Could not set needed capabilities\n");
 			exiting = true;
 		}
