@@ -52,17 +52,22 @@ CFLAGS += -O3 -g $(shell $(PKGCONF) --cflags libdpdk) \
 	  -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
 LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
 	-lm -lmnl -lkmod -lcap -lrte_net_bond
-LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
-LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk) $(LDLIBS)
+LDFLAGS_SHARED := $(shell $(PKGCONF) --libs libdpdk) $(LDLIBS)
+LDFLAGS_STATIC := $(shell $(PKGCONF) --static --libs libdpdk) $(LDLIBS)
+
+LINK = $(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_STATIC)
+COMPILE = $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -c $< -o $@
 
 $(BUILD_DIR)/$(APP): $(OBJS-y) Makefile $(PC_FILE) | $(BUILD_DIR)
 	@echo "LINK\t$@"
-	@$(CC) -o $@ $(OBJS-y) $(LDFLAGS) $(LDFLAGS_STATIC)
+	@echo $(LINK) > $@.cc
+	@$(LINK)
 
 $(BUILD_DIR)/%.o: %.c
 	@echo "CC\t$@"
 	@[ -d $(@D) ] || mkdir -p $(@D)
-	@$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -c $< -o $@
+	@echo $(COMPILE) > $(patsubst %.o,%.cc,$@)
+	@$(COMPILE)
 
 $(BUILD_DIR):
 	@mkdir -p $@
