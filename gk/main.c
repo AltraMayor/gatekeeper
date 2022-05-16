@@ -25,6 +25,7 @@
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <rte_ip.h>
 #include <rte_log.h>
@@ -2462,6 +2463,57 @@ next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 	return instance->scan_cur_flow_idx;
 }
 
+static void
+log_stats(const struct gk_measurement_metrics *stats)
+{
+	time_t now = time(NULL);
+	struct tm *p_tm, time_info;
+	char str_date_time[32];
+	int ret;
+
+	if (unlikely(now == ((time_t) -1))) {
+		G_LOG(ERR, "%s(): time() failed with errno=%i: %s\n",
+			__func__, errno, strerror(errno));
+		goto log_no_time;
+	}
+
+	p_tm = localtime_r(&now, &time_info);
+	if (unlikely(p_tm == NULL)) {
+		G_LOG(ERR, "%s(): localtime_r() failed with errno=%i: %s\n",
+			__func__, errno, strerror(errno));
+		goto log_no_time;
+	}
+	RTE_VERIFY(p_tm == &time_info);
+
+	ret = strftime(str_date_time, sizeof(str_date_time),
+		"%Y-%m-%d %H:%M:%S", &time_info);
+	if (unlikely(ret == 0)) {
+		G_LOG(ERR, "%s(): strftime() failed\n", __func__);
+		goto log_no_time;
+	}
+
+	goto log;
+
+log_no_time:
+	strcpy(str_date_time, "NO TIME");
+log:
+	G_LOG(NOTICE,
+		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed =  %"PRIu64"]\n",
+		str_date_time,
+		stats->tot_pkts_num,
+		stats->tot_pkts_size,
+		stats->pkts_num_granted,
+		stats->pkts_size_granted,
+		stats->pkts_num_request,
+		stats->pkts_size_request,
+		stats->pkts_num_declined,
+		stats->pkts_size_declined,
+		stats->tot_pkts_num_dropped,
+		stats->tot_pkts_size_dropped,
+		stats->tot_pkts_num_distributed,
+		stats->tot_pkts_size_distributed);
+}
+
 static int
 gk_proc(void *arg)
 {
@@ -2553,24 +2605,8 @@ gk_proc(void *arg)
 				basic_measurement_logging_cycles) {
 			struct gk_measurement_metrics *stats =
 				&instance->traffic_stats;
-
-			G_LOG(NOTICE,
-				"The GK block basic measurements at lcore = %u: [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed =  %"PRIu64"]\n",
-				lcore, stats->tot_pkts_num,
-				stats->tot_pkts_size,
-				stats->pkts_num_granted,
-				stats->pkts_size_granted,
-				stats->pkts_num_request,
-				stats->pkts_size_request,
-				stats->pkts_num_declined,
-				stats->pkts_size_declined,
-				stats->tot_pkts_num_dropped,
-				stats->tot_pkts_size_dropped,
-				stats->tot_pkts_num_distributed,
-				stats->tot_pkts_size_distributed);
-
+			log_stats(stats);
 			memset(stats, 0, sizeof(*stats));
-
 			last_measure_tsc = rte_rdtsc();
 		}
 	}
