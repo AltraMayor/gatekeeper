@@ -7,12 +7,14 @@ include /usr/share/dpkg/default.mk
 CFLAGS  += -g -O2 -fno-strict-aliasing -fno-strict-overflow -fPIC
 LDFLAGS += -g -O2 -fno-strict-aliasing -fno-strict-overflow -fPIC -Wl,-z,defs -Wl,--as-needed
 
-RTE_SDK    = $(shell pwd)/dependencies/dpdk
-RTE_TARGET = x86_64-native-linuxapp-gcc
+DPDK_PATH = $(shell pwd)/dependencies/dpdk
+DPDK_PKG_CONFIG_PATH = $(DPDK_PATH)/build/meson-private
+DPDK_INSTALL_PATH = $(DPDK_PATH)/build/install
+
 LUA_PATH = $(shell pwd)/dependencies/luajit-2.0/src
 
 %:
-	dh $@ --with systemd
+	dh $@
 
 override_dh_auto_configure:
 
@@ -21,25 +23,26 @@ override_dh_auto_build: build_luajit build_dpdk build_gatekeeper build_bpf
 build_luajit:
 	cd dependencies/luajit-2.0; \
 		make PREFIX=/usr CFLAGS="$(CFLAGS)"
-	cp "$(LUA_PATH)/libluajit.a" "$(LUA_PATH)/libluajit-5.1.a"
 
 build_dpdk:
-	cd dependencies/dpdk;            \
-		make config T="$(RTE_TARGET)"; \
-		RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make
+	cd dependencies/dpdk;                        \
+		meson --prefix=$(DPDK_INSTALL_PATH) build; \
+		cd build;                                  \
+		ninja;                                     \
+		ninja install
 
 build_gatekeeper: build_luajit build_dpdk
 	gcc -Wall -o generate_if_map generate_if_map.c
 	cd gkctl; gcc -Wall -Wextra -pedantic -o gkctl main.c
-	ln -s "$(RTE_SDK)/build" "$(RTE_SDK)/$(RTE_TARGET)"
-	RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)"     \
-		EXTRA_CFLAGS="-I$(LUA_PATH)" LDIR="-L$(LUA_PATH)" \
+	PKG_CONFIG_PATH=$(DPDK_PKG_CONFIG_PATH)                                                           \
+		EXTRA_CFLAGS="-I$(LUA_PATH) -I$(DPDK_INSTALL_PATH)/include"                                     \
+		LDIR="-L$(LUA_PATH) -L$(DPDK_INSTALL_PATH)/lib/$(shell dpkg-architecture -qDEB_HOST_MULTIARCH)" \
 		make
 
 build_bpf:
-	cd bpf; RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make
+	cd bpf; CFLAGS="-I$(DPDK_INSTALL_PATH)/include" make; make copy
 
-override_dh_clean: clean_luajit clean_dpdk clean_gatekeeper clean_bpf
+override_dh_clean: clean_bpf clean_gatekeeper clean_dpdk clean_luajit
 	dh_clean
 
 clean_luajit:
@@ -47,17 +50,16 @@ clean_luajit:
 		make clean
 
 clean_dpdk:
-	if [ -f "$(RTE_SDK)/build/.config" ]; then \
-		cd dependencies/dpdk && make clean;      \
-	fi
-	rm -rf dependencies/dpdk/$(RTE_TARGET)
+	rm -rf dependencies/dpdk/build
 
 clean_gatekeeper:
-	RTE_SDK="$(RTE_SDK)" RTE_TARGET="$(RTE_TARGET)" make clean; true
+	PKG_CONFIG_PATH=$(DPDK_PKG_CONFIG_PATH) make clean; true
 	rm -rf gkctl/gkctl generate_if_map build
+	rm -rf .pc
 
 clean_bpf:
 	cd bpf; rm -f *.bpf
+	rm -rf lua/bpf
 
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start
@@ -65,5 +67,6 @@ override_dh_installsystemd:
 override_dh_auto_install:
 
 override_dh_auto_clean:
+	dh_quilt_unpatch
 
 override_dh_auto_test:
