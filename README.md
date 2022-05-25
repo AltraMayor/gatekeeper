@@ -30,7 +30,9 @@ DPDK requires the use of hugepages; instructions for mounting hugepages are
 available in the [requirements documentation](http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
 On many systems, the following hugepages setup is sufficient:
 
-    $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+```console
+$ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+```
 
 ### Enable the kernel module `vfio-pci`
 
@@ -52,7 +54,9 @@ enabled before VT-d can be enabled.
 To check that VT-d is enabled at the BIOS, run the following command after
 Linux boots up:
 
-    $ dmesg | grep -e DMAR
+```console
+$ dmesg | grep -e DMAR
+```
 
 If the command above returns some lines, VT-d should be enabled.
 Otherwise, one has to go back to the BIOS to enable it.
@@ -65,7 +69,9 @@ Notice that one needs a kernel version greater than 3.6 to support IOMMU.
 One can verify if the running kernel has IOMMU enabled by default with
 the following command:
 
-    $ grep CONFIG_INTEL_IOMMU_DEFAULT_ON /boot/config-`uname -r`
+```console
+$ grep CONFIG_INTEL_IOMMU_DEFAULT_ON /boot/config-`uname -r`
+```
 
 Most likely, the command above will output
 `# CONFIG_INTEL_IOMMU_DEFAULT_ON is not set`, that is,
@@ -81,7 +87,9 @@ see [this page](https://unix.stackexchange.com/questions/595353/vt-d-support-ena
 One can check if the running kernel received this parameter with
 the command below:
 
-    $ cat /proc/cmdline | grep intel_iommu=on
+```console
+$ cat /proc/cmdline | grep intel_iommu=on
+```
 
 If the running kernel has not received the parameter `intel_iommu=on`,
 add it to GRUB, and reboot the machine.
@@ -91,11 +99,15 @@ Information on how to add a boot parameter to GRUB is found
 Once VT-d is enabled at the BIOS and the kernel supports IOMMU,
 one can verify that everything is all set with one of the following commands:
 
-   $ ls /sys/kernel/iommu_groups
+```console
+$ ls /sys/kernel/iommu_groups
+```
 
 OR
 
-   $ dmesg | grep -ie 'IOMMU\s\+enabled'
+```console
+$ dmesg | grep -ie 'IOMMU\s\+enabled'
+```
 
 Everything is all set if the outputs of the commands above are not empty.
 
@@ -109,9 +121,11 @@ page.
 
 Once the packages are downloaded, they can be installed with the commands below:
 
-    $ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
-    $ cd gatekeeper-ubuntu-20.04-packages
-    $ sudo dpkg -i dpdk-rte-kni-dkms_*_amd64.deb gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
+```console
+$ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
+$ cd gatekeeper-ubuntu-20.04-packages
+$ sudo dpkg -i dpdk-rte-kni-dkms_*_amd64.deb gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
+```
 
 The `dpdk-rte-kni-dkms` package is a DKMS (Dynamic Kernel Modules Support)
 package, which builds the `rte_kni` kernel module during installation and kernel
@@ -132,16 +146,20 @@ You also need to edit the `/etc/gatekeeper/envvars` file and set the
 `GATEKEEPER_INTERFACES` variable to the PCI addresses of the network adapters
 to be bound to DPDK. These can found using the `lshw` command. For example:
 
-    # lshw -c network -businfo
-    Bus info          Device     Class          Description
-    =======================================================
-    pci@0000:08:00.0  eth0       network        I350 Gigabit Network Connection
-    pci@0000:08:00.1  eth1       network        I350 Gigabit Network Connection
-    ...
+```console
+# lshw -c network -businfo
+Bus info          Device     Class          Description
+=======================================================
+pci@0000:08:00.0  eth0       network        I350 Gigabit Network Connection
+pci@0000:08:00.1  eth1       network        I350 Gigabit Network Connection
+...
+```
 
 Given this output, set `GATEKEEPER_INTERFACES` as below:
 
-    GATEKEEPER_INTERFACES="08:00.0 08:00.1"
+```sh
+GATEKEEPER_INTERFACES="08:00.0 08:00.1"
+```
 
 In the same file, you can optionally specify
 [Environmental Abstraction Layer options](https://doc.dpdk.org/guides/linux_gsg/linux_eal_parameters.html)
@@ -154,8 +172,10 @@ in `GATEKEEPER_ARGS`.
 Run the commands below to start Gatekeeper and to ensure it is started
 automatically on reboots.
 
-    $ sudo systemctl start gatekeeper
-    $ sudo systemctl enable gatekeeper
+```console
+$ sudo systemctl start gatekeeper
+$ sudo systemctl enable gatekeeper
+```
 
 ### Option 2: Build from Source
 
@@ -163,12 +183,14 @@ automatically on reboots.
 
 Install the following software dependencies:
 
-    $ sudo apt-get update
-    $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
-	build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
-	libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
-	autoconf flex bison libncurses5-dev libreadline-dev python \
-	libcap-dev libcap2 meson ninja-build
+```console
+$ sudo apt-get update
+$ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
+    build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
+    libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
+    autoconf flex bison libncurses5-dev libreadline-dev python \
+    libcap-dev libcap2 meson ninja-build
+```
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
 `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
@@ -194,14 +216,18 @@ To use DPDK, make sure you have all of the [environmental requirements](http://d
 Clone the Gatekeeper repository, including the submodules that
 contain Gatekeeper dependencies:
 
-    $ git clone --recursive http://github.com/AltraMayor/gatekeeper.git
+```console
+$ git clone --recursive http://github.com/AltraMayor/gatekeeper.git
+```
 
 If you do not use the `--recursive` clone option, you need to obtain the
 submodules that contain the dependences from within the `gatekeeper`
 directory:
 
-    $ git submodule init
-    $ git submodule update
+```console
+$ git submodule init
+$ git submodule update
+```
 
 #### Compile
 
@@ -211,7 +237,9 @@ Debian packages, refer to the section
 
 While in the `gatekeeper` directory, run the setup script:
 
-    $ . setup.sh
+```console
+$ . setup.sh
+```
 
 This script compiles DPDK, LuaJIT, and BIRD, and loads the needed
 kernel modules. Additionally, it saves the interface names and their
@@ -220,7 +248,9 @@ names can be used in the Gatekeeper configuration files.
 
 Once DPDK and LuaJIT are compiled, `gatekeeper` can be compiled:
 
-    $ make
+```console
+$ make
+```
 
 #### Configure Network Adapters
 
@@ -228,7 +258,9 @@ Before `gatekeeper` can be used, the network adapters must be bound to DPDK.
 For this, you can use the script `dependencies/dpdk/usertools/dpdk-devbind.py`.
 For example:
 
-    $ sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=vfio-pci enp131s0f0
+```console
+$ sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=vfio-pci enp131s0f0
+```
 
 This command binds the interface `enp131s0f0` to the `vfio-pci` driver
 so that frames can be passed directly to DPDK instead of the kernel. Note
@@ -240,7 +272,9 @@ above so that the bound interface appears in the list of interfaces in
 
 Once `gatekeeper` is compiled and the environment is configured correctly, run:
 
-    $ sudo build/gatekeeper [EAL OPTIONS] -- [GATEKEEPER OPTIONS]
+```console
+$ sudo build/gatekeeper [EAL OPTIONS] -- [GATEKEEPER OPTIONS]
+```
 
 Where `[EAL OPTIONS]` are specified before a double dash and represent the
 parameters for DPDK's [Environmental Abstraction Layer](https://doc.dpdk.org/guides/linux_gsg/linux_eal_parameters.html)
@@ -259,7 +293,9 @@ pulled, and that the build dependencies have been installed, as instructed
 above. Gatekeeper and the submodules will be automatically compiled during the
 package build process.
 
-    $ tar --exclude-vcs -Jcvf ../gatekeeper_1.1.0.orig.tar.xz -C .. gatekeeper
-    $ debuild -uc -us
+```console
+$ tar --exclude-vcs -Jcvf ../gatekeeper_1.1.0.orig.tar.xz -C .. gatekeeper
+$ debuild -uc -us
+```
 
 The Gatekeeper package will be available in the parent directory.
