@@ -1,9 +1,10 @@
 Source: gatekeeper
 Section: net
 Priority: optional
-Build-Depends: debhelper (>= 9.20160709),
+Build-Depends: debhelper (>= 12),
                clang,
                gcc-multilib,
+               quilt,
                libc6-dev-i386,
                libcap-dev (>= 2.32),
                libelf-dev,
@@ -12,7 +13,9 @@ Build-Depends: debhelper (>= 9.20160709),
                linux-headers-generic,
                libmnl0,
                libmnl-dev,
-               libnuma-dev
+               libnuma-dev,
+               meson,
+               ninja-build
 Maintainer: Andre Nathan <andre@digirati.com.br>
 Standards-Version: 4.1.4
 Vcs-Browser: https://github.com/AltraMayor/gatekeeper
@@ -22,10 +25,8 @@ Package: gatekeeper
 Architecture: linux-any
 Depends: adduser,
          ucf,
-         gatekeeper-dpdk,
-         gatekeeper-dpdk-rte-kni-dkms,
-         gatekeeper-dpdk-igb-uio-dkms,
-         ${misc:Depends},
-         ${shlib:Depends}
+         dpdk-rte-kni-dkms,
+         ${shlibs:Depends},
+         ${misc:Depends}
 Description: Open source DDoS protection system
  Gatekeeper is the first open source DDoS protection system.
