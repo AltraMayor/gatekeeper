@@ -281,7 +281,7 @@ time_resolution_init(void)
 	picosec_per_cycle = 1000UL * diff_ns / cycles;
 
 	G_LOG(NOTICE,
-		"main: cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
+		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
 		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
 
 	return 0;
@@ -421,7 +421,7 @@ main(int argc, char **argv)
 
 	ret = config_gatekeeper(args.lua_base_dir, args.gatekeeper_config_file);
 	if (ret < 0) {
-		G_LOG(ERR, "main: failed to configure Gatekeeper\n");
+		G_LOG(ERR, "Failed to configure Gatekeeper\n");
 		goto net;
 	}
 
