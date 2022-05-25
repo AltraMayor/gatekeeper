@@ -623,8 +623,7 @@ dyn_cfg_proc(void *arg)
 	uint32_t lcore = dy_conf->lcore_id;
 
 	G_LOG(NOTICE,
-		"The Dynamic Config block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+		"The Dynamic Config block is running at tid = %u\n", gettid());
 
 	if (dy_conf->gt != NULL) {
 		/*
@@ -657,12 +656,12 @@ dyn_cfg_proc(void *arg)
 		 * its Unix socket while exiting.
 		 */
 		cap_value_t caps[] = {CAP_DAC_OVERRIDE, CAP_SYS_ADMIN};
-		if (needed_caps("DYC", RTE_DIM(caps), caps) < 0) {
+		if (needed_caps(RTE_DIM(caps), caps) < 0) {
 			G_LOG(ERR, "Could not set needed capabilities for Grantor\n");
 			exiting = true;
 		}
 	} else {
-		if (needed_caps("DYC", 0, NULL) < 0) {
+		if (needed_caps(0, NULL) < 0) {
 			G_LOG(ERR, "Could not set needed capabilities\n");
 			exiting = true;
 		}
@@ -705,8 +704,7 @@ dyn_cfg_proc(void *arg)
 		handle_client(dy_conf->sock_fd, dy_conf);
 	}
 
-	G_LOG(NOTICE,
-		"The Dynamic Config block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The Dynamic Config block is exiting\n");
 
 	cleanup_dy(dy_conf);
 
@@ -777,8 +775,8 @@ run_dynamic_config(struct net_config *net_conf,
 	 */
 	ret = unlink(dy_conf->server_path);
 	if (ret != 0 && errno != ENOENT) {
-		G_LOG(ERR, "Failed to unlink(%s) - (%s)\n",
-			dy_conf->server_path, strerror(errno));
+		G_LOG(ERR, "%s(): Failed to unlink(%s), errno=%i: %s\n",
+			__func__, dy_conf->server_path, errno, strerror(errno));
 		ret = -1;
 		goto free_server_path;
 	}
@@ -786,6 +784,8 @@ run_dynamic_config(struct net_config *net_conf,
 	dy_conf->lua_dy_base_dir = rte_strdup(
 		"lua_dy_base_dir", lua_dy_base_dir);
 	if (dy_conf->lua_dy_base_dir == NULL) {
+		G_LOG(ERR, "%s(): rte_strdup(%s) out of memory\n",
+			__func__, lua_dy_base_dir);
 		ret = -1;
 		goto free_server_path;
 	}
@@ -793,6 +793,8 @@ run_dynamic_config(struct net_config *net_conf,
 	dy_conf->dynamic_config_file = rte_strdup(
 		"dynamic_config_file", dynamic_config_file);
 	if (dy_conf->dynamic_config_file == NULL) {
+		G_LOG(ERR, "%s(): rte_strdup(%s) out of memory\n",
+			__func__, dynamic_config_file);
 		ret = -1;
 		goto free_dy_lua_base_dir;
 	}
@@ -800,8 +802,8 @@ run_dynamic_config(struct net_config *net_conf,
 	/* Init the server socket. */
 	dy_conf->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (dy_conf->sock_fd < 0) {
-		G_LOG(ERR, "Failed to initialize the server socket - (%s)\n",
-			strerror(errno));
+		G_LOG(ERR, "%s(): Failed to initialize the server socket, errno=%i: %s\n",
+			__func__, errno, strerror(errno));
 		ret = -1;
 		goto free_dynamic_config_file;
 	}
@@ -811,9 +813,9 @@ run_dynamic_config(struct net_config *net_conf,
 	server_addr.sun_family = AF_UNIX;
 
 	if (sizeof(server_addr.sun_path) <= strlen(dy_conf->server_path)) {
-		G_LOG(ERR,
-			"The server path (%s) exceeds the length limit %lu\n",
-			dy_conf->server_path, sizeof(server_addr.sun_path));
+		G_LOG(ERR, "%s(): The server path (%s) exceeds the length limit %lu\n",
+			__func__, dy_conf->server_path,
+			sizeof(server_addr.sun_path));
 		ret = -1;
 		goto free_sock;
 	}
@@ -823,8 +825,8 @@ run_dynamic_config(struct net_config *net_conf,
 	ret = bind(dy_conf->sock_fd,
 		(struct sockaddr *)&server_addr, sizeof(server_addr));
 	if (ret < 0) {
-		G_LOG(ERR, "Failed to bind the server socket - (%s)\n",
-			strerror(errno));
+		G_LOG(ERR, "%s(): Failed to bind the server socket (%s), errno=%i: %s\n",
+			__func__, dy_conf->server_path, errno, strerror(errno));
 		ret = -1;
 		goto free_sock;
 	}
@@ -835,8 +837,8 @@ run_dynamic_config(struct net_config *net_conf,
 	 */
 	ret = listen(dy_conf->sock_fd, 10);
 	if (ret < 0) {
-		G_LOG(ERR, "Failed to listen on the server socket - (%s)\n",
-			strerror(errno));
+		G_LOG(ERR, "%s(): Failed to listen on the server socket (%s), errno=%i: %s\n",
+			__func__, dy_conf->server_path, errno, strerror(errno));
 		ret = -1;
 		goto free_sock;
 	}
@@ -853,17 +855,18 @@ run_dynamic_config(struct net_config *net_conf,
 		ret = fchown(dy_conf->sock_fd,
 			net_conf->pw_uid, net_conf->pw_gid);
 		if (ret < 0) {
-			G_LOG(ERR, "Failed to change the owner of the file (%s) to user with uid %u and gid %u - %s\n",
-				dy_conf->server_path, net_conf->pw_uid,
-				net_conf->pw_gid, strerror(errno));
+			G_LOG(ERR, "%s(): Failed to change the owner of the file (%s) to user with uid %u and gid %u, errno=%i: %s\n",
+				__func__, dy_conf->server_path,
+				net_conf->pw_uid, net_conf->pw_gid,
+				errno, strerror(errno));
 			goto put_gk_gt_config;
 		}
 	}
 
 	ret = fchmod(dy_conf->sock_fd, mode);
 	if (ret != 0) {
-		G_LOG(ERR, "Failed to change the mode of the file (%s) - %s\n",
-			dy_conf->server_path, strerror(errno));
+		G_LOG(ERR, "%s(): Failed to change the mode of the file (%s), errno=%i: %s\n",
+			__func__, dy_conf->server_path, errno, strerror(errno));
 		goto put_gk_gt_config;
 	}
 

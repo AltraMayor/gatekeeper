@@ -605,10 +605,9 @@ lls_proc(void *arg)
 	uint64_t timer_resolution_cycles =
 		net_conf->rotate_log_interval_sec * cycles_per_sec;
 
-	G_LOG(NOTICE, "The LLS block is running at: lcore = %u; tid = %u\n",
-		lls_conf->lcore_id, gettid());
+	G_LOG(NOTICE, "The LLS block is running at tid = %u\n", gettid());
 
-	if (needed_caps("LLS", 0, NULL) < 0) {
+	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
@@ -679,8 +678,7 @@ lls_proc(void *arg)
 		}
 	}
 
-	G_LOG(NOTICE, "The LLS block at lcore = %u is exiting\n",
-		lls_conf->lcore_id);
+	G_LOG(NOTICE, "The LLS block is exiting\n");
 
 	return cleanup_lls();
 }

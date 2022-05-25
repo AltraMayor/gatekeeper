@@ -1849,7 +1849,7 @@ fail:
 }
 
 static int
-copy_amb_to_inh(const char *name, cap_t cap_p)
+copy_amb_to_inh(cap_t cap_p)
 {
 	cap_value_t i;
 
@@ -1863,13 +1863,14 @@ copy_amb_to_inh(const char *name, cap_t cap_p)
 			old_errno = errno;
 			cap_name = cap_to_name(i);
 			if (cap_name == NULL) {
-				G_LOG(WARNING, "%s (%s): could not get string for capability %u (%s) while reporting that it is not supported by the running kernel (%s)\n",
-					__func__, name, i, strerror(errno), strerror(old_errno));
+				G_LOG(WARNING, "%s(): could not get string for capability %u (%s) while reporting that it is not supported by the running kernel (%s)\n",
+					__func__, i, strerror(errno),
+					strerror(old_errno));
 				continue;
 			}
 
-			G_LOG(WARNING, "%s (%s): capability %s (%u) not supported by the running kernel: %s\n",
-				__func__, name, cap_name, i, strerror(old_errno));
+			G_LOG(WARNING, "%s(): capability %s (%u) not supported by the running kernel: %s\n",
+				__func__, cap_name, i, strerror(old_errno));
 			cap_free(cap_name);
 			continue;
 		}
@@ -1880,14 +1881,14 @@ copy_amb_to_inh(const char *name, cap_t cap_p)
 			old_errno = errno;
 			cap_name = cap_to_name(i);
 			if (cap_name == NULL) {
-				G_LOG(WARNING, "%s (%s): could not get string for capability %u (%s) while reporting that it could not be set to CAP_INHERITABLE (%s)\n",
-					__func__, name, i, strerror(errno), strerror(old_errno));
+				G_LOG(WARNING, "%s(): could not get string for capability %u (%s) while reporting that it could not be set to CAP_INHERITABLE (%s)\n",
+					__func__, i, strerror(errno),
+					strerror(old_errno));
 				continue;
 			}
 
-			G_LOG(ERR, "%s (%s): could not set CAP_INHERITABLE to %u for capability %s (%u): %s\n",
-				__func__, name,
-				value ? CAP_SET : CAP_CLEAR,
+			G_LOG(ERR, "%s(): could not set CAP_INHERITABLE to %u for capability %s (%u): %s\n",
+				__func__, value ? CAP_SET : CAP_CLEAR,
 				cap_name, i, strerror(old_errno));
 			cap_free(cap_name);
 			return -1;
@@ -1898,46 +1899,45 @@ copy_amb_to_inh(const char *name, cap_t cap_p)
 }
 
 static void
-log_proc_caps(const char *block, const char *context)
+log_proc_caps(const char *context)
 {
 	cap_t cap_p = cap_get_proc();
 	char *cap_output, *amb_output;
-	const char *name = block != NULL ? block : "Main";
 	int ret;
 
 	if (cap_p == NULL) {
-		G_LOG(ERR, "%s: cannot get capabilities for process when asked by block %s: %s\n",
-			__func__, name, strerror(errno));
+		G_LOG(ERR, "%s(): cannot get capabilities: %s\n",
+			__func__, strerror(errno));
 		return;
 	}
 
 	cap_output = cap_to_text(cap_p, NULL);
 	if (cap_output == NULL) {
-		G_LOG(ERR, "%s: cannot get text string of capabilities when asked by block %s: %s\n",
-			__func__, name, strerror(errno));
+		G_LOG(ERR, "%s(): cannot get text string of capabilities: %s\n",
+			__func__, strerror(errno));
 		goto proc;
 	}
 
 	if (!CAP_AMBIENT_SUPPORTED()) {
-		G_LOG(DEBUG, "%s: %s: %s\n", name, context, cap_output);
+		G_LOG(DEBUG, "%s: %s\n", context, cap_output);
 		goto cap;
 	}
 
 	/* Log ambient capabilities. */
 	cap_clear(cap_p);
-	ret = copy_amb_to_inh(name, cap_p);
+	ret = copy_amb_to_inh(cap_p);
 	if (ret < 0)
 		goto cap;
 
 	amb_output = cap_to_text(cap_p, NULL);
 	if (amb_output == NULL) {
-		G_LOG(ERR, "%s: cannot get text string of ambient capabilities when asked by block %s: %s\n",
-			__func__, name, strerror(errno));
+		G_LOG(ERR, "%s(): cannot get text string of ambient capabilities: %s\n",
+			__func__, strerror(errno));
 		goto cap;
 	}
 
-	G_LOG(DEBUG, "%s: %s: %s\t(ambient as inheritable): %s\n",
-		name, context, cap_output, amb_output);
+	G_LOG(DEBUG, "%s: %s\t(ambient as inheritable): %s\n",
+		context, cap_output, amb_output);
 
 	cap_free(amb_output);
 cap:
@@ -1947,46 +1947,44 @@ proc:
 }
 
 int
-needed_caps(const char *block, int ncap, const cap_value_t *caps)
+needed_caps(int ncap, const cap_value_t *caps)
 {
 	cap_t cap_p;
 	int ret;
-
-	RTE_VERIFY(block != NULL);
 
 	/* No capablities are needed when run as root. */
 	if (config.pw_uid == 0)
 		return 0;
 
-	log_proc_caps(block, "Capabilities before setting");
+	log_proc_caps("Capabilities before setting");
 
 	cap_p = cap_init();
 	if (cap_p == NULL) {
-		G_LOG(ERR, "%s (%s): could not create a capability state in working storage: %s\n",
-			__func__, block, strerror(errno));
+		G_LOG(ERR, "%s(): could not create a capability state in working storage: %s\n",
+			__func__, strerror(errno));
 		return -1;
 	}
 
 	if (ncap > 0) {
 		ret = cap_set_flag(cap_p, CAP_PERMITTED, ncap, caps, CAP_SET);
 		if (ret != 0) {
-			G_LOG(ERR, "%s (%s): could not set CAP_PERMITTED for %d capabilities: %s\n",
-				__func__, block, ncap, strerror(errno));
+			G_LOG(ERR, "%s(): could not set CAP_PERMITTED for %d capabilities: %s\n",
+				__func__, ncap, strerror(errno));
 			goto free;
 		}
 
 		ret = cap_set_flag(cap_p, CAP_EFFECTIVE, ncap, caps, CAP_SET);
 		if (ret != 0) {
-			G_LOG(ERR, "%s (%s): could not set CAP_EFFECTIVE for %d capabilities: %s\n",
-				__func__, block, ncap, strerror(errno));
+			G_LOG(ERR, "%s(): could not set CAP_EFFECTIVE for %d capabilities: %s\n",
+				__func__, ncap, strerror(errno));
 			goto free;
 		}
 	}
 
 	ret = cap_set_proc(cap_p);
 	if (ret != 0) {
-		G_LOG(ERR, "%s (%s): could not set capabilities for process: %s\n",
-			__func__, block, strerror(errno));
+		G_LOG(ERR, "%s(): could not set capabilities for process: %s\n",
+			__func__, strerror(errno));
 		goto free;
 	}
 free:
@@ -1998,12 +1996,12 @@ free:
 	if (CAP_AMBIENT_SUPPORTED()) {
 		ret = cap_reset_ambient();
 		if (ret != 0) {
-			G_LOG(ERR, "%s (%s): could not reset ambient capabilities: %s\n",
-				__func__, block, strerror(errno));
+			G_LOG(ERR, "%s(): could not reset ambient capabilities: %s\n",
+				__func__, strerror(errno));
 		}
 	}
 
-	log_proc_caps(block, "Capabilities after setting");
+	log_proc_caps("Capabilities after setting");
 
 	return ret;
 }
@@ -2079,7 +2077,7 @@ change_user(void)
 	G_LOG(DEBUG, "Ambient capabilities supported: %s\n",
 		CAP_AMBIENT_SUPPORTED() ? "yes" : "no");
 
-	log_proc_caps(NULL, "Capabilities before changing privileges");
+	log_proc_caps("Capabilities before changing privileges");
 
 	ret = set_groups(pw->pw_name, config.pw_gid);
 	if (ret < 0) {
@@ -2088,7 +2086,7 @@ change_user(void)
 		return -1;
 	}
 
-	log_proc_caps(NULL, "Capabilities after changing group(s)");
+	log_proc_caps("Capabilities after changing group(s)");
 
 	ret = cap_setuid(config.pw_uid);
 	if (ret != 0) {
@@ -2097,7 +2095,7 @@ change_user(void)
 		return -1;
 	}
 
-	log_proc_caps(NULL, "Capabilities after changing user");
+	log_proc_caps("Capabilities after changing user");
 
 	if (seteuid(0) != -1) {
 		G_LOG(ERR, "%s: seteuid() was able to set the effective ID of a non-root user to root\n",

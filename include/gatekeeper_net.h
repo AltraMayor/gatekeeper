@@ -550,11 +550,9 @@ int ipv6_pkt_filter_add(struct gatekeeper_if *iface,
  * except for those needed by a block.
  *
  * @caps contains the @ncap number of entries that
- * the block wants to keep. @block is the name of
- * the calling block, used for logging purposes,
- * and must not be NULL.
+ * the block wants to keep.
  */
-int needed_caps(const char *block, int ncap, const cap_value_t *caps);
+int needed_caps(int ncap, const cap_value_t *caps);
 
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);

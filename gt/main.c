@@ -1558,10 +1558,9 @@ gt_proc(void *arg)
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
 
-	G_LOG(NOTICE, "The GT block is running at: lcore = %u; tid = %u\n",
-		lcore, gettid());
+	G_LOG(NOTICE, "The GT block is running at tid = %u\n", gettid());
 
-	if (needed_caps("GT", RTE_DIM(caps), caps) < 0) {
+	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
@@ -1744,7 +1743,7 @@ gt_proc(void *arg)
 			flush_notify_pkts(gt_conf, instance);
 	}
 
-	G_LOG(NOTICE, "The GT block at lcore = %u is exiting\n", lcore);
+	G_LOG(NOTICE, "The GT block is exiting\n");
 
 	return gt_conf_put(gt_conf);
 }

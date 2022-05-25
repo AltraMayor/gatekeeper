@@ -168,7 +168,7 @@ gatekeeper_log_init(void)
 	int ret;
 	int log_fd;
 	time_t now;
-	struct tm time_info;
+	struct tm *p_tm, time_info;
 	char log_file_name[128];
 	char log_file_path[512];
 	FILE *new_log_file;
@@ -181,37 +181,51 @@ gatekeeper_log_init(void)
 		log_file = stderr;
 	}
 
-	now = time(&now);
-	RTE_VERIFY(localtime_r(&now, &time_info) == &time_info);
+	now = time(NULL);
+	if (unlikely(now == ((time_t) -1))) {
+		G_LOG(ERR, "%s(): time() failed with errno=%i: %s\n",
+			__func__, errno, strerror(errno));
+		return -1;
+	}
+
+	p_tm = localtime_r(&now, &time_info);
+	if (unlikely(p_tm == NULL)) {
+		G_LOG(ERR, "%s(): localtime_r() failed with errno=%i: %s\n",
+			__func__, errno, strerror(errno));
+		return -1;
+	}
+	RTE_VERIFY(p_tm == &time_info);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"
 	ret = strftime(log_file_name, sizeof(log_file_name),
 		log_file_name_format, &time_info);
 #pragma GCC diagnostic pop
-	if (!(ret > 0 && ret < (int)sizeof(log_file_name))) {
-		G_LOG(ERR, "gatekeeper: Failed to call strftime() to format the log file name\n");
+	if (unlikely(!(ret > 0 && ret < (int)sizeof(log_file_name)))) {
+		G_LOG(ERR, "%s(): Failed to call strftime() to format the log file name\n",
+			__func__);
 		return -1;
 	}
 
 	ret = snprintf(log_file_path, sizeof(log_file_path),
 		"%s/%s", log_base_dir, log_file_name);
-	if (!(ret > 0 && ret < (int)sizeof(log_file_path))) {
-		G_LOG(ERR, "gatekeeper: Failed to call snprintf() to fill up the log file path\n");
+	if (unlikely(!(ret > 0 && ret < (int)sizeof(log_file_path)))) {
+		G_LOG(ERR, "%s(): Failed to call snprintf() to fill up the log file path\n",
+			__func__);
 		return -1;
 	}
 
 	log_fd = open(log_file_path, O_CREAT | O_WRONLY, log_file_mode);
 	if (log_fd < 0) {
-		G_LOG(ERR, "gatekeeper: Failed to get log file descriptor %s - %s\n",
-			log_file_path, strerror(errno));
+		G_LOG(ERR, "%s(): Failed to get log file descriptor %s - %s\n",
+			__func__, log_file_path, strerror(errno));
 		return -1;
 	}
 
 	new_log_file = fdopen(log_fd, "a");
 	if (new_log_file == NULL) {
-		G_LOG(ERR, "gatekeeper: Failed to open log file %s - %s\n",
-			log_file_path, strerror(errno));
+		G_LOG(ERR, "%s(): Failed to open log file %s - %s\n",
+			__func__, log_file_path, strerror(errno));
 		close(log_fd);
 		return -1;
 	}
@@ -267,7 +281,7 @@ time_resolution_init(void)
 	picosec_per_cycle = 1000UL * diff_ns / cycles;
 
 	G_LOG(NOTICE,
-		"main: cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
+		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
 		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
 
 	return 0;
@@ -407,7 +421,7 @@ main(int argc, char **argv)
 
 	ret = config_gatekeeper(args.lua_base_dir, args.gatekeeper_config_file);
 	if (ret < 0) {
-		G_LOG(ERR, "main: failed to configure Gatekeeper\n");
+		G_LOG(ERR, "Failed to configure Gatekeeper\n");
 		goto net;
 	}
 

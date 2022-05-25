@@ -26,24 +26,14 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_log_ratelimit.h"
 
-struct log_ratelimit_state {
-	uint64_t       interval_cycles;
-	uint32_t       burst;
-	uint32_t       printed;
-	uint32_t       suppressed;
-	uint64_t       end;
-	rte_atomic32_t log_level;
-	char           block_name[16];
-} __rte_cache_aligned;
+struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
 
-static struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
-
-static bool enabled;
+bool log_ratelimit_enabled;
 
 void
 log_ratelimit_enable(void)
 {
-	enabled = true;
+	log_ratelimit_enabled = true;
 }
 
 bool
@@ -59,16 +49,16 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
 		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
-			"GATEKEEPER %s: %u log entries were suppressed at lcore %u during the last ratelimit interval\n",
-			lrs->block_name, lrs->suppressed, rte_lcore_id());
+			G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
+			lrs->block_name, rte_lcore_id(), lrs->suppressed);
 	}
 	lrs->suppressed = 0;
 	lrs->end = now + lrs->interval_cycles;
 }
 
 void
-log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval, uint32_t burst,
-	uint32_t log_level, const char *block_name)
+log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
+	uint32_t burst, uint32_t log_level, const char *block_name)
 {
 	struct log_ratelimit_state *lrs;
 
@@ -128,8 +118,11 @@ rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 	int ret;
 	va_list ap;
 
-	/* unlikely() reason: @enabled is only false during startup. */
-	if (unlikely(!enabled))
+	/*
+	 * unlikely() reason: @log_ratelimit_enabled is only false during
+	 * startup.
+	 */
+	if (unlikely(!log_ratelimit_enabled))
 		goto log;
 
 	lrs = &log_ratelimit_states[rte_lcore_id()];

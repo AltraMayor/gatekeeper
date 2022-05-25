@@ -498,10 +498,9 @@ cps_proc(void *arg)
 	 */
 	cap_value_t caps[] = {CAP_NET_ADMIN, CAP_SYS_MODULE};
 
-	G_LOG(NOTICE, "The CPS block is running at: lcore = %u; tid = %u\n",
-		cps_conf->lcore_id, gettid());
+	G_LOG(NOTICE, "The CPS block is running at tid = %u\n", gettid());
 
-	if (needed_caps("CPS", RTE_DIM(caps), caps) < 0) {
+	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
 		exiting = true;
 	}
@@ -554,8 +553,7 @@ cps_proc(void *arg)
 		rd_process_events(cps_conf);
 	}
 
-	G_LOG(NOTICE, "The CPS block at lcore = %u is exiting\n",
-		cps_conf->lcore_id);
+	G_LOG(NOTICE, "The CPS block is exiting\n");
 
 	return cleanup_cps();
 }
