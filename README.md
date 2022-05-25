@@ -111,17 +111,10 @@ Once the packages are downloaded, they can be installed with the commands below:
 
     $ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
     $ cd gatekeeper-ubuntu-20.04-packages
-    $ sudo dpkg -i libgkrte-*.deb \
-        libgkdpdk-dev_*_amd64.deb \
-        gatekeeper-dpdk_*_amd64.deb \
-        gatekeeper-dpdk-dev_*_amd64.deb \
-        gatekeeper-dpdk-igb-uio-dkms_*_amd64.deb \
-        gatekeeper-dpdk-rte-kni-dkms_*_amd64.deb \
-        gatekeeper-bird_*_amd64.deb \
-        gatekeeper_*_amd64.deb
+    $ sudo dpkg -i dpdk-rte-kni-dkms_*_amd64.deb gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
 
-The `gatekeeper-dpdk-dev` package is a dependency of the DKMS packages, which
-build their respective kernel modules during package installation and kernel
+The `dpdk-rte-kni-dkms` package is a DKMS (Dynamic Kernel Modules Support)
+package, which builds the `rte_kni` kernel module during installation and kernel
 upgrades.
 
 #### Configure Gatekeeper
@@ -175,7 +168,7 @@ Install the following software dependencies:
 	build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
 	libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
 	autoconf flex bison libncurses5-dev libreadline-dev python \
-	libcap-dev libcap2 meson
+	libcap-dev libcap2 meson ninja-build
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
 `gatekeeper`, but only `libmnl0` is needed for simply running `gatekeeper`.
@@ -192,7 +185,7 @@ build Gatekeeper Debian packages.
 `python` is needed to be able to run the `dpdk-devbind.py` script.
 `libcap-dev` is needed to compile Gatekeeper, but only `libcap2` is needed
 to run Gatekeeper.
-`meson` is needed for building DPDK.
+`meson` and `ninja-build` are needed for building DPDK.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
@@ -266,7 +259,7 @@ pulled, and that the build dependencies have been installed, as instructed
 above. Gatekeeper and the submodules will be automatically compiled during the
 package build process.
 
-    $ tar --exclude-vcs -Jcvf ../gatekeeper_1.0.0.orig.tar.xz -C .. gatekeeper
+    $ tar --exclude-vcs -Jcvf ../gatekeeper_1.1.0.orig.tar.xz -C .. gatekeeper
     $ debuild -uc -us
 
 The Gatekeeper package will be available in the parent directory.
