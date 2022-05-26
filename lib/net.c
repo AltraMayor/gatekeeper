@@ -151,7 +151,8 @@ ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 		 * could be assigned to RX queues that are serviced
 		 * by non-data plane blocks (e.g., LLS).
 		 */
-		G_LOG(NOTICE, "net: cannot use EtherType filters when RSS is not supported\n");
+		G_LOG(NOTICE, "%s(%s): cannot use EtherType filters when RSS is not supported\n",
+			__func__, iface->name);
 		return -1;
 	}
 
@@ -161,22 +162,27 @@ ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 		 * A negative errno value was returned
 		 * (and also put in rte_errno).
 		 */
-		G_LOG(NOTICE, "net: could not validate EtherType flow: %s (%s)\n",
-			strerror(-ret), error.message);
+		G_LOG(NOTICE, "%s(%s): cannot validate EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
+			__func__, iface->name, ether_type,
+			-ret, strerror(-ret),
+			error.type, error.message);
 		return -1;
 	}
 
 	flow = rte_flow_create(iface->id, &attr, pattern, action, &error);
 	if (flow == NULL) {
 		/* rte_errno is set to a positive errno value. */
-		G_LOG(NOTICE, "net: could not create EtherType flow: %s (%s)\n",
-			strerror(rte_errno), error.message);
+		G_LOG(ERR, "%s(%s): cannot create EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
+			__func__, iface->name, ether_type,
+			rte_errno, strerror(rte_errno),
+			error.type, error.message);
 		return -1;
 	}
 
 	return 0;
 }
 
+#define STR_NOIP "NO IP"
 static int
 ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
@@ -235,6 +241,8 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 	struct rte_flow_item_udp udp_mask;
 	struct rte_flow_error error;
 	int ret;
+	const char *str_proto = "NO PROTO";
+	char str_dst_ip[INET_ADDRSTRLEN], str_flow[256];
 
 	if (!iface->rss) {
 		/*
@@ -242,7 +250,8 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		 * (to steer matching packets) and if RSS is supported
 		 * (to steer non-matching packets elsewhere).
 		 */
-		G_LOG(NOTICE, "net: cannot use IPv4 flows when RSS is not supported\n");
+		G_LOG(NOTICE, "%s(%s): cannot use IPv4 flows when RSS is not supported\n",
+			__func__, iface->name);
 		return -1;
 	}
 
@@ -256,6 +265,7 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		pattern[2].type = RTE_FLOW_ITEM_TYPE_TCP;
 		pattern[2].spec = &tcp_spec;
 		pattern[2].mask = &tcp_mask;
+		str_proto = "TCP";
 	} else if (proto == IPPROTO_UDP) {
 		memset(&udp_spec, 0, sizeof(udp_spec));
 		memset(&udp_mask, 0, sizeof(udp_mask));
@@ -266,11 +276,29 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		pattern[2].type = RTE_FLOW_ITEM_TYPE_UDP;
 		pattern[2].spec = &udp_spec;
 		pattern[2].mask = &udp_mask;
+		str_proto = "UDP";
 	} else {
-		G_LOG(ERR, "net: unexpected L4 protocol %hu for IPv4 flow\n",
-			proto);
+		G_LOG(ERR, "%s(%s): unexpected L4 protocol %hu for IPv4 flow\n",
+			__func__, iface->name, proto);
 		return -1;
 	}
+
+	/* Get a human-readable description of the flow. */
+	if (unlikely(inet_ntop(AF_INET, &dst_ip_be,
+			str_dst_ip, sizeof(str_dst_ip)) == NULL)) {
+		G_LOG(ERR, "%s(%s): inet_ntop() failed, errno=%i: %s\n",
+			__func__, iface->name, errno, strerror(errno));
+		RTE_BUILD_BUG_ON(sizeof(STR_NOIP) > sizeof(str_dst_ip));
+		strcpy(str_dst_ip, STR_NOIP);
+	}
+	ret = snprintf(str_flow, sizeof(str_flow),
+		"DstIP=%s %s SrcPort=%i/0x%x DstPort=%i/0x%x",
+		str_dst_ip, str_proto,
+		rte_be_to_cpu_16(src_port_be),
+		rte_be_to_cpu_16(src_port_mask_be),
+		rte_be_to_cpu_16(dst_port_be),
+		rte_be_to_cpu_16(dst_port_mask_be));
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(str_flow));
 
 	ret = rte_flow_validate(iface->id, &attr, pattern, action, &error);
 	if (ret < 0) {
@@ -278,16 +306,20 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		 * A negative errno value was returned
 		 * (and also put in rte_errno).
 		 */
-		G_LOG(NOTICE, "net: could not validate IPv4 flow: %s (%s)\n",
-			strerror(-ret), error.message);
+		G_LOG(NOTICE, "%s(%s, %s): cannot validate IPv4 flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
+			__func__, iface->name, str_flow,
+			-ret, strerror(-ret),
+			error.type, error.message);
 		return -1;
 	}
 
 	flow = rte_flow_create(iface->id, &attr, pattern, action, &error);
 	if (flow == NULL) {
 		/* rte_errno is set to a positive errno value. */
-		G_LOG(NOTICE, "net: could not create IPv4 flow: %s (%s)\n",
-			strerror(rte_errno), error.message);
+		G_LOG(ERR, "%s(%s, %s): cannot create IPv4 flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
+			__func__, iface->name, str_flow,
+			rte_errno, strerror(rte_errno),
+			error.type, error.message);
 		return -1;
 	}
 
@@ -336,7 +368,7 @@ ipv4_pkt_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 			dst_port_be, dst_port_mask_be,
 			proto, queue_id);
 		if (ret < 0) {
-			G_LOG(NOTICE, "Could not register IPv4 flow on the %s interface; trying ACL\n",
+			G_LOG(NOTICE, "Cannot register IPv4 flow on the %s interface; falling back to software filters\n",
 				iface->name);
 			goto acl;
 		}
@@ -357,7 +389,7 @@ acl:
 	ret = register_ipv4_acl(&ipv4_rule,
 		cb_f, ext_cb_f, iface);
 	if (ret < 0) {
-		G_LOG(ERR, "Could not register IPv4 ACL on the %s interface\n",
+		G_LOG(ERR, "Cannot register IPv4 ACL on the %s interface\n",
 			iface->name);
 		return ret;
 	}
