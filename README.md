@@ -7,14 +7,14 @@
 
 ## What is Gatekeeper?
 
-Gatekeeper is the first open source DoS protection system. It is designed to
-scale to any peak bandwidth, so it can withstand DoS attacks both of today
+Gatekeeper is the first open source DDoS protection system. It is designed to
+scale to any peak bandwidth, so it can withstand DDoS attacks both of today
 and of tomorrow. In spite of the geographically distributed architecture of
 Gatekeeper, the network policy that describes all decisions that have to be
 enforced on the incoming traffic is centralized. This centralized policy
 enables network operators to leverage distributed algorithms that would not
 be viable under very high latency (e.g. distributed databases) and to fight
-multiple multi-vector DoS attacks at once.
+multiple multi-vector DDoS attacks at once.
 
 The intended users of Gatekeeper are network operators of institutions,
 service and content providers, enterprise networks, etc. It is not intended
