@@ -4,6 +4,7 @@ module("dylib", package.seeall)
 -- C functions exported through FFI
 --
 
+local stdcdefs = require("gatekeeper/stdcdefs")
 local ffi = require("ffi")
 
 -- Structs
@@ -25,14 +26,6 @@ enum gk_fib_action {
 struct rte_ether_addr {
 	uint8_t addr_bytes[ETHER_ADDR_LEN];
 } __attribute__((__packed__));
-
-struct in_addr {
-	uint32_t s_addr;
-};
-
-struct in6_addr {
-	unsigned char s6_addr[16];
-};
 
 struct ipaddr {
 	uint16_t proto;
