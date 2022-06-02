@@ -139,16 +139,19 @@ log:
 	return ret;
 }
 
-void
+int
 set_log_level_per_block(const char *block_name, uint32_t log_level)
 {
+	int n = 0;
 	for (int i = 0; i < RTE_MAX_LCORE; i++) {
 		if(strcmp(log_ratelimit_states[i].block_name,
 				block_name) == 0) {
 			rte_atomic32_set(&log_ratelimit_states[i].log_level,
 				log_level);
+			n++;
 		}
 	}
+	return n;
 }
 
 int

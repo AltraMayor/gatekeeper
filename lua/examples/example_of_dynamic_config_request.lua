@@ -45,7 +45,7 @@ local old_log_level = staticlib.c.rte_log_get_global_level()
 staticlib.c.rte_log_set_global_level(staticlib.c.RTE_LOG_ERR)
 
 ret = staticlib.c.set_log_level_per_block("CPS", staticlib.c.RTE_LOG_ERR)
-if ret < 0 then
+if ret < 1 then
 	return "cps: failed to set new log level"
 end
 
@@ -70,7 +70,7 @@ if cpsc == nil then
 	return "cps: failed to fetch config to revert log level"
 end
 ret = staticlib.c.set_log_level_per_block("CPS", cpsc.log_level)
-if ret < 0 then
+if ret < 1 then
 	return "cps: failed to revert to original log level"
 end
 

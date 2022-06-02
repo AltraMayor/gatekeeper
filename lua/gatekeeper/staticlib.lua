@@ -438,7 +438,7 @@ int rte_log_set_level(uint32_t type, uint32_t level);
 int rte_log_get_level(uint32_t type);
 
 /* Functions to change the log level of functional blocks. */
-void set_log_level_per_block(const char *block_name, uint32_t log_level);
+int set_log_level_per_block(const char *block_name, uint32_t log_level);
 int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
