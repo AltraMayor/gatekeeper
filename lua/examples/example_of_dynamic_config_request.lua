@@ -1,6 +1,5 @@
 require "gatekeeper/staticlib"
 
-local acc_start = ""
 local reply_msg = ""
 
 local dyc = staticlib.c.get_dy_conf()
@@ -45,7 +44,7 @@ local old_log_level = staticlib.c.rte_log_get_global_level()
 staticlib.c.rte_log_set_global_level(staticlib.c.RTE_LOG_ERR)
 
 ret = staticlib.c.set_log_level_per_block("CPS", staticlib.c.RTE_LOG_ERR)
-if ret < 0 then
+if ret < 1 then
 	return "cps: failed to set new log level"
 end
 
@@ -70,7 +69,7 @@ if cpsc == nil then
 	return "cps: failed to fetch config to revert log level"
 end
 ret = staticlib.c.set_log_level_per_block("CPS", cpsc.log_level)
-if ret < 0 then
+if ret < 1 then
 	return "cps: failed to revert to original log level"
 end
 
@@ -98,15 +97,19 @@ if ret < 0 then
 	return "gk: failed to add an FIB entry\n"
 end
 
-reply_msg = reply_msg .. dylib.list_gk_fib4(dyc.gk,
-	dylib.print_fib_dump_entry, acc_start)
-reply_msg = reply_msg .. dylib.list_gk_fib6(dyc.gk,
-	dylib.print_fib_dump_entry, acc_start)
+local function list_fib_neighbors()
+	reply_msg = reply_msg ..
+		table.concat(dylib.list_gk_fib4(dyc.gk,
+			dylib.print_fib_dump_entry, {})) ..
+		table.concat(dylib.list_gk_fib6(dyc.gk,
+			dylib.print_fib_dump_entry, {})) ..
+		table.concat(dylib.list_gk_neighbors4(dyc.gk,
+			dylib.print_neighbor_dump_entry, {})) ..
+		table.concat(dylib.list_gk_neighbors6(dyc.gk,
+			dylib.print_neighbor_dump_entry, {}))
+end
 
-reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
-	dylib.print_neighbor_dump_entry, acc_start)
-reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
-	dylib.print_neighbor_dump_entry, acc_start)
+list_fib_neighbors()
 
 ret = dylib.c.del_fib_entry("198.51.100.0/25", dyc.gk)
 if ret < 0 then
@@ -143,24 +146,17 @@ if ret < 0 then
 	return "gk: failed to delete an FIB entry\n"
 end
 
-reply_msg = reply_msg .. dylib.list_gk_fib4(dyc.gk,
-	dylib.print_fib_dump_entry, acc_start)
-reply_msg = reply_msg .. dylib.list_gk_fib6(dyc.gk,
-	dylib.print_fib_dump_entry, acc_start)
-
-reply_msg = reply_msg .. dylib.list_gk_neighbors4(dyc.gk,
-	dylib.print_neighbor_dump_entry, acc_start)
-reply_msg = reply_msg .. dylib.list_gk_neighbors6(dyc.gk,
-	dylib.print_neighbor_dump_entry, acc_start)
+list_fib_neighbors()
 
 local llsc = staticlib.c.get_lls_conf()
 if llsc == nil then
 	return "lls: failed to fetch config to dump caches"
 end
-reply_msg = reply_msg .. dylib.list_lls_arp(llsc,
-	dylib.print_lls_dump_entry, acc_start)
-reply_msg = reply_msg .. dylib.list_lls_nd(llsc,
-	dylib.print_lls_dump_entry, acc_start)
+reply_msg = reply_msg ..
+	table.concat(dylib.list_lls_arp(llsc,
+		dylib.print_lls_dump_entry, {})) ..
+	table.concat(dylib.list_lls_nd(llsc,
+		dylib.print_lls_dump_entry, {}))
 
 ret = dylib.c.gk_log_flow_state("198.51.100.0", "192.0.2.0", dyc.gk)
 if ret < 0 then
