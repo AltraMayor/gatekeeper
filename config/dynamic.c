@@ -734,6 +734,7 @@ run_dynamic_config(struct net_config *net_conf,
 {
 	int ret;
 	struct sockaddr_un server_addr;
+	mode_t socket_umask, saved_umask;
 
 	/*
 	 * When the dynamic configuration is run for Gatekeeper,
@@ -774,10 +775,9 @@ run_dynamic_config(struct net_config *net_conf,
 	 * Remove any old socket and create an unnamed socket for the server.
 	 */
 	ret = unlink(dy_conf->server_path);
-	if (ret != 0 && errno != ENOENT) {
+	if (ret < 0 && errno != ENOENT) {
 		G_LOG(ERR, "%s(): Failed to unlink(%s), errno=%i: %s\n",
 			__func__, dy_conf->server_path, errno, strerror(errno));
-		ret = -1;
 		goto free_server_path;
 	}
 
@@ -822,13 +822,39 @@ run_dynamic_config(struct net_config *net_conf,
 
 	strcpy(server_addr.sun_path, dy_conf->server_path);
 
+	/*
+	 * fchmod(2) does not work on sockets, so the safest way to change
+	 * the mode of the server socket is through umask(2).
+	 */
+	socket_umask = ~mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+	saved_umask = umask(socket_umask);
+
 	ret = bind(dy_conf->sock_fd,
 		(struct sockaddr *)&server_addr, sizeof(server_addr));
 	if (ret < 0) {
 		G_LOG(ERR, "%s(): Failed to bind the server socket (%s), errno=%i: %s\n",
 			__func__, dy_conf->server_path, errno, strerror(errno));
-		ret = -1;
 		goto free_sock;
+	}
+
+	/* Restore original umask. */
+	RTE_VERIFY(umask(saved_umask) == socket_umask);
+
+	/* Change user and group of the server socket. */
+	if (net_conf->pw_uid != 0) {
+		/*
+		 * fchown(2) does not work on sockets,
+		 * so we are left with lchown(2).
+		 */
+		ret = lchown(dy_conf->server_path,
+			net_conf->pw_uid, net_conf->pw_gid);
+		if (ret < 0) {
+			G_LOG(ERR, "%s(): Failed to change the owner of the server socket (%s) to uid=%u and gid=%u, errno=%i: %s\n",
+				__func__, dy_conf->server_path,
+				net_conf->pw_uid, net_conf->pw_gid,
+				errno, strerror(errno));
+			goto free_sock;
+		}
 	}
 
 	/*
@@ -839,7 +865,6 @@ run_dynamic_config(struct net_config *net_conf,
 	if (ret < 0) {
 		G_LOG(ERR, "%s(): Failed to listen on the server socket (%s), errno=%i: %s\n",
 			__func__, dy_conf->server_path, errno, strerror(errno));
-		ret = -1;
 		goto free_sock;
 	}
 
@@ -850,25 +875,6 @@ run_dynamic_config(struct net_config *net_conf,
 	if (gt_conf != NULL)
 		gt_conf_hold(gt_conf);
 	dy_conf->gt = gt_conf;
-
-	if (net_conf->pw_uid != 0) {
-		ret = fchown(dy_conf->sock_fd,
-			net_conf->pw_uid, net_conf->pw_gid);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(): Failed to change the owner of the file (%s) to user with uid %u and gid %u, errno=%i: %s\n",
-				__func__, dy_conf->server_path,
-				net_conf->pw_uid, net_conf->pw_gid,
-				errno, strerror(errno));
-			goto put_gk_gt_config;
-		}
-	}
-
-	ret = fchmod(dy_conf->sock_fd, mode);
-	if (ret != 0) {
-		G_LOG(ERR, "%s(): Failed to change the mode of the file (%s), errno=%i: %s\n",
-			__func__, dy_conf->server_path, errno, strerror(errno));
-		goto put_gk_gt_config;
-	}
 
 	ret = launch_at_stage3("dynamic_conf",
 		dyn_cfg_proc, dy_conf, dy_conf->lcore_id);
@@ -898,7 +904,6 @@ free_server_path:
 	dy_conf->server_path = NULL;
 free_mb:
 	destroy_mailbox(&dy_conf->mb);
-
 out:
 	return ret;
 }

@@ -20,7 +20,7 @@ return function (net_conf, gk_conf, gt_conf, numa_table)
 	local lua_dy_lib = "gatekeeper/dylib.lua"
 	local rcv_timeout_sec = 30
 	local rcv_timeout_usec = 0
-	local mode = staticlib.c.S_IRWXU
+	local mode = staticlib.c.S_IRUSR + staticlib.c.S_IWUSR
 
 	--
 	-- End configuration of Dynamic Config block.
