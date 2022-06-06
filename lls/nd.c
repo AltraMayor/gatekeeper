@@ -626,7 +626,7 @@ nd_pkt_valid(struct rte_ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 	return ipv6_hdr->hop_limits == 255 &&
 		rte_be_to_cpu_16(ipv6_hdr->payload_len) == icmpv6_len &&
 		icmpv6_hdr->code == 0 &&
-		rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr) == 0xFFFF;
+		rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr) == 0;
 }
 
 int
