@@ -12,6 +12,7 @@ DPDK_PKG_CONFIG_PATH = $(DPDK_PATH)/build/meson-private
 DPDK_INSTALL_PATH = $(DPDK_PATH)/build/install
 
 LUA_PATH = $(shell pwd)/dependencies/luajit-2.0/src
+LUA_INSTALL_PATH = $(LUA_PATH)/install
 
 %:
 	dh $@
@@ -22,7 +23,7 @@ override_dh_auto_build: build_luajit build_dpdk build_gatekeeper build_bpf
 
 build_luajit:
 	cd dependencies/luajit-2.0; \
-		make PREFIX=/usr CFLAGS="$(CFLAGS)"
+		make install PREFIX=$(LUA_INSTALL_PATH) CFLAGS="$(CFLAGS)"
 
 build_dpdk:
 	cd dependencies/dpdk;                        \
@@ -34,9 +35,9 @@ build_dpdk:
 build_gatekeeper: build_luajit build_dpdk
 	gcc -Wall -o generate_if_map generate_if_map.c
 	cd gkctl; gcc -Wall -Wextra -pedantic -o gkctl main.c
-	PKG_CONFIG_PATH=$(DPDK_PKG_CONFIG_PATH)                                                           \
-		EXTRA_CFLAGS="-I$(LUA_PATH) -I$(DPDK_INSTALL_PATH)/include"                                     \
-		LDIR="-L$(LUA_PATH) -L$(DPDK_INSTALL_PATH)/lib/$(shell dpkg-architecture -qDEB_HOST_MULTIARCH)" \
+	PKG_CONFIG_PATH=$(DPDK_PKG_CONFIG_PATH)                                                                       \
+		EXTRA_CFLAGS="-I$(LUA_INSTALL_PATH)/include/luajit-2.0 -I$(DPDK_INSTALL_PATH)/include"                      \
+		LDIR="-L$(LUA_INSTALL_PATH)/lib -L$(DPDK_INSTALL_PATH)/lib/$(shell dpkg-architecture -qDEB_HOST_MULTIARCH)" \
 		make
 
 build_bpf:
@@ -47,7 +48,7 @@ override_dh_clean: clean_bpf clean_gatekeeper clean_dpdk clean_luajit
 
 clean_luajit:
 	cd dependencies/luajit-2.0; \
-		make clean
+		make clean && rm -rf install
 
 clean_dpdk:
 	rm -rf dependencies/dpdk/build
