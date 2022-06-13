@@ -8,5 +8,7 @@ generate_if_map usr/sbin/
 gkctl/gkctl usr/sbin/
 gkctl/scripts/* usr/share/gatekeeper
 
+dependencies/dpdk/usertools/dpdk-devbind.py usr/share/gatekeeper/
+
 debian/devbind.sh usr/share/gatekeeper/
 debian/envvars etc/gatekeeper/
