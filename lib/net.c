@@ -484,9 +484,23 @@ find_num_numa_nodes(void)
 
 static int
 configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
-	uint16_t queue_id, enum queue_type ty,
-	unsigned int numa_node, struct rte_mempool *mp)
+	uint16_t queue_id, enum queue_type ty, struct rte_mempool *mp)
 {
+	/*
+	 * Function slave_configure() of the bond driver (see file
+	 * dependencies/dpdk/drivers/net/bonding/rte_eth_bond_pmd.c) passes
+	 * rte_eth_dev_socket_id(port_id) for the parameter socket_id
+	 * of rte_eth_rx_queue_setup() and rte_eth_tx_queue_setup().
+	 *
+	 * If @numa_node is not equal to rte_eth_dev_socket_id(port_id),
+	 * the function rte_eth_dma_zone_reserve() will fail when
+	 * when the driver of the NIC calls it.
+	 *
+	 * Although this issue is only raised while using the bond driver,
+	 * it makes sense to have the RX and TX queues on the same
+	 * NUMA socket to which the underlying Ethernet device is connected.
+	 */
+	unsigned int numa_node = rte_eth_dev_socket_id(port_id);
 	int ret;
 
 	switch (ty) {
@@ -494,8 +508,9 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 		ret = rte_eth_rx_queue_setup(port_id, queue_id,
 			iface->num_rx_desc, numa_node, NULL, mp);
 		if (ret < 0) {
-			G_LOG(ERR, "net: failed to configure port %hhu rx_queue %hu (err=%d)\n",
-				port_id, queue_id, ret);
+			G_LOG(ERR, "%s(): failed to configure RX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
+				__func__, queue_id, port_id, iface->name,
+			       -ret, strerror(-ret));
 			return ret;
 		}
 		break;
@@ -503,14 +518,15 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 		ret = rte_eth_tx_queue_setup(port_id, queue_id,
 			iface->num_tx_desc, numa_node, NULL);
 		if (ret < 0) {
-			G_LOG(ERR, "net: failed to configure port %hhu tx_queue %hu (err=%d)\n",
-				port_id, queue_id, ret);
+			G_LOG(ERR, "%s(): failed to configure TX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
+				__func__, queue_id, port_id, iface->name,
+			       -ret, strerror(-ret));
 			return ret;
 		}
 		break;
 	default:
-		G_LOG(ERR, "net: unsupported queue type (%d) passed to %s\n",
-			ty, __func__);
+		G_LOG(ERR, "%s(): unsupported queue type (%d)\n",
+			__func__, ty);
 		return -1;
 	}
 
@@ -535,7 +551,6 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	int16_t *queues;
 	int ret;
 	uint16_t port;
-	unsigned int numa_node;
 	int16_t new_queue_id;
 
 	RTE_VERIFY(lcore < RTE_MAX_LCORE);
@@ -564,18 +579,17 @@ get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	 * port. All slave ports must be configured and started
 	 * before the bonded port can be started.
 	 */
-	numa_node = rte_lcore_to_socket_id(lcore);
 	for (port = 0; port < iface->num_ports; port++) {
 		ret = configure_queue(iface, iface->ports[port],
-			(uint16_t)new_queue_id, ty, numa_node, mp);
+			(uint16_t)new_queue_id, ty, mp);
 		if (ret < 0)
 			return ret;
 	}
 
 	/* If there's a bonded port, configure it too. */
 	if (iface_bonded(iface)) {
-		ret = configure_queue(iface, iface->id, (uint16_t)new_queue_id,
-			ty, numa_node, mp);
+		ret = configure_queue(iface, iface->id,
+			(uint16_t)new_queue_id, ty, mp);
 		if (ret < 0)
 			return ret;
 	}
