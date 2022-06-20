@@ -878,6 +878,7 @@ rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
 
+	rte_spinlock_unlock_tm(&ltbl->lock);
 	return 0;
 }
 
