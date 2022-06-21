@@ -28,6 +28,7 @@
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_lpm.h"
+#include "gatekeeper_rib.h"
 #include "seqlock.h"
 
 enum gk_fib_action {
@@ -196,27 +197,27 @@ struct gk_fib {
 	} u;
 };
 
-/* Structure for the GK global LPM table. */
+/* The global LPM table of Gatekeeper servers (not Grantor servers). */
 struct gk_lpm {
 	/* Use a spin lock to edit the FIB table. */
 	rte_spinlock_t  lock;
 
-	/* The IPv4 LPM table shared by the GK instances on the same socket. */
+	/* The IPv4 RIB. */
+	struct rib_head rib;
+
+	/* The IPv4 FIB. */
 	struct rte_lpm  *lpm;
 
-	/*
-	 * The fib table for IPv4 LPM table that
-	 * decides the actions on packets.
-	 */
+	/* The IPv4 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl;
 
-	/* The IPv6 LPM table shared by the GK instances on the same socket. */
+	/* The IPv6 RIB. */
+	struct rib_head rib6;
+
+	/* The IPv6 FIB. */
 	struct rte_lpm6 *lpm6;
 
-	/*
-	 * The fib table for IPv6 LPM table that
-	 * decides the actions on packets.
-	 */
+	/* The IPv6 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl6;
 };
 

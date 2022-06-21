@@ -33,26 +33,11 @@ struct rte_lpm *init_ipv4_lpm(const char *tag,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier);
 int lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip);
 
-static inline int
-lpm_is_rule_present(struct rte_lpm *lpm, rte_be32_t ip, uint8_t depth,
-	uint32_t *next_hop)
-{
-	return rte_lpm_is_rule_present(lpm, rte_be_to_cpu_32(ip), depth,
-		next_hop);
-}
-
 /* Similar to init_ipv4_lpm(), see above. */
 struct rte_lpm6 *init_ipv6_lpm(const char *tag,
 	const struct rte_lpm6_config *lpm6_conf,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier);
 int lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip);
-
-static inline int
-lpm6_is_rule_present(struct rte_lpm6 *lpm, uint8_t *ip, uint8_t depth,
-	uint32_t *next_hop)
-{
-	return rte_lpm6_is_rule_present(lpm, ip, depth, next_hop);
-}
 
 static inline void
 destroy_ipv4_lpm(struct rte_lpm *lpm)
