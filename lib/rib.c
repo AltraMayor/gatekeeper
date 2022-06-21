@@ -322,12 +322,43 @@ int
 rib_is_rule_present(const struct rib_head *rib, const uint8_t *address,
 	uint8_t depth, uint32_t *pnext_hop)
 {
-	/* TODO */
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(depth);
-	RTE_SET_USED(pnext_hop);
-	return -1;
+	rib_address_t haddr;
+	int ret;
+	struct rib_node_info info;
+	const struct rib_node *cur_node;
+
+	if (unlikely(depth > rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(rib, &haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/*
+	 * There is no need to mask @haddr because it is always accessed
+	 * within its mask.
+	 */
+
+	info_init(&info, rib);
+	cur_node = &rib->root_node;
+	do {
+		info_update(&info, cur_node);
+
+		if (info.depth > depth || !info_haddr_matches(&info, haddr))
+			break;
+
+		/* One more match. */
+
+		if (info.depth == depth) {
+			if (cur_node->has_nh) {
+				*pnext_hop = cur_node->next_hop;
+				return 1;
+			}
+			break;
+		}
+
+		cur_node = next_node(cur_node, &info, haddr);
+	} while (cur_node != NULL);
+	return 0;
 }
 
 int
