@@ -257,9 +257,8 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
-		G_LOG(ERR,
-			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",
-			rte_lcore_id(), __func__);
+		G_LOG(CRIT, "%s(): unexpected condition: non-IP packet with Ethernet type: %i\n",
+			__func__, pkt_info->inner_ip_ver);
 		return -1;
 	}
 
@@ -273,9 +272,8 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 2, 1, 0) != 0) {
-		G_LOG(ERR,
-			"Error running function `lookup_policy': %s, at lcore %u\n",
-			lua_tostring(instance->lua_state, -1), rte_lcore_id());
+		G_LOG(ERR, "Error running Lua function lookup_policy(): %s\n",
+			lua_tostring(instance->lua_state, -1));
 		return -1;
 	}
 
@@ -306,9 +304,8 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 		rte_memcpy(policy->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(policy->flow.f.v6.dst.s6_addr));
 	} else {
-		G_LOG(ERR,
-			"Unexpected condition: GT block at lcore %u lookups policy decision for an non-IP packet in function %s\n",
-			rte_lcore_id(), __func__);
+		G_LOG(CRIT, "%s(): unexpected condition: non-IP packet with Ethernet type: %i\n",
+			__func__, pkt_info->inner_ip_ver);
 		return -1;
 	}
 
@@ -318,9 +315,8 @@ lookup_frag_punish_policy_decision(struct gt_packet_headers *pkt_info,
 	*(struct ggu_policy **)ggu_policy_cdata = policy;
 
 	if (lua_pcall(instance->lua_state, 1, 0, 0) != 0) {
-		G_LOG(ERR,
-			"Error running function `lookup_frag_punish_policy': %s, at lcore %u\n",
-			lua_tostring(instance->lua_state, -1), rte_lcore_id());
+		G_LOG(ERR, "Error running Lua function lookup_frag_punish_policy(): %s\n",
+			lua_tostring(instance->lua_state, -1));
 		return -1;
 	}
 
@@ -1063,7 +1059,6 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 {
 	unsigned int max_pkts = gt_conf->max_ggu_notify_pkts;
 	struct ggu_notify_pkt *ggu_pkt = NULL;
-	unsigned int lcore_id = rte_lcore_id();
 	unsigned int i;
 
 	/* Find an available packet, sending a packet if necessary. */
@@ -1093,14 +1088,12 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 			sizeof(ggu_pkt->ipaddr.ip.v6.s6_addr));
 	} else {
 		rte_panic("Unexpected condition: gt at lcore %u adding to notification packet to Gatekeeper server with unknown IP version %hu\n",
-			lcore_id, ggu_pkt->ipaddr.proto);
+			rte_lcore_id(), ggu_pkt->ipaddr.proto);
 	}
 
 	ggu_pkt->buf = rte_pktmbuf_alloc(instance->mp);
 	if (ggu_pkt->buf == NULL) {
-		G_LOG(ERR,
-			"Failed to allocate notification packet on lcore %u\n",
-			lcore_id);
+		G_LOG(ERR, "Failed to allocate notification packet\n");
 		return NULL;
 	}
 
@@ -1408,40 +1401,36 @@ static void
 return_message(struct gt_instance *instance)
 {
 	int ret;
-	unsigned lcore_id = rte_lcore_id();
 	size_t reply_len;
 	struct dynamic_config *dy_conf = get_dy_conf();
 	struct dy_cmd_entry *entry;
 	const char *reply_msg = lua_tolstring(instance->lua_state, -1, &reply_len);
 	if (reply_msg == NULL) {
-		G_LOG(WARNING, "gt: new lua update returned a NULL message at lcore %u\n",
-			lcore_id);
+		G_LOG(WARNING, "New Lua update returned a NULL message\n");
 		goto out;
 	}
 
 	entry = mb_alloc_entry(&dy_conf->mb);
 	if (entry == NULL) {
-		G_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+		G_LOG(ERR, "Failed to send new Lua update return to Dynamic config block at lcore %d\n",
 			dy_conf->lcore_id);
 		goto out;
 	}
 
 	if (unlikely(reply_len > RETURN_MSG_MAX_LEN)) {
-		G_LOG(WARNING,
-			"gt: the return message length (%lu) exceeds the limit (%d) at lcore %u\n",
-			reply_len, RETURN_MSG_MAX_LEN, lcore_id);
-
+		G_LOG(WARNING, "The return message length (%lu) exceeds the limit (%d)\n",
+			reply_len, RETURN_MSG_MAX_LEN);
 		reply_len = RETURN_MSG_MAX_LEN;
 	}
 
 	entry->op = GT_UPDATE_POLICY_RETURN;
-	entry->u.gt.gt_lcore = lcore_id;
+	entry->u.gt.gt_lcore = rte_lcore_id();
 	entry->u.gt.length = reply_len;
 	rte_memcpy(entry->u.gt.return_msg, reply_msg, reply_len);
 
 	ret = mb_send_entry(&dy_conf->mb, entry);
 	if (ret != 0) {
-		G_LOG(ERR, "gt: failed to send new lua update return to Dynamic config block at lcore %d\n",
+		G_LOG(ERR, "Failed to send new Lua update return to Dynamic config block at lcore %d\n",
 			dy_conf->lcore_id);
 	}
 
@@ -1456,10 +1445,7 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 	case GT_UPDATE_POLICY:
 		lua_close(instance->lua_state);
 		instance->lua_state = entry->u.lua_state;
-
-		G_LOG(NOTICE,
-			"Successfully updated the lua state at lcore %u\n",
-			rte_lcore_id());
+		G_LOG(NOTICE, "Successfully updated the Lua state\n");
 		break;
 
 	case GT_UPDATE_POLICY_INCREMENTALLY:
@@ -1469,13 +1455,10 @@ process_gt_cmd(struct gt_cmd_entry *entry, struct gt_instance *instance)
 				"incremental_update_of_gt_lua_state") != 0) ||
 				(lua_pcall(instance->lua_state, 0,
 					!!entry->u.bc.is_returned, 0) != 0)) {
-			G_LOG(ERR, "gt: failed to incrementally update lua state at lcore %u: %s\n",
-				rte_lcore_id(),
+			G_LOG(ERR, "Failed to incrementally update Lua state: %s\n",
 				lua_tostring(instance->lua_state, -1));
 		} else {
-			G_LOG(NOTICE,
-				"Successfully updated the lua state incrementally at lcore %u\n",
-				rte_lcore_id());
+			G_LOG(NOTICE, "Successfully updated the Lua state incrementally\n");
 		}
 
 		if (entry->u.bc.is_returned) {

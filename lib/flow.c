@@ -160,6 +160,5 @@ print_flow_err_msg(const struct ip_flow *flow, const char *err_msg)
 		return;
 	}
 
-	G_LOG(ERR, "Flow (src: %s, dst: %s) at lcore %u: %s\n",
-		src, dst, rte_lcore_id(), err_msg);
+	G_LOG(ERR, "Flow (src: %s, dst: %s): %s\n", src, dst, err_msg);
 }
