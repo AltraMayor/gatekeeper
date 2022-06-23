@@ -1936,8 +1936,8 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 		break;
 
 	default:
-		rte_panic("Invalid FIB action (%u) at %s with lcore %u\n",
-			fib->action, __func__, rte_lcore_id());
+		rte_panic("%s() at lcore %u: invalid FIB action (%u)\n",
+			__func__, rte_lcore_id(), fib->action);
 		break;
 	}
 }

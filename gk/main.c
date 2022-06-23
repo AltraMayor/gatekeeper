@@ -1105,8 +1105,8 @@ gk_synchronize(struct gk_synch_request *req, struct gk_instance *instance)
 		break;
 
 	default:
-		rte_panic("Invalid FIB action (%u) at %s() with lcore %u\n",
-			req->fib->action, __func__, rte_lcore_id());
+		rte_panic("%s() at lcore %u: invalid FIB action (%u)\n",
+			__func__, rte_lcore_id(), req->fib->action);
 		break;
 	}
 

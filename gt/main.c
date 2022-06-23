@@ -222,9 +222,8 @@ gt_reassemble_incoming_pkt(struct rte_mbuf *pkt,
 			pkt, tms, info->inner_l3_hdr, info->frag_hdr);
 	}
 
-	rte_panic("Unexpected condition: gt at lcore %u reassembles a packet with unknown IP version %hu\n",
-		rte_lcore_id(), info->inner_ip_ver);
-
+	rte_panic("%s() at lcore %u: unexpected condition: packet with unknown IP version %hu\n",
+		__func__, rte_lcore_id(), info->inner_ip_ver);
 	return NULL;
 }
 
@@ -976,8 +975,8 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 					notify_udp);
 		}
 	} else {
-		rte_panic("Unexpected condition: gt at lcore %u sending notification packet to Gatekeeper server with unknown IP version %hu\n",
-			rte_lcore_id(), ggu_pkt->ipaddr.proto);
+		rte_panic("%s() at lcore %u: unexpected condition: unknown IP version %hu\n",
+			__func__, rte_lcore_id(), ggu_pkt->ipaddr.proto);
 	}
 }
 
@@ -1087,8 +1086,9 @@ add_notify_pkt(struct gt_config *gt_conf, struct gt_instance *instance,
 		rte_memcpy(ggu_pkt->ipaddr.ip.v6.s6_addr, ipv6_hdr->src_addr,
 			sizeof(ggu_pkt->ipaddr.ip.v6.s6_addr));
 	} else {
-		rte_panic("Unexpected condition: gt at lcore %u adding to notification packet to Gatekeeper server with unknown IP version %hu\n",
-			rte_lcore_id(), ggu_pkt->ipaddr.proto);
+		rte_panic("%s() at lcore %u: unexpected condition: unknown IP version %hu\n",
+			__func__, rte_lcore_id(),
+			ggu_pkt->ipaddr.proto);
 	}
 
 	ggu_pkt->buf = rte_pktmbuf_alloc(instance->mp);
