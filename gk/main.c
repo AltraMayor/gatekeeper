@@ -967,10 +967,8 @@ flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
 			&key, &data, &next);
 	}
 
-	G_LOG(NOTICE,
-		"The GK block at lcore %u flushed %" PRIu64
-		" flows of the flow table due to %s\n",
-		rte_lcore_id(), num_flushed_flows, context);
+	G_LOG(NOTICE, "Flushed %" PRIu64 " flows of the flow table due to %s\n",
+		num_flushed_flows, context);
 }
 
 struct flush_net_prefixes {
@@ -1060,12 +1058,9 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 	int ret = rte_hash_lookup_with_hash(instance->ip_flow_hash_table,
 		&log->flow, log->flow_hash_val);
 	if (ret < 0) {
-		char err_msg[1024];
-
+		char err_msg[128];
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gk: failed to log flow state at %s with lcore %u - flow doesn't exist\n",
-			__func__, rte_lcore_id());
-
+			"%s(): flow does not exist\n", __func__);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
 		print_flow_err_msg(&log->flow, err_msg);
 		return;
@@ -1110,8 +1105,8 @@ gk_synchronize(struct gk_synch_request *req, struct gk_instance *instance)
 		break;
 
 	default:
-		rte_panic("Invalid FIB action (%u) at %s() with lcore %u\n",
-			req->fib->action, __func__, rte_lcore_id());
+		rte_panic("%s() at lcore %u: invalid FIB action (%u)\n",
+			__func__, rte_lcore_id(), req->fib->action);
 		break;
 	}
 
@@ -1881,11 +1876,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 			(const void **)&flow_arr[done_lookups],
 			(hash_sig_t *)&flow_hash_val_arr[done_lookups],
 			num_keys, &pos_arr[done_lookups]);
-		if (ret != 0) {
-			G_LOG(NOTICE,
-				"failed to find multiple keys in the hash table at lcore %u\n",
-				rte_lcore_id());
-		}
+		if (ret != 0)
+			G_LOG(NOTICE, "Failed to find multiple keys in the hash table\n");
 
 		done_lookups += num_keys;
 	}
@@ -2341,11 +2333,8 @@ add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
 			(const void **)&flow_arr[done_lookups],
 			&flow_hash_val_arr[done_lookups],
 			num_keys, &pos_arr[done_lookups]);
-		if (ret != 0) {
-			G_LOG(NOTICE,
-				"failed to find multiple keys in the hash table at lcore %u\n",
-				rte_lcore_id());
-		}
+		if (ret != 0)
+			G_LOG(NOTICE, "Failed to find multiple keys in the hash table\n");
 
 		done_lookups += num_keys;
 	}
