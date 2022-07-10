@@ -440,16 +440,22 @@ extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 		0xFF, ipv6[13], ipv6[14], ipv6[15],	\
 	}
 
+/* Call lacp_enabled() instead this function wherever possible. */
+static inline int
+__lacp_enabled(struct gatekeeper_if *iface)
+{
+	return	iface->bonding_mode == BONDING_MODE_8023AD;
+}
+
 static inline int
 lacp_enabled(struct net_config *net, struct gatekeeper_if *iface)
 {
 	/* When @iface is the back, need to make sure it's enabled. */
 	if (iface == &net->back)
-		return net->back_iface_enabled &&
-			iface->bonding_mode == BONDING_MODE_8023AD;
+		return net->back_iface_enabled && __lacp_enabled(iface);
 
 	/* @iface is the front interface. */
-	return iface->bonding_mode == BONDING_MODE_8023AD;
+	return __lacp_enabled(iface);
 }
 
 int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,

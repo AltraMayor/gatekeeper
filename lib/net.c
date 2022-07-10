@@ -1497,6 +1497,22 @@ init_iface(struct gatekeeper_if *iface)
 		iface->id = (uint8_t)ret;
 
 		/*
+		 * If LACP is enabled, enable multicast addresses.
+		 * Otherwise, rx_burst_8023ad() of DPDK's bonding driver
+		 * (see rte_eth_bond_pmd.c) is going to discard
+		 * multicast Ethernet packets such as ARP and ND packets.
+		 */
+		if (__lacp_enabled(iface)) {
+			ret = rte_eth_allmulticast_enable(iface->id);
+			if (ret < 0) {
+				G_LOG(ERR, "%s(%s): cannot enable multicast on bond device (errno=%i): %s\n",
+					__func__, iface->name,
+					-ret, rte_strerror(-ret));
+				goto close_ports;
+			}
+		}
+
+		/*
 		 * Bonded port inherits RSS and offload settings
 		 * from the slave ports added to it.
 		 */
