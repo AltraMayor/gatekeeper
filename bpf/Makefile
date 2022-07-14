@@ -1,6 +1,5 @@
 CC = clang
 CFLAGS += -O2 -target bpf -I../include \
-	  -I$(RTE_SDK)/$(RTE_TARGET)/include \
 	  -Wno-int-to-void-pointer-cast
 
 TARGETS = granted.bpf declined.bpf grantedv2.bpf web.bpf
