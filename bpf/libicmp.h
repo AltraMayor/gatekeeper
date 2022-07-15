@@ -23,8 +23,9 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 
+#include <rte_mbuf_core.h>
+
 #include "gatekeeper_flow_bpf.h"
-#include "bpf_mbuf.h"
 
 static inline uint64_t
 check_icmp(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)

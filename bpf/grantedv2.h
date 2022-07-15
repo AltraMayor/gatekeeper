@@ -23,9 +23,9 @@
 #include <stdbool.h>
 
 #include <rte_common.h>
+#include <rte_mbuf_core.h>
 
 #include "gatekeeper_flow_bpf.h"
-#include "bpf_mbuf.h"
 
 struct grantedv2_params {
 	/*

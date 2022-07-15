@@ -26,9 +26,9 @@
 #include <stdbool.h>
 
 #include <rte_common.h>
+#include <rte_mbuf_core.h>
 
 #include "gatekeeper_flow_bpf.h"
-#include "bpf_mbuf.h"
 
 struct granted_params {
 	/* Rate limit: kibibyte/second. */
