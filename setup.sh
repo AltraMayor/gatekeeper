@@ -1,4 +1,4 @@
-# Gatekeeper - DoS protection system.
+# Gatekeeper - DDoS protection system.
 # Copyright (C) 2016 Digirati LTDA.
 #
 # This program is free software: you can redistribute it and/or modify
