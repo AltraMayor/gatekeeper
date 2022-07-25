@@ -12,6 +12,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 		[1] = "declined.bpf",
 		[2] = "grantedv2.bpf",
 		[3] = "web.bpf",
+		[4] = "tcp-services.bpf",
 	}
 
 	-- XXX #155 These parameters should only be changed for performance reasons.

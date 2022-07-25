@@ -189,6 +189,20 @@ struct grantedv2_params {
 	bool direct_if_possible;
 } __attribute__ ((packed));
 
+#define TCPSRV_MAX_NUM_PORTS (12)
+struct tcpsrv_ports {
+	uint16_t p[TCPSRV_MAX_NUM_PORTS];
+};
+
+struct tcpsrv_params {
+	uint32_t tx1_rate_kib_sec;
+	uint32_t next_renewal_ms;
+	uint32_t renewal_step_ms:24;
+	uint8_t listening_port_count:4;
+	uint8_t remote_port_count:4;
+	struct tcpsrv_ports ports;
+} __attribute__ ((packed));
+
 uint16_t gt_cpu_to_be_16(uint16_t x);
 uint32_t gt_cpu_to_be_32(uint32_t x);
 uint16_t gt_be_to_cpu_16(uint16_t x);
@@ -203,6 +217,7 @@ BPF_INDEX_GRANTED = 0
 BPF_INDEX_DECLINED = 1
 BPF_INDEX_GRANTEDV2 = 2
 BPF_INDEX_WEB = 3
+BPF_INDEX_TCPSRV = 4
 
 function decision_granted_nobpf(policy, tx_rate_kib_sec, cap_expire_sec,
 	next_renewal_ms, renewal_step_ms)
@@ -262,6 +277,93 @@ function decision_grantedv2_will_full_params(program_index, policy,
 	params.next_renewal_ms = next_renewal_ms
 	params.renewal_step_ms = renewal_step_ms
 	params.direct_if_possible = direct_if_possible
+
+	return true
+end
+
+local function ipairs_skip_first(a)
+	local f, t, i = ipairs(a)
+	return f, t, i + 1
+end
+
+local function sort_unique(array)
+	if #array < 2 then
+		return
+	end
+
+	table.sort(array)
+
+	-- Unique
+	local prv_indx = 1
+	local prv_elem = array[prv_indx]
+	for i, v in ipairs_skip_first(array) do
+		if prv_elem ~= v then
+			prv_indx = prv_indx + 1
+			prv_elem = v
+			array[prv_indx] = prv_elem
+		end
+		if prv_indx < i then
+			array[i] = nil
+		end
+	end
+end
+
+-- CAUTION: Do not refer to the arrays @listening_ports and @remote_ports
+-- once this function returns.
+function tcpsrv_ports(listening_ports, remote_ports)
+	sort_unique(listening_ports)
+	sort_unique(remote_ports)
+
+	local total_ports = #listening_ports + #remote_ports
+	if total_ports > c.TCPSRV_MAX_NUM_PORTS then
+		error("There are " .. total_ports .. " ports; maximum of "  ..
+			c.TCPSRV_MAX_NUM_PORTS .. " ports")
+	end
+
+	local ret = {
+		listening_port_count = #listening_ports,
+		remote_port_count = #remote_ports,
+		ports = listening_ports,
+	}
+
+	-- Padding.
+	local pad_n = c.TCPSRV_MAX_NUM_PORTS - total_ports
+	for i = 1, pad_n do
+		table.insert(ret.ports, 0)
+	end
+
+	-- Add remote ports in reverse order.
+	for i = #remote_ports, 1, -1 do
+		table.insert(ret.ports, remote_ports[i])
+	end
+
+	assert(#ret.ports == c.TCPSRV_MAX_NUM_PORTS)
+	return ret
+end
+
+-- The BPF tcp-services.c only supports 12 (listening + remote) ports.
+-- The BPF tcp-services.c does not support idiosyncratic services like FTP.
+-- If you need more than 12 ports, or supporting idiosyncratic services,
+-- write a custom BPF following the BPF web.c example.
+function decision_tcpsrv(policy, tx1_rate_kib_sec, cap_expire_sec,
+	next_renewal_ms, renewal_step_ms, ports)
+	policy.state = c.GK_BPF
+	policy.params.bpf.expire_sec = cap_expire_sec
+	policy.params.bpf.program_index = BPF_INDEX_TCPSRV
+	policy.params.bpf.reserved = 0
+	policy.params.bpf.cookie_len = ffi.sizeof("struct tcpsrv_params")
+
+	local params = ffi.cast("struct tcpsrv_params *",
+		policy.params.bpf.cookie)
+	params.tx1_rate_kib_sec = tx1_rate_kib_sec
+	params.next_renewal_ms = next_renewal_ms
+	params.renewal_step_ms = renewal_step_ms
+	params.listening_port_count = ports.listening_port_count
+	params.remote_port_count = ports.remote_port_count
+
+	for i, v in ipairs(ports.ports) do
+		params.ports.p[i - 1] = v
+	end
 
 	return true
 end
