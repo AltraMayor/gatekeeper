@@ -24,6 +24,7 @@
 
 #include <rte_common.h>
 #include <rte_mbuf_core.h>
+#include <rte_branch_prediction.h>
 
 #include "gatekeeper_flow_bpf.h"
 
@@ -127,7 +128,7 @@ static inline uint64_t
 grantedv2_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 	struct grantedv2_state *state, uint32_t pkt_len)
 {
-	if (ctx->now >= state->budget_renew_at) {
+	if (unlikely(ctx->now >= state->budget_renew_at)) {
 		int64_t max_budget1 = (int64_t)state->tx1_rate_kib_cycle * 1024;
 		int64_t cycles = ctx->now - state->budget_renew_at;
 		int64_t epochs = cycles / cycles_per_sec;
@@ -162,13 +163,14 @@ grantedv2_pkt_end(struct gk_bpf_pkt_ctx *ctx, struct grantedv2_state *state)
 {
 	uint8_t priority = PRIORITY_GRANTED;
 
-	if (ctx->now >= state->send_next_renewal_at) {
+	if (unlikely(ctx->now >= state->send_next_renewal_at)) {
 		state->send_next_renewal_at = ctx->now +
 			state->renewal_step_cycle;
 		priority = PRIORITY_RENEW_CAP;
 	}
 
-	if (gk_bpf_prep_for_tx(ctx, priority, state->direct_if_possible) < 0)
+	if (unlikely(gk_bpf_prep_for_tx(ctx, priority,
+			state->direct_if_possible) < 0))
 		return GK_BPF_PKT_RET_ERROR;
 
 	return GK_BPF_PKT_RET_FORWARD;

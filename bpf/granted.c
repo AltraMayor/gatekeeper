@@ -27,6 +27,7 @@
 
 #include <rte_common.h>
 #include <rte_mbuf_core.h>
+#include <rte_branch_prediction.h>
 
 #include "gatekeeper_flow_bpf.h"
 
@@ -96,7 +97,7 @@ granted_pkt(struct gk_bpf_pkt_ctx *ctx)
 	uint32_t pkt_len;
 	uint8_t priority = PRIORITY_GRANTED;
 
-	if (ctx->now >= state->budget_renew_at) {
+	if (unlikely(ctx->now >= state->budget_renew_at)) {
 		state->budget_renew_at = ctx->now + cycles_per_sec;
 		state->budget_byte = (uint64_t)state->tx_rate_kib_cycle * 1024;
 	}
@@ -106,13 +107,13 @@ granted_pkt(struct gk_bpf_pkt_ctx *ctx)
 		return GK_BPF_PKT_RET_DECLINE;
 	state->budget_byte -= pkt_len;
 
-	if (ctx->now >= state->send_next_renewal_at) {
+	if (unlikely(ctx->now >= state->send_next_renewal_at)) {
 		state->send_next_renewal_at = ctx->now +
 			state->renewal_step_cycle;
 		priority = PRIORITY_RENEW_CAP;
 	}
 
-	if (gk_bpf_prep_for_tx(ctx, priority, false) < 0)
+	if (unlikely(gk_bpf_prep_for_tx(ctx, priority, false) < 0))
 		return GK_BPF_PKT_RET_ERROR;
 
 	return GK_BPF_PKT_RET_FORWARD;

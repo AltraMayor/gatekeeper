@@ -79,7 +79,7 @@ web_pkt(struct gk_bpf_pkt_ctx *ctx)
 
 	if (ctx->fragmented)
 		goto secondary_budget;
-	if (pkt->l4_len < sizeof(*tcp_hdr)) {
+	if (unlikely(pkt->l4_len < sizeof(*tcp_hdr))) {
 		/* Malformed TCP header. */
 		return GK_BPF_PKT_RET_DECLINE;
 	}
