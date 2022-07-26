@@ -48,7 +48,8 @@ PKGCONF ?= pkg-config
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
 CFLAGS += -O3 -g $(shell $(PKGCONF) --cflags libdpdk) \
 	  -DALLOW_EXPERIMENTAL_API -DCORO_ASM \
-	  -Wno-address-of-packed-member -Wfatal-errors $(WERROR_FLAGS) \
+	  -Wall -Wextra -Wno-packed-not-aligned -Wno-address-of-packed-member \
+	  -Wfatal-errors $(WERROR_FLAGS) \
 	  -I${GATEKEEPER}include -I/usr/local/include/luajit-2.0/
 LDLIBS += $(LDIR) -rdynamic -L/usr/local/lib/ -lluajit-5.1 -ldl \
 	-lm -lmnl -lkmod -lcap -lrte_net_bond
