@@ -30,7 +30,6 @@
 
 #include "grantedv2.h"
 #include "libicmp.h"
-#include "libinet.h"
 
 SEC("init") uint64_t
 web_init(struct gk_bpf_init_ctx *ctx)
