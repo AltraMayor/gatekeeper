@@ -600,8 +600,7 @@ process_mb(struct ggu_config *ggu_conf)
 static int
 ggu_proc(void *arg)
 {
-	uint32_t lcore = rte_lcore_id();
-	struct ggu_config *ggu_conf = (struct ggu_config *)arg;
+	struct ggu_config *ggu_conf = arg;
 	uint16_t port_in = ggu_conf->net->back.id;
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;

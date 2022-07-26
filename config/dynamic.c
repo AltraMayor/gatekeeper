@@ -620,7 +620,6 @@ dyn_cfg_proc(void *arg)
 {
 	int ret = 0;
 	struct dynamic_config *dy_conf = arg;
-	uint32_t lcore = dy_conf->lcore_id;
 
 	G_LOG(NOTICE,
 		"The Dynamic Config block is running at tid = %u\n", gettid());

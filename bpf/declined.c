@@ -20,16 +20,20 @@
 
 #include <stdint.h>
 
+#include <rte_common.h>
+
 #include "gatekeeper_flow_bpf.h"
 
 SEC("init") uint64_t
 declined_init(struct gk_bpf_init_ctx *ctx)
 {
+	RTE_SET_USED(ctx);
 	return GK_BPF_INIT_RET_OK;
 }
 
 SEC("pkt") uint64_t
 declined_pkt(struct gk_bpf_pkt_ctx *ctx)
 {
+	RTE_SET_USED(ctx);
 	return GK_BPF_PKT_RET_DECLINE;
 }
