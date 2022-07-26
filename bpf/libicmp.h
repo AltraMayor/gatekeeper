@@ -32,13 +32,13 @@ check_icmp(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)
 {
 	struct icmphdr *icmp_hdr;
 
-	if (ctx->l3_proto != ETHERTYPE_IP) {
+	if (unlikely(ctx->l3_proto != ETHERTYPE_IP)) {
 		/* ICMP must be on top of IPv4. */
 		return GK_BPF_PKT_RET_DECLINE;
 	}
 	if (ctx->fragmented)
 		return GK_BPF_PKT_RET_DECLINE;
-	if (pkt->l4_len < sizeof(*icmp_hdr)) {
+	if (unlikely(pkt->l4_len < sizeof(*icmp_hdr))) {
 		/* Malformed ICMP header. */
 		return GK_BPF_PKT_RET_DECLINE;
 	}
@@ -63,13 +63,13 @@ check_icmp6(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)
 {
 	struct icmp6_hdr *icmp6_hdr;
 
-	if (ctx->l3_proto != ETHERTYPE_IPV6) {
+	if (unlikely(ctx->l3_proto != ETHERTYPE_IPV6)) {
 		/* ICMPv6 must be on top of IPv6. */
 		return GK_BPF_PKT_RET_DECLINE;
 	}
 	if (ctx->fragmented)
 		return GK_BPF_PKT_RET_DECLINE;
-	if (pkt->l4_len < sizeof(*icmp6_hdr)) {
+	if (unlikely(pkt->l4_len < sizeof(*icmp6_hdr))) {
 		/* Malformed ICMPv6 header. */
 		return GK_BPF_PKT_RET_DECLINE;
 	}
