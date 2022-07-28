@@ -179,6 +179,8 @@ ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 		return -1;
 	}
 
+	G_LOG(NOTICE, "%s(%s): EtherType=0x%x flow supported\n",
+		__func__, iface->name, ether_type);
 	return 0;
 }
 
@@ -323,6 +325,8 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		return -1;
 	}
 
+	G_LOG(NOTICE, "%s(%s, %s): IPv4 flow supported\n",
+		__func__, iface->name, str_flow);
 	return 0;
 }
 
