@@ -126,35 +126,35 @@ print_flow_err_msg(const struct ip_flow *flow, const char *err_msg)
 	RTE_BUILD_BUG_ON(sizeof(dst) < sizeof(INVALID_IP_ADDR_STRING));
 
 	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
-		if (inet_ntop(AF_INET, &flow->f.v4.src,
-				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "%s(): failed to convert source IPv4 address to a string errno=%i: %s\n",
+		if (unlikely(inet_ntop(AF_INET, &flow->f.v4.src,
+				src, sizeof(src)) == NULL)) {
+			G_LOG(ERR, "%s(): failed to convert source IPv4 address to a string (errno=%i): %s\n",
 				__func__, errno, strerror(errno));
 			strcpy(src, INVALID_IP_ADDR_STRING);
 		}
 
-		if (inet_ntop(AF_INET, &flow->f.v4.dst,
-				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "%s(): failed to convert destination IPv4 address to a string errno=%i: %s\n",
+		if (unlikely(inet_ntop(AF_INET, &flow->f.v4.dst,
+				dst, sizeof(dst)) == NULL)) {
+			G_LOG(ERR, "%s(): failed to convert destination IPv4 address to a string (errno=%i): %s\n",
 				__func__, errno, strerror(errno));
 			strcpy(dst, INVALID_IP_ADDR_STRING);
 		}
 	} else if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
-		if (inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
-				src, sizeof(src)) == NULL) {
-			G_LOG(ERR, "%s(): failed to convert source IPv6 address to a string errno=%i: %s\n",
+		if (unlikely(inet_ntop(AF_INET6, flow->f.v6.src.s6_addr,
+				src, sizeof(src)) == NULL)) {
+			G_LOG(ERR, "%s(): failed to convert source IPv6 address to a string (errno=%i): %s\n",
 				__func__, errno, strerror(errno));
 			strcpy(src, INVALID_IP_ADDR_STRING);
 		}
 
-		if (inet_ntop(AF_INET6, flow->f.v6.dst.s6_addr,
-				dst, sizeof(dst)) == NULL) {
-			G_LOG(ERR, "%s(): failed to convert destination IPv6 address to a string errno=%i: %s\n",
+		if (unlikely(inet_ntop(AF_INET6, flow->f.v6.dst.s6_addr,
+				dst, sizeof(dst)) == NULL)) {
+			G_LOG(ERR, "%s(): failed to convert destination IPv6 address to a string (errno=%i): %s\n",
 				__func__, errno, strerror(errno));
 			strcpy(dst, INVALID_IP_ADDR_STRING);
 		}
 	} else {
-		G_LOG(ERR,
+		G_LOG(CRIT,
 			"flow: %s; while trying to show flow data, an unknown flow type %hu was found\n",
 			err_msg, flow->proto);
 		return;
