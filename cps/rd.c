@@ -619,9 +619,9 @@ put_priority(struct nlmsghdr *reply, uint32_t priority)
 }
 
 static void
-rd_fill_getroute_reply(const struct cps_config *cps_conf,
-	struct nlmsghdr *reply, struct gk_fib *fib, int family, uint32_t seq,
-	uint8_t prefix_len, struct ipaddr **gw_addr)
+rd_fill_getroute_reply(const void *prefix, const struct cps_config *cps_conf,
+	struct nlmsghdr *reply, const struct gk_fib *fib, int family,
+	uint32_t seq, uint8_t prefix_len, const struct ipaddr **gw_addr)
 {
 	struct rtmsg *rm;
 
@@ -677,15 +677,35 @@ rd_fill_getroute_reply(const struct cps_config *cps_conf,
 		*gw_addr = NULL;
 		break;
 	case GK_DROP:
-		put_priority(reply, fib->u.gateway.props.priority);
+		put_priority(reply, fib->u.drop.props.priority);
 		rm->rtm_protocol = fib->u.drop.props.rt_proto;
 		rm->rtm_type = RTN_BLACKHOLE;
 		*gw_addr = NULL;
 		break;
-	default:
-		rte_panic("Invalid FIB action (%u) in FIB while being processed by CPS block in %s\n",
-			fib->action, __func__);
-		return;
+	default: {
+		/*
+		 * Things went bad, but keep going.
+		 */
+
+		char str_prefix[INET6_ADDRSTRLEN];
+
+		RTE_BUILD_BUG_ON(INET6_ADDRSTRLEN < INET_ADDRSTRLEN);
+
+		/* Enter some generic values. */
+		rm->rtm_protocol = RTPROT_STATIC;
+		rm->rtm_type = RTN_UNICAST;
+		*gw_addr = NULL;
+
+		if (unlikely(inet_ntop(family, prefix, str_prefix,
+				sizeof(str_prefix)) == NULL)) {
+			G_LOG(ERR, "%s(): failed to convert address of family=%i to a string (errno=%i): %s\n",
+				__func__, family, errno, strerror(errno));
+			strcpy(str_prefix, "<ERROR>");
+		}
+		G_LOG(CRIT, "%s(%s/%i): invalid FIB action (%u) in FIB",
+			__func__, str_prefix, prefix_len, fib->action);
+		break;
+	}
 	}
 }
 
@@ -762,15 +782,16 @@ rd_getroute_ipv4(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	index = rte_lpm_rule_iterate(&state, &re4);
 	while (index >= 0) {
 		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
-		struct ipaddr *gw_addr;
+		const struct ipaddr *gw_addr;
 		struct nlmsghdr *reply =
 			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+		uint32_t ip = htonl(re4->ip);
 
-		rd_fill_getroute_reply(cps_conf, reply, fib,
+		rd_fill_getroute_reply(&ip, cps_conf, reply, fib,
 			AF_INET, req->nlmsg_seq, state.depth, &gw_addr);
 
 		/* Add address. */
-		mnl_attr_put_u32(reply, RTA_DST, htonl(re4->ip));
+		mnl_attr_put_u32(reply, RTA_DST, ip);
 
 		if (fib->action == GK_FWD_GRANTOR) {
 			unsigned int i;
@@ -831,16 +852,15 @@ rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 	index = rte_lpm6_rule_iterate(&state6, &re6);
 	while (index >= 0) {
 		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
-		struct ipaddr *gw_addr;
+		const struct ipaddr *gw_addr;
 		struct nlmsghdr *reply =
 			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
 
-		rd_fill_getroute_reply(cps_conf, reply, fib,
+		rd_fill_getroute_reply(re6.ip, cps_conf, reply, fib,
 			AF_INET6, req->nlmsg_seq, re6.depth, &gw_addr);
 
 		/* Add address. */
-		mnl_attr_put(reply, RTA_DST,
-			sizeof(struct in6_addr), re6.ip);
+		mnl_attr_put(reply, RTA_DST, sizeof(struct in6_addr), re6.ip);
 
 		if (fib->action == GK_FWD_GRANTOR) {
 			unsigned int i;
