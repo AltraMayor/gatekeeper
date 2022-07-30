@@ -747,24 +747,28 @@ int
 convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n)
 {
 	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
-		if (inet_ntop(AF_INET, &ip_addr->ip.v4, res, n) == NULL) {
-			G_LOG(ERR, "net: %s: failed to convert a number to an IPv4 address (%s)\n",
-				__func__, strerror(errno));
+		if (unlikely(inet_ntop(AF_INET, &ip_addr->ip.v4, res, n)
+				== NULL)) {
+			G_LOG(ERR, "%s(): failed to convert an IPv4 address to string (errno=%i): %s\n",
+				__func__, errno, strerror(errno));
 			return -1;
 		}
-	} else if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
-		if (inet_ntop(AF_INET6, &ip_addr->ip.v6, res, n) == NULL) {
-			G_LOG(ERR, "net: %s: failed to convert a number to an IPv6 address (%s)\n",
-				__func__, strerror(errno));
-			return -1;
-		}
-	} else {
-		G_LOG(ERR, "net: unexpected condition at %s: unknown IP type %hu\n",
-			__func__, ip_addr->proto);
-		return -1;
+		return 0;
 	}
 
-	return 0;
+	if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
+		if (unlikely(inet_ntop(AF_INET6, &ip_addr->ip.v6, res, n)
+				== NULL)) {
+			G_LOG(ERR, "%s(): failed to convert an IPv6 address to string (errno=%i): %s\n",
+				__func__, errno, strerror(errno));
+			return -1;
+		}
+		return 0;
+	}
+
+	G_LOG(CRIT, "%s(): unexpected condition: unknown IP type %hu\n",
+		__func__, ip_addr->proto);
+	return -1;
 }
 
 static int

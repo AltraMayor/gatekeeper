@@ -1906,8 +1906,13 @@ fillup_gk_fib_dump_entry_ether(struct fib_dump_addr_set *addr_set,
 		&addr_set->d_addr);
 }
 
+/*
+ * CAUTION: fields @dentry->addr and @dentry->prefix_len must be filled in
+ * before calling this function.
+ */
 static void
-fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
+fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry,
+	const struct gk_fib *fib)
 {
 	dentry->action = fib->action;
 	switch (dentry->action) {
@@ -1935,10 +1940,22 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry, struct gk_fib *fib)
 	case GK_DROP:
 		break;
 
-	default:
-		rte_panic("%s() at lcore %u: invalid FIB action (%u)\n",
-			__func__, rte_lcore_id(), fib->action);
+	default: {
+		/*
+		 * Things went bad, but keep going.
+		 */
+
+		char str_prefix[INET6_ADDRSTRLEN];
+
+		RTE_BUILD_BUG_ON(INET6_ADDRSTRLEN < INET_ADDRSTRLEN);
+
+		if (unlikely(convert_ip_to_str(&dentry->addr, str_prefix,
+				sizeof(str_prefix)) < 0))
+			strcpy(str_prefix, "<ERROR>");
+		G_LOG(CRIT, "%s(%s/%i): invalid FIB action (%u) in FIB",
+			__func__, str_prefix, dentry->prefix_len, fib->action);
 		break;
+	}
 	}
 }
 
