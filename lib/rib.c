@@ -171,8 +171,13 @@ rib_create(struct rib_head *rib, const char *name, int socket_id,
 void
 rib_free(struct rib_head *rib)
 {
-	/* TODO */
-	RTE_SET_USED(rib);
+	rib->root_node.has_nh = false;
+	rib->root_node.branch[false] = NULL;
+	rib->root_node.branch[true] = NULL;
+	rib->version++;
+
+	rte_mempool_free(rib->mp_nodes);
+	rib->mp_nodes = NULL;
 }
 
 int
