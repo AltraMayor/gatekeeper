@@ -774,26 +774,235 @@ done:
 	return 0;
 }
 
+static inline void
+mask_haddr(const struct rib_head *rib, rib_address_t *haddr, uint8_t depth)
+{
+	*haddr &= ~n_one_bits(rib->max_length - depth);
+}
+
+static inline bool
+is_haddr_in_scope(const struct rib_node_info *info, rib_address_t haddr,
+	uint8_t depth)
+{
+	rib_address_t shorter_mask =
+		lshift(info->haddr_mask, info->depth - depth);
+	RTE_VERIFY(depth <= info->depth);
+	return !((haddr ^ info->haddr_matched) & shorter_mask);
+}
+
+static void
+scope_longer_iterator(struct rib_longer_iterator_state *state)
+{
+	struct rib_node_info prv_info, info;
+	const struct rib_node *cur_node;
+
+	info_init(&info, state->rib);
+	cur_node = &state->rib->root_node;
+	do {
+		prv_info = info;
+
+		info_update(&info, cur_node);
+		if (info.depth >= state->min_depth) {
+			if (!is_haddr_in_scope(&info, state->next_address,
+					state->min_depth))
+				break;
+
+			/* Found the scope. */
+			goto scope;
+		}
+
+		/* It is not deep enough into the prefix tree. */
+
+		if (!info_haddr_matches(&info, state->next_address))
+			break;
+
+		cur_node = next_node(cur_node, &info, state->next_address);
+	} while (cur_node != NULL);
+
+	/*
+	 * There is no prefix with @state->min_depth for
+	 * @state->next_address.
+	 */
+	cur_node = NULL;
+
+scope:
+	state->version = state->rib->version;
+	state->start_node = cur_node;
+	state->start_info = prv_info;
+}
+
 int
 rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
 	const struct rib_head *rib, const uint8_t *address, uint8_t depth)
 {
-	/* TODO */
-	RTE_SET_USED(state);
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(depth);
-	return -1;
+	int ret;
+
+	if (unlikely(depth > rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(rib, &state->next_address, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/*
+	 * It is necessary to mask @state->next_address because
+	 * the iterator compares it with the prefixes of the branches of
+	 * the RIB to avoid previously visited prefixes. And these comparisons
+	 * are done without masking.
+	 */
+	mask_haddr(rib, &state->next_address, depth);
+
+	state->rib = rib;
+	state->min_depth = depth;
+	state->next_depth = depth;
+	state->has_ended = false;
+	scope_longer_iterator(state);
+	return 0;
+}
+
+static void
+__rib_longer_iterator_next(struct rib_longer_iterator_state *state,
+	const struct rib_node *cur_node, struct rib_node_info info)
+{
+	if (cur_node == NULL)
+		return;
+
+	info_update(&info, cur_node);
+
+	if (!state->ignore_next_address) {
+		/*
+		 * Invariants:
+		 *
+		 * 1. Only the body of this if statement sets
+		 *    @state->ignore_next_address true.
+		 *
+		 *    Proof: Inspect the code.
+		 *
+		 * 2. When @state->ignore_next_address is set true,
+		 *    no recursive call already in the stack is affected,
+		 *    that is, changes its execution.
+		 *
+		 *    Proof:
+		 *
+		 *    Assume that @state->ignore_next_address is false;
+		 *    otherwise setting it can not affect recursive calls
+		 *    already in the stack.
+		 *
+		 *    All recursive calls already in the stack are either
+		 *    (A) within the body of this if statement or (B) after it.
+		 *
+		 *    (A) The recursive calls already in the stack and within
+		 *    the body of this if statement do not test
+		 *    @state->ignore_next_address again; inspect the code.
+		 *
+		 *    (B) The recursive calls already in the stack and after
+		 *    the body of this if statement have no reference to
+		 *    @state->ignore_next_address thanks to invariant 1.
+		 *
+		 *    Notice that a recursive call already in the stack may
+		 *    make another recursive call that will be affected, but
+		 *    this is a *new* recursive call.
+		 */
+		if (info.depth < state->next_depth &&
+				info_haddr_matches(&info,
+					state->next_address)) {
+			int next_b = next_bit(&info, state->next_address);
+			if (unlikely(next_b < 0))
+				return;
+
+			__rib_longer_iterator_next(state,
+				cur_node->branch[next_b], info);
+			/*
+			 * There may or may not be a rule for the prefix
+			 * @state->next_address/@state->next_depth, but
+			 * one needs to find the immediately greater prefix.
+			 *
+			 * One does not need to check @cur_node->has_nh
+			 * because (info.depth < state->next_depth) means
+			 * that the rule of @cur_node is before the prefix
+			 * @state->next_address/@state->next_depth.
+			 */
+			if (next_b == 0) {
+				__rib_longer_iterator_next(state,
+					cur_node->branch[true],	info);
+			}
+			return;
+		}
+
+		/*
+		 * Notice that if @cur_node corresponds to the prefix
+		 * @state->next_address/@state->next_depth, but
+		 * @cur_node->has_nh is false because the prefix was removed,
+		 * @state->found_return can only become true in another
+		 * point of the recursion.
+		 *
+		 * This is why @state->ignore_next_address and
+		 * @state->found_return may have different values.
+		 */
+		state->ignore_next_address = true;
+
+		if (info.haddr_matched < state->next_address) {
+			/*
+			 * There is no rule for the prefix
+			 * @state->next_address/@state->next_depth or
+			 * after it on this branch.
+			 */
+			return;
+		}
+	}
+
+	/* Any prefix from here on is a match. */
+
+	if (cur_node->has_nh) {
+		if (state->found_return) {
+			state->next_address = info.haddr_matched;
+			state->next_depth = info.depth;
+			longjmp(state->jmp_found, true);
+		}
+
+		state->found_return = true;
+		RTE_VERIFY(write_addr(state->rib,
+				(uint8_t *)&state->rule->address_no,
+				info.haddr_matched) == 0);
+		state->rule->depth = info.depth;
+		state->rule->next_hop = cur_node->next_hop;
+		/* Still missing the next rule after the found rule. */
+	}
+
+	__rib_longer_iterator_next(state, cur_node->branch[false], info);
+	__rib_longer_iterator_next(state, cur_node->branch[true], info);
 }
 
 int
 rib_longer_iterator_next(struct rib_longer_iterator_state *state,
 	struct rib_iterator_rule *rule)
 {
-	/* TODO */
-	RTE_SET_USED(state);
-	RTE_SET_USED(rule);
-	return -1;
+	if (unlikely(state->has_ended))
+		return -ENOENT;
+
+	/* Set fields used during recursion. */
+	state->ignore_next_address = false;
+	state->found_return = false;
+	state->rule = rule;
+
+	if (setjmp(state->jmp_found) == 0) {
+		if (state->version != state->rib->version)
+			scope_longer_iterator(state);
+
+		/* Start recursion. */
+		__rib_longer_iterator_next(state, state->start_node,
+			state->start_info);
+		state->has_ended = true;
+
+		if (state->found_return) {
+			/* It found the last rule. */
+			goto found;
+		}
+		return -ENOENT;
+	}
+
+found:
+	/* A rule was found. */
+	return 0;
 }
 
 int
