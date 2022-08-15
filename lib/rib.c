@@ -180,15 +180,142 @@ rib_free(struct rib_head *rib)
 	rib->mp_nodes = NULL;
 }
 
+static inline void
+info_init(struct rib_node_info *info, const struct rib_head *rib)
+{
+	info->haddr_matched = 0;
+	info->haddr_mask = 0;
+	info->depth = 0;
+	info->missing_bits = rib->max_length;
+}
+
+static rib_address_t
+lshift(rib_address_t x, uint8_t count)
+{
+	RTE_BUILD_BUG_ON((typeof(count))-1 < RIB_MAX_ADDRESS_LENGTH);
+
+	if (unlikely(count > RIB_MAX_ADDRESS_LENGTH)) {
+		G_LOG(CRIT, "%s(): bug: count == %i is greater than %i\n",
+			__func__, count, RIB_MAX_ADDRESS_LENGTH);
+		count = RIB_MAX_ADDRESS_LENGTH;
+	}
+
+	/*
+	 * The result of the left shift operator (i.e. <<) is undefined if
+	 * the right operand is negative, or greater than or equal to
+	 * the number of bits in the type of the left expression.
+	 */
+	if (unlikely(count == RIB_MAX_ADDRESS_LENGTH))
+		return 0;
+
+	return x << count;
+}
+
+static inline rib_address_t
+n_one_bits(uint8_t n)
+{
+	return lshift(1, n) - 1;
+}
+
+static void
+info_update(struct rib_node_info *info, const struct rib_node *cur_node)
+{
+	rib_address_t lsb_mask; /* Mask for the least-significant bits. */
+
+	/* Update @info->missing_bits. */
+	info->missing_bits -= cur_node->matched_bits;
+	RTE_VERIFY(info->missing_bits >= 0);
+
+	/* Update @info->depth. */
+	info->depth += cur_node->matched_bits;
+
+	/* Update @info->haddr_mask. */
+	lsb_mask = n_one_bits(cur_node->matched_bits);
+	info->haddr_mask |= lshift(lsb_mask, info->missing_bits);
+
+	/* Update @info->haddr_matched. */
+	RTE_VERIFY((cur_node->pfx_bits & ~lsb_mask) == 0);
+	info->haddr_matched |= lshift(cur_node->pfx_bits, info->missing_bits);
+}
+
+static inline bool
+info_haddr_matches(const struct rib_node_info *info, rib_address_t haddr)
+{
+	return (haddr & info->haddr_mask) == info->haddr_matched;
+}
+
+static inline bool
+test_bit_n(rib_address_t haddr, uint8_t bit)
+{
+	return !!(haddr & lshift(1, bit));
+}
+
+static int
+next_bit(const struct rib_node_info *info, rib_address_t haddr)
+{
+	if (unlikely(info->missing_bits <= 0)) {
+		G_LOG(CRIT, "%s(): bug: missing_bits == %i is not positive\n",
+			__func__, info->missing_bits);
+		return -EINVAL;
+	}
+
+	return test_bit_n(haddr, info->missing_bits - 1);
+}
+
+static inline const struct rib_node *
+next_node(const struct rib_node *cur_node, const struct rib_node_info *info,
+	rib_address_t haddr)
+{
+	int ret = next_bit(info, haddr);
+	if (unlikely(ret < 0))
+		return NULL;
+
+	return cur_node->branch[ret];
+}
+
 int
 rib_lookup(const struct rib_head *rib, const uint8_t *address,
 	uint32_t *pnext_hop)
 {
-	/* TODO */
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(pnext_hop);
-	return -1;
+	rib_address_t haddr;
+	int ret = read_addr(rib, &haddr, address);
+	bool has_nh = false;
+	uint32_t next_hop;
+	struct rib_node_info info;
+	const struct rib_node *cur_node;
+
+	if (unlikely(ret < 0))
+		return ret;
+
+	info_init(&info, rib);
+	cur_node = &rib->root_node;
+	do {
+		info_update(&info, cur_node);
+
+		if (!info_haddr_matches(&info, haddr))
+			break;
+
+		/* One more match. */
+
+		if (cur_node->has_nh) {
+			has_nh = true;
+			next_hop = cur_node->next_hop;
+		}
+
+		if (info.missing_bits == 0) {
+			RTE_VERIFY(cur_node->branch[false] == NULL);
+			RTE_VERIFY(cur_node->branch[true] == NULL);
+			break;
+		}
+
+		cur_node = next_node(cur_node, &info, haddr);
+	} while (cur_node != NULL);
+
+	if (has_nh) {
+		*pnext_hop = next_hop;
+		return 0;
+	}
+	return -ENOENT;
 }
 
 int
