@@ -361,16 +361,273 @@ rib_is_rule_present(const struct rib_head *rib, const uint8_t *address,
 	return 0;
 }
 
-int
-rib_add(struct rib_head *rib, const uint8_t *address, uint8_t depth,
-	uint32_t next_hop)
+static struct rib_node *
+zalloc_node(const struct rib_head *rib)
 {
-	/* TODO */
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(depth);
-	RTE_SET_USED(next_hop);
-	return -1;
+	struct rib_node *new_node;
+	int ret = rte_mempool_get(rib->mp_nodes, (void **)&new_node);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to allocate a node (errno=%i): %s\n",
+			__func__, -ret, rte_strerror(-ret));
+		return NULL;
+	}
+	return memset(new_node, 0, sizeof(*new_node));
+}
+
+static int
+split_cur_node(const struct rib_head *rib, struct rib_node **anchor_cur_node,
+	const struct rib_node_info *info, rib_address_t haddr, uint8_t depth)
+{
+	struct rib_node *new_node, *old_node;
+	rib_prefix_bits_t new_prefix, first_mismatch_bit;
+	int missing_bits, testing_bits, mismatch_bits;
+
+	/* Create a new node for the split. */
+	new_node = zalloc_node(rib);
+	if (unlikely(new_node == NULL))
+		return -ENOMEM;
+
+	/*
+	 * Find the prefix of @new_node.
+	 */
+
+	RTE_BUILD_BUG_ON(sizeof(haddr) != sizeof(uint128_t));
+	RTE_BUILD_BUG_ON(sizeof(new_prefix) != sizeof(uint64_t));
+
+	old_node = *anchor_cur_node;
+	missing_bits = rib->max_length - RTE_MIN(info->depth, depth);
+	testing_bits = info->depth <= depth
+		? old_node->matched_bits
+		: depth - (info->depth - old_node->matched_bits);
+	if (unlikely(testing_bits < 1 ||
+			old_node->matched_bits < testing_bits)) {
+		G_LOG(CRIT,
+			"%s(): bug: testing_bits == %i must be in [1, %i]\n",
+			__func__, testing_bits, old_node->matched_bits);
+		goto bug;
+	}
+
+	new_prefix = (haddr >> missing_bits) & n_one_bits(testing_bits);
+	first_mismatch_bit = rte_align64prevpow2(new_prefix ^
+	       (old_node->pfx_bits >> (old_node->matched_bits - testing_bits)));
+	mismatch_bits = first_mismatch_bit == 0
+		? 0 : rte_bsf64(first_mismatch_bit) + 1;
+	if (unlikely(testing_bits <= mismatch_bits)) {
+		G_LOG(CRIT, "%s(): bug: there should be at least one matched bit; testing_bits == %i and mismatch_bits == %i\n",
+			__func__, testing_bits, mismatch_bits);
+		goto bug;
+	}
+
+	new_node->pfx_bits = new_prefix >> mismatch_bits;
+	new_node->matched_bits = testing_bits - mismatch_bits;
+
+	/* Update the prefix of the old node. */
+	if (unlikely(old_node->matched_bits <= new_node->matched_bits)) {
+		G_LOG(CRIT, "%s(): bug: over matching; old_node->matched_bits == %i, testing_bits == %i, mismatch_bits == %i\n",
+			__func__, old_node->matched_bits,
+			testing_bits, mismatch_bits);
+		goto bug;
+	}
+	old_node->matched_bits -= new_node->matched_bits;
+	old_node->pfx_bits &= n_one_bits(old_node->matched_bits);
+
+	/* Link the old and new nodes. */
+	new_node->branch[
+		test_bit_n(old_node->pfx_bits, old_node->matched_bits - 1)] =
+		old_node;
+	*anchor_cur_node = new_node;
+
+	return 0;
+
+bug:
+	rte_mempool_put(rib->mp_nodes, new_node);
+	return -EFAULT;
+}
+
+static inline struct rib_node **
+next_p_node(struct rib_node **anchor_cur_node, const struct rib_node_info *info,
+	rib_address_t haddr)
+{
+	int ret = next_bit(info, haddr);
+	if (unlikely(ret < 0))
+		return NULL;
+
+	return &(*anchor_cur_node)->branch[ret];
+}
+
+static void
+free_tail(const struct rib_head *rib, struct rib_node *cur_node)
+{
+	while (cur_node != NULL) {
+		struct rib_node *n_node = cur_node->branch[false];
+		if (n_node == NULL)
+			n_node = cur_node->branch[true];
+		rte_mempool_put(rib->mp_nodes, cur_node);
+		cur_node = n_node;
+	}
+}
+
+/*
+ * If successful, @p_anchor_cur_node is updated to refer to
+ * the last node of the tail.
+ */
+static int
+add_haddr_tail(const struct rib_head *rib, struct rib_node ***p_anchor_cur_node,
+	struct rib_node_info *info, const rib_address_t haddr,
+	const uint8_t depth)
+{
+	struct rib_node **saved_anchor_cur_node = *p_anchor_cur_node;
+	struct rib_node **anchor_cur_node = saved_anchor_cur_node;
+	struct rib_node **prv_anchor_cur_node = NULL;
+	int ret;
+
+	if (unlikely(p_anchor_cur_node == NULL || *p_anchor_cur_node == NULL ||
+			**p_anchor_cur_node != NULL)) {
+		G_LOG(CRIT, "%s(): bug: no location to save tail\n", __func__);
+		return -EINVAL;
+	}
+
+	if (unlikely(info->depth >= depth)) {
+		G_LOG(CRIT, "%s(): bug: invalid call, info->depth == %i and depth == %i\n",
+			__func__, info->depth, depth);
+		return -EINVAL;
+	}
+
+	do {
+		struct rib_node *new_node = zalloc_node(rib);
+		if (unlikely(new_node == NULL)) {
+			ret = -ENOMEM;
+			goto error;
+		}
+		*anchor_cur_node = new_node;
+
+		new_node->matched_bits =
+			RTE_MIN(depth - info->depth, RIB_MAX_PREFIX_BITS);
+		new_node->pfx_bits =
+			(haddr >> (info->missing_bits - new_node->matched_bits))
+			& n_one_bits(new_node->matched_bits);
+		info_update(info, new_node);
+		prv_anchor_cur_node = anchor_cur_node;
+
+		if (info->depth == depth)
+			break;
+
+		anchor_cur_node = next_p_node(anchor_cur_node, info, haddr);
+		if (unlikely(anchor_cur_node == NULL)) {
+			ret = -EFAULT;
+			goto error;
+		}
+	} while (info->depth < depth);
+
+	if (unlikely(info->depth != depth)) {
+		G_LOG(CRIT, "%s(): bug: something went wrong, info->depth == %i and depth == %i\n",
+			__func__, info->depth, depth);
+		ret = -EFAULT;
+		goto error;
+	}
+
+	*p_anchor_cur_node = prv_anchor_cur_node;
+	return 0;
+
+error:
+	free_tail(rib, *saved_anchor_cur_node);
+	*saved_anchor_cur_node = NULL;
+	return ret;
+}
+
+int
+rib_add(struct rib_head *rib, const uint8_t *address, const uint8_t depth,
+	const uint32_t next_hop)
+{
+	rib_address_t haddr;
+	int ret;
+	struct rib_node_info info;
+	struct rib_node *fake_root, **anchor_cur_node;
+
+	if (unlikely(depth > rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(rib, &haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/*
+	 * There is no need to mask @haddr because it is always accessed
+	 * within its mask.
+	 */
+
+	info_init(&info, rib);
+	/* @fake_root is only used to bootstrap the loop. */
+	fake_root = &rib->root_node;
+	anchor_cur_node = &fake_root;
+	do {
+		struct rib_node_info prv_info = info;
+		info_update(&info, *anchor_cur_node);
+
+		if (info.depth > depth || !info_haddr_matches(&info, haddr)) {
+			/*
+			 * If execution is here, @haddr and
+			 * @(*anchor_cur_node)->pfx_bits match at least
+			 * the most significant bit of
+			 * @(*anchor_cur_node)->pfx_bits.
+			 *
+			 * Proof:
+			 *
+			 * If @*anchor_cur_node points to @rib->root_node,
+			 * the test in this if statement is false,
+			 * so the execution cannot be here. Therefore,
+			 * if the execution is here, @*anchor_cur_node must
+			 * point to a node that is not @rib->root_node.
+			 *
+			 * All nodes but @rib->root_node make
+			 * @(*anchor_cur_node)->matched_bits > 0 true.
+			 * Therefore, whenever next_p_node() returns,
+			 * @*anchor_cur_node matches at least the most
+			 * significant bit of @(*anchor_cur_node)->pfx_bits
+			 * with @haddr.
+			 *
+			 * Since that @*anchor_cur_node does not point to
+			 * @rib->root_node, the loop has reached next_p_node()
+			 * at least once.
+			 */
+			ret = split_cur_node(rib, anchor_cur_node, &info,
+				haddr, depth);
+			if (unlikely(ret < 0))
+				return ret;
+
+			/*
+			 * If there is an error after here, the newly split
+			 * node will be left in @rib, so iterators must
+			 * be aware of the change.
+			 */
+			rib->version++;
+
+			/* Back track to the new node. */
+			info = prv_info;
+			info_update(&info, *anchor_cur_node);
+		}
+
+		/* One more match. */
+
+		if (info.depth == depth) {
+			if ((*anchor_cur_node)->has_nh)
+				return -EEXIST;
+			goto add_rule;
+		}
+
+		anchor_cur_node = next_p_node(anchor_cur_node, &info, haddr);
+		if (unlikely(anchor_cur_node == NULL))
+			return -EFAULT;
+	} while (*anchor_cur_node != NULL);
+
+	ret = add_haddr_tail(rib, &anchor_cur_node, &info, haddr, depth);
+	if (unlikely(ret < 0))
+		return ret;
+
+add_rule:
+	(*anchor_cur_node)->has_nh = true;
+	(*anchor_cur_node)->next_hop = next_hop;
+	rib->version++;
+	return 0;
 }
 
 int
