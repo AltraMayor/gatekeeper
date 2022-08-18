@@ -643,6 +643,17 @@ found_corruption_in_flow_table(struct gk_instance *instance)
 	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
 }
 
+static inline bool
+is_flow_valid(const struct ip_flow *flow)
+{
+	/*
+	 * If @flow does not satify the following constraints,
+	 * rss_ip_flow_hf() cannot work.
+	 */
+	return flow->proto == RTE_ETHER_TYPE_IPV4 ||
+		flow->proto == RTE_ETHER_TYPE_IPV6;
+}
+
 /*
  * This function is way more complex than necessary because
  * it heals the flow table in case the table is corrupted.
@@ -685,6 +696,16 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	 * to identify any corruption; including flow entries that are invalid
 	 * only because @fe->in_use is false.
 	 */
+
+	if (unlikely(!is_flow_valid(&fe->flow))) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow key is invalid at position %u; logging and removing flow entry...",
+			__func__, entry_idx);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		goto del;
+	}
 
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
@@ -807,8 +828,21 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	 * Use @ret2 instead of @ret to pair this function with its sister
 	 * function gk_del_flow_entry_at_pos().
 	 */
-	int ret2;
+	int ret, ret2;
 	char err_msg[256];
+
+	if (unlikely(!is_flow_valid(flow_key))) {
+		ret = rte_hash_free_key_with_position(
+			instance->ip_flow_hash_table, entry_idx);
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow_key is invalid at position %u. rte_hash_free_key_with_position() returned %i (i.e. %s). Logging and removing flow entry...",
+			__func__, entry_idx, ret, rte_strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		found_corruption_in_flow_table(instance);
+		return gk_del_flow_entry_at_pos(instance, entry_idx);
+	}
 
 	if (likely(flow_key_eq(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
@@ -2455,7 +2489,10 @@ static bool
 test_invalid_flow(__attribute__((unused)) void *arg,
 	const struct ip_flow *flow, struct flow_entry *fe)
 {
-	if (unlikely(!fe->in_use))
+	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
+			!fe->in_use || fe->grantor_fib == NULL ||
+			fe->grantor_fib->action != GK_FWD_GRANTOR
+			))
 		return true;
 
 	switch (fe->state) {
@@ -2467,10 +2504,6 @@ test_invalid_flow(__attribute__((unused)) void *arg,
 	default:
 		return true;
 	}
-
-	if (unlikely(fe->grantor_fib == NULL ||
-			fe->grantor_fib->action != GK_FWD_GRANTOR))
-		return true;
 
 	return !flow_key_eq(flow, &fe->flow);
 }

@@ -113,6 +113,24 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
 }
 
+static void
+print_invalid_flow_err_msg(const struct ip_flow *flow, const char *err_msg)
+{
+	const uint64_t *src = (const uint64_t *)&flow->f.v6.src;
+	const uint64_t *dst = (const uint64_t *)&flow->f.v6.dst;
+
+	RTE_BUILD_BUG_ON(sizeof(flow->f.v6.src) != 16);
+	RTE_BUILD_BUG_ON(sizeof(flow->f.v6.dst) != 16);
+
+	G_LOG(ERR, "INVALID Flow {proto = %i, f.v6.src = 0x%016"PRIx64
+		"%016"PRIx64", f.v6.dst = 0x%016"PRIx64"%016"PRIx64
+		"} at lcore %u: %s\n",
+		flow->proto,
+		rte_cpu_to_be_64(src[0]), rte_cpu_to_be_64(src[1]),
+		rte_cpu_to_be_64(dst[0]), rte_cpu_to_be_64(dst[1]),
+		rte_lcore_id(), err_msg);
+}
+
 #define INVALID_IP_ADDR_STRING "<ERROR>"
 
 void
@@ -154,10 +172,7 @@ print_flow_err_msg(const struct ip_flow *flow, const char *err_msg)
 			strcpy(dst, INVALID_IP_ADDR_STRING);
 		}
 	} else {
-		G_LOG(ERR,
-			"flow: %s; while trying to show flow data, an unknown flow type %hu was found\n",
-			err_msg, flow->proto);
-		return;
+		return print_invalid_flow_err_msg(flow, err_msg);
 	}
 
 	G_LOG(ERR, "Flow (src: %s, dst: %s) at lcore %u: %s\n",
