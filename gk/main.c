@@ -643,6 +643,17 @@ found_corruption_in_flow_table(struct gk_instance *instance)
 	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
 }
 
+static inline bool
+is_flow_valid(const struct ip_flow *flow)
+{
+	/*
+	 * If @flow does not satify the following constraints,
+	 * rss_ip_flow_hf() cannot work.
+	 */
+	return flow->proto == RTE_ETHER_TYPE_IPV4 ||
+		flow->proto == RTE_ETHER_TYPE_IPV6;
+}
+
 /*
  * This function is way more complex than necessary because
  * it heals the flow table in case the table is corrupted.
@@ -685,6 +696,16 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	 * to identify any corruption; including flow entries that are invalid
 	 * only because @fe->in_use is false.
 	 */
+
+	if (unlikely(!is_flow_valid(&fe->flow))) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow key is invalid at position %u; logging and removing flow entry...",
+			__func__, entry_idx);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		goto del;
+	}
 
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
@@ -807,8 +828,21 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	 * Use @ret2 instead of @ret to pair this function with its sister
 	 * function gk_del_flow_entry_at_pos().
 	 */
-	int ret2;
+	int ret, ret2;
 	char err_msg[256];
+
+	if (unlikely(!is_flow_valid(flow_key))) {
+		ret = rte_hash_free_key_with_position(
+			instance->ip_flow_hash_table, entry_idx);
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow_key is invalid at position %u. rte_hash_free_key_with_position() returned %i (i.e. %s). Logging and removing flow entry...",
+			__func__, entry_idx, ret, rte_strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		found_corruption_in_flow_table(instance);
+		return gk_del_flow_entry_at_pos(instance, entry_idx);
+	}
 
 	if (likely(flow_key_eq(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
@@ -1677,7 +1711,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 static int
 process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
+	struct gk_config *gk_conf, struct gk_instance *instance)
 {
 	int ret;
 
@@ -1706,23 +1740,59 @@ process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 
 	case GK_GRANTED:
 		ret = gk_process_granted(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_DECLINED:
 		ret = gk_process_declined(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_BPF:
 		ret = gk_process_bpf(fe, packet,
-			req_bufs, num_reqs, gk_conf, stats);
+			req_bufs, num_reqs, gk_conf, &instance->traffic_stats);
 		break;
 
-	default:
+	default: {
+		char err_msg[256];
+		int ret2;
+
 		ret = -1;
-		GK_LOG(ERR, "Unknown flow state: %d\n", fe->state);
+
+		/*
+		 * The flow table is corrupted.
+		 *
+		 * The ideal solution would be to move the flow into
+		 * the GK_REQUEST state and to process it as such.
+		 * The corresponding fib entry, however, is not available
+		 * to change the state, and finding the fib entry is too
+		 * expensive to do here.
+		 *
+		 * The second best solution would be to remove the flow entry.
+		 * But obtaining the index of @fe requires too much
+		 * rearrangement of the code for an event that is rare.
+		 *
+		 * Thus, the chosen solution is to
+		 * 1. log the problem;
+		 * 2. force the expiration of the flow;
+		 * 3. begin the healing of the flow table.
+		 */
+
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): Unknown flow state: %d; logging and expiring flow, and beginning to heal the flow table...\n",
+			__func__, fe->state);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+
+		fe->in_use = true;
+		fe->expire_at = rte_rdtsc();
+
+		found_corruption_in_flow_table(instance);
 		break;
+	}
 	}
 
 	return ret;
@@ -1936,7 +2006,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 			continue;
 
 		ret = process_flow_entry(fe_arr[i], &pkt_arr[i], req_bufs,
-			&num_reqs, gk_conf, stats);
+			&num_reqs, gk_conf, instance);
 		if (ret < 0)
 			drop_packet_front(pkt_arr[i].pkt, instance);
 		else if (ret == EINPROGRESS) {
@@ -2419,7 +2489,10 @@ static bool
 test_invalid_flow(__attribute__((unused)) void *arg,
 	const struct ip_flow *flow, struct flow_entry *fe)
 {
-	if (unlikely(!fe->in_use))
+	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
+			!fe->in_use || fe->grantor_fib == NULL ||
+			fe->grantor_fib->action != GK_FWD_GRANTOR
+			))
 		return true;
 
 	switch (fe->state) {
@@ -2431,10 +2504,6 @@ test_invalid_flow(__attribute__((unused)) void *arg,
 	default:
 		return true;
 	}
-
-	if (unlikely(fe->grantor_fib == NULL ||
-			fe->grantor_fib->action != GK_FWD_GRANTOR))
-		return true;
 
 	return !flow_key_eq(flow, &fe->flow);
 }
