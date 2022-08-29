@@ -630,14 +630,148 @@ add_rule:
 	return 0;
 }
 
+struct rib_delete_state {
+	/* Parameters of rib_delete(). */
+	struct rib_head *rib;
+	rib_address_t   haddr;
+	uint8_t         depth;
+	/* Long jump to unwind the recursion. */
+	jmp_buf         jmp_end;
+};
+
+static inline bool
+is_node_root(struct rib_head *rib, struct rib_node *cur_node)
+{
+	return cur_node == &rib->root_node;
+}
+
+static unsigned int
+count_children(struct rib_node *cur_node,
+	struct rib_node ***p_anchor_of_single_child)
+{
+	if (cur_node->branch[false] != NULL) {
+		if (cur_node->branch[true] != NULL) {
+			*p_anchor_of_single_child = NULL;
+			return 2;
+		}
+
+		*p_anchor_of_single_child = &cur_node->branch[false];
+		return 1;
+	}
+
+	if (cur_node->branch[true] != NULL) {
+		*p_anchor_of_single_child = &cur_node->branch[true];
+		return 1;
+	}
+
+	*p_anchor_of_single_child = NULL;
+	return 0;
+}
+
+static void
+__rib_delete(struct rib_delete_state *state, struct rib_node **anchor_cur_node,
+	struct rib_node_info info)
+{
+	struct rib_node **anchor_of_single_child;
+	unsigned int children;
+
+	if (*anchor_cur_node == NULL)
+		longjmp(state->jmp_end, -ENOENT);
+
+	info_update(&info, *anchor_cur_node);
+
+	if (info.depth > state->depth ||
+			!info_haddr_matches(&info, state->haddr))
+		longjmp(state->jmp_end, -ENOENT);
+
+	/* One more match. */
+
+	if (info.depth == state->depth) {
+		if (!(*anchor_cur_node)->has_nh)
+			longjmp(state->jmp_end, -ENOENT);
+		(*anchor_cur_node)->has_nh = false;
+	} else {
+		__rib_delete(state,
+			next_p_node(anchor_cur_node, &info, state->haddr),
+			info);
+	}
+
+	/*
+	 * Try to merge @(*anchor_cur_node) downstream.
+	 */
+
+	if (is_node_root(state->rib, *anchor_cur_node) ||
+			(*anchor_cur_node)->has_nh)
+		goto done;
+	children = count_children(*anchor_cur_node, &anchor_of_single_child);
+
+	if (children >= 2)
+		goto done;
+
+	if (children == 0) {
+		/* @(*anchor_cur_node) is a leaf node. */
+		rte_mempool_put(state->rib->mp_nodes, *anchor_cur_node);
+		*anchor_cur_node = NULL;
+		return; /* Allow further compression of @state->rib. */
+	}
+
+	/* @children == 1 */
+
+	if ((*anchor_cur_node)->matched_bits +
+			(*anchor_of_single_child)->matched_bits >
+			RIB_MAX_PREFIX_BITS) {
+		/* @(*anchor_cur_node) cannot merge downstream, try upstream. */
+		return;
+	}
+
+	(*anchor_of_single_child)->pfx_bits |= (*anchor_cur_node)->pfx_bits <<
+		(*anchor_of_single_child)->matched_bits;
+	(*anchor_of_single_child)->matched_bits +=
+		(*anchor_cur_node)->matched_bits;
+	rte_mempool_put(state->rib->mp_nodes, *anchor_cur_node);
+	*anchor_cur_node = *anchor_of_single_child;
+	return; /* Allow further compression of @state->rib. */
+
+done:
+	longjmp(state->jmp_end, true);
+}
+
 int
 rib_delete(struct rib_head *rib, const uint8_t *address, uint8_t depth)
 {
-	/* TODO */
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(depth);
-	return -1;
+	struct rib_delete_state state;
+	int ret;
+
+	if (unlikely(depth > rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(rib, &state.haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/*
+	 * There is no need to mask @state.haddr because it is always accessed
+	 * within its mask.
+	 */
+
+	state.rib = rib;
+	state.depth = depth;
+
+	ret = setjmp(state.jmp_end);
+	if (ret == 0) {
+		struct rib_node *fake_root = &rib->root_node;
+		struct rib_node_info info;
+
+		info_init(&info, rib);
+		__rib_delete(&state, &fake_root, info);
+		goto done;
+	}
+
+	if (ret < 0)
+		return ret;
+
+done:
+	rib->version++;
+	return 0;
 }
 
 int
