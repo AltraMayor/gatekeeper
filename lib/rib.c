@@ -1009,20 +1009,71 @@ int
 rib_shorter_iterator_state_init(struct rib_shorter_iterator_state *state,
 	const struct rib_head *rib, const uint8_t *address, uint8_t depth)
 {
-	/* TODO */
-	RTE_SET_USED(state);
-	RTE_SET_USED(rib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(depth);
-	return -1;
+	int ret;
+
+	if (unlikely(depth > rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(rib, &state->haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/*
+	 * There is no need to mask @haddr because it is always accessed
+	 * within its mask.
+	 */
+
+	state->rib = rib;
+	state->version = rib->version;
+	state->cur_node = &rib->root_node;
+	info_init(&state->info, rib);
+	state->depth = depth;
+	state->has_ended = false;
+	return 0;
 }
 
 int
 rib_shorter_iterator_next(struct rib_shorter_iterator_state *state,
 	struct rib_iterator_rule *rule)
 {
-	/* TODO */
-	RTE_SET_USED(state);
-	RTE_SET_USED(rule);
-	return -1;
+	bool found_return = false;
+
+	if (unlikely(state->has_ended))
+		return -ENOENT;
+
+	if (unlikely(state->version != state->rib->version))
+		return -EFAULT;
+
+	do {
+		info_update(&state->info, state->cur_node);
+
+		if (state->info.depth > state->depth ||
+				!info_haddr_matches(&state->info, state->haddr))
+			goto end;
+
+		/* One more match. */
+
+		if (state->cur_node->has_nh) {
+			RTE_VERIFY(write_addr(state->rib,
+				(uint8_t *)&rule->address_no,
+				state->info.haddr_matched) == 0);
+			rule->depth = state->info.depth;
+			rule->next_hop = state->cur_node->next_hop;
+			found_return = true;
+		}
+
+		if (state->info.depth == state->depth)
+			goto end;
+
+		state->cur_node = next_node(state->cur_node, &state->info,
+			state->haddr);
+		if (state->cur_node == NULL)
+			goto end;
+	} while (!found_return);
+
+	goto out;
+
+end:
+	state->has_ended = true;
+out:
+	return found_return ? 0 : -ENOENT;
 }
