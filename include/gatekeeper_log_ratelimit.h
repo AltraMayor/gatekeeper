@@ -22,6 +22,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <rte_atomic.h> /* Needed for rte_atomic32_t. */
+
 /*
  * At startup, log ratelimiting is disabled so that all
  * startup logs are captured. Before the blocks start,

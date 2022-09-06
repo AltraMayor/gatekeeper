@@ -43,18 +43,82 @@ destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
 	neigh->tbl_size = 0;
 }
 
-static inline int
-gk_lpm_add_ipv4_route(uint32_t ip,
-	uint8_t depth, uint32_t nexthop, struct gk_lpm *ltbl)
+static int
+gk_lpm_add_ipv4_route(uint32_t ip, uint8_t depth, uint32_t nexthop,
+	struct gk_lpm *ltbl)
 {
-	return rte_lpm_add(ltbl->lpm, ntohl(ip), depth, nexthop);
+	int ret = rib_add(&ltbl->rib, (uint8_t *)&ip, depth, nexthop);
+	if (ret < 0)
+		return ret;
+
+	ret = rte_lpm_add(ltbl->lpm, ntohl(ip), depth, nexthop);
+	if (unlikely(ret < 0)) {
+		int ret2 = rib_delete(&ltbl->rib, (uint8_t *)&ip, depth);
+		if (unlikely(ret2 < 0)) {
+			G_LOG(CRIT, "%s(): bug: failed to remove a prefix just added (errno=%i): %s\n",
+				__func__, -ret2, strerror(-ret2));
+		}
+		return ret;
+	}
+
+	return 0;
 }
 
-static inline int
-gk_lpm_add_ipv6_route(uint8_t *ip,
-	uint8_t depth, uint32_t nexthop, struct gk_lpm *ltbl)
+static int
+gk_lpm_add_ipv6_route(const uint8_t *ip, uint8_t depth, uint32_t nexthop,
+	struct gk_lpm *ltbl)
 {
-	return rte_lpm6_add(ltbl->lpm6, ip, depth, nexthop);
+	int ret = rib_add(&ltbl->rib6, ip, depth, nexthop);
+	if (ret < 0)
+		return ret;
+
+	ret = rte_lpm6_add(ltbl->lpm6, ip, depth, nexthop);
+	if (unlikely(ret < 0)) {
+		int ret2 = rib_delete(&ltbl->rib6, ip, depth);
+		if (unlikely(ret2 < 0)) {
+			G_LOG(CRIT, "%s(): bug: failed to remove a prefix just added (errno=%i): %s\n",
+				__func__, -ret2, strerror(-ret2));
+		}
+		return ret;
+	}
+
+	return 0;
+}
+
+static int
+gk_lpm_del_ipv4_route(struct gk_lpm *ltbl, uint32_t ip, uint8_t depth)
+{
+	int ret2, ret = rib_delete(&ltbl->rib, (uint8_t *)&ip, depth);
+	if (unlikely(ret != 0 && ret != -ENOENT)) {
+		G_LOG(CRIT, "%s(): bug: unexpected return (errno=%i): %s\n",
+			__func__, ret, strerror(-ret));
+	}
+
+	ret2 = rte_lpm_delete(ltbl->lpm, ntohl(ip), depth);
+	if (unlikely(ret != ret2)) {
+		G_LOG(CRIT, "%s(): bug: unexpected mismatch, ret == %i and ret2 == %i: %s\n",
+			__func__, ret, ret2, strerror(-ret2));
+	}
+
+	return ret2;
+}
+
+static int
+gk_lpm_del_ipv6_route(struct gk_lpm *ltbl, const uint8_t *ip, uint8_t depth)
+{
+	int ret2, ret = rib_delete(&ltbl->rib6, ip, depth);
+	if (unlikely(ret != 0 && ret != -ENOENT)) {
+		G_LOG(CRIT, "%s(): bug: unexpected return (errno=%i): %s\n",
+			__func__, ret, strerror(-ret));
+	}
+
+	ret2 = rte_lpm6_delete(ltbl->lpm6, ip, depth);
+	if (unlikely(ret != ret2)) {
+		G_LOG(CRIT, "%s(): bug: unexpected mismatch, ret == %i and ret2 == %i: %s\n",
+			__func__, ret, ret2, strerror(-ret2));
+	}
+
+	return ret2;
 }
 
 /*
@@ -334,9 +398,9 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf,
 }
 
 /* Add a prefix into the LPM table. */
-static inline int
-lpm_add_route(struct ipaddr *ip_addr,
-	int prefix_len, int fib_id, struct gk_lpm *ltbl)
+static int
+lpm_add_route(const struct ipaddr *ip_addr, int prefix_len, int fib_id,
+	struct gk_lpm *ltbl)
 {
 	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
 		return gk_lpm_add_ipv4_route(
@@ -355,17 +419,17 @@ lpm_add_route(struct ipaddr *ip_addr,
 }
 
 /* Delete a prefix from the LPM table. */
-static inline int
-lpm_del_route(struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
+static int
+lpm_del_route(const struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
 {
 	if (ip_addr->proto == RTE_ETHER_TYPE_IPV4) {
-		return rte_lpm_delete(ltbl->lpm,
-			ntohl(ip_addr->ip.v4.s_addr), prefix_len);
+		return gk_lpm_del_ipv4_route(ltbl, ip_addr->ip.v4.s_addr,
+			prefix_len);
 	}
 
 	if (likely(ip_addr->proto == RTE_ETHER_TYPE_IPV6)) {
-		return rte_lpm6_delete(ltbl->lpm6,
-			ip_addr->ip.v6.s6_addr, prefix_len);
+		return gk_lpm_del_ipv6_route(ltbl, ip_addr->ip.v6.s6_addr,
+			prefix_len);
 	}
 
 	rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
@@ -552,7 +616,7 @@ free_fib_ipv4:
 
 	*neigh_fib = NULL;
 
-	RTE_VERIFY(rte_lpm_delete(ltbl->lpm, ntohl(iface->ip4_addr.s_addr),
+	RTE_VERIFY(gk_lpm_del_ipv4_route(ltbl, iface->ip4_addr.s_addr,
 		iface->ip4_addr_plen) == 0);
 
 free_fib_ipv4_ht:
@@ -612,16 +676,15 @@ init_fib_tbl(struct gk_config *gk_conf)
 free_front_fibs:
 	if (neigh_fib_front != NULL) {
 		struct gatekeeper_if *iface = &gk_conf->net->front;
-		RTE_VERIFY(rte_lpm_delete(gk_conf->lpm_tbl.lpm,
-			ntohl(iface->ip4_addr.s_addr),
-			iface->ip4_addr_plen) == 0);
+		RTE_VERIFY(gk_lpm_del_ipv4_route(&gk_conf->lpm_tbl,
+			iface->ip4_addr.s_addr, iface->ip4_addr_plen) == 0);
 		destroy_neigh_hash_table(&neigh_fib_front->u.neigh);
 		initialize_fib_entry(neigh_fib_front);
 		neigh_fib_front = NULL;
 	}
 	if (neigh6_fib_front != NULL) {
 		struct gatekeeper_if *iface = &gk_conf->net->front;
-		RTE_VERIFY(rte_lpm6_delete(gk_conf->lpm_tbl.lpm6,
+		RTE_VERIFY(gk_lpm_del_ipv6_route(&gk_conf->lpm_tbl,
 			iface->ip6_addr.s6_addr, iface->ip6_addr_plen) == 0);
 		destroy_neigh_hash_table(&neigh6_fib_front->u.neigh);
 		initialize_fib_entry(neigh6_fib_front);
@@ -641,6 +704,14 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	if (ipv4_configured(gk_conf->net)) {
+		ret = rib_create(&ltbl->rib, "IPv4-RIB", socket_id, 32,
+			gk_conf->max_num_ipv4_rules);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(): failed to create the IPv4 RIB\n",
+				__func__);
+			goto out;
+		}
+
 		ipv4_lpm_config.max_rules = gk_conf->max_num_ipv4_rules;
 		ipv4_lpm_config.number_tbl8s = gk_conf->num_ipv4_tbl8s;
 
@@ -649,24 +720,23 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		 * IPv4 LPM table on the @socket_id, so the
 		 * @lcore and @identifier are set to 0.
 		 */
-		ltbl->lpm = init_ipv4_lpm(
-			"gk", &ipv4_lpm_config, socket_id, 0, 0);
-		if (ltbl->lpm == NULL) {
-			G_LOG(ERR,
-				"Failed to initialize the IPv4 LPM table at %s\n",
+		ltbl->lpm = init_ipv4_lpm("gk", &ipv4_lpm_config, socket_id,
+			0, 0);
+		if (unlikely(ltbl->lpm == NULL)) {
+			G_LOG(ERR, "%s(): failed to create the IPv4 FIB\n",
 				__func__);
-			ret = -1;
-			goto out;
+			ret = -ENOMEM;
+			goto free_rib;
 		}
 
 		ltbl->fib_tbl = rte_calloc_socket(NULL,
-			gk_conf->max_num_ipv4_rules, sizeof(struct gk_fib), 0, socket_id);
-		if (ltbl->fib_tbl == NULL) {
-			G_LOG(ERR,
-				"Failed to allocate the IPv4 FIB table at %s\n",
+			gk_conf->max_num_ipv4_rules, sizeof(struct gk_fib),
+			0, socket_id);
+		if (unlikely(ltbl->fib_tbl == NULL)) {
+			G_LOG(ERR, "%s(): failed to create the IPv4 FIB table\n",
 				__func__);
-			ret = -1;
-			goto free_lpm;
+			ret = -ENOMEM;
+			goto free_fib;
 		}
 	} else if (gk_conf->max_num_ipv4_rules != 0 ||
 			gk_conf->num_ipv4_tbl8s != 0) {
@@ -675,6 +745,14 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 	}
 
 	if (ipv6_configured(gk_conf->net)) {
+		ret = rib_create(&ltbl->rib6, "IPv6-RIB", socket_id, 128,
+			gk_conf->max_num_ipv6_rules);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(): failed to create the IPv6 RIB\n",
+				__func__);
+			goto free_lpm_tbl;
+		}
+
 		ipv6_lpm_config.max_rules = gk_conf->max_num_ipv6_rules;
 		ipv6_lpm_config.number_tbl8s = gk_conf->num_ipv6_tbl8s;
 
@@ -683,24 +761,23 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		 * IPv6 LPM table on the @socket_id, so the
 		 * @lcore and @identifier are set to 0.
 		 */
-		ltbl->lpm6 = init_ipv6_lpm(
-			"gk", &ipv6_lpm_config, socket_id, 0, 0);
-		if (ltbl->lpm6 == NULL) {
-			G_LOG(ERR,
-				"Failed to initialize the IPv6 LPM table at %s\n",
+		ltbl->lpm6 = init_ipv6_lpm("gk", &ipv6_lpm_config, socket_id,
+			0, 0);
+		if (unlikely(ltbl->lpm6 == NULL)) {
+			G_LOG(ERR, "%s(): failed to create the IPv6 FIB\n",
 				__func__);
-			ret = -1;
-			goto free_lpm_tbl;
+			ret = -ENOMEM;
+			goto free_rib6;
 		}
 
 		ltbl->fib_tbl6 = rte_calloc_socket(NULL,
-			gk_conf->max_num_ipv6_rules, sizeof(struct gk_fib), 0, socket_id);
-		if (ltbl->fib_tbl6 == NULL) {
-			G_LOG(ERR,
-				"Failed to allocate the IPv6 FIB table at %s\n",
+			gk_conf->max_num_ipv6_rules, sizeof(struct gk_fib),
+			0, socket_id);
+		if (unlikely(ltbl->fib_tbl6 == NULL)) {
+			G_LOG(ERR, "%s(): failed to create the IPv6 FIB table\n",
 				__func__);
-			ret = -1;
-			goto free_lpm6;
+			ret = -ENOMEM;
+			goto free_fib6;
 		}
 	} else if (gk_conf->max_num_ipv6_rules != 0 ||
 			gk_conf->num_ipv6_tbl8s != 0) {
@@ -709,8 +786,8 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 	}
 
 	ret = init_fib_tbl(gk_conf);
-	if (ret < 0) {
-		G_LOG(ERR, "Failed to initialize the FIB table at %s\n",
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to initialize the FIB table\n",
 			__func__);
 		goto free_lpm_tbl6;
 	}
@@ -724,22 +801,22 @@ free_lpm_tbl6:
 
 	rte_free(ltbl->fib_tbl6);
 	ltbl->fib_tbl6 = NULL;
-
-free_lpm6:
+free_fib6:
 	destroy_ipv6_lpm(ltbl->lpm6);
 	ltbl->lpm6 = NULL;
-
+free_rib6:
+	rib_free(&ltbl->rib6);
 free_lpm_tbl:
 	if (!ipv4_configured(gk_conf->net))
 		goto out;
 
 	rte_free(ltbl->fib_tbl);
 	ltbl->fib_tbl = NULL;
-
-free_lpm:
+free_fib:
 	destroy_ipv4_lpm(ltbl->lpm);
 	ltbl->lpm = NULL;
-
+free_rib:
+	rib_free(&ltbl->rib);
 out:
 	return ret;
 }
@@ -965,12 +1042,13 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	int ret;
 
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		ret = lpm_is_rule_present(ltbl->lpm, prefix->addr.ip.v4.s_addr,
+		ret = rib_is_rule_present(&ltbl->rib,
+			(uint8_t *)&prefix->addr.ip.v4.s_addr,
 			prefix->len, &fib_id);
 		if (ret == 1 && p_fib != NULL)
 			*p_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = lpm6_is_rule_present(ltbl->lpm6,
+		ret = rib_is_rule_present(&ltbl->rib6,
 			prefix->addr.ip.v6.s6_addr, prefix->len, &fib_id);
 		if (ret == 1 && p_fib != NULL)
 			*p_fib = &ltbl->fib_tbl6[fib_id];
@@ -1411,6 +1489,94 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 	return -1;
 }
 
+static int
+check_longer_prefixes(const char *context, const struct rib_head *rib,
+	const void *ip, uint8_t depth, const struct gk_fib *fib_table,
+	const char *prefix_str, enum gk_fib_action prefix_action)
+{
+	struct rib_longer_iterator_state state;
+	int ret = rib_longer_iterator_state_init(&state, rib, ip, depth);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
+			__func__, context, -ret, strerror(-ret));
+		return ret;
+	}
+
+	while (true) {
+		struct rib_iterator_rule rule;
+		const struct gk_fib *fib;
+
+		ret = rib_longer_iterator_next(&state, &rule);
+		if (unlikely(ret < 0)) {
+			if (unlikely(ret != -ENOENT)) {
+				G_LOG(ERR, "%s(): %s RIB iterator failed (errno=%i): %s\n",
+					__func__, context,
+					-ret, strerror(-ret));
+				goto out;
+			}
+			ret = 0;
+			goto out;
+		}
+
+		fib = &fib_table[rule.next_hop];
+		if (fib->action != GK_FWD_GRANTOR && fib->action != GK_DROP) {
+			G_LOG(WARNING, "%s(): adding the %s rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
+				__func__, context, prefix_str, prefix_action,
+				rule.depth, fib->action);
+			ret = -EPERM;
+			goto out;
+		}
+	}
+
+out:
+	rib_longer_iterator_end(&state);
+	return ret;
+}
+
+static int
+check_shorter_prefixes(const char *context, const struct rib_head *rib,
+	const void *ip, uint8_t depth, const struct gk_fib *fib_table,
+	const char *prefix_str, enum gk_fib_action prefix_action)
+{
+	struct rib_shorter_iterator_state state;
+	int ret = rib_shorter_iterator_state_init(&state, rib, ip, depth);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
+			__func__, context, -ret, strerror(-ret));
+		return ret;
+	}
+
+	while (true) {
+		struct rib_iterator_rule rule;
+		const struct gk_fib *fib;
+
+		ret = rib_shorter_iterator_next(&state, &rule);
+		if (unlikely(ret < 0)) {
+			if (unlikely(ret != -ENOENT)) {
+				G_LOG(ERR, "%s(): %s RIB iterator failed (errno=%i): %s\n",
+					__func__, context,
+					-ret, strerror(-ret));
+				goto out;
+			}
+			ret = 0;
+			goto out;
+		}
+
+		fib = &fib_table[rule.next_hop];
+		if (fib->action == GK_FWD_GRANTOR || fib->action == GK_DROP) {
+			G_LOG(WARNING, "%s(): adding the %s rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
+				__func__, context, prefix_str, prefix_action,
+				rule.depth, fib->action);
+			ret = -EPERM;
+			goto out;
+		}
+	}
+
+out:
+	rib_shorter_iterator_end(&state);
+	return ret;
+}
+
 /*
  * This function makes sure that only a drop or another Grantor entry
  * can have a longer prefix than a drop or Grantor entry.
@@ -1427,120 +1593,44 @@ static int
 check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
-	uint8_t i;
-	int ip_prefix_present;
-	struct gk_fib *ip_prefix_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 
 	if (action == GK_DROP || action == GK_FWD_GRANTOR) {
 		/* Ensure that all prefixes longer than @prefix are safe. */
+
 		if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-			struct rte_lpm_iterator_state state;
-			const struct rte_lpm_rule *re;
-			int ret = rte_lpm_iterator_state_init(ltbl->lpm,
-				ntohl(prefix->addr.ip.v4.s_addr),
-				prefix->len, &state);
-			if (ret < 0) {
-				G_LOG(ERR,
-					"Failed to initialize the lpm rule iterator state at %s\n",
-					__func__);
-				return -1;
-			}
-
-			ret = rte_lpm_rule_iterate(&state, &re);
-			while (ret >= 0) {
-				ip_prefix_fib = &ltbl->fib_tbl[re->next_hop];
-				if (ip_prefix_fib->action != GK_FWD_GRANTOR &&
-						ip_prefix_fib->action !=
-						GK_DROP) {
-					G_LOG(WARNING,
-						"Adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-						prefix->str, action, state.depth,
-						ip_prefix_fib->action);
-					return -1;
-				}
-				ret = rte_lpm_rule_iterate(&state, &re);
-			}
-		} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-			struct rte_lpm6_iterator_state state;
-			struct rte_lpm6_rule re;
-			int ret = rte_lpm6_iterator_state_init(ltbl->lpm6,
-				prefix->addr.ip.v6.s6_addr,
-				prefix->len, &state);
-			if (ret < 0) {
-				G_LOG(ERR,
-					"Failed to initialize the lpm6 rule iterator state at %s\n",
-					__func__);
-				return -1;
-			}
-
-			ret = rte_lpm6_rule_iterate(&state, &re);
-			while (ret >= 0) {
-				ip_prefix_fib = &ltbl->fib_tbl6[re.next_hop];
-				if (ip_prefix_fib->action != GK_FWD_GRANTOR &&
-						ip_prefix_fib->action !=
-						GK_DROP) {
-					G_LOG(WARNING,
-						"Adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-						prefix->str, action, re.depth,
-						ip_prefix_fib->action);
-					return -1;
-				}
-				ret = rte_lpm6_rule_iterate(&state, &re);
-			}
-		} else {
-			G_LOG(WARNING,
-				"Unknown IP type %hu with prefix %s and action %u\n",
-				prefix->addr.proto, prefix->str, action);
-			return -1;
+			return check_longer_prefixes("IPv4", &ltbl->rib,
+				&prefix->addr.ip.v4.s_addr, prefix->len,
+				ltbl->fib_tbl, prefix->str, action);
 		}
 
-		return 0;
+		if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+			return check_longer_prefixes("IPv6", &ltbl->rib6,
+				prefix->addr.ip.v6.s6_addr, prefix->len,
+				ltbl->fib_tbl6, prefix->str, action);
+		}
+
+		goto unknown;
 	}
 
-	/* Ensure that the new prefix does not create a security hole. */
+	/* Ensure that all prefixer shorter than @prefix are safe. */
+
 	if (prefix->addr.proto == RTE_ETHER_TYPE_IPV4) {
-		for (i = 0; i < prefix->len; i++) {
-			uint32_t fib_id;
-			ip_prefix_present = lpm_is_rule_present(ltbl->lpm,
-				prefix->addr.ip.v4.s_addr, i, &fib_id);
-			if (ip_prefix_present != 1)
-				continue;
-
-			ip_prefix_fib = &ltbl->fib_tbl[fib_id];
-			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
-					ip_prefix_fib->action == GK_DROP) {
-				G_LOG(WARNING,
-					"Adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-					prefix->str, action, i, ip_prefix_fib->action);
-				return -1;
-			}
-		}
-	} else if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
-		for (i = 0; i < prefix->len; i++) {
-			uint32_t fib_id;
-			ip_prefix_present = lpm6_is_rule_present(ltbl->lpm6,
-				prefix->addr.ip.v6.s6_addr, i, &fib_id);
-			if (ip_prefix_present != 1)
-				continue;
-
-			ip_prefix_fib = &ltbl->fib_tbl6[fib_id];
-			if (ip_prefix_fib->action == GK_FWD_GRANTOR ||
-					ip_prefix_fib->action == GK_DROP) {
-				G_LOG(WARNING,
-					"Adding this rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-					prefix->str, action, i, ip_prefix_fib->action);
-				return -1;
-			}
-		}
-	} else {
-		G_LOG(WARNING,
-			"Unknown IP type %hu with prefix %s and action %u\n",
-			prefix->addr.proto, prefix->str, action);
-		return -1;
+		return check_shorter_prefixes("IPv4", &ltbl->rib,
+			&prefix->addr.ip.v4.s_addr, prefix->len,
+			ltbl->fib_tbl, prefix->str, action);
 	}
 
-	return 0;
+	if (likely(prefix->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+		return check_shorter_prefixes("IPv6", &ltbl->rib6,
+			prefix->addr.ip.v6.s6_addr, prefix->len,
+			ltbl->fib_tbl6, prefix->str, action);
+	}
+
+unknown:
+	G_LOG(WARNING, "%s(): unknown IP type %hu with prefix %s and action %u\n",
+		__func__, prefix->addr.proto, prefix->str, action);
+	return -EINVAL;
 }
 
 /*
@@ -1962,7 +2052,7 @@ fillup_gk_fib_dump_entry(struct gk_fib_dump_entry *dentry,
 #define CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR "struct gk_fib_dump_entry *"
 
 static inline unsigned int
-num_addrs_entry_type(struct gk_fib *fib)
+num_addrs_entry_type(const struct gk_fib *fib)
 {
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
@@ -1975,40 +2065,54 @@ num_addrs_entry_type(struct gk_fib *fib)
 	}
 }
 
+typedef void (*set_addr_t)(struct ipaddr *addr, rib_address_t address_no);
+
 static void
-list_ipv4_fib_entries(lua_State *l, struct gk_config *gk_conf)
+list_fib_entries(lua_State *l, const char *context, const struct rib_head *rib,
+	const struct gk_fib *fib_table, rte_spinlock_t *lock, set_addr_t setf,
+	uint8_t batch_size)
 {
-	int ret, index;
-	const struct rte_lpm_rule *re4;
-	struct rte_lpm_iterator_state state;
 	struct gk_fib_dump_entry *dentry = NULL;
 	size_t dentry_size = 0;
 	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
 	uint8_t current_batch_size = 0;
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	struct rib_longer_iterator_state state;
+	int ret;
 
-	rte_spinlock_lock_tm(&ltbl->lock);
-	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&ltbl->lock);
-		luaL_error(l, "gk: failed to initialize the lpm rule iterator state at %s",
-			__func__);
+	rte_spinlock_lock_tm(lock);
+	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0);
+	if (unlikely(ret < 0)) {
+		rte_spinlock_unlock_tm(lock);
+		luaL_error(l, "%s(): failed to initialize the %s RIB iterator (errno=%d): %s",
+			__func__, context, -ret, strerror(-ret));
 	}
 
-	index = rte_lpm_rule_iterate(&state, &re4);
-	while (index >= 0) {
+	while (true) {
+		struct rib_iterator_rule rule;
+		const struct gk_fib *fib;
 		unsigned int num_addrs;
 		size_t new_dentry_size;
 		int done;
 		void *cdata;
 
-		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
-		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
-				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-			index = rte_lpm_rule_iterate(&state, &re4);
-			continue;
+		ret = rib_longer_iterator_next(&state, &rule);
+		if (unlikely(ret < 0)) {
+			rte_free(dentry);
+			rib_longer_iterator_end(&state);
+			rte_spinlock_unlock_tm(lock);
+			if (unlikely(ret != -ENOENT)) {
+				luaL_error(l, "%s(): %s RIB iterator failed (errno=%d): %s\n",
+					__func__, context,
+					-ret, strerror(-ret));
+			}
+			return;
 		}
+
+		fib = &fib_table[rule.next_hop];
+		if (unlikely(fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
+				fib->action == GK_FWD_NEIGHBOR_BACK_NET))
+			continue;
 
 		num_addrs = num_addrs_entry_type(fib);
 		new_dentry_size = sizeof(*dentry) +
@@ -2021,20 +2125,20 @@ list_ipv4_fib_entries(lua_State *l, struct gk_config *gk_conf)
 			 * We don't need rte_zmalloc_socket() here because
 			 * the memory is not being used by the GK block.
 			 */
-			dentry = rte_zmalloc("fib4_dump", dentry_size, 0);
+			dentry = rte_zmalloc("fib_dump", dentry_size, 0);
 			if (unlikely(dentry == NULL)) {
-				rte_spinlock_unlock_tm(&ltbl->lock);
+				rib_longer_iterator_end(&state);
+				rte_spinlock_unlock_tm(lock);
 				luaL_error(l,
-					"gk: failed to allocate memory for the IPv4 FIB dump at %s",
-					__func__);
+					"%s(): failed to allocate memory for the %s FIB dump",
+					__func__, context);
 			}
 		} else
 			memset(dentry, 0, new_dentry_size);
 
-		dentry->addr.proto = RTE_ETHER_TYPE_IPV4;
-		dentry->addr.ip.v4.s_addr = htonl(re4->ip);
-		dentry->prefix_len = state.depth;
-		dentry->fib_id = re4->next_hop;
+		setf(&dentry->addr, rule.address_no);
+		dentry->prefix_len = rule.depth;
+		dentry->fib_id = rule.next_hop;
 		dentry->num_addr_sets = num_addrs;
 		fillup_gk_fib_dump_entry(dentry, fib);
 
@@ -2047,18 +2151,23 @@ list_ipv4_fib_entries(lua_State *l, struct gk_config *gk_conf)
 
 		if (lua_pcall(l, 2, 2, 0) != 0) {
 			rte_free(dentry);
-			rte_spinlock_unlock_tm(&ltbl->lock);
+			rib_longer_iterator_end(&state);
+			rte_spinlock_unlock_tm(lock);
 			lua_error(l);
 		}
 
 		done = lua_toboolean(l, -2);
 		lua_remove(l, -2);
-		if (unlikely(done))
-			break;
+		if (unlikely(done)) {
+			rte_free(dentry);
+			rib_longer_iterator_end(&state);
+			rte_spinlock_unlock_tm(lock);
+			return;
+		}
 
-		if (++current_batch_size >= gk_conf->fib_dump_batch_size) {
+		if (++current_batch_size >= batch_size) {
 			/* Release the lock after dumping the full batch. */
-			rte_spinlock_unlock_tm(&ltbl->lock);
+			rte_spinlock_unlock_tm(lock);
 
 			current_batch_size = 0;
 
@@ -2067,132 +2176,38 @@ list_ipv4_fib_entries(lua_State *l, struct gk_config *gk_conf)
 
 			/*
 			 * Obtain the lock when starting a new dumping batch.
-			 * For the last batch, the lock will be released at the end.
+			 * For the last batch, the lock will be released at
+			 * the end.
 			 */
-			rte_spinlock_lock_tm(&ltbl->lock);
+			rte_spinlock_lock_tm(lock);
 		}
-
-		index = rte_lpm_rule_iterate(&state, &re4);
 	}
-	rte_free(dentry);
-	rte_spinlock_unlock_tm(&ltbl->lock);
 }
 
 static void
-list_ipv6_fib_entries(lua_State *l, struct gk_config *gk_conf)
+set_addr4(struct ipaddr *addr, rib_address_t address_no)
 {
-	int ret, index;
-	struct rte_lpm6_rule re6;
-	struct rte_lpm6_iterator_state state6;
-	struct gk_fib_dump_entry *dentry = NULL;
-	size_t dentry_size = 0;
-	uint32_t correct_ctypeid_fib_dump_entry = luaL_get_ctypeid(l,
-		CTYPE_STRUCT_FIB_DUMP_ENTRY_PTR);
-	uint8_t current_batch_size = 0;
-	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
-
-	rte_spinlock_lock_tm(&ltbl->lock);
-	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, NULL, 0, &state6);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&ltbl->lock);
-		luaL_error(l, "gk: failed to initialize the lpm6 rule iterator state at %s",
-			__func__);
-	}
-
-	index = rte_lpm6_rule_iterate(&state6, &re6);
-	while (index >= 0) {
-		unsigned int num_addrs;
-		size_t new_dentry_size;
-		int done;
-		void *cdata;
-
-		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
-		if (fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
-				fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
-			index = rte_lpm6_rule_iterate(&state6, &re6);
-			continue;
-		}
-
-		num_addrs = num_addrs_entry_type(fib);
-		new_dentry_size = sizeof(*dentry) +
-			num_addrs * sizeof(*dentry->addr_sets);
-
-		if (new_dentry_size > dentry_size) {
-			dentry_size = new_dentry_size;
-			rte_free(dentry);
-			/*
-			 * We don't need rte_zmalloc_socket() here because
-			 * the memory is not being used by the GK block.
-			 */
-			dentry = rte_zmalloc("fib6_dump", dentry_size, 0);
-			if (unlikely(dentry == NULL)) {
-				rte_spinlock_unlock_tm(&ltbl->lock);
-				luaL_error(l,
-					"gk: failed to allocate memory for the IPv6 FIB dump at %s",
-					__func__);
-			}
-		} else
-			memset(dentry, 0, new_dentry_size);
-
-		dentry->addr.proto = RTE_ETHER_TYPE_IPV6;
-		rte_memcpy(&dentry->addr.ip.v6, re6.ip,
-			sizeof(dentry->addr.ip.v6));
-		dentry->prefix_len = re6.depth;
-		dentry->fib_id = re6.next_hop;
-		dentry->num_addr_sets = num_addrs;
-		fillup_gk_fib_dump_entry(dentry, fib);
-
-		lua_pushvalue(l, 2);
-		lua_insert(l, 3);
-		cdata = luaL_pushcdata(l, correct_ctypeid_fib_dump_entry,
-			sizeof(struct gk_fib_dump_entry *));
-		*(struct gk_fib_dump_entry **)cdata = dentry;
-		lua_insert(l, 4);
-
-		if (lua_pcall(l, 2, 2, 0) != 0) {
-			rte_free(dentry);
-			rte_spinlock_unlock_tm(&ltbl->lock);
-			lua_error(l);
-		}
-
-		done = lua_toboolean(l, -2);
-		lua_remove(l, -2);
-		if (unlikely(done))
-			break;
-
-		if (++current_batch_size >= gk_conf->fib_dump_batch_size) {
-			/* Release the lock after dumping the full batch. */
-			rte_spinlock_unlock_tm(&ltbl->lock);
-
-			current_batch_size = 0;
-
-			/* Give other lcores a chance to acquire the lock. */
-			rte_pause();
-
-			/*
-			 * Obtain the lock when starting a new dumping batch.
-			 * For the last batch, the lock will be released at the end.
-			 */
-			rte_spinlock_lock_tm(&ltbl->lock);
-		}
-
-		index = rte_lpm6_rule_iterate(&state6, &re6);
-	}
-	rte_free(dentry);
-	rte_spinlock_unlock_tm(&ltbl->lock);
+	addr->proto = RTE_ETHER_TYPE_IPV4;
+	addr->ip.v4.s_addr = ipv4_from_rib_addr(address_no);
 }
 
-typedef void (*list_fib_entries)(lua_State *l, struct gk_config *gk_conf);
+static void
+set_addr6(struct ipaddr *addr, rib_address_t address_no)
+{
+	addr->proto = RTE_ETHER_TYPE_IPV6;
+	rte_memcpy(&addr->ip.v6, &address_no, sizeof(addr->ip.v6));
+}
 
 #define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 
-static void
-list_fib_for_lua(lua_State *l, list_fib_entries f)
+static int
+list_fib_for_lua(lua_State *l, bool list_ipv4)
 {
 	struct gk_config *gk_conf;
 	uint32_t ctypeid;
 	uint32_t correct_ctypeid_gk_config = luaL_get_ctypeid(l,
 		CTYPE_STRUCT_GK_CONFIG_PTR);
+	struct gk_lpm *ltbl;
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
 	void *cdata = luaL_checkcdata(l, 1,
@@ -2210,25 +2225,31 @@ list_fib_for_lua(lua_State *l, list_fib_entries f)
 			lua_gettop(l));
 
 	gk_conf = *(struct gk_config **)cdata;
+	ltbl = &gk_conf->lpm_tbl;
 
-	f(l, gk_conf);
+	if (list_ipv4) {
+		list_fib_entries(l, "IPv4", &ltbl->rib, ltbl->fib_tbl,
+			&ltbl->lock, set_addr4, gk_conf->fib_dump_batch_size);
+	} else {
+		list_fib_entries(l, "IPv6", &ltbl->rib6, ltbl->fib_tbl6,
+			&ltbl->lock, set_addr6, gk_conf->fib_dump_batch_size);
+	}
 
 	lua_remove(l, 1);
 	lua_remove(l, 1);
+	return 1;
 }
 
 int
 l_list_gk_fib4(lua_State *l)
 {
-	list_fib_for_lua(l, list_ipv4_fib_entries);
-	return 1;
+	return list_fib_for_lua(l, true);
 }
 
 int
 l_list_gk_fib6(lua_State *l)
 {
-	list_fib_for_lua(l, list_ipv6_fib_entries);
-	return 1;
+	return list_fib_for_lua(l, false);
 }
 
 static void

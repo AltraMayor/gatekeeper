@@ -2614,11 +2614,13 @@ alloc_gk_conf(void)
 static void
 destroy_gk_lpm(struct gk_lpm *ltbl)
 {
+	rib_free(&ltbl->rib);
 	destroy_ipv4_lpm(ltbl->lpm);
 	ltbl->lpm = NULL;
 	rte_free(ltbl->fib_tbl);
 	ltbl->fib_tbl = NULL;
 
+	rib_free(&ltbl->rib6);
 	destroy_ipv6_lpm(ltbl->lpm6);
 	ltbl->lpm6 = NULL;
 	rte_free(ltbl->fib_tbl6);

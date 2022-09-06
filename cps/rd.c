@@ -115,12 +115,13 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 	int ret;
 
 	if (update->family == AF_INET) {
-		ret = lpm_is_rule_present(ltbl->lpm,
-			update->prefix_info.addr.ip.v4.s_addr,
+		ret = rib_is_rule_present(&ltbl->rib,
+			(uint8_t *)&update->prefix_info.addr.ip.v4.s_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			G_LOG(ERR, "%s(): lpm_is_rule_present(%s) failed (%i)\n",
-				__func__, update->prefix_info.str, ret);
+			G_LOG(ERR, "%s(): IPv4 rib_is_rule_present(%s) failed (errno=%i): %s\n",
+				__func__, update->prefix_info.str,
+				-ret, strerror(-ret));
 			return ret;
 		}
 		if (ret == 1) {
@@ -128,12 +129,13 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 			return 0;
 		}
 	} else if (likely(update->family == AF_INET6)) {
-		ret = lpm6_is_rule_present(ltbl->lpm6,
+		ret = rib_is_rule_present(&ltbl->rib6,
 			update->prefix_info.addr.ip.v6.s6_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
-			G_LOG(ERR, "%s(): lpm6_is_rule_present(%s) failed (%i)\n",
-				__func__, update->prefix_info.str, ret);
+			G_LOG(ERR, "%s(): IPv6 rib_is_rule_present(%s) failed (errno=%i): %s\n",
+				__func__, update->prefix_info.str,
+				-ret, strerror(-ret));
 			return ret;
 		}
 		if (ret == 1) {
@@ -141,9 +143,8 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 			return 0;
 		}
 	} else {
-		G_LOG(ERR,
-			"cps update: unknown address family %d at %s()\n",
-			update->family, __func__);
+		G_LOG(ERR, "%s(): unknown address family %i\n",
+			__func__, update->family);
 		return -EAFNOSUPPORT;
 	}
 
@@ -649,6 +650,7 @@ rd_fill_getroute_reply(const void *prefix, const struct cps_config *cps_conf,
 		 * entries can have multiple corresponding Grantors, each
 		 * with their own gateway.
 		 */
+		*gw_addr = NULL;
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
 		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
@@ -762,119 +764,89 @@ spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
 	RTE_VERIFY(ret == 1);
 }
 
-static int
-rd_getroute_ipv4(struct cps_config *cps_conf, struct gk_lpm *ltbl,
-	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
+static void
+attr_put_ipaddr(struct nlmsghdr *nlh, uint16_t type, const struct ipaddr *addr)
 {
-	struct rte_lpm_iterator_state state;
-	const struct rte_lpm_rule *re4;
-	int index, ret;
+	if (addr->proto == RTE_ETHER_TYPE_IPV4)
+		return mnl_attr_put_u32(nlh, type, addr->ip.v4.s_addr);
 
-	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
-	ret = rte_lpm_iterator_state_init(ltbl->lpm, 0, 0, &state);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&ltbl->lock);
-		G_LOG(ERR, "Failed to initialize the IPv4 LPM rule iterator state in %s\n",
-			__func__);
-		return ret;
-	}
+	if (likely(addr->proto == RTE_ETHER_TYPE_IPV6))
+		return mnl_attr_put(nlh, type, sizeof(addr->ip.v6),
+			&addr->ip.v6);
 
-	index = rte_lpm_rule_iterate(&state, &re4);
-	while (index >= 0) {
-		struct gk_fib *fib = &ltbl->fib_tbl[re4->next_hop];
-		const struct ipaddr *gw_addr;
-		struct nlmsghdr *reply =
-			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
-		uint32_t ip = htonl(re4->ip);
+	G_LOG(CRIT, "%s(): bug: unknown protocol %i\n", __func__, addr->proto);
+}
 
-		rd_fill_getroute_reply(&ip, cps_conf, reply, fib,
-			AF_INET, req->nlmsg_seq, state.depth, &gw_addr);
+static void
+attr_put_rib_addr(struct nlmsghdr *nlh, uint16_t type, int family,
+	rib_address_t address_no)
+{
+	if (family == AF_INET)
+		return mnl_attr_put_u32(nlh, type,
+			ipv4_from_rib_addr(address_no));
 
-		/* Add address. */
-		mnl_attr_put_u32(reply, RTA_DST, ip);
+	if (likely(family == AF_INET6))
+		return mnl_attr_put(nlh, type, sizeof(struct in6_addr),
+			&address_no);
 
-		if (fib->action == GK_FWD_GRANTOR) {
-			unsigned int i;
-			for (i = 0; i < fib->u.grantor.set->num_entries; i++) {
-				gw_addr = &fib->u.grantor.set->entries[i]
-					.eth_cache->ip_addr;
-				mnl_attr_put_u32(reply, RTA_GATEWAY,
-					gw_addr->ip.v4.s_addr);
-			}
-		} else if (gw_addr != NULL) {
-			/* Only report gateway for main routes. */
-			mnl_attr_put_u32(reply, RTA_GATEWAY,
-				gw_addr->ip.v4.s_addr);
-		}
-
-		if (!mnl_nlmsg_batch_next(batch)) {
-			/*
-			 * Do not access @fib or any FIB-related variable
-			 * without the lock.
-			 */
-			rte_spinlock_unlock_tm(&ltbl->lock);
-			ret = rd_send_batch(cps_conf, batch, "IPv4",
-				req->nlmsg_seq, req->nlmsg_pid, false);
-			if (ret < 0)
-				return ret;
-			/*
-			 * Obtain the lock when starting a new Netlink batch.
-			 * For the last batch that won't be sent in this function,
-			 * the lock will be released at the end.
-			 */
-			spinlock_lock_with_yield(&ltbl->lock, cps_conf);
-		}
-
-		index = rte_lpm_rule_iterate(&state, &re4);
-	}
-
-	rte_spinlock_unlock_tm(&ltbl->lock);
-	return 0;
+	G_LOG(CRIT, "%s(): bug: unknown family %i\n", __func__, family);
 }
 
 static int
-rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
-	struct mnl_nlmsg_batch *batch, const struct nlmsghdr *req)
+rd_getroute_family(const char *daemon, struct cps_config *cps_conf,
+	const struct rib_head *rib, const struct gk_fib *fib_table,
+	rte_spinlock_t *lock, int family, struct mnl_nlmsg_batch *batch,
+	const struct nlmsghdr *req)
 {
-	struct rte_lpm6_iterator_state state6;
-	struct rte_lpm6_rule re6;
-	int index, ret;
+	struct rib_longer_iterator_state state;
+	int ret;
 
-	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
-	ret = rte_lpm6_iterator_state_init(ltbl->lpm6, 0, 0, &state6);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&ltbl->lock);
-		G_LOG(ERR, "Failed to initialize the IPv6 LPM rule iterator state in %s\n",
-			__func__);
+	spinlock_lock_with_yield(lock, cps_conf);
+	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0);
+	if (unlikely(ret < 0)) {
+		rte_spinlock_unlock_tm(lock);
+		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
+			__func__, daemon, -ret, strerror(-ret));
 		return ret;
 	}
 
-	index = rte_lpm6_rule_iterate(&state6, &re6);
-	while (index >= 0) {
-		struct gk_fib *fib = &ltbl->fib_tbl6[re6.next_hop];
+	while (true) {
+		struct rib_iterator_rule rule;
+		struct nlmsghdr *reply;
+		const struct gk_fib *fib;
 		const struct ipaddr *gw_addr;
-		struct nlmsghdr *reply =
-			mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
 
-		rd_fill_getroute_reply(re6.ip, cps_conf, reply, fib,
-			AF_INET6, req->nlmsg_seq, re6.depth, &gw_addr);
+		ret = rib_longer_iterator_next(&state, &rule);
+		if (unlikely(ret < 0)) {
+			rib_longer_iterator_end(&state);
+			rte_spinlock_unlock_tm(lock);
+			if (unlikely(ret != -ENOENT)) {
+				G_LOG(ERR, "%s(): %s RIB iterator failed (errno=%i): %s\n",
+					__func__, daemon, -ret, strerror(-ret));
+				return ret;
+			}
+			return 0;
+		}
+
+		reply = mnl_nlmsg_put_header(mnl_nlmsg_batch_current(batch));
+		fib = &fib_table[rule.next_hop];
+
+		rd_fill_getroute_reply(&rule.address_no, cps_conf, reply, fib,
+			family, req->nlmsg_seq, rule.depth, &gw_addr);
 
 		/* Add address. */
-		mnl_attr_put(reply, RTA_DST, sizeof(struct in6_addr), re6.ip);
+		attr_put_rib_addr(reply, RTA_DST, family, rule.address_no);
 
 		if (fib->action == GK_FWD_GRANTOR) {
 			unsigned int i;
 			for (i = 0; i < fib->u.grantor.set->num_entries; i++) {
 				gw_addr = &fib->u.grantor.set->entries[i]
 					.eth_cache->ip_addr;
-				mnl_attr_put(reply, RTA_GATEWAY,
-					sizeof(struct in6_addr),
-					&gw_addr->ip.v6);
+				attr_put_ipaddr(reply, RTA_GATEWAY, gw_addr);
 			}
 		} else if (gw_addr != NULL) {
 			/* Only report gateway for main routes. */
-			mnl_attr_put(reply, RTA_GATEWAY,
-				sizeof(struct in6_addr), &gw_addr->ip.v6);
+			attr_put_ipaddr(reply, RTA_GATEWAY, gw_addr);
 		}
 
 		if (!mnl_nlmsg_batch_next(batch)) {
@@ -882,24 +854,21 @@ rd_getroute_ipv6(struct cps_config *cps_conf, struct gk_lpm *ltbl,
 			 * Do not access @fib or any FIB-related variable
 			 * without the lock.
 			 */
-			rte_spinlock_unlock_tm(&ltbl->lock);
-			ret = rd_send_batch(cps_conf, batch, "IPv6",
+			rte_spinlock_unlock_tm(lock);
+			ret = rd_send_batch(cps_conf, batch, daemon,
 				req->nlmsg_seq, req->nlmsg_pid, false);
-			if (ret < 0)
+			if (unlikely(ret < 0)) {
+				rib_longer_iterator_end(&state);
 				return ret;
+			}
 			/*
 			 * Obtain the lock when starting a new Netlink batch.
-			 * For the last batch that won't be sent in this function,
-			 * the lock will be released at the end.
+			 * For the last batch, which won't be sent in
+			 * this function, the lock will be released at the end.
 			 */
-			spinlock_lock_with_yield(&ltbl->lock, cps_conf);
+			spinlock_lock_with_yield(lock, cps_conf);
 		}
-
-		index = rte_lpm6_rule_iterate(&state6, &re6);
 	}
-
-	rte_spinlock_unlock_tm(&ltbl->lock);
-	return 0;
 }
 
 static int
@@ -964,7 +933,8 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 			}
 		}
 
-		*err = rd_getroute_ipv4(cps_conf, ltbl, batch, req);
+		*err = rd_getroute_family("IPv4", cps_conf, &ltbl->rib,
+			ltbl->fib_tbl, &ltbl->lock, AF_INET, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}
@@ -979,7 +949,8 @@ ipv6:
 			}
 		}
 
-		*err = rd_getroute_ipv6(cps_conf, ltbl, batch, req);
+		*err = rd_getroute_family("IPv6", cps_conf, &ltbl->rib6,
+			ltbl->fib_tbl6, &ltbl->lock, AF_INET6, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}
