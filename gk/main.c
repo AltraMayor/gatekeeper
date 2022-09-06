@@ -1871,7 +1871,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		if (num_keys > RTE_HASH_LOOKUP_BULK_MAX)
 			num_keys = RTE_HASH_LOOKUP_BULK_MAX;
 
-		ret = rte_hash_lookup_bulk_with_hash(
+		ret = rte_hash_lookup_with_hash_bulk(
 			instance->ip_flow_hash_table,
 			(const void **)&flow_arr[done_lookups],
 			(hash_sig_t *)&flow_hash_val_arr[done_lookups],
@@ -2328,7 +2328,7 @@ add_ggu_policy_bulk(struct gk_add_policy **policies, int num_policies,
 		if (num_keys > RTE_HASH_LOOKUP_BULK_MAX)
 			num_keys = RTE_HASH_LOOKUP_BULK_MAX;
 
-		ret = rte_hash_lookup_bulk_with_hash(
+		ret = rte_hash_lookup_with_hash_bulk(
 			instance->ip_flow_hash_table,
 			(const void **)&flow_arr[done_lookups],
 			&flow_hash_val_arr[done_lookups],
