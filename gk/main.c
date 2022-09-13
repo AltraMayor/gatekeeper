@@ -1548,7 +1548,8 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 
 static struct flow_entry *
 lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
-		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
+		struct gk_fib *fib, int32_t *fe_index,
+		uint16_t *num_tx, struct rte_mbuf **tx_bufs,
 		struct acl_search *acl4, struct acl_search *acl6,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 		struct rte_mbuf **req_bufs, uint16_t *num_reqs,
@@ -1566,7 +1567,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			add_pkt_acl(acl4, pkt);
 		else
 			add_pkt_acl(acl6, pkt);
-		return NULL;
+		goto no_fe;
 	}
 
 	switch (fib->action) {
@@ -1585,16 +1586,16 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 */
 			send_request_to_grantor(packet, ip_flow_hash_val,
 				fib, req_bufs, num_reqs, instance, gk_conf);
-			return NULL;
+			break;
 		}
 		if (ret < 0) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		fe = &instance->ip_flow_entry_table[ret];
-		initialize_flow_entry(fe,
-			&packet->flow, ip_flow_hash_val, fib);
+		initialize_flow_entry(fe, &packet->flow, ip_flow_hash_val, fib);
+		*fe_index = ret;
 		return fe;
 	}
 
@@ -1609,7 +1610,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to a front gateway");
 
 		drop_packet_front(pkt, instance);
-		return NULL;
+		break;
 
 	case GK_FWD_GATEWAY_BACK_NET:
 		/*
@@ -1633,20 +1634,22 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
 				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
-			return NULL;
+			break;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
+		break;
 
 	case GK_FWD_NEIGHBOR_FRONT_NET:
-		rte_panic("GK_FWD_NEIGHBOR_FRONT_NET should have been already handled");
-		return NULL;
+		G_LOG(CRIT, "%s(): bug: GK_FWD_NEIGHBOR_FRONT_NET should have been already handled; dropping packet...\n",
+			__func__);
+		drop_packet_front(pkt, instance);
+		break;
 
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		/*
@@ -1679,36 +1682,40 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
 
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
 				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
 				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
-			return NULL;
+			break;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
+		break;
 
 	case GK_DROP:
 		/* FALLTHROUGH */
 	default:
 		drop_packet_front(pkt, instance);
-		return NULL;
+		break;
 	}
+
+no_fe:
+	*fe_index = -ENOENT;
+	return NULL;
 }
 
 static int
-process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
+process_flow_entry(struct flow_entry *fe, int32_t fe_index,
+	struct ipacket *packet, struct rte_mbuf **req_bufs, uint16_t *num_reqs,
+	struct gk_config *gk_conf, struct gk_instance *instance)
 {
 	int ret;
 
@@ -1737,23 +1744,50 @@ process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 
 	case GK_GRANTED:
 		ret = gk_process_granted(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_DECLINED:
 		ret = gk_process_declined(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_BPF:
 		ret = gk_process_bpf(fe, packet,
-			req_bufs, num_reqs, gk_conf, stats);
+			req_bufs, num_reqs, gk_conf,
+			&instance->traffic_stats);
 		break;
 
-	default:
+	default: {
+		char err_msg[256];
+		int ret2;
+
 		ret = -1;
-		G_LOG(ERR, "Unknown flow state: %d\n", fe->state);
+
+		/*
+		 * The flow table is corrupted.
+		 *
+		 * The ideal solution would be to move the flow into
+		 * the GK_REQUEST state and to process it as such.
+		 * The corresponding fib entry, however, is not available
+		 * to change the state, and finding the fib entry is too
+		 * expensive to do here.
+		 *
+		 * The second best solution, done below, is to remove
+		 * the flow entry.
+		 */
+
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): Unknown flow state: %i; logging and dropping flow entry...\n",
+			__func__, fe->state);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_state(fe);
+		gk_del_flow_entry_at_pos(instance, fe_index);
 		break;
+	}
 	}
 
 	return ret;
@@ -1943,7 +1977,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		int fidx = lpm_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs[i],
+			flow_hash_val_arr[fidx], fibs[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs,
 			&num_reqs, front, back, instance, gk_conf);
@@ -1953,7 +1987,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		int fidx = lpm6_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs6[i],
+			flow_hash_val_arr[fidx], fibs6[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs,
 			&num_reqs, front, back, instance, gk_conf);
@@ -1963,8 +1997,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		if (fe_arr[i] == NULL)
 			continue;
 
-		ret = process_flow_entry(fe_arr[i], &pkt_arr[i], req_bufs,
-			&num_reqs, gk_conf, stats);
+		ret = process_flow_entry(fe_arr[i], pos_arr[i], &pkt_arr[i],
+			req_bufs, &num_reqs, gk_conf, instance);
 		if (ret < 0)
 			drop_packet_front(pkt_arr[i].pkt, instance);
 		else if (ret == EINPROGRESS) {
