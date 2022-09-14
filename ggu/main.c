@@ -91,7 +91,8 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 		break;
 
 	default:
-		G_LOG(ERR, "Impossible policy state %hhu\n", policy->state);
+		G_LOG(ERR, "%s(): unknown policy state %hhu\n",
+			__func__, policy->state);
 		goto error;
 	}
 
@@ -331,26 +332,26 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
 		ip4hdr = l3_hdr;
 		if (ip4hdr->next_proto_id != IPPROTO_UDP) {
-			G_LOG(ERR, "Received non-UDP packets, IPv4 filter bug\n");
+			G_LOG(ERR, "%s(): received non-UDP packets, IPv4 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (ip4hdr->dst_addr != back->ip4_addr.s_addr) {
-			G_LOG(ERR, "Received packets not destined to the Gatekeeper server, IPv4 filter bug\n");
+			G_LOG(ERR, "%s(): received packets not destined to the Gatekeeper server, IPv4 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
-			G_LOG(WARNING,
-				"Received IPv4 fragmented packets destined to the Gatekeeper server at %s\n",
+			G_LOG(WARNING, "%s(): received IPv4 fragmented packets destined to the Gatekeeper server\n",
 				__func__);
 			goto free_packet;
 		}
@@ -363,9 +364,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip4hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -384,9 +384,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -397,8 +396,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		ip6hdr = l3_hdr;
 
 		if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-			G_LOG(WARNING,
-				"Received IPv6 fragmented packets destined to the Gatekeeper server at %s\n",
+			G_LOG(WARNING, "%s(): received IPv6 fragmented packets destined to the Gatekeeper server\n",
 				__func__);
 			goto free_packet;
 		}
@@ -406,13 +404,14 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		l3_len = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 			&nexthdr);
 		if (l3_len < 0) {
-			G_LOG(ERR,
-				"Failed to parse the IPv6 packet's extension headers\n");
+			G_LOG(ERR, "%s(): failed to parse the IPv6 packet's extension headers\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (nexthdr != IPPROTO_UDP) {
-			G_LOG(ERR, "Received non-UDP packets, IPv6 filter bug\n");
+			G_LOG(ERR, "%s(): received non-UDP packets, IPv6 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
@@ -422,9 +421,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip6hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -433,17 +431,16 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	}
 
 	default:
-		G_LOG(NOTICE, "Unknown network layer protocol %hu\n",
-			ether_type);
+		G_LOG(NOTICE, "%s(): unknown network layer protocol %hu\n",
+			__func__, ether_type);
 		goto free_packet;
 		break;
 	}
 
 	if (udphdr->src_port != ggu_conf->ggu_src_port ||
 			udphdr->dst_port != ggu_conf->ggu_dst_port) {
-		G_LOG(ERR,
-			"Unknown UDP src port %hu, dst port %hu, filter bug\n",
-			rte_be_to_cpu_16(udphdr->src_port),
+		G_LOG(ERR, "%s(): unknown UDP src port %hu, dst port %hu, filter bug\n",
+			__func__, rte_be_to_cpu_16(udphdr->src_port),
 			rte_be_to_cpu_16(udphdr->dst_port));
 		goto free_packet;
 	}
@@ -451,9 +448,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	real_payload_len = pkt->data_len - l2_len - l3_len;
 	expected_payload_len = rte_be_to_cpu_16(udphdr->dgram_len);
 	if (real_payload_len != expected_payload_len) {
-		G_LOG(NOTICE,
-			"The size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)\n",
-			real_payload_len, expected_payload_len);
+		G_LOG(NOTICE, "%s(): the size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)\n",
+			__func__, real_payload_len, expected_payload_len);
 		goto free_packet;
 	}
 
@@ -463,29 +459,28 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	if (ether_type == RTE_ETHER_TYPE_IPV4) {
 		cal_udp_checksum = rte_ipv4_udptcp_cksum(l3_hdr, udphdr);
 		if (pkt_udp_checksum != cal_udp_checksum) {
-			G_LOG(ERR, "The IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
-				pkt_udp_checksum, cal_udp_checksum);
+			G_LOG(ERR, "%s(): the IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				__func__, pkt_udp_checksum, cal_udp_checksum);
 			goto free_packet;
 		}
 	} else {
 		cal_udp_checksum = rte_ipv6_udptcp_cksum(l3_hdr, udphdr);
 		if (pkt_udp_checksum != cal_udp_checksum) {
-			G_LOG(ERR, "The IPv6 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
-				pkt_udp_checksum, cal_udp_checksum);
+			G_LOG(ERR, "%s(): the IPv6 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				__func__, pkt_udp_checksum, cal_udp_checksum);
 			goto free_packet;
 		}
 	}
 
 	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
 	if (gguhdr->version != GGU_PD_VER) {
-		G_LOG(NOTICE, "Unknown policy decision format %hhu\n",
-			gguhdr->version);
+		G_LOG(NOTICE, "%s(): unknown policy decision format %hhu\n",
+			__func__, gguhdr->version);
 		goto free_packet;
 	}
 	if (gguhdr->res1 != 0 || gguhdr->res2 != 0) {
-		G_LOG(NOTICE,
-			"Reserved fields of GGU header should be 0 but are %hhu and %hu\n",
-			gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
+		G_LOG(NOTICE, "%s(): reserved fields of GGU header should be 0 but are %hhu and %hu\n",
+			__func__, gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
 		goto free_packet;
 	}
 
