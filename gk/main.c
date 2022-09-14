@@ -533,7 +533,7 @@ get_block_idx(struct gk_config *gk_conf, unsigned int lcore_id)
 }
 
 static void
-print_flow_state(struct flow_entry *fe)
+print_flow_state(struct flow_entry *fe, int32_t index)
 {
 	int ret;
 	char grantor_ip[RTE_MAX(MAX_INET_ADDRSTRLEN, 128)];
@@ -617,7 +617,7 @@ dump:
 	}
 
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(state_msg));
-	print_flow_err_msg(&fe->flow, state_msg);
+	print_flow_err_msg(&fe->flow, index, state_msg);
 }
 
 static inline void
@@ -643,6 +643,17 @@ found_corruption_in_flow_table(struct gk_instance *instance)
 	}
 	instance->scan_waiting_eoc = true;
 	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
+}
+
+static inline bool
+is_flow_valid(const struct ip_flow *flow)
+{
+	/*
+	 * If @flow does not satify the following constraints,
+	 * rss_ip_flow_hf() cannot work.
+	 */
+	return flow->proto == RTE_ETHER_TYPE_IPV4 ||
+		flow->proto == RTE_ETHER_TYPE_IPV6;
 }
 
 /*
@@ -688,6 +699,16 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	 * only because @fe->in_use is false.
 	 */
 
+	if (unlikely(!is_flow_valid(&fe->flow))) {
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow key is invalid; logging and removing flow entry...",
+			__func__);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
+		print_flow_state(fe, entry_idx);
+		goto del;
+	}
+
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
 		if (likely(entry_idx == (typeof(entry_idx))ret)) {
@@ -700,11 +721,11 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 			"%s(): there are two flow entries for the same flow; the main entry is at position %i and the duplicate at position %u; logging and removing both entries...",
 			__func__, ret, entry_idx);
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_err_msg(&fe->flow, ret, err_msg);
 		fe2 = &instance->ip_flow_entry_table[ret];
-		print_flow_state(fe2);
+		print_flow_state(fe2, ret);
 		reset_fe(instance, fe2);
-		print_flow_state(fe);
+		print_flow_state(fe, entry_idx);
 		goto del;
 	}
 
@@ -713,8 +734,8 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 			"%s(): failed to delete a flow (errno=%i): %s; logging flow and dropping it...",
 			__func__, -ret, strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
-		print_flow_state(fe);
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
+		print_flow_state(fe, entry_idx);
 		goto del;
 	}
 
@@ -731,26 +752,26 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 			"%s(): flow was not indexed; logging and dropping flow...",
 			__func__);
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
-		print_flow_state(fe);
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
+		print_flow_state(fe, entry_idx);
 		goto del;
 	}
 
 	ret2 = snprintf(err_msg, sizeof(err_msg),
-		"%s(): flow had wrong hash value (0x%x); fixed hash value to 0x%x; correcting, logging, and dropping flow entry...",
+		"%s(): flow had wrong hash value (0x%x); fixed hash value to 0x%x; correcting and logging flow entry...",
 		__func__, fe->flow_hash_val, recomp_hash);
 	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-	print_flow_err_msg(&fe->flow, err_msg);
+	print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 	fe->flow_hash_val = recomp_hash;
-	print_flow_state(fe);
+	print_flow_state(fe, entry_idx);
 
 	ret = rte_hash_lookup_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (ret < 0) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): failed to look flow up even after fixing its hash value errno=%i: %s",
+			"%s(): failed to look flow up even after fixing its hash value errno=%i: %s; dropping flow entry...",
 			__func__, -ret, strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 		/*
 		 * Although the hash was wrong, the entry was not indexed.
 		 * So it is safe to release it.
@@ -763,9 +784,9 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 			"%s(): there is a duplicate flow entry at %i for entry at %u; logging and releasing duplicate entry...",
 			__func__, ret, entry_idx);
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_err_msg(&fe->flow, ret, err_msg);
 		fe2 = &instance->ip_flow_entry_table[ret];
-		print_flow_state(fe2);
+		print_flow_state(fe2, ret);
 		gk_del_flow_entry_with_key(instance, &fe->flow, ret);
 		goto del;
 	}
@@ -773,18 +794,18 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (unlikely(ret < 0)) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): failed to remove flow entry even after fixing its hash value errno=%i: %s",
+			"%s(): failed to remove flow entry even after fixing its hash value errno=%i: %s; dropping flow entry...",
 			__func__, -ret, strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 	} else if (unlikely(entry_idx != (typeof(entry_idx))ret)) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
 			"%s(): there is bug in the hash table library of DPDK: a lookup for a flow returned position %u, but, while removing the flow, rte_hash_del_key_with_hash() returned position %i; logging this second flow entry and releasing both entries...",
 			__func__, entry_idx, ret);
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, err_msg);
+		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 		fe2 = &instance->ip_flow_entry_table[ret];
-		print_flow_state(fe2);
+		print_flow_state(fe2, ret);
 		reset_fe(instance, fe2);
 	}
 
@@ -809,8 +830,21 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	 * Use @ret2 instead of @ret to pair this function with its sister
 	 * function gk_del_flow_entry_at_pos().
 	 */
-	int ret2;
+	int ret, ret2;
 	char err_msg[256];
+
+	if (unlikely(!is_flow_valid(flow_key))) {
+		ret = rte_hash_free_key_with_position(
+			instance->ip_flow_hash_table, entry_idx);
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): flow_key is invalid at position %u. rte_hash_free_key_with_position() returned %i (i.e. %s). Logging and removing flow entry...",
+			__func__, entry_idx, ret, rte_strerror(-ret));
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(flow_key, entry_idx, err_msg);
+		print_flow_state(fe, entry_idx);
+		found_corruption_in_flow_table(instance);
+		return gk_del_flow_entry_at_pos(instance, entry_idx);
+	}
 
 	if (likely(flow_key_eq(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
@@ -818,11 +852,11 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	found_corruption_in_flow_table(instance);
 
 	ret2 = snprintf(err_msg, sizeof(err_msg),
-		"%s(): the flow entry does not correspond to the flow key at postion %u; logging entry and releasing both flow keys...",
-		__func__, entry_idx);
+		"%s(): the flow entry does not correspond to the flow key; logging entry and releasing both flow keys...",
+		__func__);
 	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-	print_flow_err_msg(flow_key, err_msg);
-	print_flow_state(fe);
+	print_flow_err_msg(flow_key, entry_idx, err_msg);
+	print_flow_state(fe, entry_idx);
 
 	/*
 	 * Back up the value of @*flow_key because if it is contained in @fe,
@@ -1062,12 +1096,12 @@ log_flow_state(struct gk_log_flow *log, struct gk_instance *instance)
 		ret = snprintf(err_msg, sizeof(err_msg),
 			"%s(): flow does not exist\n", __func__);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-		print_flow_err_msg(&log->flow, err_msg);
+		print_flow_err_msg(&log->flow, -ENOENT, err_msg);
 		return;
 	}
 
 	fe = &instance->ip_flow_entry_table[ret];
-	print_flow_state(fe);
+	print_flow_state(fe, ret);
 }
 
 static bool
@@ -1514,7 +1548,8 @@ lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 
 static struct flow_entry *
 lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
-		struct gk_fib *fib, uint16_t *num_tx, struct rte_mbuf **tx_bufs,
+		struct gk_fib *fib, int32_t *fe_index,
+		uint16_t *num_tx, struct rte_mbuf **tx_bufs,
 		struct acl_search *acl4, struct acl_search *acl6,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
 		struct rte_mbuf **req_bufs, uint16_t *num_reqs,
@@ -1532,7 +1567,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			add_pkt_acl(acl4, pkt);
 		else
 			add_pkt_acl(acl6, pkt);
-		return NULL;
+		goto no_fe;
 	}
 
 	switch (fib->action) {
@@ -1551,16 +1586,16 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 */
 			send_request_to_grantor(packet, ip_flow_hash_val,
 				fib, req_bufs, num_reqs, instance, gk_conf);
-			return NULL;
+			break;
 		}
 		if (ret < 0) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		fe = &instance->ip_flow_entry_table[ret];
-		initialize_flow_entry(fe,
-			&packet->flow, ip_flow_hash_val, fib);
+		initialize_flow_entry(fe, &packet->flow, ip_flow_hash_val, fib);
+		*fe_index = ret;
 		return fe;
 	}
 
@@ -1572,10 +1607,10 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		 * G_LOG, so test log level at the Gatekeeper level.
 		 */
 		if (unlikely(G_LOG_CHECK(DEBUG)))
-			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to a front gateway");
+			print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the front interface and is destined to a front gateway");
 
 		drop_packet_front(pkt, instance);
-		return NULL;
+		break;
 
 	case GK_FWD_GATEWAY_BACK_NET:
 		/*
@@ -1599,20 +1634,22 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
 				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
-			return NULL;
+			break;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
+		break;
 
 	case GK_FWD_NEIGHBOR_FRONT_NET:
-		rte_panic("GK_FWD_NEIGHBOR_FRONT_NET should have been already handled");
-		return NULL;
+		G_LOG(CRIT, "%s(): bug: GK_FWD_NEIGHBOR_FRONT_NET should have been already handled; dropping packet...\n",
+			__func__);
+		drop_packet_front(pkt, instance);
+		break;
 
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		/*
@@ -1642,39 +1679,43 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 * the hardware of the back interface.
 			 */
 			if (unlikely(G_LOG_CHECK(DEBUG)))
-				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
+				print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
 
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (adjust_pkt_len(pkt, back, 0) == NULL ||
 				pkt_copy_cached_eth_header(pkt, eth_cache,
 					back->l2_len_out)) {
 			drop_packet_front(pkt, instance);
-			return NULL;
+			break;
 		}
 
 		if (update_ip_hop_count(front, packet, num_pkts, icmp_bufs,
 				&instance->front_icmp_rs, instance,
 				drop_packet_front) < 0)
-			return NULL;
+			break;
 
 		tx_bufs[(*num_tx)++] = pkt;
-		return NULL;
+		break;
 
 	case GK_DROP:
 		/* FALLTHROUGH */
 	default:
 		drop_packet_front(pkt, instance);
-		return NULL;
+		break;
 	}
+
+no_fe:
+	*fe_index = -ENOENT;
+	return NULL;
 }
 
 static int
-process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
-	struct rte_mbuf **req_bufs, uint16_t *num_reqs,
-	struct gk_config *gk_conf, struct gk_measurement_metrics *stats)
+process_flow_entry(struct flow_entry *fe, int32_t fe_index,
+	struct ipacket *packet, struct rte_mbuf **req_bufs, uint16_t *num_reqs,
+	struct gk_config *gk_conf, struct gk_instance *instance)
 {
 	int ret;
 
@@ -1703,23 +1744,50 @@ process_flow_entry(struct flow_entry *fe, struct ipacket *packet,
 
 	case GK_GRANTED:
 		ret = gk_process_granted(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_DECLINED:
 		ret = gk_process_declined(fe, packet,
-			req_bufs, num_reqs, gk_conf->sol_conf, stats);
+			req_bufs, num_reqs, gk_conf->sol_conf,
+			&instance->traffic_stats);
 		break;
 
 	case GK_BPF:
 		ret = gk_process_bpf(fe, packet,
-			req_bufs, num_reqs, gk_conf, stats);
+			req_bufs, num_reqs, gk_conf,
+			&instance->traffic_stats);
 		break;
 
-	default:
+	default: {
+		char err_msg[256];
+		int ret2;
+
 		ret = -1;
-		G_LOG(ERR, "Unknown flow state: %d\n", fe->state);
+
+		/*
+		 * The flow table is corrupted.
+		 *
+		 * The ideal solution would be to move the flow into
+		 * the GK_REQUEST state and to process it as such.
+		 * The corresponding fib entry, however, is not available
+		 * to change the state, and finding the fib entry is too
+		 * expensive to do here.
+		 *
+		 * The second best solution, done below, is to remove
+		 * the flow entry.
+		 */
+
+		ret2 = snprintf(err_msg, sizeof(err_msg),
+			"%s(): Unknown flow state: %i; logging and dropping flow entry...\n",
+			__func__, fe->state);
+		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
+		print_flow_err_msg(&fe->flow, fe_index, err_msg);
+		print_flow_state(fe, fe_index);
+		gk_del_flow_entry_at_pos(instance, fe_index);
 		break;
+	}
 	}
 
 	return ret;
@@ -1909,7 +1977,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		int fidx = lpm_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs[i],
+			flow_hash_val_arr[fidx], fibs[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs,
 			&num_reqs, front, back, instance, gk_conf);
@@ -1919,7 +1987,7 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		int fidx = lpm6_lookup_pos[i];
 
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
-			flow_hash_val_arr[fidx], fibs6[i],
+			flow_hash_val_arr[fidx], fibs6[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
 			tx_front_num_pkts, tx_front_pkts, req_bufs,
 			&num_reqs, front, back, instance, gk_conf);
@@ -1929,8 +1997,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		if (fe_arr[i] == NULL)
 			continue;
 
-		ret = process_flow_entry(fe_arr[i], &pkt_arr[i], req_bufs,
-			&num_reqs, gk_conf, stats);
+		ret = process_flow_entry(fe_arr[i], pos_arr[i], &pkt_arr[i],
+			req_bufs, &num_reqs, gk_conf, instance);
 		if (ret < 0)
 			drop_packet_front(pkt_arr[i].pkt, instance);
 		else if (ret == EINPROGRESS) {
@@ -1989,8 +2057,7 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 				RTE_ETHER_TYPE_IPV6))
 			add_pkt_acl(acl6, pkt);
 		else {
-			print_flow_err_msg(&packet->flow,
-				"gk: failed to get the fib entry or it is not an IP packet");
+			print_flow_err_msg(&packet->flow, -ENOENT, "Failed to get the fib entry or it is not an IP packet");
 			drop_packet(pkt);
 		}
 		return;
@@ -2036,7 +2103,7 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 		 * G_LOG, so test log level at the Gatekeeper level.
 		 */
 		if (unlikely(G_LOG_CHECK(DEBUG)))
-			print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the back interface and is destined to a back gateway");
+			print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the back interface and is destined to a back gateway");
 
 		drop_packet(pkt);
 		return;
@@ -2069,7 +2136,7 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 			 * the hardware of the front interface.
 			 */
 			if (unlikely(G_LOG_CHECK(DEBUG)))
-				print_flow_err_msg(&packet->flow, "Dropping packet that arrived at the back interface and is destined to an uknown front neighbor");
+				print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the back interface and is destined to an uknown front neighbor");
 
 			drop_packet(pkt);
 			return;
@@ -2091,7 +2158,9 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 		return;
 
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		rte_panic("GK_FWD_NEIGHBOR_BACK_NET should have been already handled");
+		G_LOG(CRIT, "%s(): bug: GK_FWD_NEIGHBOR_BACK_NET should have been already handled; dropping packet...\n",
+			__func__);
+		drop_packet(pkt);
 		return;
 
 	case GK_DROP:
@@ -2264,7 +2333,8 @@ update_flow_entry(struct flow_entry *fe, struct ggu_policy *policy)
 		break;
 
 	default:
-		G_LOG(ERR, "Unknown flow state %u\n", policy->state);
+		G_LOG(ERR, "%s(): unknown flow state %u\n",
+			__func__, policy->state);
 		break;
 	}
 }
@@ -2281,10 +2351,9 @@ update_flow_table(struct gk_fib *fib, struct ggu_policy *policy,
 		/* Drop this solicitation to add a policy decision. */
 		char err_msg[128];
 		ret = snprintf(err_msg, sizeof(err_msg),
-			"gk: at %s initialize flow entry error",
-			__func__);
+			"%s(): error while initializing flow entry", __func__);
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
-		print_flow_err_msg(&policy->flow, err_msg);
+		print_flow_err_msg(&policy->flow, -ENOENT, err_msg);
 		return;
 	}
 
@@ -2410,7 +2479,11 @@ static bool
 test_invalid_flow(__attribute__((unused)) void *arg,
 	const struct ip_flow *flow, struct flow_entry *fe)
 {
-	if (unlikely(!fe->in_use))
+	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
+			!flow_key_eq(flow, &fe->flow) ||
+			!fe->in_use || fe->grantor_fib == NULL ||
+			fe->grantor_fib->action != GK_FWD_GRANTOR
+			))
 		return true;
 
 	switch (fe->state) {
@@ -2418,16 +2491,10 @@ test_invalid_flow(__attribute__((unused)) void *arg,
 	case GK_GRANTED:
 	case GK_DECLINED:
 	case GK_BPF:
-		break;
+		return false;
 	default:
 		return true;
 	}
-
-	if (unlikely(fe->grantor_fib == NULL ||
-			fe->grantor_fib->action != GK_FWD_GRANTOR))
-		return true;
-
-	return !flow_key_eq(flow, &fe->flow);
 }
 
 static uint32_t

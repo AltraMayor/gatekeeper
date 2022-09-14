@@ -51,6 +51,7 @@ flow_key_eq(const struct ip_flow *f1, const struct ip_flow *f2)
 	return ip_flow_cmp_eq(f1, f2, sizeof(*f1)) == 0;
 }
 
-void print_flow_err_msg(const struct ip_flow *flow, const char *err_msg);
+void print_flow_err_msg(const struct ip_flow *flow, int32_t index,
+	const char *err_msg);
 
 #endif /* _GATEKEEPER_FLOW_H_ */
