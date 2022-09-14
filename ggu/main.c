@@ -105,7 +105,7 @@ error:
 void
 ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	unsigned int decision_list_len, ggu_policy_fn policy_fn,
-	void *policy_arg, const char *block)
+	void *policy_arg)
 {
 	while (decision_list_len >= sizeof(*ggu_decision)) {
 		struct ggu_policy policy;
@@ -114,10 +114,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		size_t params_offset;
 
 		if (ggu_decision->res1 != 0 || ggu_decision->res2 != 0) {
-			G_LOG(NOTICE,
-				"%s: %s: reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
-				block, __func__,
-				ggu_decision->res1,
+			G_LOG(NOTICE, "%s(): reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
+				__func__, ggu_decision->res1,
 				rte_be_to_cpu_16(ggu_decision->res2));
 			return;
 		}
@@ -128,9 +126,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 declined decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 declined decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_DECLINED;
@@ -143,9 +140,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 declined decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 declined decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_DECLINED;
@@ -158,9 +154,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 granted decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 granted decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_GRANTED;
@@ -173,9 +168,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 granted decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 granted decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_GRANTED;
@@ -188,9 +182,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(struct ggu_bpf_wire);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 BPF decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 BPF decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_BPF;
@@ -203,9 +196,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(struct ggu_bpf_wire);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 BPF decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 BPF decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_BPF;
@@ -215,9 +207,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			params_offset = sizeof(policy.flow.f.v6);
 			break;
 		default:
-			G_LOG(WARNING,
-				"%s: %s: unexpected decision type: %hu\n",
-				block, __func__, decision_type);
+			G_LOG(WARNING, "%s(): unexpected decision type: %hu\n",
+				__func__, decision_type);
 			return;
 		}
 
@@ -258,23 +249,20 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				(ggu_decision->ip_flow + params_offset);
 			unsigned int cookie_len;
 			if (bpf_wire_be->reserved != 0) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision, reserved=%u\n",
-					block, __func__, bpf_wire_be->reserved);
+				G_LOG(WARNING, "%s(): malformed BPF decision, reserved=%u\n",
+					__func__, bpf_wire_be->reserved);
 				return;
 			}
 			cookie_len = 4 * bpf_wire_be->cookie_len_4by;
 			if (cookie_len > sizeof(struct gk_bpf_cookie)) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision, cookie_len=%u\n",
-					block, __func__, cookie_len);
+				G_LOG(WARNING, "%s(): malformed BPF decision, cookie_len=%u\n",
+					__func__, cookie_len);
 				return;
 			}
 			decision_len += cookie_len;
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision (too short)\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed BPF decision (too short)\n",
+					__func__);
 				return;
 			}
 			policy.params.bpf.expire_sec =
@@ -296,8 +284,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		}
 
 		default:
-			rte_panic("ggu: found an unknown decision type after previously verifying it: %hhu\n",
-				decision_type);
+			rte_panic("%s(): found an unknown decision type after previously verifying it: %hhu\n",
+				__func__, decision_type);
 		}
 
 		policy_fn(&policy, policy_arg);
@@ -307,9 +295,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	}
 
 	if (decision_list_len != 0) {
-		G_LOG(WARNING,
-			"%s: %s: notification packet had partial decision list\n",
-			block, __func__);
+		G_LOG(WARNING, "%s(): notification packet had partial decision list\n",
+			__func__);
 	}
 }
 
@@ -508,7 +495,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 
 	/* Loop over each policy decision in the packet. */
 	ggu_policy_iterator(ggu_decision, decision_list_len,
-		process_single_policy, ggu_conf, "ggu");
+		process_single_policy, ggu_conf);
 
 free_packet:
 	rte_pktmbuf_free(pkt);

@@ -856,7 +856,7 @@ print_unsent_policies(struct ggu_notify_pkt *ggu_pkt)
 		ggu_pkt->buf, struct ggu_decision *, offset);
 	unsigned int decision_list_len = ggu_pkt->buf->data_len - offset;
 	ggu_policy_iterator(ggu_decision, decision_list_len,
-		print_unsent_policy, NULL, "gt");
+		print_unsent_policy, NULL);
 }
 
 /*
