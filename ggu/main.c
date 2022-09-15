@@ -91,7 +91,8 @@ process_single_policy(struct ggu_policy *policy, void *arg)
 		break;
 
 	default:
-		G_LOG(ERR, "Impossible policy state %hhu\n", policy->state);
+		G_LOG(ERR, "%s(): unknown policy state %hhu\n",
+			__func__, policy->state);
 		goto error;
 	}
 
@@ -105,7 +106,7 @@ error:
 void
 ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	unsigned int decision_list_len, ggu_policy_fn policy_fn,
-	void *policy_arg, const char *block)
+	void *policy_arg)
 {
 	while (decision_list_len >= sizeof(*ggu_decision)) {
 		struct ggu_policy policy;
@@ -114,10 +115,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		size_t params_offset;
 
 		if (ggu_decision->res1 != 0 || ggu_decision->res2 != 0) {
-			G_LOG(NOTICE,
-				"%s: %s: reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
-				block, __func__,
-				ggu_decision->res1,
+			G_LOG(NOTICE, "%s(): reserved fields of GGU decisions should be 0 but are %hhu and %hu\n",
+				__func__, ggu_decision->res1,
 				rte_be_to_cpu_16(ggu_decision->res2));
 			return;
 		}
@@ -128,9 +127,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 declined decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 declined decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_DECLINED;
@@ -143,9 +141,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.declined);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 declined decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 declined decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_DECLINED;
@@ -158,9 +155,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 granted decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 granted decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_GRANTED;
@@ -173,9 +169,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(policy.params.granted);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 granted decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 granted decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_GRANTED;
@@ -188,9 +183,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v4) +
 				sizeof(struct ggu_bpf_wire);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv4 BPF decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv4 BPF decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_BPF;
@@ -203,9 +197,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			decision_len += sizeof(policy.flow.f.v6) +
 				sizeof(struct ggu_bpf_wire);
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed IPv6 BPF decision\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed IPv6 BPF decision\n",
+					__func__);
 				return;
 			}
 			policy.state = GK_BPF;
@@ -215,9 +208,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 			params_offset = sizeof(policy.flow.f.v6);
 			break;
 		default:
-			G_LOG(WARNING,
-				"%s: %s: unexpected decision type: %hu\n",
-				block, __func__, decision_type);
+			G_LOG(WARNING, "%s(): unexpected decision type: %hu\n",
+				__func__, decision_type);
 			return;
 		}
 
@@ -258,23 +250,20 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 				(ggu_decision->ip_flow + params_offset);
 			unsigned int cookie_len;
 			if (bpf_wire_be->reserved != 0) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision, reserved=%u\n",
-					block, __func__, bpf_wire_be->reserved);
+				G_LOG(WARNING, "%s(): malformed BPF decision, reserved=%u\n",
+					__func__, bpf_wire_be->reserved);
 				return;
 			}
 			cookie_len = 4 * bpf_wire_be->cookie_len_4by;
 			if (cookie_len > sizeof(struct gk_bpf_cookie)) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision, cookie_len=%u\n",
-					block, __func__, cookie_len);
+				G_LOG(WARNING, "%s(): malformed BPF decision, cookie_len=%u\n",
+					__func__, cookie_len);
 				return;
 			}
 			decision_len += cookie_len;
 			if (decision_list_len < decision_len) {
-				G_LOG(WARNING,
-					"%s: %s: malformed BPF decision (too short)\n",
-					block, __func__);
+				G_LOG(WARNING, "%s(): malformed BPF decision (too short)\n",
+					__func__);
 				return;
 			}
 			policy.params.bpf.expire_sec =
@@ -296,8 +285,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 		}
 
 		default:
-			rte_panic("ggu: found an unknown decision type after previously verifying it: %hhu\n",
-				decision_type);
+			rte_panic("%s(): found an unknown decision type after previously verifying it: %hhu\n",
+				__func__, decision_type);
 		}
 
 		policy_fn(&policy, policy_arg);
@@ -307,9 +296,8 @@ ggu_policy_iterator(struct ggu_decision *ggu_decision,
 	}
 
 	if (decision_list_len != 0) {
-		G_LOG(WARNING,
-			"%s: %s: notification packet had partial decision list\n",
-			block, __func__);
+		G_LOG(WARNING, "%s(): notification packet had partial decision list\n",
+			__func__);
 	}
 }
 
@@ -344,26 +332,26 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
 		ip4hdr = l3_hdr;
 		if (ip4hdr->next_proto_id != IPPROTO_UDP) {
-			G_LOG(ERR, "Received non-UDP packets, IPv4 filter bug\n");
+			G_LOG(ERR, "%s(): received non-UDP packets, IPv4 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (ip4hdr->dst_addr != back->ip4_addr.s_addr) {
-			G_LOG(ERR, "Received packets not destined to the Gatekeeper server, IPv4 filter bug\n");
+			G_LOG(ERR, "%s(): received packets not destined to the Gatekeeper server, IPv4 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
-			G_LOG(WARNING,
-				"Received IPv4 fragmented packets destined to the Gatekeeper server at %s\n",
+			G_LOG(WARNING, "%s(): received IPv4 fragmented packets destined to the Gatekeeper server\n",
 				__func__);
 			goto free_packet;
 		}
@@ -376,9 +364,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip4hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv4 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -397,9 +384,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 			sizeof(struct rte_udp_hdr) +
 			sizeof(struct ggu_common_hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -410,8 +396,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		ip6hdr = l3_hdr;
 
 		if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-			G_LOG(WARNING,
-				"Received IPv6 fragmented packets destined to the Gatekeeper server at %s\n",
+			G_LOG(WARNING, "%s(): received IPv6 fragmented packets destined to the Gatekeeper server\n",
 				__func__);
 			goto free_packet;
 		}
@@ -419,13 +404,14 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		l3_len = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
 			&nexthdr);
 		if (l3_len < 0) {
-			G_LOG(ERR,
-				"Failed to parse the IPv6 packet's extension headers\n");
+			G_LOG(ERR, "%s(): failed to parse the IPv6 packet's extension headers\n",
+				__func__);
 			goto free_packet;
 		}
 
 		if (nexthdr != IPPROTO_UDP) {
-			G_LOG(ERR, "Received non-UDP packets, IPv6 filter bug\n");
+			G_LOG(ERR, "%s(): received non-UDP packets, IPv6 filter bug\n",
+				__func__);
 			goto free_packet;
 		}
 
@@ -435,9 +421,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 		 */
 		minimum_size += l3_len - sizeof(*ip6hdr);
 		if (pkt->data_len < minimum_size) {
-			G_LOG(NOTICE,
-				"The IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
-				pkt->data_len, minimum_size);
+			G_LOG(NOTICE, "%s(): the IPv6 packet's actual size is %hu, which doesn't have the minimum expected size %hu\n",
+				__func__, pkt->data_len, minimum_size);
 			goto free_packet;
 		}
 
@@ -446,17 +431,16 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	}
 
 	default:
-		G_LOG(NOTICE, "Unknown network layer protocol %hu\n",
-			ether_type);
+		G_LOG(NOTICE, "%s(): unknown network layer protocol %hu\n",
+			__func__, ether_type);
 		goto free_packet;
 		break;
 	}
 
 	if (udphdr->src_port != ggu_conf->ggu_src_port ||
 			udphdr->dst_port != ggu_conf->ggu_dst_port) {
-		G_LOG(ERR,
-			"Unknown UDP src port %hu, dst port %hu, filter bug\n",
-			rte_be_to_cpu_16(udphdr->src_port),
+		G_LOG(ERR, "%s(): unknown UDP src port %hu, dst port %hu, filter bug\n",
+			__func__, rte_be_to_cpu_16(udphdr->src_port),
 			rte_be_to_cpu_16(udphdr->dst_port));
 		goto free_packet;
 	}
@@ -464,9 +448,8 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	real_payload_len = pkt->data_len - l2_len - l3_len;
 	expected_payload_len = rte_be_to_cpu_16(udphdr->dgram_len);
 	if (real_payload_len != expected_payload_len) {
-		G_LOG(NOTICE,
-			"The size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)\n",
-			real_payload_len, expected_payload_len);
+		G_LOG(NOTICE, "%s(): the size (%hu) of the payload available in the UDP header doesn't match the expected size (%hu)\n",
+			__func__, real_payload_len, expected_payload_len);
 		goto free_packet;
 	}
 
@@ -476,29 +459,28 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 	if (ether_type == RTE_ETHER_TYPE_IPV4) {
 		cal_udp_checksum = rte_ipv4_udptcp_cksum(l3_hdr, udphdr);
 		if (pkt_udp_checksum != cal_udp_checksum) {
-			G_LOG(ERR, "The IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
-				pkt_udp_checksum, cal_udp_checksum);
+			G_LOG(ERR, "%s(): the IPv4 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				__func__, pkt_udp_checksum, cal_udp_checksum);
 			goto free_packet;
 		}
 	} else {
 		cal_udp_checksum = rte_ipv6_udptcp_cksum(l3_hdr, udphdr);
 		if (pkt_udp_checksum != cal_udp_checksum) {
-			G_LOG(ERR, "The IPv6 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
-				pkt_udp_checksum, cal_udp_checksum);
+			G_LOG(ERR, "%s(): the IPv6 packet's UDP checksum (%hu) doesn't match the calculated checksum (%hu)\n",
+				__func__, pkt_udp_checksum, cal_udp_checksum);
 			goto free_packet;
 		}
 	}
 
 	gguhdr = (struct ggu_common_hdr *)&udphdr[1];
 	if (gguhdr->version != GGU_PD_VER) {
-		G_LOG(NOTICE, "Unknown policy decision format %hhu\n",
-			gguhdr->version);
+		G_LOG(NOTICE, "%s(): unknown policy decision format %hhu\n",
+			__func__, gguhdr->version);
 		goto free_packet;
 	}
 	if (gguhdr->res1 != 0 || gguhdr->res2 != 0) {
-		G_LOG(NOTICE,
-			"Reserved fields of GGU header should be 0 but are %hhu and %hu\n",
-			gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
+		G_LOG(NOTICE, "%s(): reserved fields of GGU header should be 0 but are %hhu and %hu\n",
+			__func__, gguhdr->res1, rte_be_to_cpu_16(gguhdr->res2));
 		goto free_packet;
 	}
 
@@ -508,7 +490,7 @@ process_single_packet(struct rte_mbuf *pkt, struct ggu_config *ggu_conf)
 
 	/* Loop over each policy decision in the packet. */
 	ggu_policy_iterator(ggu_decision, decision_list_len,
-		process_single_policy, ggu_conf, "ggu");
+		process_single_policy, ggu_conf);
 
 free_packet:
 	rte_pktmbuf_free(pkt);

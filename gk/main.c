@@ -601,10 +601,10 @@ dump:
 			"%s[state: GK_BPF (%hhu), flow_hash_value: 0x%x, expire_at: 0x%"PRIx64", program_index=%u, cookie=%016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", %016"PRIx64", grantor_ip: %s]",
 			s_in_use, fe->state, fe->flow_hash_val, fe->expire_at,
 			fe->program_index,
-			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
-			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
-			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
-			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]),
+			rte_be_to_cpu_64(c[0]), rte_be_to_cpu_64(c[1]),
+			rte_be_to_cpu_64(c[2]), rte_be_to_cpu_64(c[3]),
+			rte_be_to_cpu_64(c[4]), rte_be_to_cpu_64(c[5]),
+			rte_be_to_cpu_64(c[6]), rte_be_to_cpu_64(c[7]),
 			grantor_ip);
 		break;
 	}

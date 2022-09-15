@@ -830,10 +830,10 @@ print_unsent_policy(struct ggu_policy *policy,
 			__func__, policy->state,
 			policy->params.bpf.expire_sec,
 			policy->params.bpf.program_index,
-			rte_cpu_to_be_64(c[0]), rte_cpu_to_be_64(c[1]),
-			rte_cpu_to_be_64(c[2]), rte_cpu_to_be_64(c[3]),
-			rte_cpu_to_be_64(c[4]), rte_cpu_to_be_64(c[5]),
-			rte_cpu_to_be_64(c[6]), rte_cpu_to_be_64(c[7]));
+			rte_be_to_cpu_64(c[0]), rte_be_to_cpu_64(c[1]),
+			rte_be_to_cpu_64(c[2]), rte_be_to_cpu_64(c[3]),
+			rte_be_to_cpu_64(c[4]), rte_be_to_cpu_64(c[5]),
+			rte_be_to_cpu_64(c[6]), rte_be_to_cpu_64(c[7]));
 		break;
 	}
 	default:
@@ -856,7 +856,7 @@ print_unsent_policies(struct ggu_notify_pkt *ggu_pkt)
 		ggu_pkt->buf, struct ggu_decision *, offset);
 	unsigned int decision_list_len = ggu_pkt->buf->data_len - offset;
 	ggu_policy_iterator(ggu_decision, decision_list_len,
-		print_unsent_policy, NULL, "gt");
+		print_unsent_policy, NULL);
 }
 
 /*
