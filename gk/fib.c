@@ -1507,6 +1507,25 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 	return -1;
 }
 
+/*
+ * Verify that the IP addresses of gateway FIB entries are not included in
+ * the prefix.
+ */
+static int
+check_gateway_prefixes(struct ip_prefix *prefix_info,
+	struct ipaddr *gw_addrs, unsigned int num_addrs)
+{
+	unsigned int i;
+
+	for (i = 0; i < num_addrs; i++) {
+		int ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
+		if (unlikely(ret < 0))
+			return ret;
+	}
+
+	return 0;
+}
+
 static int
 check_longer_prefixes(const char *context, const struct rib_head *rib,
 	const void *ip, uint8_t depth, const struct gk_fib *fib_table,
@@ -1670,7 +1689,6 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	struct gk_fib *neigh_fib;
-	unsigned int i;
 	int ret = check_prefix(prefix_info);
 
 	if (unlikely(ret < 0))
@@ -1705,15 +1723,9 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 		G_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
 	}
 
-	for (i = 0; i < num_addrs; i++) {
-		/*
-		 * Verify that the IP addresses of gateway FIB entries
-		 * are not included in the prefix.
-		 */
-		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (ret < 0)
-			return -1;
-	}
+	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
+	if (unlikely(ret < 0))
+		return ret;
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
@@ -1743,22 +1755,15 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int fib_id;
-	unsigned int i;
 	struct gk_fib *cur_fib;
 	int ret = check_prefix(prefix_info);
 
 	if (unlikely(ret < 0))
 		return ret;
 
-	for (i = 0; i < num_addrs; i++) {
-		/*
-		 * Verify that the IP addresses of gateway FIB entries
-		 * are not included in the prefix.
-		 */
-		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (ret < 0)
-			return -1;
-	}
+	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
+	if (unlikely(ret < 0))
+		return ret;
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, &cur_fib);
