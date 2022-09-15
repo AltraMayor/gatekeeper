@@ -987,9 +987,9 @@ ether_cache_put(struct gk_fib *neigh_fib,
 }
 
 /*
- * This function is called by del_fib_entry_locked().
+ * This function is called by del_fib_entry_numerical_locked().
  * Notice that, it doesn't stand on its own, and it's only
- * a construct to make del_fib_entry_locked() readable.
+ * a construct to make del_fib_entry_numerical_locked() readable.
  */
 static int
 del_gateway_from_neigh_table_locked(
@@ -1070,27 +1070,46 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	return ret;
 }
 
+static int
+check_prefix(struct ip_prefix *prefix_info)
+{
+	if (unlikely(prefix_info->len < 0))
+		return -EINVAL;
+
+	if (unlikely(prefix_info->len == 0)) {
+		G_LOG(WARNING, "%s(%s): Gatekeeper currently does not support default routes\n",
+			__func__, prefix_info->str);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
 /*
  * For removing FIB entries, it needs to notify the GK instances
  * about the removal of the FIB entry.
  */
-static int
-del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
+int
+del_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+	struct gk_config *gk_conf)
 {
 	struct gk_fib *prefix_fib;
+	int ret = check_prefix(prefix_info);
 
-	int ret = check_prefix_exists_locked(ip_prefix, gk_conf, &prefix_fib);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_prefix_exists_locked(prefix_info, gk_conf, &prefix_fib);
 	if (unlikely(ret == -ENOENT)) {
-		G_LOG(WARNING,
-			"Tried to delete a non-existent IP prefix (%s)\n",
-			ip_prefix->str);
-		return -1;
+		G_LOG(WARNING, "%s(%s): tried to delete a non-existent IP prefix\n",
+			__func__, prefix_info->str);
+		return -ENOENT;
 	}
 
 	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "check_prefix_exists_locked(%s) failed, error = %i: %s\n",
-			ip_prefix->str, -ret, strerror(-ret));
-		return -1;
+		G_LOG(ERR, "%s(%s): check_prefix_exists_locked() failed (errno=%i): %s\n",
+			__func__, prefix_info->str, -ret, strerror(-ret));
+		return ret;
 	}
 
 	RTE_VERIFY(prefix_fib != NULL);
@@ -1104,18 +1123,17 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 */
 	if (unlikely(prefix_fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 			prefix_fib->action == GK_FWD_NEIGHBOR_BACK_NET)) {
-		G_LOG(WARNING,
-			"%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
-			__func__, ip_prefix->str);
-		return -1;
+		G_LOG(WARNING, "%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
+			__func__, prefix_info->str);
+		return -EPERM;
 	}
 
-	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
+	ret = lpm_del_route(&prefix_info->addr, prefix_info->len,
 		&gk_conf->lpm_tbl);
 	if (ret < 0) {
-		G_LOG(ERR, "Cannot remove the IP prefix %s from LPM table\n",
-			ip_prefix->str);
-		return -1;
+		G_LOG(ERR, "%s(%s) failed to remove the IP prefix (errno=%i): %s\n",
+			__func__, prefix_info->str, -ret, strerror(-ret));
+		return ret;
 	}
 
 	/*
@@ -1131,7 +1149,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 	switch (prefix_fib->action) {
 	case GK_FWD_GRANTOR:
-		ret = clear_grantor_set(ip_prefix,
+		ret = clear_grantor_set(prefix_info,
 			prefix_fib->u.grantor.set, gk_conf);
 		break;
 
@@ -1139,7 +1157,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET:
 		ret = del_gateway_from_neigh_table_locked(
-			ip_prefix, prefix_fib->action,
+			prefix_info, prefix_fib->action,
 			prefix_fib->u.gateway.eth_cache, gk_conf);
 		break;
 
@@ -1150,13 +1168,13 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		rte_panic("%s(%s): GK_FWD_NEIGHBOR_FRONT_NET and GK_FWD_NEIGHBOR_BACK_NET (action = %u) should have been handled above\n",
-			__func__, ip_prefix->str, prefix_fib->action);
+			__func__, prefix_info->str, prefix_fib->action);
 		ret = -1;
 		break;
 
 	default:
-		rte_panic("Unexpected condition at %s(%s): unsupported action %u\n",
-			__func__, ip_prefix->str, prefix_fib->action);
+		rte_panic("%s(%s): bug: unsupported action %u\n",
+			__func__, prefix_info->str, prefix_fib->action);
 		ret = -1;
 		break;
 	}
@@ -1651,19 +1669,12 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
-	int ret;
 	struct gk_fib *neigh_fib;
 	unsigned int i;
+	int ret = check_prefix(prefix_info);
 
-	if (prefix_info->len < 0)
-		return -1;
-
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
+	if (unlikely(ret < 0))
+		return ret;
 
 	/*
 	 * One can only look up, without the lock, the LPM table to verify that
@@ -1731,19 +1742,13 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
-	int ret, fib_id;
+	int fib_id;
 	unsigned int i;
 	struct gk_fib *cur_fib;
+	int ret = check_prefix(prefix_info);
 
-	if (prefix_info->len < 0)
-		return -1;
-
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
+	if (unlikely(ret < 0))
+		return ret;
 
 	for (i = 0; i < num_addrs; i++) {
 		/*
@@ -1813,18 +1818,8 @@ del_fib_entry_numerical(
 {
 	int ret;
 
-	if (prefix_info->len < 0)
-		return -1;
-
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
-
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = del_fib_entry_locked(prefix_info, gk_conf);
+	ret = del_fib_entry_numerical_locked(prefix_info, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;

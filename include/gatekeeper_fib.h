@@ -320,6 +320,8 @@ int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(
 	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
+int del_fib_entry_numerical_locked(
+	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
 int l_list_gk_fib4(lua_State *l);
