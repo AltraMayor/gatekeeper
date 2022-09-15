@@ -316,6 +316,10 @@ int add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf);
+int add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	const struct route_properties *props, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
 int del_fib_entry_numerical(

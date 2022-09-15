@@ -1053,8 +1053,8 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 		if (ret == 1 && p_fib != NULL)
 			*p_fib = &ltbl->fib_tbl6[fib_id];
 	} else {
-		G_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
-			__func__, prefix->addr.proto, prefix->str);
+		G_LOG(WARNING, "%s(%s): Unknown IP type %hu\n",
+			__func__, prefix->str, prefix->addr.proto);
 		if (p_fib != NULL)
 			*p_fib = NULL;
 		return -EINVAL;
@@ -1683,7 +1683,7 @@ unknown:
  * have one gateway (@num_addrs == 1).
  */
 int
-add_fib_entry_numerical(struct ip_prefix *prefix_info,
+add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
@@ -1694,55 +1694,62 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	if (unlikely(ret < 0))
 		return ret;
 
-	/*
-	 * One can only look up, without the lock, the LPM table to verify that
-	 * the adding prefix does not lead to a GK_FWD_NEIGHBOR_*_NET FIB entry
-	 * because GK_FWD_NEIGHBOR_*_NET entries can only be added through
-	 * a network interface.
-	 * Otherwise, after the lookup, but before acquiring the lock,
-	 * a concurrent thread could add a GK_FWD_NEIGHBOR_*_NET entry that
-	 * would break the test.
-	 */
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		&prefix_info->addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
 	if (neigh_fib != NULL) {
-		G_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on front interface\n");
+		G_LOG(ERR, "%s(%s): invalid prefix; prefix lookup found existing neighbor FIB on front interface\n",
+			__func__, prefix_info->str);
 		return -1;
 	} else {
 		/* Clarify LPM lookup miss that will occur in log. */
-		G_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on front interface, as expected\n");
+		G_LOG(INFO, "%s(%s): prefix lookup did not find existing neighbor FIB on front interface, as expected\n",
+			__func__, prefix_info->str);
 	}
 
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		&prefix_info->addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
 	if (neigh_fib != NULL) {
-		G_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on back interface\n");
+		G_LOG(ERR, "%s(%s): invalid prefix; prefix lookup found existing neighbor FIB on back interface\n",
+			__func__, prefix_info->str);
 		return -1;
 	} else {
 		/* Clarify LPM lookup miss that will occur in log. */
-		G_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
+		G_LOG(INFO, "%s(%s): prefix lookup did not find existing neighbor FIB on back interface, as expected\n",
+			__func__, prefix_info->str);
 	}
 
 	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
 	if (unlikely(ret < 0))
 		return ret;
 
-	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
 	if (ret != -ENOENT) {
-		G_LOG(ERR, "Prefix already exists or error occurred\n");
-		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-		return -1;
+		G_LOG(ERR, "%s(%s): prefix already exists or error occurred\n",
+			__func__, prefix_info->str);
+		if (ret >= 0)
+			return -EEXIST;
+		return ret;
 	}
 
 	ret = check_prefix_security_hole_locked(prefix_info, action, gk_conf);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-		return -1;
-	}
+	if (ret < 0)
+		return ret;
 
-	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
+	return add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
 		action, props, gk_conf, NULL);
+}
+
+int
+add_fib_entry_numerical(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	const struct route_properties *props, struct gk_config *gk_conf)
+{
+	int ret;
+
+	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
+	ret = add_fib_entry_numerical_locked(prefix_info, gt_addrs, gw_addrs,
+		num_addrs, action, props, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
