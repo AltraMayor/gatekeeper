@@ -108,7 +108,7 @@ close:
 }
 
 static int
-get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
+get_prefix_fib_locked(struct route_update *update, struct gk_lpm *ltbl,
 	struct gk_fib **prefix_fib)
 {
 	uint32_t fib_id;
@@ -153,6 +153,21 @@ get_prefix_fib(struct route_update *update, struct gk_lpm *ltbl,
 	return 0;
 }
 
+static inline void
+rd_yield(struct cps_config *cps_conf)
+{
+	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
+}
+
+static void
+spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
+{
+	int ret;
+	while ((ret = rte_spinlock_trylock_tm(sl)) == 0)
+		rd_yield(cps_conf);
+	RTE_VERIFY(ret == 1);
+}
+
 static int
 can_rd_del_route(struct route_update *update, struct gk_fib *prefix_fib)
 {
@@ -171,47 +186,55 @@ can_rd_del_route(struct route_update *update, struct gk_fib *prefix_fib)
 }
 
 static int
-new_route(struct route_update *update, const struct cps_config *cps_conf)
+new_route(struct route_update *update, struct cps_config *cps_conf)
 {
 	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 	struct gk_fib *prefix_fib;
 	int ret;
 
-	ret = get_prefix_fib(update, ltbl, &prefix_fib);
+	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
+
+	ret = get_prefix_fib_locked(update, ltbl, &prefix_fib);
 	if (ret < 0)
-		return ret;
+		goto out;
 
 	if (prefix_fib != NULL) {
 		if ((update->rt_flags & NLM_F_EXCL) ||
-			!(update->rt_flags & NLM_F_REPLACE))
-			return -EEXIST;
+				!(update->rt_flags & NLM_F_REPLACE)) {
+			ret = -EEXIST;
+			goto out;
+		}
 
 		ret = can_rd_del_route(update, prefix_fib);
 		if (ret < 0)
-			return ret;
+			goto out;
 
 		/* Gatekeeper does not currently support multipath. */
 		if (update->rt_flags & NLM_F_APPEND) {
-			G_LOG(WARNING,
-				"%s(%s): flag NLM_F_APPEND is NOT supported\n",
+			G_LOG(WARNING, "%s(%s): flag NLM_F_APPEND is NOT supported\n",
 				__func__, update->ip_px_buf);
-			return -EOPNOTSUPP;
+			ret = -EOPNOTSUPP;
+			goto out;
 		}
 
-		/*
-		 * Ignore the return of del_fib_entry_numerical() because
-		 * no lock is held since the prefix lookup. Thus,
-		 * the prefix may or may not be in the table.
-		 */
-		del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
-	} else {
-		if (!(update->rt_flags & NLM_F_CREATE))
-			return -ENOENT;
+		ret = del_fib_entry_numerical_locked(&update->prefix_info,
+			cps_conf->gk);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to remove prefix after successful lookup (errno=%i): %s\n",
+				__func__, update->ip_px_buf,
+				-ret, strerror(-ret));
+			goto out;
+		}
+	} else if (!(update->rt_flags & NLM_F_CREATE)) {
+		ret = -ENOENT;
+		goto out;
 	}
 
 	if (update->rt_type == RTN_BLACKHOLE) {
-		return add_fib_entry_numerical(&update->prefix_info, NULL,
-			NULL, 0, GK_DROP, &update->rt_props, cps_conf->gk);
+		ret = add_fib_entry_numerical_locked(&update->prefix_info,
+			NULL, NULL, 0, GK_DROP, &update->rt_props,
+			cps_conf->gk);
+		goto out;
 	}
 
 	if (update->oif_index == 0) {
@@ -229,29 +252,30 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 				update->gw.ip.v4.s_addr);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
-					G_LOG(WARNING,
-						"%s(): there is no route to the gateway %s of the IPv4 route %s sent by routing daemon\n",
-						__func__, update->gw_buf,
-						update->ip_px_buf);
+					G_LOG(WARNING, "%s(%s): there is no route to the gateway %s\n",
+						__func__, update->ip_px_buf,
+						update->gw_buf);
 				}
-				return ret;
+				goto out;
 			}
 			gw_fib = &ltbl->fib_tbl[ret];
 		} else if (likely(update->family == AF_INET6)) {
 			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
-					G_LOG(WARNING,
-						"%s(): there is no route to the gateway %s of the IPv6 route %s sent by routing daemon\n",
-						__func__, update->gw_buf,
-						update->ip_px_buf);
+					G_LOG(WARNING, "%s(%s): there is no route to the gateway %s\n",
+						__func__, update->ip_px_buf,
+						update->gw_buf);
 				}
-				return ret;
+				goto out;
 			}
 			gw_fib = &ltbl->fib_tbl6[ret];
 		} else {
 			/* The execution should never reach here. */
-			rte_panic("Unexpected condition in %s()\n", __func__);
+			G_LOG(CRIT, "%s(%s): bug: unknown family = %i\n",
+				__func__, update->ip_px_buf, update->family);
+			ret = -EINVAL;
+			goto out;
 		}
 		RTE_VERIFY(gw_fib != NULL);
 
@@ -260,53 +284,64 @@ new_route(struct route_update *update, const struct cps_config *cps_conf)
 		else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET))
 			update->oif_index = cps_conf->back_kni_index;
 		else {
-			G_LOG(ERR,
-				"%s(%s): the gateway %s is NOT a neighbor\n",
+			G_LOG(ERR, "%s(%s): the gateway %s is NOT a neighbor\n",
 				__func__, update->ip_px_buf, update->gw_buf);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 	}
 
 	if (update->oif_index == cps_conf->front_kni_index) {
-		return add_fib_entry_numerical(&update->prefix_info, NULL,
-			&update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
+		ret = add_fib_entry_numerical_locked(&update->prefix_info,
+			NULL, &update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
 			&update->rt_props, cps_conf->gk);
+		goto out;
 	}
 
 	if (likely(update->oif_index == cps_conf->back_kni_index)) {
-		return add_fib_entry_numerical(&update->prefix_info, NULL,
-			&update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
+		ret = add_fib_entry_numerical_locked(&update->prefix_info,
+			NULL, &update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
 			&update->rt_props, cps_conf->gk);
+		goto out;
 	}
 
-	G_LOG(ERR,
-		"%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
+	G_LOG(ERR, "%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
 		__func__, update->ip_px_buf, update->oif_index,
 		cps_conf->front_kni_index, cps_conf->back_kni_index);
-	return -EINVAL;
+	ret = -EINVAL;
+
+out:
+	rte_spinlock_unlock_tm(&ltbl->lock);
+	return ret;
 }
 
 static int
-del_route(struct route_update *update, const struct cps_config *cps_conf)
+del_route(struct route_update *update, struct cps_config *cps_conf)
 {
+	int ret;
 	struct gk_fib *prefix_fib;
+	struct gk_lpm *ltbl = &cps_conf->gk->lpm_tbl;
 
-	int ret = get_prefix_fib(update, &cps_conf->gk->lpm_tbl, &prefix_fib);
+	spinlock_lock_with_yield(&ltbl->lock, cps_conf);
+
+	ret = get_prefix_fib_locked(update, ltbl, &prefix_fib);
 	if (ret < 0)
-		goto error;
+		goto out;
 
 	if (prefix_fib == NULL) {
 		ret = -ENOENT;
-		goto error;
+		goto out;
 	}
 
 	ret = can_rd_del_route(update, prefix_fib);
 	if (ret < 0)
-		goto error;
+		goto out;
 
-	ret = del_fib_entry_numerical(&update->prefix_info, cps_conf->gk);
+	ret = del_fib_entry_numerical_locked(&update->prefix_info,
+		cps_conf->gk);
 
-error:
+out:
+	rte_spinlock_unlock_tm(&ltbl->lock);
 	/*
 	 * Although the Linux kernel uses ENOENT for similar situations (e.g.
 	 * when RTM_NEWROUTE tries to replace an entry that does not exist),
@@ -541,12 +576,6 @@ data_ipv6_attr_cb(const struct nlattr *attr, void *data)
 	return MNL_CB_OK;
 }
 
-static inline void
-rd_yield(struct cps_config *cps_conf)
-{
-	coro_transfer(&cps_conf->coro_rd, &cps_conf->coro_root);
-}
-
 static ssize_t
 sendto_with_yield(int sockfd, const void *buf, size_t len,
 	const struct sockaddr *dest_addr, socklen_t addrlen,
@@ -753,15 +782,6 @@ rd_send_batch(struct cps_config *cps_conf, struct mnl_nlmsg_batch *batch,
 
 	mnl_nlmsg_batch_reset(batch);
 	return ret;
-}
-
-static void
-spinlock_lock_with_yield(rte_spinlock_t *sl, struct cps_config *cps_conf)
-{
-	int ret;
-	while ((ret = rte_spinlock_trylock_tm(sl)) == 0)
-		rd_yield(cps_conf);
-	RTE_VERIFY(ret == 1);
 }
 
 static void
@@ -1039,8 +1059,7 @@ out:
 }
 
 static int
-rd_modroute(const struct nlmsghdr *req, const struct cps_config *cps_conf,
-	int *err)
+rd_modroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 {
 	struct nlattr *tb[__RTA_MAX] = {};
 	struct rtmsg *rm = mnl_nlmsg_get_payload(req);
