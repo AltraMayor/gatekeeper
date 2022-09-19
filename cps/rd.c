@@ -243,13 +243,14 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		 * front or back network.
 		 */
 		struct gk_fib *gw_fib = NULL;
+		uint32_t next_hop;
 
 		/*
 		 * Obtain @gw_fib.
 		 */
 		if (update->family == AF_INET) {
-			ret = lpm_lookup_ipv4(ltbl->lpm,
-				update->gw.ip.v4.s_addr);
+			ret = rib_lookup(&ltbl->rib,
+				(uint8_t *)&update->gw.ip.v4.s_addr, &next_hop);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
 					G_LOG(WARNING, "%s(%s): there is no route to the gateway %s\n",
@@ -258,9 +259,10 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 				}
 				goto out;
 			}
-			gw_fib = &ltbl->fib_tbl[ret];
+			gw_fib = &ltbl->fib_tbl[next_hop];
 		} else if (likely(update->family == AF_INET6)) {
-			ret = lpm_lookup_ipv6(ltbl->lpm6, &update->gw.ip.v6);
+			ret = rib_lookup(&ltbl->rib6,
+				update->gw.ip.v6.s6_addr, &next_hop);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
 					G_LOG(WARNING, "%s(%s): there is no route to the gateway %s\n",
@@ -269,7 +271,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 				}
 				goto out;
 			}
-			gw_fib = &ltbl->fib_tbl6[ret];
+			gw_fib = &ltbl->fib_tbl6[next_hop];
 		} else {
 			/* The execution should never reach here. */
 			G_LOG(CRIT, "%s(%s): bug: unknown family = %i\n",

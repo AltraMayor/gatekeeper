@@ -851,7 +851,8 @@ static struct gk_fib *
 find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	struct gatekeeper_if *iface;
@@ -868,23 +869,24 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 
 	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4 &&
 			ipv4_if_configured(iface)) {
-		fib_id = lpm_lookup_ipv4(ltbl->lpm, gw_addr->ip.v4.s_addr);
+		ret = rib_lookup(&ltbl->rib, (uint8_t *)&gw_addr->ip.v4.s_addr,
+			&fib_id);
 		/*
 		 * Invalid gateway entry, since at least we should
 		 * obtain the FIB entry for the neighbor table.
 		 */
-		if (fib_id < 0)
+		if (unlikely(ret < 0))
 			return NULL;
 
 		neigh_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)
 			&& ipv6_if_configured(iface)) {
-		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &gw_addr->ip.v6);
+		ret = rib_lookup(&ltbl->rib6, gw_addr->ip.v6.s6_addr, &fib_id);
 		/*
 		 * Invalid gateway entry, since at least we should
 		 * obtain the FIB entry for the neighbor table.
 		 */
-		if (fib_id < 0)
+		if (unlikely(ret < 0))
 			return NULL;
 
 		neigh_fib = &ltbl->fib_tbl6[fib_id];
@@ -2315,16 +2317,18 @@ static void
 list_ipv4_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
-	fib_id = lpm_lookup_ipv4(ltbl->lpm, iface->ip4_addr.s_addr);
+	ret = rib_lookup(&ltbl->rib, (uint8_t *)&iface->ip4_addr.s_addr,
+		&fib_id);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0) {
+	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to lookup the lpm table at %s!",
 			__func__);
@@ -2340,19 +2344,20 @@ static void
 list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
-	fib_id = lpm_lookup_ipv6(ltbl->lpm6, &iface->ip6_addr);
+	ret = rib_lookup(&ltbl->rib6, iface->ip6_addr.s6_addr, &fib_id);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0) {
+	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
-		luaL_error(l, "gk: failed to lookup the lpm6 table at %s!",
-			__func__);
+		luaL_error(l, "%s(): failed to lookup the lpm6 table (errno=%d): %s",
+			__func__, -ret, strerror(-ret));
 	}
 
 	neigh_fib = &ltbl->fib_tbl6[fib_id];

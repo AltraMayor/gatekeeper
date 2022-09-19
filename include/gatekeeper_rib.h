@@ -142,6 +142,11 @@ int rib_delete(struct rib_head *rib, const uint8_t *address, uint8_t depth);
  * Look an address up on the RIB.
  * @address is in network order (big endian).
  * @address == NULL is equivalent to the all-zero address.
+ * RETURN
+ *	0 on lookup hit.
+ *	-ENOENT on lookup miss.
+ * 	A negative value on failure.
+ *
  */
 int rib_lookup(const struct rib_head *rib, const uint8_t *address,
 	uint32_t *pnext_hop);
