@@ -851,7 +851,8 @@ static struct gk_fib *
 find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	struct gatekeeper_if *iface;
@@ -868,23 +869,24 @@ find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
 
 	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4 &&
 			ipv4_if_configured(iface)) {
-		fib_id = lpm_lookup_ipv4(ltbl->lpm, gw_addr->ip.v4.s_addr);
+		ret = rib_lookup(&ltbl->rib, (uint8_t *)&gw_addr->ip.v4.s_addr,
+			&fib_id);
 		/*
 		 * Invalid gateway entry, since at least we should
 		 * obtain the FIB entry for the neighbor table.
 		 */
-		if (fib_id < 0)
+		if (unlikely(ret < 0))
 			return NULL;
 
 		neigh_fib = &ltbl->fib_tbl[fib_id];
 	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)
 			&& ipv6_if_configured(iface)) {
-		fib_id = lpm_lookup_ipv6(ltbl->lpm6, &gw_addr->ip.v6);
+		ret = rib_lookup(&ltbl->rib6, gw_addr->ip.v6.s6_addr, &fib_id);
 		/*
 		 * Invalid gateway entry, since at least we should
 		 * obtain the FIB entry for the neighbor table.
 		 */
-		if (fib_id < 0)
+		if (unlikely(ret < 0))
 			return NULL;
 
 		neigh_fib = &ltbl->fib_tbl6[fib_id];
@@ -987,9 +989,9 @@ ether_cache_put(struct gk_fib *neigh_fib,
 }
 
 /*
- * This function is called by del_fib_entry_locked().
+ * This function is called by del_fib_entry_numerical_locked().
  * Notice that, it doesn't stand on its own, and it's only
- * a construct to make del_fib_entry_locked() readable.
+ * a construct to make del_fib_entry_numerical_locked() readable.
  */
 static int
 del_gateway_from_neigh_table_locked(
@@ -1053,8 +1055,8 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 		if (ret == 1 && p_fib != NULL)
 			*p_fib = &ltbl->fib_tbl6[fib_id];
 	} else {
-		G_LOG(WARNING, "%s(): Unknown IP type %hu with prefix %s\n",
-			__func__, prefix->addr.proto, prefix->str);
+		G_LOG(WARNING, "%s(%s): Unknown IP type %hu\n",
+			__func__, prefix->str, prefix->addr.proto);
 		if (p_fib != NULL)
 			*p_fib = NULL;
 		return -EINVAL;
@@ -1070,27 +1072,46 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 	return ret;
 }
 
+static int
+check_prefix(struct ip_prefix *prefix_info)
+{
+	if (unlikely(prefix_info->len < 0))
+		return -EINVAL;
+
+	if (unlikely(prefix_info->len == 0)) {
+		G_LOG(WARNING, "%s(%s): Gatekeeper currently does not support default routes\n",
+			__func__, prefix_info->str);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
 /*
  * For removing FIB entries, it needs to notify the GK instances
  * about the removal of the FIB entry.
  */
-static int
-del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
+int
+del_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+	struct gk_config *gk_conf)
 {
 	struct gk_fib *prefix_fib;
+	int ret = check_prefix(prefix_info);
 
-	int ret = check_prefix_exists_locked(ip_prefix, gk_conf, &prefix_fib);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_prefix_exists_locked(prefix_info, gk_conf, &prefix_fib);
 	if (unlikely(ret == -ENOENT)) {
-		G_LOG(WARNING,
-			"Tried to delete a non-existent IP prefix (%s)\n",
-			ip_prefix->str);
-		return -1;
+		G_LOG(WARNING, "%s(%s): tried to delete a non-existent IP prefix\n",
+			__func__, prefix_info->str);
+		return -ENOENT;
 	}
 
 	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "check_prefix_exists_locked(%s) failed, error = %i: %s\n",
-			ip_prefix->str, -ret, strerror(-ret));
-		return -1;
+		G_LOG(ERR, "%s(%s): check_prefix_exists_locked() failed (errno=%i): %s\n",
+			__func__, prefix_info->str, -ret, strerror(-ret));
+		return ret;
 	}
 
 	RTE_VERIFY(prefix_fib != NULL);
@@ -1104,18 +1125,17 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 	 */
 	if (unlikely(prefix_fib->action == GK_FWD_NEIGHBOR_FRONT_NET ||
 			prefix_fib->action == GK_FWD_NEIGHBOR_BACK_NET)) {
-		G_LOG(WARNING,
-			"%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
-			__func__, ip_prefix->str);
-		return -1;
+		G_LOG(WARNING, "%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
+			__func__, prefix_info->str);
+		return -EPERM;
 	}
 
-	ret = lpm_del_route(&ip_prefix->addr, ip_prefix->len,
+	ret = lpm_del_route(&prefix_info->addr, prefix_info->len,
 		&gk_conf->lpm_tbl);
 	if (ret < 0) {
-		G_LOG(ERR, "Cannot remove the IP prefix %s from LPM table\n",
-			ip_prefix->str);
-		return -1;
+		G_LOG(ERR, "%s(%s) failed to remove the IP prefix (errno=%i): %s\n",
+			__func__, prefix_info->str, -ret, strerror(-ret));
+		return ret;
 	}
 
 	/*
@@ -1131,7 +1151,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 
 	switch (prefix_fib->action) {
 	case GK_FWD_GRANTOR:
-		ret = clear_grantor_set(ip_prefix,
+		ret = clear_grantor_set(prefix_info,
 			prefix_fib->u.grantor.set, gk_conf);
 		break;
 
@@ -1139,7 +1159,7 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 		/* FALLTHROUGH */
 	case GK_FWD_GATEWAY_BACK_NET:
 		ret = del_gateway_from_neigh_table_locked(
-			ip_prefix, prefix_fib->action,
+			prefix_info, prefix_fib->action,
 			prefix_fib->u.gateway.eth_cache, gk_conf);
 		break;
 
@@ -1150,13 +1170,13 @@ del_fib_entry_locked(struct ip_prefix *ip_prefix, struct gk_config *gk_conf)
 		/* FALLTHROUGH */
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		rte_panic("%s(%s): GK_FWD_NEIGHBOR_FRONT_NET and GK_FWD_NEIGHBOR_BACK_NET (action = %u) should have been handled above\n",
-			__func__, ip_prefix->str, prefix_fib->action);
+			__func__, prefix_info->str, prefix_fib->action);
 		ret = -1;
 		break;
 
 	default:
-		rte_panic("Unexpected condition at %s(%s): unsupported action %u\n",
-			__func__, ip_prefix->str, prefix_fib->action);
+		rte_panic("%s(%s): bug: unsupported action %u\n",
+			__func__, prefix_info->str, prefix_fib->action);
 		ret = -1;
 		break;
 	}
@@ -1489,6 +1509,25 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 	return -1;
 }
 
+/*
+ * Verify that the IP addresses of gateway FIB entries are not included in
+ * the prefix.
+ */
+static int
+check_gateway_prefixes(struct ip_prefix *prefix_info,
+	struct ipaddr *gw_addrs, unsigned int num_addrs)
+{
+	unsigned int i;
+
+	for (i = 0; i < num_addrs; i++) {
+		int ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
+		if (unlikely(ret < 0))
+			return ret;
+	}
+
+	return 0;
+}
+
 static int
 check_longer_prefixes(const char *context, const struct rib_head *rib,
 	const void *ip, uint8_t depth, const struct gk_fib *fib_table,
@@ -1646,80 +1685,73 @@ unknown:
  * have one gateway (@num_addrs == 1).
  */
 int
+add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, enum gk_fib_action action,
+	const struct route_properties *props, struct gk_config *gk_conf)
+{
+	struct gk_fib *neigh_fib;
+	int ret = check_prefix(prefix_info);
+
+	if (unlikely(ret < 0))
+		return ret;
+
+	neigh_fib = find_fib_entry_for_neighbor_locked(
+		&prefix_info->addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
+	if (neigh_fib != NULL) {
+		G_LOG(ERR, "%s(%s): invalid prefix; prefix lookup found existing neighbor FIB on front interface\n",
+			__func__, prefix_info->str);
+		return -1;
+	} else {
+		/* Clarify LPM lookup miss that will occur in log. */
+		G_LOG(INFO, "%s(%s): prefix lookup did not find existing neighbor FIB on front interface, as expected\n",
+			__func__, prefix_info->str);
+	}
+
+	neigh_fib = find_fib_entry_for_neighbor_locked(
+		&prefix_info->addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
+	if (neigh_fib != NULL) {
+		G_LOG(ERR, "%s(%s): invalid prefix; prefix lookup found existing neighbor FIB on back interface\n",
+			__func__, prefix_info->str);
+		return -1;
+	} else {
+		/* Clarify LPM lookup miss that will occur in log. */
+		G_LOG(INFO, "%s(%s): prefix lookup did not find existing neighbor FIB on back interface, as expected\n",
+			__func__, prefix_info->str);
+	}
+
+	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
+	if (ret != -ENOENT) {
+		G_LOG(ERR, "%s(%s): prefix already exists or error occurred\n",
+			__func__, prefix_info->str);
+		if (ret >= 0)
+			return -EEXIST;
+		return ret;
+	}
+
+	ret = check_prefix_security_hole_locked(prefix_info, action, gk_conf);
+	if (ret < 0)
+		return ret;
+
+	return add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
+		action, props, gk_conf, NULL);
+}
+
+int
 add_fib_entry_numerical(struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int ret;
-	struct gk_fib *neigh_fib;
-	unsigned int i;
-
-	if (prefix_info->len < 0)
-		return -1;
-
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
-
-	/*
-	 * One can only look up, without the lock, the LPM table to verify that
-	 * the adding prefix does not lead to a GK_FWD_NEIGHBOR_*_NET FIB entry
-	 * because GK_FWD_NEIGHBOR_*_NET entries can only be added through
-	 * a network interface.
-	 * Otherwise, after the lookup, but before acquiring the lock,
-	 * a concurrent thread could add a GK_FWD_NEIGHBOR_*_NET entry that
-	 * would break the test.
-	 */
-	neigh_fib = find_fib_entry_for_neighbor_locked(
-		&prefix_info->addr, GK_FWD_GATEWAY_FRONT_NET, gk_conf);
-	if (neigh_fib != NULL) {
-		G_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on front interface\n");
-		return -1;
-	} else {
-		/* Clarify LPM lookup miss that will occur in log. */
-		G_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on front interface, as expected\n");
-	}
-
-	neigh_fib = find_fib_entry_for_neighbor_locked(
-		&prefix_info->addr, GK_FWD_GATEWAY_BACK_NET, gk_conf);
-	if (neigh_fib != NULL) {
-		G_LOG(ERR, "Invalid prefix; prefix lookup found existing neighbor FIB on back interface\n");
-		return -1;
-	} else {
-		/* Clarify LPM lookup miss that will occur in log. */
-		G_LOG(INFO, "Prefix lookup did not find existing neighbor FIB on back interface, as expected\n");
-	}
-
-	for (i = 0; i < num_addrs; i++) {
-		/*
-		 * Verify that the IP addresses of gateway FIB entries
-		 * are not included in the prefix.
-		 */
-		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (ret < 0)
-			return -1;
-	}
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
-	if (ret != -ENOENT) {
-		G_LOG(ERR, "Prefix already exists or error occurred\n");
-		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-		return -1;
-	}
-
-	ret = check_prefix_security_hole_locked(prefix_info, action, gk_conf);
-	if (ret < 0) {
-		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-		return -1;
-	}
-
-	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
-		action, props, gk_conf, NULL);
+	ret = add_fib_entry_numerical_locked(prefix_info, gt_addrs, gw_addrs,
+		num_addrs, action, props, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -1731,29 +1763,16 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
-	int ret, fib_id;
-	unsigned int i;
+	int fib_id;
 	struct gk_fib *cur_fib;
+	int ret = check_prefix(prefix_info);
 
-	if (prefix_info->len < 0)
-		return -1;
+	if (unlikely(ret < 0))
+		return ret;
 
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
-
-	for (i = 0; i < num_addrs; i++) {
-		/*
-		 * Verify that the IP addresses of gateway FIB entries
-		 * are not included in the prefix.
-		 */
-		ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (ret < 0)
-			return -1;
-	}
+	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
+	if (unlikely(ret < 0))
+		return ret;
 
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, &cur_fib);
@@ -1813,18 +1832,8 @@ del_fib_entry_numerical(
 {
 	int ret;
 
-	if (prefix_info->len < 0)
-		return -1;
-
-	if (prefix_info->len == 0) {
-		G_LOG(WARNING,
-			"Gatekeeper currently doesn't support default routes when it receives the prefix %s with length zero at %s\n",
-			prefix_info->str, __func__);
-		return -1;
-	}
-
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
-	ret = del_fib_entry_locked(prefix_info, gk_conf);
+	ret = del_fib_entry_numerical_locked(prefix_info, gk_conf);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 
 	return ret;
@@ -2308,16 +2317,18 @@ static void
 list_ipv4_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
-	fib_id = lpm_lookup_ipv4(ltbl->lpm, iface->ip4_addr.s_addr);
+	ret = rib_lookup(&ltbl->rib, (uint8_t *)&iface->ip4_addr.s_addr,
+		&fib_id);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0) {
+	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
 		luaL_error(l, "gk: failed to lookup the lpm table at %s!",
 			__func__);
@@ -2333,19 +2344,20 @@ static void
 list_ipv6_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	enum gk_fib_action action, struct gk_lpm *ltbl)
 {
-	int fib_id;
+	int ret;
+	uint32_t fib_id;
 	struct gk_fib *neigh_fib;
 
 	rte_spinlock_lock_tm(&ltbl->lock);
-	fib_id = lpm_lookup_ipv6(ltbl->lpm6, &iface->ip6_addr);
+	ret = rib_lookup(&ltbl->rib6, iface->ip6_addr.s6_addr, &fib_id);
 	/*
 	 * Invalid gateway entry, since at least we should
 	 * obtain the FIB entry for the neighbor table.
 	 */
-	if (fib_id < 0) {
+	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
-		luaL_error(l, "gk: failed to lookup the lpm6 table at %s!",
-			__func__);
+		luaL_error(l, "%s(): failed to lookup the lpm6 table (errno=%d): %s",
+			__func__, -ret, strerror(-ret));
 	}
 
 	neigh_fib = &ltbl->fib_tbl6[fib_id];
