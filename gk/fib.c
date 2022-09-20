@@ -343,10 +343,12 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 }
 
 /* WARNING: do NOT call this function directly, call get_empty_fib_id(). */
-static inline int
-__get_empty_fib_id(struct gk_fib *fib_tbl, unsigned int num_fib_entries)
+static int
+__get_empty_fib_id(struct gk_fib *fib_tbl, uint32_t *plast_index,
+	unsigned int num_fib_entries)
 {
-	unsigned int i;
+	uint32_t last_index = *plast_index;
+	unsigned int i = last_index;
 
 	/*
 	 * @gk_conf->lpm_tbl.fib_tbl or @gk_conf->lpm_tbl.fib_tbl6 is NULL
@@ -355,11 +357,18 @@ __get_empty_fib_id(struct gk_fib *fib_tbl, unsigned int num_fib_entries)
 	 */
 	RTE_VERIFY(fib_tbl != NULL);
 
-	for (i = 0; i < num_fib_entries; i++) {
-		if (fib_tbl[i].action == GK_FIB_MAX)
-			return i; 
-	}
-	return -1;
+	do {
+		/* Next index. */
+		i++;
+		if (unlikely(i >= num_fib_entries))
+			i = 0;
+
+		if (likely(fib_tbl[i].action == GK_FIB_MAX)) {
+			*plast_index = i;
+			return i;
+		}
+	} while (likely(i != last_index));
+	return -ENOENT;
 }
 
 /* This function will return an empty FIB entry. */
@@ -372,29 +381,32 @@ get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf,
 
 	/* Find an empty FIB entry. */
 	if (ip_proto == RTE_ETHER_TYPE_IPV4) {
-		ret = __get_empty_fib_id(ltbl->fib_tbl,
+		ret = __get_empty_fib_id(ltbl->fib_tbl, &ltbl->last_ipv4_index,
 			gk_conf->max_num_ipv4_rules);
-		if (ret < 0)
-			G_LOG(WARNING, "Cannot find an empty fib entry in the IPv4 FIB table\n");
-		else 
+		if (unlikely(ret < 0)) {
+			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv4 FIB table\n",
+				__func__);
+		} else {
 			*p_fib = &ltbl->fib_tbl[ret];
+		}
 		return ret;
 	}
 
 	if (likely(ip_proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = __get_empty_fib_id(ltbl->fib_tbl6,
+		ret = __get_empty_fib_id(ltbl->fib_tbl6, &ltbl->last_ipv6_index,
 			gk_conf->max_num_ipv6_rules);
-		if (ret < 0)
-			G_LOG(WARNING, "Cannot find an empty fib entry in the IPv6 FIB table\n");
-		else
+		if (unlikely(ret < 0)) {
+			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv6 FIB table\n",
+				__func__);
+		} else {
 			*p_fib = &ltbl->fib_tbl6[ret];
+		}
 		return ret;
 	}
 
-	rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
+	G_LOG(CRIT, "%s(): bug: unknown Ethernet type %hu\n",
 		__func__, ip_proto);
-
-	return -1;
+	return -EINVAL;
 }
 
 /* Add a prefix into the LPM table. */
@@ -738,6 +750,7 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -ENOMEM;
 			goto free_fib;
 		}
+		ltbl->last_ipv4_index = gk_conf->max_num_ipv4_rules - 1;
 	} else if (gk_conf->max_num_ipv4_rules != 0 ||
 			gk_conf->num_ipv4_tbl8s != 0) {
 		G_LOG(WARNING, "IPv4 is not configured, but the parameters max_num_ipv4_rules=%u and num_ipv4_tbl8s=%u are not both zero\n",
@@ -779,6 +792,7 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -ENOMEM;
 			goto free_fib6;
 		}
+		ltbl->last_ipv6_index = gk_conf->max_num_ipv6_rules - 1;
 	} else if (gk_conf->max_num_ipv6_rules != 0 ||
 			gk_conf->num_ipv6_tbl8s != 0) {
 		G_LOG(WARNING, "IPv6 is not configured, but the parameters max_num_ipv6_rules=%u and num_ipv6_tbl8s=%u are not both zero\n",
