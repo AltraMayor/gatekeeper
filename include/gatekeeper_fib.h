@@ -219,6 +219,13 @@ struct gk_lpm {
 
 	/* The IPv6 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl6;
+
+	/*
+	 * Indexes of the last FIB entries allocated at @fib_tbl and @fib_tbl6.
+	 * get_empty_fib_id() is the only function that uses these fields.
+	 */
+	uint32_t        last_ipv4_index;
+	uint32_t        last_ipv6_index;
 };
 
 struct ip_prefix {
