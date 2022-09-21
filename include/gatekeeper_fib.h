@@ -319,20 +319,20 @@ void destroy_neigh_hash_table(struct neighbor_hash_table *neigh);
 
 int parse_ip_prefix(const char *ip_prefix, struct ipaddr *res);
 
-int add_fib_entry_numerical(struct ip_prefix *prefix_info,
+int add_fib_entry_numerical(const struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf);
-int add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+int add_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf);
 int add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 	enum gk_fib_action action, struct gk_config *gk_conf);
-int del_fib_entry_numerical(
-	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
-int del_fib_entry_numerical_locked(
-	struct ip_prefix *prefix_info, struct gk_config *gk_conf);
+int del_fib_entry_numerical(const struct ip_prefix *prefix_info,
+	struct gk_config *gk_conf);
+int del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
+	struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
 int l_list_gk_fib4(lua_State *l);

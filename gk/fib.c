@@ -135,9 +135,8 @@ clear_ether_cache(struct ether_cache *eth_cache)
 		offsetof(struct ether_cache, fields_to_clear));
 
 	if ((ref_cnt = rte_atomic32_read(&eth_cache->ref_cnt)) != 1) {
-		G_LOG(WARNING,
-			"The value of ref_cnt field in Ethernet cache entry is %d rather than 1 while calling function %s\n",
-			ref_cnt, __func__);
+		G_LOG(WARNING, "%s() the value of ref_cnt field in Ethernet cache entry is %d rather than 1\n",
+			__func__, ref_cnt);
 	}
 
 	rte_atomic32_init(&eth_cache->ref_cnt);
@@ -230,8 +229,7 @@ neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
 		ret = hold_nd(gk_arp_and_nd_req_cb,
 			eth_cache, &addr->ip.v6, lcore_id);
 	} else {
-		G_LOG(CRIT,
-			"Unexpected condition at %s: unknown IP type %hu\n",
+		G_LOG(CRIT, "%s(): bug: unknown IP type %hu\n",
 			__func__, addr->proto);
 		ret = -1;
 	}
@@ -248,8 +246,7 @@ neigh_get_ether_cache_locked(struct neighbor_hash_table *neigh,
 		return eth_cache;
 	}
 
-	G_LOG(ERR,
-		"Failed to add a cache entry to the neighbor hash table at %s\n",
+	G_LOG(ERR, "%s(): failed to add a cache entry to the neighbor hash table\n",
 		__func__);
 
 	if (addr->proto == RTE_ETHER_TYPE_IPV4)
@@ -290,9 +287,8 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 
 	ip_addr = strtok_r(ip_prefix_copy, "/", &saveptr);
 	if (ip_addr == NULL) {
-		G_LOG(ERR,
-			"Failed to parse IP address in IP prefix %s at %s\n",
-			ip_prefix, __func__);
+		G_LOG(ERR, "%s(%s): failed to parse IP address in prefix\n",
+			__func__, ip_prefix);
 		return -1;
 	}
 
@@ -302,37 +298,34 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 
 	prefix_len_str = strtok_r(NULL, "\0", &saveptr);
 	if (prefix_len_str == NULL) {
-		G_LOG(ERR,
-			"Failed to parse prefix length in IP prefix %s at %s\n",
-			ip_prefix, __func__);
+		G_LOG(ERR, "%s(%s): failed to parse prefix length in prefix\n",
+			__func__, ip_prefix);
 		return -1;
 	}
 
 	prefix_len = strtol(prefix_len_str, &end, 10);
 	if (prefix_len_str == end || !*prefix_len_str || *end) {
-		G_LOG(ERR, "Prefix length \"%s\" is not a number\n",
-			prefix_len_str);
+		G_LOG(ERR, "%s(%s): prefix length \"%s\" is not a number\n",
+			__func__, ip_prefix, prefix_len_str);
 		return -1;
 	}
 
 	if ((prefix_len == LONG_MAX || prefix_len == LONG_MIN) &&
 			errno == ERANGE) {
-		G_LOG(ERR,
-			"Prefix length \"%s\" caused underflow or overflow\n",
-			prefix_len_str);
+		G_LOG(ERR, "%s(%s): prefix length \"%s\" caused underflow or overflow\n",
+			__func__, ip_prefix, prefix_len_str);
 		return -1;
 	}
 
 	if (prefix_len < 0 || prefix_len > max_prefix_len(ip_type)) {
-		G_LOG(ERR, "Prefix length \"%s\" is out of range\n",
-			prefix_len_str);
+		G_LOG(ERR, "%s(%s): prefix length \"%s\" is out of range\n",
+			__func__, ip_prefix, prefix_len_str);
 		return -1;
 	}
 
 	if (convert_str_to_ip(ip_addr, res) < 0) {
-		G_LOG(ERR,
-			"The IP address part of the IP prefix %s is not valid\n",
-			ip_prefix);
+		G_LOG(ERR, "%s(%s): the IP address of the prefix is not valid\n",
+			__func__, ip_prefix);
 		return -1;
 	}
 
@@ -424,10 +417,9 @@ lpm_add_route(const struct ipaddr *ip_addr, int prefix_len, int fib_id,
 			ip_addr->ip.v6.s6_addr, prefix_len, fib_id, ltbl);
 	}
 
-	rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
+	G_LOG(CRIT, "%s(): bug: unknown IP type %hu\n",
 		__func__, ip_addr->proto);
-
-	return -1;
+	return -EINVAL;
 }
 
 /* Delete a prefix from the LPM table. */
@@ -444,10 +436,9 @@ lpm_del_route(const struct ipaddr *ip_addr, int prefix_len, struct gk_lpm *ltbl)
 			prefix_len);
 	}
 
-	rte_panic("Unexpected condition at %s: unknown IP type %hu\n",
+	G_LOG(CRIT, "%s(): bug: unknown IP type %hu\n",
 		__func__, ip_addr->proto);
-
-	return -1;
+	return -EINVAL;
 }
 
 /*
@@ -494,7 +485,8 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	neigh_hash_params.name = ht_name;
 	neigh->hash_table = rte_hash_create(&neigh_hash_params);
 	if (neigh->hash_table == NULL) {
-		G_LOG(ERR, "Cannot create hash table for neighbor FIB\n");
+		G_LOG(ERR, "%s(): cannot create hash table for neighbor FIB\n",
+			__func__);
 		ret = -1;
 		goto out;
 	}
@@ -503,7 +495,8 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 	neigh->cache_tbl = rte_calloc_socket(NULL,
 		ht_size, sizeof(struct ether_cache), 0, socket_id);
 	if (neigh->cache_tbl == NULL) {
-		G_LOG(ERR, "Cannot create Ethernet header cache table\n");
+		G_LOG(ERR, "%s(): cannot create Ethernet header cache table\n",
+			__func__);
 		ret = -1;
 		goto neigh_hash;
 	}
@@ -573,9 +566,11 @@ setup_net_prefix_fib(int identifier,
 			neigh_fib_ipv4->action = GK_FWD_NEIGHBOR_FRONT_NET;
 		else if (likely(iface == &net_conf->back))
 			neigh_fib_ipv4->action = GK_FWD_NEIGHBOR_BACK_NET;
-		else
-			rte_panic("Unexpected condition at %s: invalid interface %s\n",
+		else {
+			G_LOG(CRIT, "%s(): bug: invalid interface %s\n",
 				__func__, iface->name);
+			goto free_fib_ipv4_ht;
+		}
 
 		ret = gk_lpm_add_ipv4_route(iface->ip4_addr.s_addr,
 			iface->ip4_addr_plen, fib_id, ltbl);
@@ -602,9 +597,11 @@ setup_net_prefix_fib(int identifier,
 			neigh_fib_ipv6->action = GK_FWD_NEIGHBOR_FRONT_NET;
 		else if (likely(iface == &net_conf->back))
 			neigh_fib_ipv6->action = GK_FWD_NEIGHBOR_BACK_NET;
-		else
-			rte_panic("Unexpected condition at %s: invalid interface %s\n",
+		else {
+			G_LOG(CRIT, "%s(): bug: invalid interface %s\n",
 				__func__, iface->name);
+			goto free_fib_ipv6_ht;
+		}
 
 		ret = gk_lpm_add_ipv6_route(iface->ip6_addr.s6_addr,
 			iface->ip6_addr_plen, fib_id, ltbl);
@@ -666,8 +663,7 @@ init_fib_tbl(struct gk_config *gk_conf)
 	ret = setup_net_prefix_fib(0, &neigh_fib_front,
 		&neigh6_fib_front, &gk_conf->net->front, gk_conf);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"Failed to setup the FIB entry for the front network prefixes at %s\n",
+		G_LOG(ERR, "%s(): failed to setup the FIB entry for the front network prefixes\n",
 			__func__);
 		goto out;
 	}
@@ -677,8 +673,7 @@ init_fib_tbl(struct gk_config *gk_conf)
 	ret = setup_net_prefix_fib(1, &neigh_fib_back,
 		&neigh6_fib_back, &gk_conf->net->back, gk_conf);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"Failed to setup the FIB entry for the back network prefixes at %s\n",
+		G_LOG(ERR, "%s(): failed to setup the FIB entry for the back network prefixes\n",
 			__func__);
 		goto free_front_fibs;
 	}
@@ -753,8 +748,9 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		ltbl->last_ipv4_index = gk_conf->max_num_ipv4_rules - 1;
 	} else if (gk_conf->max_num_ipv4_rules != 0 ||
 			gk_conf->num_ipv4_tbl8s != 0) {
-		G_LOG(WARNING, "IPv4 is not configured, but the parameters max_num_ipv4_rules=%u and num_ipv4_tbl8s=%u are not both zero\n",
-			gk_conf->max_num_ipv4_rules, gk_conf->num_ipv4_tbl8s);
+		G_LOG(WARNING, "%s(): IPv4 is not configured, but the parameters max_num_ipv4_rules=%u and num_ipv4_tbl8s=%u are not both zero\n",
+			__func__, gk_conf->max_num_ipv4_rules,
+			gk_conf->num_ipv4_tbl8s);
 	}
 
 	if (ipv6_configured(gk_conf->net)) {
@@ -795,8 +791,9 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		ltbl->last_ipv6_index = gk_conf->max_num_ipv6_rules - 1;
 	} else if (gk_conf->max_num_ipv6_rules != 0 ||
 			gk_conf->num_ipv6_tbl8s != 0) {
-		G_LOG(WARNING, "IPv6 is not configured, but the parameters max_num_ipv6_rules=%u and num_ipv6_tbl8s=%u are not both zero\n",
-			gk_conf->max_num_ipv6_rules, gk_conf->num_ipv6_tbl8s);
+		G_LOG(WARNING, "%s(): IPv6 is not configured, but the parameters max_num_ipv6_rules=%u and num_ipv6_tbl8s=%u are not both zero\n",
+			__func__, gk_conf->max_num_ipv6_rules,
+			gk_conf->num_ipv6_tbl8s);
 	}
 
 	ret = init_fib_tbl(gk_conf);
@@ -862,7 +859,7 @@ synchronize_gk_instances_with_fib(struct gk_config *gk_conf,
  * or GK_FWD_GATEWAY_BACK_NET.
  */
 static struct gk_fib *
-find_fib_entry_for_neighbor_locked(struct ipaddr *gw_addr,
+find_fib_entry_for_neighbor_locked(const struct ipaddr *gw_addr,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
 	int ret;
@@ -939,8 +936,8 @@ ether_cache_put(struct gk_fib *neigh_fib,
 			return 0;
 	}
 	if (ref_cnt < 1) {
-		rte_panic("Unexpected condition: the ref_cnt of the ether cache should be 1 while it is %d at %s\n",
-			ref_cnt, __func__);
+		rte_panic("%s(): bug: the ref_cnt of the ether cache should be 1, but it is %d\n",
+			__func__, ref_cnt);
 	}
 
 	/*
@@ -961,7 +958,8 @@ ether_cache_put(struct gk_fib *neigh_fib,
 		neighbor_fib = find_fib_entry_for_neighbor_locked(
 			&addr, action, gk_conf);
 		if (neighbor_fib == NULL) {
-			G_LOG(ERR, "Could not find neighbor FIB to release Ethernet header entry\n");
+			G_LOG(ERR, "%s(): could not find neighbor FIB to release Ethernet header entry\n",
+				__func__);
 			return -1;
 		}
 	}
@@ -974,8 +972,7 @@ ether_cache_put(struct gk_fib *neigh_fib,
 		ret = rte_hash_del_key(neighbor_fib->u.neigh.hash_table,
 			&addr.ip.v4.s_addr);
 		if (ret < 0) {
-			G_LOG(CRIT,
-				"Failed to delete an Ethernet cache entry from the IPv4 neighbor table at %s, we are not trying to recover from this failure\n",
+			G_LOG(CRIT, "%s(): failed to delete an Ethernet cache entry from the IPv4 neighbor table; we are NOT trying to recover from this failure\n",
 				__func__);
 		}
 		return ret;
@@ -989,16 +986,14 @@ ether_cache_put(struct gk_fib *neigh_fib,
 		ret = rte_hash_del_key(neighbor_fib->u.neigh.hash_table,
 			addr.ip.v6.s6_addr);
 		if (ret < 0) {
-			G_LOG(CRIT,
-				"Failed to delete an Ethernet cache entry from the IPv6 neighbor table at %s, we are not trying to recover from this failure\n",
+			G_LOG(CRIT, "%s(): failed to delete an Ethernet cache entry from the IPv6 neighbor table; we are NOT trying to recover from this failure\n",
 				__func__);
 		}
 		return ret;
 	}
 
-	G_LOG(ERR, "Remove an invalid FIB entry with IP type %hu at %s\n",
-		addr.proto, __func__);
-
+	G_LOG(ERR, "%s(): remove an invalid FIB entry with IP type %hu\n",
+		__func__, addr.proto);
 	return -1;
 }
 
@@ -1008,15 +1003,14 @@ ether_cache_put(struct gk_fib *neigh_fib,
  * a construct to make del_fib_entry_numerical_locked() readable.
  */
 static int
-del_gateway_from_neigh_table_locked(
-	struct ip_prefix *ip_prefix, enum gk_fib_action action,
-	struct ether_cache *eth_cache, struct gk_config *gk_conf)
+del_gateway_from_neigh_table_locked(const struct ip_prefix *ip_prefix,
+	enum gk_fib_action action, struct ether_cache *eth_cache,
+	struct gk_config *gk_conf)
 {
 	int ret = ether_cache_put(NULL, action, eth_cache, gk_conf);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"Failed to release the Ethernet cached header of the Grantor FIB entry for the IP prefix %s at %s\n",
-			ip_prefix->str, __func__);
+		G_LOG(ERR, "%s(%s): failed to release the Ethernet cached header of the Grantor FIB entry\n",
+			__func__, ip_prefix->str);
 		return -1;
 	}
 
@@ -1024,7 +1018,7 @@ del_gateway_from_neigh_table_locked(
 }
 
 static int
-clear_grantor_set(struct ip_prefix *ip_prefix, struct grantor_set *set,
+clear_grantor_set(const struct ip_prefix *ip_prefix, struct grantor_set *set,
 	struct gk_config *gk_conf)
 {
 	bool failed_one = false;
@@ -1050,8 +1044,8 @@ clear_grantor_set(struct ip_prefix *ip_prefix, struct grantor_set *set,
  *     < 0 if an error occurred.
  */
 static int
-check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
-	struct gk_fib **p_fib)
+check_prefix_exists_locked(const struct ip_prefix *prefix,
+	struct gk_config *gk_conf, struct gk_fib **p_fib)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	uint32_t fib_id;
@@ -1087,7 +1081,7 @@ check_prefix_exists_locked(struct ip_prefix *prefix, struct gk_config *gk_conf,
 }
 
 static int
-check_prefix(struct ip_prefix *prefix_info)
+check_prefix(const struct ip_prefix *prefix_info)
 {
 	if (unlikely(prefix_info->len < 0))
 		return -EINVAL;
@@ -1106,7 +1100,7 @@ check_prefix(struct ip_prefix *prefix_info)
  * about the removal of the FIB entry.
  */
 int
-del_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 	struct gk_config *gk_conf)
 {
 	struct gk_fib *prefix_fib;
@@ -1211,9 +1205,9 @@ del_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
  * and the prefix have the same IP version.
  */
 static int
-init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
-	const struct route_properties *props, struct ipaddr *gw_addr,
-	struct gk_config *gk_conf)
+init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
+	enum gk_fib_action action, const struct route_properties *props,
+	struct ipaddr *gw_addr, struct gk_config *gk_conf)
 {
 	int ret, fib_id;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
@@ -1227,9 +1221,8 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	else if (likely(action == GK_FWD_GATEWAY_BACK_NET))
 		iface = &gk_conf->net->back;
 	else {
-		G_LOG(ERR,
-			"Failed to initialize a fib entry for gateway, since it has invalid action %d\n",
-			action);
+		G_LOG(ERR, "%s(%s): failed to initialize a fib entry for gateway because it has invalid action %d\n",
+			__func__, ip_prefix->str, action);
 		return -1;
 	}
 
@@ -1237,7 +1230,8 @@ init_gateway_fib_locked(struct ip_prefix *ip_prefix, enum gk_fib_action action,
 	neigh_fib = find_fib_entry_for_neighbor_locked(
 		gw_addr, action, gk_conf);
 	if (neigh_fib == NULL) {
-		G_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
+		G_LOG(ERR, "%s(%s): invalid gateway entry; could not find neighbor FIB\n",
+			__func__, ip_prefix->str);
 		return -1;
 	}
 
@@ -1285,9 +1279,10 @@ put_ether_cache:
  * and the prefix have the same IP version.
  */
 static int
-init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
-	struct ipaddr *gw_addrs, unsigned int num_addrs,
-	struct gk_config *gk_conf, struct gk_fib *gt_fib)
+init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
+	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
+	unsigned int num_addrs, struct gk_config *gk_conf,
+	struct gk_fib *gt_fib)
 {
 	int ret;
 	struct gk_fib *neigh_fibs[num_addrs];
@@ -1299,8 +1294,9 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
 	int fib_id = -1;
 
 	if (num_addrs > MAX_NUM_GRANTORS_PER_ENTRY) {
-		G_LOG(ERR, "Number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
-			num_addrs, MAX_NUM_GRANTORS_PER_ENTRY);
+		G_LOG(ERR, "%s(%s): number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
+			__func__, ip_prefix->str, num_addrs,
+			MAX_NUM_GRANTORS_PER_ENTRY);
 		return -1;
 	}
 
@@ -1308,8 +1304,8 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
 		struct neighbor_hash_table *neigh_ht;
 
 		if (gt_addrs[i].proto != ip_prefix->addr.proto) {
-			G_LOG(ERR,
-				"Failed to initialize a Grantor FIB entry, since the Grantor IP and the given IP prefix have different IP versions\n");
+			G_LOG(ERR, "%s(%s): failed to initialize a Grantor FIB entry, since the Grantor IP and the given IP prefix have different IP versions\n",
+				__func__, ip_prefix->str);
 			goto put_ether_cache;
 		}
 
@@ -1317,7 +1313,8 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
 		neigh_fibs[i] = find_fib_entry_for_neighbor_locked(
 			&gw_addrs[i], GK_FWD_GATEWAY_BACK_NET, gk_conf);
 		if (neigh_fibs[i]== NULL) {
-			G_LOG(ERR, "Invalid gateway entry; could not find neighbor FIB\n");
+			G_LOG(ERR, "%s(%s): invalid gateway entry; could not find neighbor FIB\n",
+				__func__, ip_prefix->str);
 			goto put_ether_cache;
 		}
 
@@ -1341,7 +1338,8 @@ init_grantor_fib_locked(struct ip_prefix *ip_prefix, struct ipaddr *gt_addrs,
 		sizeof(*new_set) + num_addrs * sizeof(*(new_set->entries)),
 		0, rte_lcore_to_socket_id(gk_conf->lcores[0]));
 	if (unlikely(new_set == NULL)) {
-		G_LOG(ERR, "Could not allocate set of Grantor entries\n");
+		G_LOG(ERR, "%s(%s): could not allocate set of Grantor entries\n",
+			__func__, ip_prefix->str);
 		goto put_ether_cache;
 	}
 	new_set->proto = ip_prefix->addr.proto;
@@ -1381,7 +1379,7 @@ put_ether_cache:
 }
 
 static int
-init_drop_fib_locked(struct ip_prefix *ip_prefix,
+init_drop_fib_locked(const struct ip_prefix *ip_prefix,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
 	int ret;
@@ -1411,7 +1409,7 @@ init_drop_fib_locked(struct ip_prefix *ip_prefix,
  * Otherwise, @cur_fib is NULL.
  */
 static int
-add_fib_entry_locked(struct ip_prefix *prefix,
+add_fib_entry_locked(const struct ip_prefix *prefix,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf,
@@ -1420,20 +1418,20 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	int ret;
 
 	if (cur_fib != NULL && cur_fib->action != action) {
-		G_LOG(ERR, "Attempt to overwrite prefix %s whose action is %u with a new FIB entry of action %u; delete current FIB entry and add the new one\n",
-			prefix->str, cur_fib->action, action);
-		return -1;
+		G_LOG(ERR, "%s(%s): attempt to overwrite prefix whose action is %u with a new FIB entry of action %u; delete current FIB entry and add the new one\n",
+			__func__, prefix->str, cur_fib->action, action);
+		return -EINVAL;
 	}
 
 	switch (action) {
 	case GK_FWD_GRANTOR:
 		if (num_addrs < 1 || gt_addrs == NULL || gw_addrs == NULL)
-			return -1;
+			return -EINVAL;
 
 		ret = init_grantor_fib_locked(prefix, gt_addrs, gw_addrs,
 			num_addrs, gk_conf, cur_fib);
 		if (ret < 0)
-			return -1;
+			return ret;
 
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
@@ -1441,22 +1439,22 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_FWD_GATEWAY_BACK_NET:
 		if (num_addrs != 1 || gt_addrs != NULL || gw_addrs == NULL ||
 				cur_fib != NULL)
-			return -1;
+			return -EINVAL;
 
 		ret = init_gateway_fib_locked(prefix, action, props,
 			&gw_addrs[0], gk_conf);
 		if (ret < 0)
-			return -1;
+			return ret;
 
 		break;
 	case GK_DROP:
 		if (num_addrs != 0 || gt_addrs != NULL || gw_addrs != NULL ||
 				cur_fib != NULL)
-			return -1;
+			return -EINVAL;
 
 		ret = init_drop_fib_locked(prefix, props, gk_conf);
 		if (ret < 0)
-			return -1;
+			return ret;
 
 		break;
 	case GK_FWD_NEIGHBOR_FRONT_NET:
@@ -1464,9 +1462,9 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 	case GK_FWD_NEIGHBOR_BACK_NET:
 		/* FALLTHROUGH */
 	default:
-		G_LOG(ERR, "%s(%s): Invalid FIB action %u\n",
+		G_LOG(ERR, "%s(%s): invalid FIB action %u\n",
 			__func__, prefix->str, action);
-		return -1;
+		return -EINVAL;
 	}
 
 	return 0;
@@ -1474,17 +1472,18 @@ add_fib_entry_locked(struct ip_prefix *prefix,
 
 /*
  * Return 0 when @gw_addr is not included in @prefix.
- * If not, or if there is an error, return -1.
+ * If not, or if there is an error, return a negative number.
  *
  * Issue #267 discusses the assumptions behind this verification.
  */
 static int
-check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
+check_gateway_prefix(const struct ip_prefix *prefix, struct ipaddr *gw_addr)
 {
 	if (unlikely(prefix->addr.proto != gw_addr->proto)) {
-		G_LOG(ERR, "IP prefix protocol (%hu) does not match the gateway address protocol (%hu) for prefix %s\n",
-			prefix->addr.proto, gw_addr->proto, prefix->str);
-		return -1;
+		G_LOG(ERR, "%s(%s): IP prefix protocol (%hu) does not match the gateway address protocol (%hu)\n",
+			__func__, prefix->str, prefix->addr.proto,
+			gw_addr->proto);
+		return -EINVAL;
 	}
 
 	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4) {
@@ -1498,9 +1497,9 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 		uint64_t *pf = (uint64_t *)prefix->addr.ip.v6.s6_addr;
 		uint64_t *gw = (uint64_t *)gw_addr->ip.v6.s6_addr;
 
-		if (prefix->len == 0)
-			return -1;
-		else if (prefix->len <= 64) {
+		if (prefix->len == 0) {
+			/* Do nothing. */
+		} else if (prefix->len <= 64) {
 			ip6_mask = rte_cpu_to_be_64(
 				~0ULL << (64 - prefix->len));
 			if ((pf[0] ^ gw[0]) & ip6_mask)
@@ -1513,14 +1512,14 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
 				return 0;
 		}
 	} else {
-		G_LOG(ERR, "Unexpected condition at %s(): unknown IP type %hu for prefix %s\n",
-			__func__, gw_addr->proto, prefix->str);
-		return -1;
+		G_LOG(CRIT, "%s(%s): bug: unknown IP type %hu\n",
+			__func__, prefix->str, gw_addr->proto);
+		return -EINVAL;
 	}
 
-	G_LOG(ERR, "Gateway address is in prefix %s, so gateway is not a neighbor\n",
-		prefix->str);
-	return -1;
+	G_LOG(ERR, "%s(%s): gateway address is in prefix, so gateway is not a neighbor\n",
+		__func__, prefix->str);
+	return -EPERM;
 }
 
 /*
@@ -1528,7 +1527,7 @@ check_gateway_prefix(struct ip_prefix *prefix, struct ipaddr *gw_addr)
  * the prefix.
  */
 static int
-check_gateway_prefixes(struct ip_prefix *prefix_info,
+check_gateway_prefixes(const struct ip_prefix *prefix_info,
 	struct ipaddr *gw_addrs, unsigned int num_addrs)
 {
 	unsigned int i;
@@ -1550,8 +1549,8 @@ check_longer_prefixes(const char *context, const struct rib_head *rib,
 	struct rib_longer_iterator_state state;
 	int ret = rib_longer_iterator_state_init(&state, rib, ip, depth);
 	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
-			__func__, context, -ret, strerror(-ret));
+		G_LOG(ERR, "%s(%s): failed to initialize the %s RIB iterator (errno=%i): %s\n",
+			__func__, prefix_str, context, -ret, strerror(-ret));
 		return ret;
 	}
 
@@ -1562,8 +1561,8 @@ check_longer_prefixes(const char *context, const struct rib_head *rib,
 		ret = rib_longer_iterator_next(&state, &rule);
 		if (unlikely(ret < 0)) {
 			if (unlikely(ret != -ENOENT)) {
-				G_LOG(ERR, "%s(): %s RIB iterator failed (errno=%i): %s\n",
-					__func__, context,
+				G_LOG(ERR, "%s(%s): %s RIB iterator failed (errno=%i): %s\n",
+					__func__, prefix_str, context,
 					-ret, strerror(-ret));
 				goto out;
 			}
@@ -1573,8 +1572,8 @@ check_longer_prefixes(const char *context, const struct rib_head *rib,
 
 		fib = &fib_table[rule.next_hop];
 		if (fib->action != GK_FWD_GRANTOR && fib->action != GK_DROP) {
-			G_LOG(WARNING, "%s(): adding the %s rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-				__func__, context, prefix_str, prefix_action,
+			G_LOG(WARNING, "%s(%s): adding the %s rule with action %u would add a security hole since there already exists an entry of %u length with action %u\n",
+				__func__, prefix_str, context, prefix_action,
 				rule.depth, fib->action);
 			ret = -EPERM;
 			goto out;
@@ -1594,8 +1593,8 @@ check_shorter_prefixes(const char *context, const struct rib_head *rib,
 	struct rib_shorter_iterator_state state;
 	int ret = rib_shorter_iterator_state_init(&state, rib, ip, depth);
 	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
-			__func__, context, -ret, strerror(-ret));
+		G_LOG(ERR, "%s(%s): failed to initialize the %s RIB iterator (errno=%i): %s\n",
+			__func__, prefix_str, context, -ret, strerror(-ret));
 		return ret;
 	}
 
@@ -1606,8 +1605,8 @@ check_shorter_prefixes(const char *context, const struct rib_head *rib,
 		ret = rib_shorter_iterator_next(&state, &rule);
 		if (unlikely(ret < 0)) {
 			if (unlikely(ret != -ENOENT)) {
-				G_LOG(ERR, "%s(): %s RIB iterator failed (errno=%i): %s\n",
-					__func__, context,
+				G_LOG(ERR, "%s(%s): %s RIB iterator failed (errno=%i): %s\n",
+					__func__, prefix_str, context,
 					-ret, strerror(-ret));
 				goto out;
 			}
@@ -1617,8 +1616,8 @@ check_shorter_prefixes(const char *context, const struct rib_head *rib,
 
 		fib = &fib_table[rule.next_hop];
 		if (fib->action == GK_FWD_GRANTOR || fib->action == GK_DROP) {
-			G_LOG(WARNING, "%s(): adding the %s rule with prefix %s and action %u would add a security hole since there already exists an entry of %u length with action %u\n",
-				__func__, context, prefix_str, prefix_action,
+			G_LOG(WARNING, "%s(%s): adding the %s rule with action %u would add a security hole since there already exists an entry of %u length with action %u\n",
+				__func__, prefix_str, context, prefix_action,
 				rule.depth, fib->action);
 			ret = -EPERM;
 			goto out;
@@ -1643,7 +1642,7 @@ out:
  * example could go unnoticed until it is too late.
  */
 static int
-check_prefix_security_hole_locked(struct ip_prefix *prefix,
+check_prefix_security_hole_locked(const struct ip_prefix *prefix,
 	enum gk_fib_action action, struct gk_config *gk_conf)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
@@ -1681,8 +1680,8 @@ check_prefix_security_hole_locked(struct ip_prefix *prefix,
 	}
 
 unknown:
-	G_LOG(WARNING, "%s(): unknown IP type %hu with prefix %s and action %u\n",
-		__func__, prefix->addr.proto, prefix->str, action);
+	G_LOG(WARNING, "%s(%s): unknown IP type %hu with action %u\n",
+		__func__, prefix->str, prefix->addr.proto, action);
 	return -EINVAL;
 }
 
@@ -1699,7 +1698,7 @@ unknown:
  * have one gateway (@num_addrs == 1).
  */
 int
-add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
+add_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
@@ -1756,7 +1755,7 @@ add_fib_entry_numerical_locked(struct ip_prefix *prefix_info,
 }
 
 int
-add_fib_entry_numerical(struct ip_prefix *prefix_info,
+add_fib_entry_numerical(const struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
@@ -1772,7 +1771,7 @@ add_fib_entry_numerical(struct ip_prefix *prefix_info,
 }
 
 static int
-update_fib_entry_numerical(struct ip_prefix *prefix_info,
+update_fib_entry_numerical(const struct ip_prefix *prefix_info,
 	struct ipaddr *gt_addrs, struct ipaddr *gw_addrs,
 	unsigned int num_addrs, enum gk_fib_action action,
 	const struct route_properties *props, struct gk_config *gk_conf)
@@ -1791,7 +1790,8 @@ update_fib_entry_numerical(struct ip_prefix *prefix_info,
 	rte_spinlock_lock_tm(&gk_conf->lpm_tbl.lock);
 	fib_id = check_prefix_exists_locked(prefix_info, gk_conf, &cur_fib);
 	if (fib_id < 0) {
-		G_LOG(ERR, "Cannot update set of Grantors; prefix does not already exist or error occurred\n");
+		G_LOG(ERR, "%s(%s): cannot update set of Grantors; prefix does not already exist or error occurred\n",
+			__func__, prefix_info->str);
 		rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
 		return -1;
 	}
@@ -1841,8 +1841,8 @@ add_fib_entry(const char *prefix, const char *gt_ip, const char *gw_ip,
 }
 
 int
-del_fib_entry_numerical(
-	struct ip_prefix *prefix_info, struct gk_config *gk_conf)
+del_fib_entry_numerical(const struct ip_prefix *prefix_info,
+	struct gk_config *gk_conf)
 {
 	int ret;
 
@@ -1893,7 +1893,8 @@ read_grantor_lb_entries(lua_State *l, lua_Integer tbl_size,
 		 * the table is a table itself.
 		 */
 		if (!lua_istable(l, 6))
-			luaL_error(l, "Grantor entry %ld is not a table\n", i);
+			luaL_error(l, "%s(): Grantor entry %ld is not a table",
+				__func__, i);
 
 		lua_getfield(l, 6, "gt_ip");
 		lua_getfield(l, 6, "gw_ip");
@@ -1903,17 +1904,14 @@ read_grantor_lb_entries(lua_State *l, lua_Integer tbl_size,
 
 		ret = convert_str_to_ip(gt_ip, &gt_addrs[i - 1]);
 		if (ret < 0) {
-			luaL_error(l,
-				"Cannot convert Grantor IP %s to bytes\n",
-				gt_ip);
+			luaL_error(l, "%s(): cannot convert Grantor IP %s to bytes",
+				__func__, gt_ip);
 		}
 
 		ret = convert_str_to_ip(gw_ip, &gw_addrs[i - 1]);
 		if (ret < 0) {
-			luaL_error(
-				l,
-				"Cannot convert gateway IP %s to bytes\n",
-				gw_ip);
+			luaL_error(l, "%s(): cannot convert gateway IP %s to bytes",
+				__func__, gw_ip);
 		}
 
 		/* Pop the Grantor/gateway and their table from Lua stack. */
@@ -1932,27 +1930,28 @@ add_grantor_entry_lb_verify_params(lua_State *l, const char **prefix,
 	size_t len;
 
 	if (lua_gettop(l) != 3) {
-		luaL_error(l,
-			"%s expected three arguments, however it received %d arguments\n",
+		luaL_error(l, "%s(): expected three arguments, however it received %d arguments",
 		      __func__, lua_gettop(l));
 	}
 
 	/* First argument must be a prefix string. */
 	*prefix = lua_tolstring(l, 1, &len);
 	if (*prefix == NULL || len == 0)
-		luaL_error(l, "Could not read prefix for adding load balanced Grantor set\n");
+		luaL_error(l, "%s(): could not read prefix for adding load balanced Grantor set",
+			__func__);
 
 	/* Second argument must be a table. */
 	luaL_checktype(l, 2, LUA_TTABLE);
 	*tbl_size = lua_objlen(l, 2);
 	if (*tbl_size <= 0)
-		luaL_error(l, "Table must have a positive number of Grantor entries\n");
+		luaL_error(l, "%s(): table must have a positive number of Grantor entries",
+			__func__);
 
 	/* Third argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
 	cdata = luaL_checkcdata(l, 3,
 		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config) {
-		luaL_error(l, "%s expected '%s' as the third argument\n",
+		luaL_error(l, "%s(): expected '%s' as the third argument",
 			__func__, CTYPE_STRUCT_GK_CONFIG_PTR);
 	}
 	*gk_conf = *(struct gk_config **)cdata;
@@ -1992,7 +1991,8 @@ __add_grantor_entry_lb(lua_State *l, int overwrite)
 			&default_route_properties, gk_conf);
 	}
 	if (ret < 0)
-		luaL_error(l, "Could not add or update FIB entry; check Gatekeeper log");
+		luaL_error(l, "%s(): could not add or update FIB entry; check Gatekeeper log",
+			__func__);
 
 	return 0;
 }
@@ -2125,7 +2125,7 @@ list_fib_entries(lua_State *l, const char *context, const struct rib_head *rib,
 			rib_longer_iterator_end(&state);
 			rte_spinlock_unlock_tm(lock);
 			if (unlikely(ret != -ENOENT)) {
-				luaL_error(l, "%s(): %s RIB iterator failed (errno=%d): %s\n",
+				luaL_error(l, "%s(): %s RIB iterator failed (errno=%d): %s",
 					__func__, context,
 					-ret, strerror(-ret));
 			}
@@ -2152,8 +2152,7 @@ list_fib_entries(lua_State *l, const char *context, const struct rib_head *rib,
 			if (unlikely(dentry == NULL)) {
 				rib_longer_iterator_end(&state);
 				rte_spinlock_unlock_tm(lock);
-				luaL_error(l,
-					"%s(): failed to allocate memory for the %s FIB dump",
+				luaL_error(l, "%s(): failed to allocate memory for the %s FIB dump",
 					__func__, context);
 			}
 		} else
@@ -2236,16 +2235,16 @@ list_fib_for_lua(lua_State *l, bool list_ipv4)
 	void *cdata = luaL_checkcdata(l, 1,
 		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_GK_CONFIG_PTR);
+		luaL_error(l, "%s(): expected `%s' as first argument",
+			__func__, CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* Second argument must be a Lua function. */
 	luaL_checktype(l, 2, LUA_TFUNCTION);
 
 	/* Third argument should be a Lua value. */
 	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+		luaL_error(l, "%s(): expected three arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
 
 	gk_conf = *(struct gk_config **)cdata;
 	ltbl = &gk_conf->lpm_tbl;
@@ -2344,8 +2343,8 @@ list_ipv4_if_neighbors(lua_State *l, struct gatekeeper_if *iface,
 	 */
 	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(&ltbl->lock);
-		luaL_error(l, "gk: failed to lookup the lpm table at %s!",
-			__func__);
+		luaL_error(l, "%s(): failed to lookup the lpm table (errno=%d): %s",
+			__func__, -ret, strerror(-ret));
 	}
 
 	neigh_fib = &ltbl->fib_tbl[fib_id];
@@ -2425,16 +2424,16 @@ list_neighbors_for_lua(lua_State *l, list_neighbors f)
 	void *cdata = luaL_checkcdata(l, 1,
 		&ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gk_config)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_GK_CONFIG_PTR);
+		luaL_error(l, "%s(): expected `%s' as first argument",
+			__func__, CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* Second argument must be a Lua function. */
 	luaL_checktype(l, 2, LUA_TFUNCTION);
 
 	/* Third argument should be a Lua value. */
 	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+		luaL_error(l, "%s(): expected three arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
 
 	gk_conf = *(struct gk_config **)cdata;
 
@@ -2473,8 +2472,8 @@ l_ether_format_addr(lua_State *l)
 	void *cdata = luaL_checkcdata(l, 1,
 		&ctypeid, CTYPE_STRUCT_ETHER_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ether_addr)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_ETHER_ADDR_REF);
+		luaL_error(l, "%s(): expected `%s' as first argument",
+			__func__, CTYPE_STRUCT_ETHER_ADDR_REF);
 
 	d_addr = *(struct rte_ether_addr **)cdata;
 
@@ -2501,14 +2500,15 @@ l_ip_format_addr(lua_State *l)
 	void *cdata = luaL_checkcdata(l, 1,
 		&ctypeid, CTYPE_STRUCT_IP_ADDR_REF);
 	if (ctypeid != correct_ctypeid_ip_addr)
-		luaL_error(l, "Expected `%s' as first argument",
-			CTYPE_STRUCT_IP_ADDR_REF);
+		luaL_error(l, "%s(): expected `%s' as first argument",
+			__func__, CTYPE_STRUCT_IP_ADDR_REF);
 
 	ip_addr = *(struct ipaddr **)cdata;
 
 	ret = convert_ip_to_str(ip_addr, ip, sizeof(ip));
 	if (ret < 0)
-		luaL_error(l, "gk: failed to convert an IP address to string!");
+		luaL_error(l, "%s(): failed to convert an IP address to string",
+			__func__);
 
 	lua_pushstring(l, ip);
 
