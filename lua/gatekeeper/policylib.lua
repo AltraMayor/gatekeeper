@@ -189,7 +189,8 @@ struct grantedv2_params {
 	bool direct_if_possible;
 } __attribute__ ((packed));
 
-#define TCPSRV_MAX_NUM_PORTS (12)
+static const unsigned char TCPSRV_MAX_NUM_PORTS = 12;
+
 struct tcpsrv_ports {
 	uint16_t p[TCPSRV_MAX_NUM_PORTS];
 };
