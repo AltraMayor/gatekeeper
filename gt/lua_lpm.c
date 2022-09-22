@@ -143,8 +143,10 @@ l_new_lpm(lua_State *l)
 	/* Second argument must be a Lua number. */
 	lpm_ud->config.number_tbl8s = luaL_checknumber(l, 2);
 
+	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
+	lua_pop(l, 1);
 
 	lpm_ud->lpm = init_ipv4_lpm("gt_", &lpm_ud->config,
 		rte_lcore_to_socket_id(lcore_id), lcore_id,
@@ -153,7 +155,7 @@ l_new_lpm(lua_State *l)
 		luaL_error(l, "gt: failed to initialize the IPv4 LPM table for Lua policies");
 
 	luaL_getmetatable(l, LUA_LPM_UD_TNAME);
-	lua_setmetatable(l, -3);
+	lua_setmetatable(l, -2);
 
 	return 1;
 }
@@ -314,8 +316,10 @@ l_new_lpm6(lua_State *l)
 	/* Second argument must be a Lua number. */
 	lpm6_ud->config.number_tbl8s = luaL_checknumber(l, 2);
 
+	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
+	lua_pop(l, 1);
 
 	lpm6_ud->lpm6 = init_ipv6_lpm("gt", &lpm6_ud->config,
 		rte_lcore_to_socket_id(lcore_id), lcore_id,
@@ -324,7 +328,7 @@ l_new_lpm6(lua_State *l)
 		luaL_error(l, "gt: failed to initialize the IPv6 LPM table for Lua policies");
 
 	luaL_getmetatable(l, LUA_LPM6_UD_TNAME);
-	lua_setmetatable(l, -3);
+	lua_setmetatable(l, -2);
 
 	return 1;
 }
