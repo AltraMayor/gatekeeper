@@ -1679,7 +1679,7 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 			 * the hardware of the back interface.
 			 */
 			if (unlikely(G_LOG_CHECK(DEBUG)))
-				print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the front interface and is destined to an uknown back neighbor");
+				print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the front interface and is destined to an unknown back neighbor");
 
 			drop_packet_front(pkt, instance);
 			break;
@@ -2049,6 +2049,8 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 {
 	struct rte_mbuf *pkt = packet->pkt;
 	struct ether_cache *eth_cache;
+	char err_msg[128];
+	int ret;
 
 	if (fib == NULL || fib->action == GK_FWD_NEIGHBOR_BACK_NET) {
 		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4)
@@ -2057,7 +2059,10 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 				RTE_ETHER_TYPE_IPV6))
 			add_pkt_acl(acl6, pkt);
 		else {
-			print_flow_err_msg(&packet->flow, -ENOENT, "Failed to get the fib entry or it is not an IP packet");
+			ret = snprintf(err_msg, sizeof(err_msg), "%s(): failed to find the fib entry or it is not an IP packet; dropping packet...",
+				__func__);
+			RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+			print_flow_err_msg(&packet->flow, -ENOENT, err_msg);
 			drop_packet(pkt);
 		}
 		return;
@@ -2098,21 +2103,20 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 	case GK_FWD_GATEWAY_BACK_NET:
 		/* Gatekeeper does not intermediate neighbors. */
 
-		/*
-		 * Although this is the GK block, print_flow_err_msg() uses
-		 * G_LOG, so test log level at the Gatekeeper level.
-		 */
-		if (unlikely(G_LOG_CHECK(DEBUG)))
-			print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the back interface and is destined to a back gateway");
-
+		/* print_flow_err_msg() uses G_LOG, so test log level. */
+		if (unlikely(G_LOG_CHECK(DEBUG))) {
+			ret = snprintf(err_msg, sizeof(err_msg), "%s(): packet arrived at the back interface and is destined to a back gateway; dropping packet...",
+				__func__);
+			RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+			print_flow_err_msg(&packet->flow, -ENOENT, err_msg);
+		}
 		drop_packet(pkt);
 		return;
 
 	case GK_FWD_NEIGHBOR_FRONT_NET:
 		/*
-		 * The entry instructs to forward
-		 * its packets to the neighbor in
-		 * the front network, forward accordingly.
+		 * The entry instructs to forward its packets to
+		 * the neighbor in the front network, forward accordingly.
 		 */
 		if (packet->flow.proto == RTE_ETHER_TYPE_IPV4) {
 			eth_cache = lookup_ether_cache(&fib->u.neigh,
@@ -2124,9 +2128,7 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 
 		if (eth_cache == NULL) {
 			/*
-			 * Although this is the GK block, print_flow_err_msg()
-			 * uses G_LOG, so test log level at the Gatekeeper
-			 * level.
+			 * print_flow_err_msg() uses G_LOG, so test log level.
 			 *
 			 * NOTICE that the unknown front neighbor that the log
 			 * entry below refers to could be the address of
@@ -2135,9 +2137,14 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 			 * because the target filter may be implemented in
 			 * the hardware of the front interface.
 			 */
-			if (unlikely(G_LOG_CHECK(DEBUG)))
-				print_flow_err_msg(&packet->flow, -ENOENT, "Dropping packet that arrived at the back interface and is destined to an uknown front neighbor");
-
+			if (unlikely(G_LOG_CHECK(DEBUG))) {
+				ret = snprintf(err_msg, sizeof(err_msg), "%s(): packet arrived at the back interface and is destined to unknown front neighbor; dropping packet...",
+					__func__);
+				RTE_VERIFY(ret > 0 &&
+					ret < (int)sizeof(err_msg));
+				print_flow_err_msg(&packet->flow, -ENOENT,
+					err_msg);
+			}
 			drop_packet(pkt);
 			return;
 		}
@@ -2158,8 +2165,14 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 		return;
 
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		G_LOG(CRIT, "%s(): bug: GK_FWD_NEIGHBOR_BACK_NET should have been already handled; dropping packet...\n",
+		ret = snprintf(err_msg, sizeof(err_msg), "%s(): bug: GK_FWD_NEIGHBOR_BACK_NET should have been already handled; dropping packet...",
 			__func__);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+		/*
+		 * XXX The log priority should be CRIT, but
+		 * print_flow_err_msg() does not have a priority parameter.
+		 */
+		print_flow_err_msg(&packet->flow, -ENOENT, err_msg);
 		drop_packet(pkt);
 		return;
 
@@ -2168,10 +2181,11 @@ process_fib_back(struct ipacket *packet, struct gk_fib *fib, uint16_t *num_tx,
 		return;
 
 	default:
-		/* All other actions should log a warning. */
-		G_LOG(WARNING,
-			"%s(): A FIB entry has the unexpected action %u\n",
+		/* All other actions should log an error. */
+		ret = snprintf(err_msg, sizeof(err_msg), "%s(): a FIB entry has the unknown action %u; dropping packet...",
 			__func__, fib->action);
+		RTE_VERIFY(ret > 0 && ret < (int)sizeof(err_msg));
+		print_flow_err_msg(&packet->flow, -ENOENT, err_msg);
 		drop_packet(pkt);
 		return;
 	}
