@@ -105,24 +105,23 @@ no_entry:
 	return next_hop;
 }
 
-struct rte_lpm6 *
-init_ipv6_lpm(const char *tag,
-	const struct rte_lpm6_config *lpm6_conf,
+struct rte_fib6 *
+init_ipv6_lpm(const char *tag, struct rte_fib6_conf lpm6_conf,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier)
 {
 	int ret;
 	char lpm_name[128];
-	struct rte_lpm6 *lpm;
+	struct rte_fib6 *lpm;
 
-	ret = snprintf(lpm_name, sizeof(lpm_name),
-		"%s_lpm_ipv6_%u_%u", tag, lcore, identifier);
+	ret = snprintf(lpm_name, sizeof(lpm_name), "%s_lpm_ipv6_%u_%u",
+		tag, lcore, identifier);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lpm_name));
 
-	lpm = rte_lpm6_create(lpm_name, socket_id, lpm6_conf);
-	if (lpm == NULL) {
-		G_LOG(ERR,
-			"lpm: unable to create the IPv6 LPM table %s on socket %u\n",
-			lpm_name, socket_id);
+	lpm = rte_fib6_create(lpm_name, socket_id, &lpm6_conf);
+	if (unlikely(lpm == NULL)) {
+		G_LOG(ERR, "%s(): unable to create the IPv6 LPM table %s on socket %u (errno=%i): %s\n",
+			__func__, lpm_name, socket_id,
+			rte_errno, rte_strerror(rte_errno));
 		return NULL;
 	}
 
@@ -135,35 +134,40 @@ init_ipv6_lpm(const char *tag,
  *    a context-specific message.
  */
 int
-lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip)
+lpm_lookup_ipv6(struct rte_fib6 *lpm, struct in6_addr *ip)
 {
 	int ret;
-	uint32_t next_hop;
+	uint64_t next_hop;
 
-	ret = rte_lpm6_lookup(lpm, (uint8_t *)ip, &next_hop);
-	if (ret == -EINVAL) {
-		G_LOG(ERR, "lpm: incorrect arguments for IPv6 lookup\n");
+	ret = rte_fib6_lookup_bulk(lpm, (uint8_t (*)[16])ip->s6_addr,
+		&next_hop, 1);
+	if (unlikely(ret == -EINVAL)) {
+		G_LOG(ERR, "%s(): incorrect arguments for IPv6 lookup\n",
+			__func__);
 		return ret;
-	} else if (ret == -ENOENT) {
+	}
+	RTE_VERIFY(ret == 0);
+
+	if (next_hop == LPM_DEFAULT_NH) {
 		/* See comment for -ENOENT case in lpm_lookup_ipv4(). */
 		char buf[INET6_ADDRSTRLEN];
 
 		if (likely(!G_LOG_CHECK(DEBUG)))
-			return ret;
+			goto no_entry;
 
-		if (likely(inet_ntop(AF_INET6, &ip->s6_addr,
-				buf, sizeof(buf)) != NULL)) {
-			G_LOG(DEBUG,
-				"lpm: IPv6 lookup miss for %s\n", buf);
-			return ret;
+		if (likely(inet_ntop(AF_INET6, &ip->s6_addr, buf,
+				sizeof(buf)) != NULL)) {
+			G_LOG(DEBUG, "%s(): IPv6 lookup miss for %s\n",
+				__func__, buf);
+			goto no_entry;
 		}
 
-		G_LOG(DEBUG,
-			"lpm: IPv6 lookup miss; can't convert IP to string: %s\n",
-			strerror(errno));
-		return ret;
+		G_LOG(DEBUG, "%s(): IPv6 lookup miss; can't convert IP to string (errno=%i): %s\n",
+			__func__, errno, strerror(errno));
+no_entry:
+
+		return -ENOENT;
 	}
 
-	RTE_VERIFY(ret == 0);
 	return next_hop;
 }

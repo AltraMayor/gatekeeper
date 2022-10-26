@@ -19,10 +19,10 @@
 #ifndef _GATEKEEPER_LPM_H_
 #define _GATEKEEPER_LPM_H_
 
-#include <rte_lpm6.h>
 #include <string.h>
 
 #include <rte_fib.h>
+#include <rte_fib6.h>
 #include <rte_byteorder.h>
 
 /*
@@ -76,16 +76,43 @@ destroy_ipv4_lpm(struct rte_fib *lpm)
 	rte_fib_free(lpm);
 }
 
+static inline void
+set_ipv6_lpm_conf(struct rte_fib6_conf *conf, uint32_t max_routes,
+	uint32_t num_tbl8)
+{
+	memset(conf, 0, sizeof(*conf));
+	conf->type = RTE_FIB6_TRIE;
+	conf->default_nh = LPM_DEFAULT_NH;
+	conf->max_routes = max_routes;
+	conf->trie.nh_sz = RTE_FIB6_TRIE_4B;
+	conf->trie.num_tbl8 = num_tbl8;
+}
+
 /* Similar to init_ipv4_lpm(), see above. */
-struct rte_lpm6 *init_ipv6_lpm(const char *tag,
-	const struct rte_lpm6_config *lpm6_conf,
+struct rte_fib6 *init_ipv6_lpm(const char *tag, struct rte_fib6_conf lpm6_conf,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier);
-int lpm_lookup_ipv6(struct rte_lpm6 *lpm, struct in6_addr *ip);
+int lpm_lookup_ipv6(struct rte_fib6 *lpm, struct in6_addr *ip);
+
+/* @ip is in network order (i.e. big endian). */
+static inline int
+lpm6_add(struct rte_fib6 *fib, const uint8_t ip[RTE_FIB6_IPV6_ADDR_SIZE],
+	uint8_t depth, uint64_t next_hop)
+{
+	return rte_fib6_add(fib, ip, depth, next_hop);
+}
+
+/* @ip is in network order (i.e. big endian). */
+static inline int
+lpm6_delete(struct rte_fib6 *fib, const uint8_t ip[RTE_FIB6_IPV6_ADDR_SIZE],
+	uint8_t depth)
+{
+	return rte_fib6_delete(fib, ip, depth);
+}
 
 static inline void
-destroy_ipv6_lpm(struct rte_lpm6 *lpm)
+destroy_ipv6_lpm(struct rte_fib6 *lpm6)
 {
-	rte_lpm6_free(lpm);
+	rte_fib6_free(lpm6);
 }
 
 #endif /* _GATEKEEPER_LPM_H_ */

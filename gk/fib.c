@@ -72,7 +72,7 @@ gk_lpm_add_ipv6_route(const uint8_t *ip, uint8_t depth, uint32_t nexthop,
 	if (ret < 0)
 		return ret;
 
-	ret = rte_lpm6_add(ltbl->lpm6, ip, depth, nexthop);
+	ret = lpm6_add(ltbl->lpm6, ip, depth, nexthop);
 	if (unlikely(ret < 0)) {
 		int ret2 = rib_delete(&ltbl->rib6, ip, depth);
 		if (unlikely(ret2 < 0)) {
@@ -112,7 +112,7 @@ gk_lpm_del_ipv6_route(struct gk_lpm *ltbl, const uint8_t *ip, uint8_t depth)
 			__func__, ret, strerror(-ret));
 	}
 
-	ret2 = rte_lpm6_delete(ltbl->lpm6, ip, depth);
+	ret2 = lpm6_delete(ltbl->lpm6, ip, depth);
 	if (unlikely(ret != ret2)) {
 		G_LOG(CRIT, "%s(): bug: unexpected mismatch, ret == %i and ret2 == %i: %s\n",
 			__func__, ret, ret2, strerror(-ret2));
@@ -705,7 +705,6 @@ out:
 int
 setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 {
-	struct rte_lpm6_config ipv6_lpm_config;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	int ret;
 
@@ -755,6 +754,8 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 	}
 
 	if (ipv6_configured(gk_conf->net)) {
+		struct rte_fib6_conf ipv6_lpm_config;
+
 		ret = rib_create(&ltbl->rib6, "IPv6-RIB", socket_id, 128,
 			gk_conf->max_num_ipv6_rules);
 		if (unlikely(ret < 0)) {
@@ -763,15 +764,15 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto free_lpm_tbl;
 		}
 
-		ipv6_lpm_config.max_rules = gk_conf->max_num_ipv6_rules;
-		ipv6_lpm_config.number_tbl8s = gk_conf->num_ipv6_tbl8s;
+		set_ipv6_lpm_conf(&ipv6_lpm_config,
+			gk_conf->max_num_ipv6_rules, gk_conf->num_ipv6_tbl8s);
 
 		/*
 		 * The GK blocks only need to create one single
 		 * IPv6 LPM table on the @socket_id, so the
 		 * @lcore and @identifier are set to 0.
 		 */
-		ltbl->lpm6 = init_ipv6_lpm("gk", &ipv6_lpm_config, socket_id,
+		ltbl->lpm6 = init_ipv6_lpm("gk", ipv6_lpm_config, socket_id,
 			0, 0);
 		if (unlikely(ltbl->lpm6 == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv6 FIB\n",

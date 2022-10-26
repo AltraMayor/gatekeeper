@@ -291,8 +291,8 @@ l_lpm_get_paras(lua_State *l)
 #define LUA_LPM6_UD_TNAME "gt_lpm6_ud"
 
 struct lpm6_lua_userdata {
-	struct rte_lpm6 *lpm6;
-	struct rte_lpm6_config config;
+	struct rte_fib6 *lpm6;
+	struct rte_fib6_conf config;
 };
 
 static int
@@ -308,17 +308,16 @@ l_new_lpm6(lua_State *l)
 
 	lpm6_ud = lua_newuserdata(l, sizeof(*lpm6_ud));
 	memset(&lpm6_ud->config, 0, sizeof(lpm6_ud->config));
-	/* First argument must be a Lua number. */
-	lpm6_ud->config.max_rules = luaL_checknumber(l, 1);
-	/* Second argument must be a Lua number. */
-	lpm6_ud->config.number_tbl8s = luaL_checknumber(l, 2);
+	/* The first and second argument must be Lua numbers. */
+	set_ipv6_lpm_conf(&lpm6_ud->config, luaL_checknumber(l, 1),
+		luaL_checknumber(l, 2));
 
 	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
 
-	lpm6_ud->lpm6 = init_ipv6_lpm("gt", &lpm6_ud->config,
+	lpm6_ud->lpm6 = init_ipv6_lpm("gt", lpm6_ud->config,
 		rte_lcore_to_socket_id(lcore_id), lcore_id,
 		rte_atomic32_add_return(&identifier6, 1));
 	if (unlikely(lpm6_ud->lpm6 == NULL))
@@ -352,7 +351,7 @@ l_lpm6_add(lua_State *l)
 		luaL_error(l, "Expected four arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	ret = rte_lpm6_add(lpm6_ud->lpm6, ipv6_addr->s6_addr, depth, label);
+	ret = lpm6_add(lpm6_ud->lpm6, ipv6_addr->s6_addr, depth, label);
 	if (ret < 0) {
 		char addr_buf[INET6_ADDRSTRLEN];
 		if (unlikely(inet_ntop(AF_INET6, ipv6_addr, addr_buf,
@@ -384,7 +383,7 @@ l_lpm6_del(lua_State *l)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	lua_pushinteger(l, rte_lpm6_delete(lpm6_ud->lpm6,
+	lua_pushinteger(l, lpm6_delete(lpm6_ud->lpm6,
 		ipv6_addr->s6_addr, depth));
 
 	return 1;
@@ -429,13 +428,13 @@ ip6_mask_addr(uint8_t *ip, uint8_t depth)
 static inline void
 ip6_copy_addr(uint8_t *dst, const uint8_t *src)
 {
-	rte_memcpy(dst, src, RTE_LPM6_IPV6_ADDR_SIZE);
+	rte_memcpy(dst, src, RTE_FIB6_IPV6_ADDR_SIZE);
 }
 
 static int
 l_ip6_mask_addr(lua_State *l)
 {
-	uint8_t masked_ip[RTE_LPM6_IPV6_ADDR_SIZE];
+	uint8_t masked_ip[RTE_FIB6_IPV6_ADDR_SIZE];
 	char buf[INET6_ADDRSTRLEN];
 
 	/* First argument must be a struct in6_add. */
@@ -443,7 +442,7 @@ l_ip6_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_LPM6_MAX_DEPTH))
+	if ((depth == 0) || (depth > RTE_FIB6_MAXDEPTH))
 		luaL_error(l, "Expected a depth value between 1 and 128, however it is %d",
 			depth);
 
@@ -473,8 +472,8 @@ l_lpm6_get_paras(lua_State *l)
 		luaL_error(l, "Expected one argument, however it got %d arguments",
 			lua_gettop(l));
 
-	lua_pushinteger(l, lpm6_ud->config.max_rules);
-	lua_pushinteger(l, lpm6_ud->config.number_tbl8s);
+	lua_pushinteger(l, lpm6_ud->config.max_routes);
+	lua_pushinteger(l, lpm6_ud->config.trie.num_tbl8);
 	return 2;
 }
 
@@ -506,7 +505,7 @@ lpm_ud_gc(lua_State *l) {
 static int
 lpm6_ud_gc(lua_State *l) {
 	struct lpm6_lua_userdata *lpm6_ud = lua_touserdata(l, 1);
-	rte_lpm6_free(lpm6_ud->lpm6);
+	destroy_ipv6_lpm(lpm6_ud->lpm6);
 	return 0;
 }
 

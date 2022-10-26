@@ -1522,26 +1522,31 @@ static void
 lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
 	int num_flows, struct gk_fib *fibs[])
 {
-	int i;
-	uint8_t dst_ip[num_flows][RTE_LPM6_IPV6_ADDR_SIZE];
-	int32_t hop[num_flows];
+	uint8_t ips[num_flows][RTE_FIB6_IPV6_ADDR_SIZE];
+	uint64_t next_hops[num_flows];
+	int i, ret;
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
 	if (num_flows == 0)
 		return;
 
-	for (i = 0; i < num_flows; i++) {
-		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
-			sizeof(dst_ip[i]));
+	/* Fill array @ips[] in. */
+	for (i = 0; i < num_flows; i++)
+		memcpy(&ips[i][0], flows[i]->f.v6.dst.s6_addr, sizeof(ips[i]));
+
+	ret = rte_fib6_lookup_bulk(ltbl->lpm6, ips, next_hops, num_flows);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): rte_fib6_lookup_bulk() failed (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		memset(fibs, 0, sizeof(fibs[0]) * num_flows);
+		return;
 	}
 
-	rte_lpm6_lookup_bulk_func(ltbl->lpm6, dst_ip, hop, num_flows);
-
 	for (i = 0; i < num_flows; i++) {
-		if (hop[i] != -1) {
-			fibs[i] = &ltbl->fib_tbl6[hop[i]];
-
+		uint64_t fib_id = next_hops[i];
+		if (fib_id != LPM_DEFAULT_NH) {
+			fibs[i] = &ltbl->fib_tbl6[fib_id];
 			rte_prefetch0(fibs[i]);
 		} else
 			fibs[i] = NULL;

@@ -215,7 +215,7 @@ struct gk_lpm {
 	struct rib_head rib6;
 
 	/* The IPv6 FIB. */
-	struct rte_lpm6 *lpm6;
+	struct rte_fib6 *lpm6;
 
 	/* The IPv6 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl6;
