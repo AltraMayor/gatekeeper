@@ -253,20 +253,24 @@ l_ip_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_FIB_MAXDEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 32, however it is %d",
-			depth);
+	if (unlikely(depth > RTE_FIB_MAXDEPTH)) {
+		luaL_error(l, "%s(): expected a depth value between 0 and %d, however it is %d",
+			__func__, RTE_FIB_MAXDEPTH, depth);
+	}
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
 	ip4_prefix_mask(depth, &mask);
 	masked_ip = htonl(ntohl(ip) & rte_be_to_cpu_32(mask.s_addr));
 
-	if (inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf)) == NULL)
-		luaL_error(l, "%s: failed to convert a number to an IPv4 address (%s)\n",
-			__func__, strerror(errno));
+	if (unlikely(inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf))
+			== NULL)) {
+		luaL_error(l, "%s(): failed to convert a number to an IPv4 address (errno=%d): %s\n",
+			__func__, errno, strerror(errno));
+	}
 
 	lua_pushstring(l, buf);
 	return 1;
@@ -442,20 +446,24 @@ l_ip6_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_FIB6_MAXDEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 128, however it is %d",
-			depth);
+	if (unlikely(depth > RTE_FIB6_MAXDEPTH)) {
+		luaL_error(l, "%s(): expected a depth value between 0 and %d, however it is %d",
+			__func__, RTE_FIB6_MAXDEPTH, depth);
+	}
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
 	ip6_copy_addr(masked_ip, ipv6_addr->s6_addr);
 	ip6_mask_addr(masked_ip, depth);
 
-	if (inet_ntop(AF_INET6, masked_ip, buf, sizeof(buf)) == NULL)
-		luaL_error(l, "net: %s: failed to convert a number to an IPv6 address (%s)\n",
-			__func__, strerror(errno));
+	if (unlikely(inet_ntop(AF_INET6, masked_ip, buf, sizeof(buf))
+			== NULL)) {
+		luaL_error(l, "%s(): failed to convert a number to an IPv6 address (errno=%d): %s\n",
+			__func__, errno, strerror(errno));
+	}
 
 	lua_pushstring(l, buf);
 	return 1;

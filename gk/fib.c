@@ -1087,13 +1087,6 @@ check_prefix(const struct ip_prefix *prefix_info)
 {
 	if (unlikely(prefix_info->len < 0))
 		return -EINVAL;
-
-	if (unlikely(prefix_info->len == 0)) {
-		G_LOG(WARNING, "%s(%s): Gatekeeper currently does not support default routes\n",
-			__func__, prefix_info->str);
-		return -EPERM;
-	}
-
 	return 0;
 }
 
