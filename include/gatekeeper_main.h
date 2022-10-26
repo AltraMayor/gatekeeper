@@ -28,6 +28,7 @@
 #include <rte_jhash.h>
 #define DEFAULT_HASH_FUNC       rte_jhash
 #endif
+#include <rte_lcore.h>
 
 #include "gatekeeper_log_ratelimit.h"
 #include "list.h"
