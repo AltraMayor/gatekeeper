@@ -51,7 +51,7 @@ gk_lpm_add_ipv4_route(uint32_t ip, uint8_t depth, uint32_t nexthop,
 	if (ret < 0)
 		return ret;
 
-	ret = rte_lpm_add(ltbl->lpm, ntohl(ip), depth, nexthop);
+	ret = lpm_add(ltbl->lpm, ip, depth, nexthop);
 	if (unlikely(ret < 0)) {
 		int ret2 = rib_delete(&ltbl->rib, (uint8_t *)&ip, depth);
 		if (unlikely(ret2 < 0)) {
@@ -94,7 +94,7 @@ gk_lpm_del_ipv4_route(struct gk_lpm *ltbl, uint32_t ip, uint8_t depth)
 			__func__, ret, strerror(-ret));
 	}
 
-	ret2 = rte_lpm_delete(ltbl->lpm, ntohl(ip), depth);
+	ret2 = lpm_delete(ltbl->lpm, ip, depth);
 	if (unlikely(ret != ret2)) {
 		G_LOG(CRIT, "%s(): bug: unexpected mismatch, ret == %i and ret2 == %i: %s\n",
 			__func__, ret, ret2, strerror(-ret2));
@@ -705,12 +705,13 @@ out:
 int
 setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 {
-	int ret;
-	struct rte_lpm_config ipv4_lpm_config;
 	struct rte_lpm6_config ipv6_lpm_config;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	int ret;
 
 	if (ipv4_configured(gk_conf->net)) {
+		struct rte_fib_conf ipv4_lpm_config;
+
 		ret = rib_create(&ltbl->rib, "IPv4-RIB", socket_id, 32,
 			gk_conf->max_num_ipv4_rules);
 		if (unlikely(ret < 0)) {
@@ -719,15 +720,15 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto out;
 		}
 
-		ipv4_lpm_config.max_rules = gk_conf->max_num_ipv4_rules;
-		ipv4_lpm_config.number_tbl8s = gk_conf->num_ipv4_tbl8s;
+		set_ipv4_lpm_conf(&ipv4_lpm_config,
+			gk_conf->max_num_ipv4_rules, gk_conf->num_ipv4_tbl8s);
 
 		/*
 		 * The GK blocks only need to create one single
 		 * IPv4 LPM table on the @socket_id, so the
 		 * @lcore and @identifier are set to 0.
 		 */
-		ltbl->lpm = init_ipv4_lpm("gk", &ipv4_lpm_config, socket_id,
+		ltbl->lpm = init_ipv4_lpm("gk", ipv4_lpm_config, socket_id,
 			0, 0);
 		if (unlikely(ltbl->lpm == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv4 FIB\n",

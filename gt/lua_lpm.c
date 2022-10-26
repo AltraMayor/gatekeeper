@@ -121,8 +121,8 @@ l_str_to_prefix6(lua_State *l)
 #define LUA_LPM_UD_TNAME "gt_lpm_ud"
 
 struct lpm_lua_userdata {
-	struct rte_lpm *lpm;
-	struct rte_lpm_config config;
+	struct rte_fib *lpm;
+	struct rte_fib_conf config;
 };
 
 static int
@@ -137,18 +137,16 @@ l_new_lpm(lua_State *l)
 			lua_gettop(l));
 
 	lpm_ud = lua_newuserdata(l, sizeof(*lpm_ud));
-	memset(&lpm_ud->config, 0, sizeof(lpm_ud->config));
-	/* First argument must be a Lua number. */
-	lpm_ud->config.max_rules = luaL_checknumber(l, 1);
-	/* Second argument must be a Lua number. */
-	lpm_ud->config.number_tbl8s = luaL_checknumber(l, 2);
+	/* The first and second arguments must be Lua numbers. */
+	set_ipv4_lpm_conf(&lpm_ud->config, luaL_checknumber(l, 1),
+		luaL_checknumber(l, 2));
 
 	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
 
-	lpm_ud->lpm = init_ipv4_lpm("gt_", &lpm_ud->config,
+	lpm_ud->lpm = init_ipv4_lpm("gt_", lpm_ud->config,
 		rte_lcore_to_socket_id(lcore_id), lcore_id,
 		rte_atomic32_add_return(&identifier, 1));
 	if (unlikely(lpm_ud->lpm == NULL))
@@ -185,7 +183,7 @@ l_lpm_add(lua_State *l)
 		luaL_error(l, "Expected four arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	ret = rte_lpm_add(lpm_ud->lpm, ntohl(ip), depth, label);
+	ret = lpm_add(lpm_ud->lpm, ip, depth, label);
 	if (ret < 0) {
 		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s(%d): %s",
 			ip, depth, label, __func__, -ret, strerror(-ret));
@@ -214,8 +212,7 @@ l_lpm_del(lua_State *l)
 		luaL_error(l, "Expected three arguments, however it got %d arguments",
 			lua_gettop(l));
 
-	lua_pushinteger(l, rte_lpm_delete(lpm_ud->lpm, ntohl(ip), depth));
-
+	lua_pushinteger(l, lpm_delete(lpm_ud->lpm, ip, depth));
 	return 1;
 }
 
@@ -256,7 +253,7 @@ l_ip_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_LPM_MAX_DEPTH))
+	if ((depth == 0) || (depth > RTE_FIB_MAXDEPTH))
 		luaL_error(l, "Expected a depth value between 1 and 32, however it is %d",
 			depth);
 
@@ -286,8 +283,8 @@ l_lpm_get_paras(lua_State *l)
 		luaL_error(l, "Expected one argument, however it got %d arguments",
 			lua_gettop(l));
 
-	lua_pushinteger(l, lpm_ud->config.max_rules);
-	lua_pushinteger(l, lpm_ud->config.number_tbl8s);
+	lua_pushinteger(l, lpm_ud->config.max_routes);
+	lua_pushinteger(l, lpm_ud->config.dir24_8.num_tbl8);
 	return 2;
 }
 
@@ -502,7 +499,7 @@ static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 static int
 lpm_ud_gc(lua_State *l) {
 	struct lpm_lua_userdata *lpm_ud = lua_touserdata(l, 1);
-	rte_lpm_free(lpm_ud->lpm);
+	destroy_ipv4_lpm(lpm_ud->lpm);
 	return 0;
 }
 

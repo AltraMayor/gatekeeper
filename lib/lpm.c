@@ -19,30 +19,29 @@
 #include <arpa/inet.h>
 #include <string.h>
 
-#include <rte_log.h>
 #include <rte_debug.h>
+#include <rte_errno.h>
 
 #include "gatekeeper_lpm.h"
 #include "gatekeeper_main.h"
 
-struct rte_lpm *
-init_ipv4_lpm(const char *tag,
-	const struct rte_lpm_config *lpm_conf,
+struct rte_fib *
+init_ipv4_lpm(const char *tag, struct rte_fib_conf lpm_conf,
 	unsigned int socket_id, unsigned int lcore, unsigned int identifier)
 {
 	int ret;
 	char lpm_name[128];
-	struct rte_lpm *lpm;
+	struct rte_fib *lpm;
 
-	ret = snprintf(lpm_name, sizeof(lpm_name),
-		"%s_lpm_ipv4_%u_%u", tag, lcore, identifier);
+	ret = snprintf(lpm_name, sizeof(lpm_name), "%s_lpm_ipv4_%u_%u",
+		tag, lcore, identifier);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lpm_name));
 
-	lpm = rte_lpm_create(lpm_name, socket_id, lpm_conf);
-	if (lpm == NULL) {
-		G_LOG(ERR,
-			"lpm: unable to create the IPv4 LPM table %s on socket %u\n",
-			lpm_name, socket_id);
+	lpm = rte_fib_create(lpm_name, socket_id, &lpm_conf);
+	if (unlikely(lpm == NULL)) {
+		G_LOG(ERR, "%s(): unable to create the IPv4 LPM table %s on socket %u (errno=%i): %s\n",
+			__func__, lpm_name, socket_id,
+			rte_errno, rte_strerror(rte_errno));
 		return NULL;
 	}
 
@@ -56,16 +55,21 @@ init_ipv4_lpm(const char *tag,
  *    a context-specific message.
  */
 int
-lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
+lpm_lookup_ipv4(struct rte_fib *lpm, uint32_t ip)
 {
 	int ret;
-	uint32_t next_hop;
+	uint32_t ho_ip = rte_be_to_cpu_32(ip);
+	uint64_t next_hop;
 
-	ret = rte_lpm_lookup(lpm, ntohl(ip), &next_hop);
-	if (ret == -EINVAL) {
-		G_LOG(ERR, "lpm: incorrect arguments for IPv4 lookup\n");
+	ret = rte_fib_lookup_bulk(lpm, &ho_ip, &next_hop, 1);
+	if (unlikely(ret == -EINVAL)) {
+		G_LOG(ERR, "%s(): incorrect arguments for IPv4 lookup\n",
+			__func__);
 		return ret;
-	} else if (ret == -ENOENT) {
+	}
+	RTE_VERIFY(ret == 0);
+
+	if (next_hop == LPM_DEFAULT_NH) {
 		/*
 		 * Failing to find an LPM entry can mean many different
 		 * things, depending on the caller. In some cases,
@@ -84,22 +88,20 @@ lpm_lookup_ipv4(struct rte_lpm *lpm, uint32_t ip)
 		char buf[INET_ADDRSTRLEN];
 
 		if (likely(!G_LOG_CHECK(DEBUG)))
-			return ret;
+			goto no_entry;
 
-		if (likely(inet_ntop(AF_INET, &ip,
-				buf, sizeof(buf)) != NULL)) {
-			G_LOG(DEBUG,
-				"lpm: IPv4 lookup miss for %s\n", buf);
-			return ret;
+		if (likely(inet_ntop(AF_INET, &ip, buf, sizeof(buf)) != NULL)) {
+			G_LOG(DEBUG, "%s(): IPv4 lookup miss for %s\n",
+				__func__, buf);
+			goto no_entry;
 		}
 
-		G_LOG(DEBUG,
-			"lpm: IPv4 lookup miss; can't convert IP to string: %s\n",
-			strerror(errno));
-		return ret;
+		G_LOG(DEBUG, "%s() IPv4 lookup miss; can't convert IP to string (errno=%i): %s\n",
+			__func__, errno, strerror(errno));
+no_entry:
+		return -ENOENT;
 	}
 
-	RTE_VERIFY(ret == 0);
 	return next_hop;
 }
 

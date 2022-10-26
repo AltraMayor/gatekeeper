@@ -36,7 +36,6 @@
 #include <rte_cycles.h>
 #include <rte_malloc.h>
 #include <rte_icmp.h>
-#include <rte_vect.h>
 #include <rte_common.h>
 
 #include "gatekeeper_acl.h"
@@ -1488,47 +1487,30 @@ static void
 lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows, int num_flows,
 	struct gk_fib *fibs[])
 {
-	int i;
-	/* The batch size for IPv4 LPM table lookup. */
-	const uint8_t FWDSTEP = 4;
-	const uint32_t default_nh = -1;
-	int k = RTE_ALIGN_FLOOR(num_flows, FWDSTEP);
+	uint32_t ips[num_flows];
+	uint64_t next_hops[num_flows];
+	int i, ret;
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
 	if (num_flows == 0)
 		return;
 
-	for (i = 0; i < k; i += FWDSTEP) {
-		int j;
-		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
-			4, 5, 6, 7, 0, 1, 2, 3);
-		__m128i dip = _mm_set_epi32(flows[i + 3]->f.v4.dst.s_addr,
-			flows[i + 2]->f.v4.dst.s_addr,
-			flows[i + 1]->f.v4.dst.s_addr,
-			flows[i]->f.v4.dst.s_addr);
-		rte_xmm_t dst;
+	/* Fill array @ips[] in. */
+	for (i = 0; i < num_flows; i++)
+		ips[i] = rte_be_to_cpu_32(flows[i]->f.v4.dst.s_addr);
 
-		/* Byte swap 4 IPV4 addresses. */
-		dip = _mm_shuffle_epi8(dip, bswap_mask);
-
-		rte_lpm_lookupx4(ltbl->lpm, dip, dst.u32, default_nh);
-
-		for (j = 0; j < FWDSTEP; j++) {
-			if (dst.u32[j] != default_nh) {
-				fibs[i + j] = &ltbl->fib_tbl[dst.u32[j]];
-				rte_prefetch0(fibs[i + j]);
-			} else
-				fibs[i + j] = NULL;
-		}
+	ret = rte_fib_lookup_bulk(ltbl->lpm, ips, next_hops, num_flows);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): rte_fib_lookup_bulk() failed (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		memset(fibs, 0, sizeof(fibs[0]) * num_flows);
+		return;
 	}
 
-	RTE_VERIFY(i == k);
-
-	for (; i < num_flows; i++) {
-		int fib_id = lpm_lookup_ipv4(ltbl->lpm,
-			flows[i]->f.v4.dst.s_addr);
-		if (fib_id >= 0) {
+	for (i = 0; i < num_flows; i++) {
+		uint64_t fib_id = next_hops[i];
+		if (fib_id != LPM_DEFAULT_NH) {
 			fibs[i] = &ltbl->fib_tbl[fib_id];
 			rte_prefetch0(fibs[i]);
 		} else
