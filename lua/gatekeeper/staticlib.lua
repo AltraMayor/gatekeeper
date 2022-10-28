@@ -283,12 +283,12 @@ struct gatekeeper_if {
 	bool     ipv4_hw_udp_cksum;
 	bool     ipv6_hw_udp_cksum;
 	bool     ipv4_hw_cksum;
+	bool     guarantee_random_entropy;
 	/* This struct has hidden fields. */
 };
 
 struct net_config {
 	int          back_iface_enabled;
-	int          guarantee_random_entropy;
 	unsigned int num_attempts_link_get;
 	bool         *numa_used;
 	uint32_t     log_level;

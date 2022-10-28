@@ -40,9 +40,6 @@ struct ip_flow {
 	} f;
 };
 
-uint32_t rss_ip_flow_hf(const void *data,
-	uint32_t data_len, uint32_t init_val);
-
 int ip_flow_cmp_eq(const void *key1, const void *key2, size_t key_len);
 
 static inline bool

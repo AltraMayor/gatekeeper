@@ -23,78 +23,8 @@
 #include <rte_ether.h>
 
 #include "gatekeeper_net.h"
-#include "gatekeeper_flow.h"
 #include "gatekeeper_main.h"
-
-/*
- * Optimized generic implementation of RSS hash function.
- * If you want the calculated hash value matches NIC RSS value,
- * you have to use special converted key with rte_convert_rss_key() fn.
- * @param input_tuple
- *   Pointer to input tuple with network order.
- * @param input_len
- *   Length of input_tuple in 4-bytes chunks.
- * @param *rss_key
- *   Pointer to RSS hash key.
- * @return
- *   Calculated hash value.
- */
-static inline uint32_t
-gk_softrss_be(const uint32_t *input_tuple, uint32_t input_len,
-		const uint8_t *rss_key)
-{
-	uint32_t i;
-	uint32_t j;
-	uint32_t ret = 0;
-
-	for (j = 0; j < input_len; j++) {
-		/*
-		 * Need to use little endian,
-		 * since it takes ordering as little endian in both bytes and bits.
-		 */
-		uint32_t val = rte_be_to_cpu_32(input_tuple[j]);
-		for (i = 0; i < 32; i++)
-			if (val & (1 << (31 - i))) {
-				/*
-				 * The cast (uint64_t) is needed because when
-				 * @i == 0, the expression requires a 32-bit
-				 * shift of a 32-bit unsigned integer,
-				 * what is undefined.
-				 * The C standard only defines bit shifting
-				 * up to the bit-size of the integer minus one.
-				 * Finally, the cast (uint32_t) avoid promoting
-				 * the expression before the bit-or (i.e. `|`)
-				 * to uint64_t.
-				 */
-				ret ^= ((const uint32_t *)rss_key)[j] << i |
-					(uint32_t)((uint64_t)
-						(((const uint32_t *)rss_key)
-							[j + 1])
-						>> (32 - i));
-			}
-	}
-
-	return ret;
-}
-
-uint32_t
-rss_ip_flow_hf(const void *data,
-	__attribute__((unused)) uint32_t data_len,
-	__attribute__((unused)) uint32_t init_val)
-{
-	const struct ip_flow *flow = (const struct ip_flow *)data;
-
-	if (flow->proto == RTE_ETHER_TYPE_IPV4)
-		return gk_softrss_be((const uint32_t *)&flow->f,
-				(sizeof(flow->f.v4)/sizeof(uint32_t)), rss_key_be);
-	else if (flow->proto == RTE_ETHER_TYPE_IPV6)
-		return gk_softrss_be((const uint32_t *)&flow->f,
-				(sizeof(flow->f.v6)/sizeof(uint32_t)), rss_key_be);
-	else
-		rte_panic("Unexpected protocol: %i\n", flow->proto);
-
-	return 0;
-}
+#include "gatekeeper_flow.h"
 
 /* Type of function used to compare the hash key. */
 int

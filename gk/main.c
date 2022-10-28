@@ -873,6 +873,19 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	gk_del_flow_entry_at_pos(instance, entry_idx);
 }
 
+static uint32_t
+rss_ip_flow_hf(const void *data,
+	__attribute__((unused)) uint32_t data_len,
+	__attribute__((unused)) uint32_t init_val)
+{
+	/*
+	 * XXX #375 Ideally, @init_val would be of the type (void *),
+	 * so one would not need to rely on calling get_net_conf() to
+	 * get @front.
+	 */
+	return rss_flow_hash(&get_net_conf()->front, data);
+}
+
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
@@ -1848,7 +1861,7 @@ parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
 
 	flow_arr[*num_ip_flows] = &packet->flow;
 	flow_hash_val_arr[*num_ip_flows] = likely(front->rss) ?
-		pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
+		pkt->hash.rss : rss_flow_hash(front, &packet->flow);
 	(*num_ip_flows)++;
 }
 
@@ -3146,7 +3159,7 @@ gk_log_flow_state(const char *src_addr,
 		flow.f.v6.dst = dst.ip.v6;
 	}
 
-	flow_hash_val = rss_ip_flow_hf(&flow, 0, 0);
+	flow_hash_val = rss_flow_hash(&gk_conf->net->front, &flow);
 
 	mb = get_responsible_gk_mailbox(flow_hash_val, gk_conf);
 	if (mb == NULL) {
