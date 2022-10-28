@@ -21,8 +21,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <linux/random.h>
-#include <sys/syscall.h>
+#include <sys/random.h>
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
@@ -1146,10 +1145,8 @@ randomize_rss_key(struct gatekeeper_if *iface)
 		 * (i.e flags) is zero, getrandom() uses the /dev/urandom pool.
 		 */
 		do {
-			int ret = syscall(SYS_getrandom,
-				iface->rss_key + number_of_bytes,
-				iface->rss_key_len - number_of_bytes,
-				flags);
+			int ret = getrandom(iface->rss_key + number_of_bytes,
+				iface->rss_key_len - number_of_bytes, flags);
 			if (ret < 0)
 				return ret;
 			number_of_bytes += ret;
