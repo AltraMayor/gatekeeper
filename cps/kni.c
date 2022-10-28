@@ -46,28 +46,6 @@ extern long init_module(void *, unsigned long, const char *);
 extern long delete_module(const char *, unsigned int);
 
 int
-kni_change_if(uint16_t port_id, uint8_t if_up)
-{
-	int ret = 0;
-
-	if (!rte_eth_dev_is_valid_port(port_id)) {
-		G_LOG(ERR, "%s: invalid port ID %hu\n", __func__, port_id);
-		return -EINVAL;
-	}
-
-	if (if_up != 0) {
-		rte_eth_dev_stop(port_id);
-		ret = rte_eth_dev_start(port_id);
-		if (ret < 0)
-			G_LOG(ERR, "%s: Failed to start port %hu\n",
-				__func__, port_id);
-	} else
-		rte_eth_dev_stop(port_id);
-
-	return ret;
-}
-
-int
 kni_disable_change_mtu(__attribute__((unused)) uint16_t port_id,
 __attribute__((unused)) unsigned int new_mtu)
 {
@@ -99,20 +77,14 @@ kni_disable_change_mac_address(__attribute__((unused)) uint16_t port_id,
 }
 
 int
-kni_disable_change_promiscusity(__attribute__((unused)) uint16_t port_id,
-	uint8_t to_on)
+kni_ignore_change(__attribute__((unused)) uint16_t port_id,
+	__attribute__((unused)) uint8_t to_on)
 {
-	if (to_on == 0)
-		return 0;
-
 	/*
-	 * Only specific classes of packets that arrive at
-	 * the physical interfaces are forwarded to the KNI interfaces.
-	 * Thus, there is no point in enabling promiscuous mode on
-	 * the physical interfaces since the extra packets are
-	 * just going to be discarded.
+	 * Silently ignore the request instead of returning -ENOTSUP to avoid
+	 * upsetting applications.
 	 */
-	return -ENOTSUP;
+	return 0;
 }
 
 static int
