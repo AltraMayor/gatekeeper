@@ -26,21 +26,16 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_flow.h"
 
-/* Type of function used to compare the hash key. */
 int
-ip_flow_cmp_eq(const void *key1, const void *key2,
-	__attribute__((unused)) size_t key_len)
+flow_cmp(const struct ip_flow *flow1, const struct ip_flow *flow2)
 {
-	const struct ip_flow *f1 = (const struct ip_flow *)key1;
-	const struct ip_flow *f2 = (const struct ip_flow *)key2;
+	if (flow1->proto != flow2->proto)
+		return flow1->proto == RTE_ETHER_TYPE_IPV4 ? -1 : 1;
 
-	if (f1->proto != f2->proto)
-		return f1->proto == RTE_ETHER_TYPE_IPV4 ? -1 : 1;
+	if (flow1->proto == RTE_ETHER_TYPE_IPV4)
+		return memcmp(&flow1->f.v4, &flow2->f.v4, sizeof(flow1->f.v4));
 
-	if (f1->proto == RTE_ETHER_TYPE_IPV4)
-		return memcmp(&f1->f.v4, &f2->f.v4, sizeof(f1->f.v4));
-	else
-		return memcmp(&f1->f.v6, &f2->f.v6, sizeof(f1->f.v6));
+	return memcmp(&flow1->f.v6, &flow2->f.v6, sizeof(flow1->f.v6));
 }
 
 static void

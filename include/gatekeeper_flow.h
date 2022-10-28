@@ -40,12 +40,12 @@ struct ip_flow {
 	} f;
 };
 
-int ip_flow_cmp_eq(const void *key1, const void *key2, size_t key_len);
+int flow_cmp(const struct ip_flow *flow1, const struct ip_flow *flow2);
 
 static inline bool
-flow_key_eq(const struct ip_flow *f1, const struct ip_flow *f2)
+flow_equal(const struct ip_flow *flow1, const struct ip_flow *flow2)
 {
-	return ip_flow_cmp_eq(f1, f2, sizeof(*f1)) == 0;
+	return flow_cmp(flow1, flow2) == 0;
 }
 
 void print_flow_err_msg(const struct ip_flow *flow, int32_t index,

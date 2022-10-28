@@ -846,7 +846,7 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
 	}
 
-	if (likely(flow_key_eq(flow_key, &fe->flow)))
+	if (likely(flow_equal(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
 
 	found_corruption_in_flow_table(instance);
@@ -884,6 +884,13 @@ rss_ip_flow_hf(const void *data,
 	 * get @front.
 	 */
 	return rss_flow_hash(&get_net_conf()->front, data);
+}
+
+static int
+ip_flow_cmp_eq(const void *key1, const void *key2,
+	__attribute__((unused)) size_t key_len)
+{
+	return flow_cmp(key1, key2);
 }
 
 static int
@@ -2507,7 +2514,7 @@ test_invalid_flow(__attribute__((unused)) void *arg,
 	const struct ip_flow *flow, struct flow_entry *fe)
 {
 	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
-			!flow_key_eq(flow, &fe->flow) ||
+			!flow_equal(flow, &fe->flow) ||
 			!fe->in_use || fe->grantor_fib == NULL ||
 			fe->grantor_fib->action != GK_FWD_GRANTOR
 			))
