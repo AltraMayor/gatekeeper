@@ -846,7 +846,7 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
 	}
 
-	if (likely(flow_key_eq(flow_key, &fe->flow)))
+	if (likely(flow_equal(flow_key, &fe->flow)))
 		return gk_del_flow_entry_at_pos(instance, entry_idx);
 
 	found_corruption_in_flow_table(instance);
@@ -871,6 +871,26 @@ gk_del_flow_entry_with_key(struct gk_instance *instance,
 	fe->flow_hash_val = rte_hash_hash(instance->ip_flow_hash_table,
 		&fe->flow);
 	gk_del_flow_entry_at_pos(instance, entry_idx);
+}
+
+static uint32_t
+rss_ip_flow_hf(const void *data,
+	__attribute__((unused)) uint32_t data_len,
+	__attribute__((unused)) uint32_t init_val)
+{
+	/*
+	 * XXX #375 Ideally, @init_val would be of the type (void *),
+	 * so one would not need to rely on calling get_net_conf() to
+	 * get @front.
+	 */
+	return rss_flow_hash(&get_net_conf()->front, data);
+}
+
+static int
+ip_flow_cmp_eq(const void *key1, const void *key2,
+	__attribute__((unused)) size_t key_len)
+{
+	return flow_cmp(key1, key2);
 }
 
 static int
@@ -1848,7 +1868,7 @@ parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
 
 	flow_arr[*num_ip_flows] = &packet->flow;
 	flow_hash_val_arr[*num_ip_flows] = likely(front->rss) ?
-		pkt->hash.rss : rss_ip_flow_hf(&packet->flow, 0, 0);
+		pkt->hash.rss : rss_flow_hash(front, &packet->flow);
 	(*num_ip_flows)++;
 }
 
@@ -2494,7 +2514,7 @@ test_invalid_flow(__attribute__((unused)) void *arg,
 	const struct ip_flow *flow, struct flow_entry *fe)
 {
 	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
-			!flow_key_eq(flow, &fe->flow) ||
+			!flow_equal(flow, &fe->flow) ||
 			!fe->in_use || fe->grantor_fib == NULL ||
 			fe->grantor_fib->action != GK_FWD_GRANTOR
 			))
@@ -3146,7 +3166,7 @@ gk_log_flow_state(const char *src_addr,
 		flow.f.v6.dst = dst.ip.v6;
 	}
 
-	flow_hash_val = rss_ip_flow_hf(&flow, 0, 0);
+	flow_hash_val = rss_flow_hash(&gk_conf->net->front, &flow);
 
 	mb = get_responsible_gk_mailbox(flow_hash_val, gk_conf);
 	if (mb == NULL) {

@@ -44,8 +44,9 @@ static struct ggu_config *ggu_conf;
 static void
 process_single_policy(struct ggu_policy *policy, void *arg)
 {
-	uint32_t flow_hash_val = rss_ip_flow_hf(&policy->flow, 0, 0);
 	const struct ggu_config *ggu_conf = arg;
+	uint32_t flow_hash_val = rss_flow_hash(&ggu_conf->net->front,
+		&policy->flow);
 	struct gk_cmd_entry *entry;
 	/*
 	 * Obtain mailbox of that GK block,

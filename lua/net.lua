@@ -36,7 +36,7 @@ return function (gatekeeper_server)
 	local back_num_tx_desc = 128
 
 	-- These variables are unlikely to need to be changed.
-	local guarantee_random_entropy = 0
+	local guarantee_random_entropy = false
 	local num_attempts_link_get = 5
 	local front_ipv6_default_hop_limits = 255
 	local back_ipv6_default_hop_limits = 255
@@ -53,7 +53,6 @@ return function (gatekeeper_server)
 	--
 
 	local net_conf = staticlib.c.get_net_conf()
-	net_conf.guarantee_random_entropy = guarantee_random_entropy
 	net_conf.num_attempts_link_get = num_attempts_link_get
 	net_conf.log_level = log_level
 	net_conf.rotate_log_interval_sec = rotate_log_interval_sec
@@ -76,8 +75,10 @@ return function (gatekeeper_server)
 	front_iface.ipv4_hw_udp_cksum = front_ipv4_hw_udp_cksum
 	front_iface.ipv6_hw_udp_cksum = front_ipv6_hw_udp_cksum
 	front_iface.ipv4_hw_cksum = front_ipv4_hw_cksum
+	front_iface.guarantee_random_entropy = guarantee_random_entropy
 	local ret = staticlib.init_iface(front_iface, "front",
-		front_ports, front_ips, front_ipv4_vlan_tag, front_ipv6_vlan_tag)
+		front_ports, front_ips, front_ipv4_vlan_tag,
+		front_ipv6_vlan_tag)
 	if ret < 0 then
 		error("Failed to initialize the front interface")
 	end
@@ -97,8 +98,10 @@ return function (gatekeeper_server)
 		back_iface.ipv4_hw_udp_cksum = back_ipv4_hw_udp_cksum
 		back_iface.ipv6_hw_udp_cksum = back_ipv6_hw_udp_cksum
 		back_iface.ipv4_hw_cksum = back_ipv4_hw_cksum
+		back_iface.guarantee_random_entropy = guarantee_random_entropy
 		ret = staticlib.init_iface(back_iface, "back",
-			back_ports, back_ips, back_ipv4_vlan_tag, back_ipv6_vlan_tag)
+			back_ports, back_ips, back_ipv4_vlan_tag,
+			back_ipv6_vlan_tag)
 		if ret < 0 then
 			error("Failed to initialize the back interface")
 		end

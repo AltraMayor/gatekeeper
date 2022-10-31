@@ -51,8 +51,14 @@ struct ipaddr {
 	} ip;
 };
 
-/* Size of the secret key of the RSS hash. */
-#define GATEKEEPER_RSS_KEY_LEN (40)
+/*
+ * The minimum and maximum sizes of the (secret) RSS hash key.
+ *
+ * These constants MUST be multiples of 4 since functions such
+ * rte_convert_rss_key() expects so.
+ */
+#define GATEKEEPER_RSS_MIN_KEY_LEN (40)
+#define GATEKEEPER_RSS_MAX_KEY_LEN (128)
 
 /*
  * The maximum number of "rte_eth_rss_reta_entry64" structures can be used to
@@ -235,6 +241,12 @@ struct gatekeeper_if {
 	bool		ipv4_hw_cksum;
 
 	/*
+	 * This field decides if the flag GRND_RANDOM is passed to getradom(2)
+	 * while initializing field @rss_key.
+	 */
+	bool            guarantee_random_entropy;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */
@@ -350,7 +362,23 @@ struct gatekeeper_if {
 
 	/* Whether the interface has been initialized. */
 	bool              alive;
+
+	/* Length of the RSS key in bytes. */
+	uint8_t           rss_key_len;
+
+	/*
+	 * RSS hash key.
+	 *
+	 * The secret key of the RSS hash (RSK) must be random in order
+	 * to prevent hackers from knowing it.
+	 */
+	uint8_t           rss_key[GATEKEEPER_RSS_MAX_KEY_LEN];
+	/* @rss_key ready for use with rte_softrss_be(). */
+	uint8_t           rss_key_be[GATEKEEPER_RSS_MAX_KEY_LEN];
 };
+
+uint32_t rss_flow_hash(const struct gatekeeper_if *iface,
+	const struct ip_flow *flow);
 
 /*
  * The atomic counters for @rx_queue_id and @tx_queue_id are
@@ -381,12 +409,6 @@ struct net_config {
 	 * for Grantor.
 	 */
 	int                  back_iface_enabled;
-
-	/*
-	 * This parameter is used to decide if flag GRND_RANDOM
-	 * should be passed to any call of getradom(2).
-	 */
-	int                  guarantee_random_entropy;
 
 	/*
 	 * Number of attempts to wait for Gatekeeper links to
@@ -423,9 +445,6 @@ struct net_config {
 	/* The group ID of the user that will run Gatekeeper after it boots. */
 	gid_t                pw_gid;
 };
-
-extern uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
-extern uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 /*
  * Initializes an array of 16 bytes that represents the IPv6 solicited

@@ -21,8 +21,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <linux/random.h>
-#include <sys/syscall.h>
+#include <sys/random.h>
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
@@ -41,58 +40,6 @@
 #include "gatekeeper_launch.h"
 
 static struct net_config config;
-/*
- * The secret key of the RSS hash (RSK) must be random in order
- * to prevent hackers from knowing it.
- */
-uint8_t default_rss_key[GATEKEEPER_RSS_KEY_LEN];
-
-static int
-randomize_rss_key(int guarantee_random_entropy)
-{
-	uint16_t final_set_count;
-	unsigned int flags = guarantee_random_entropy == 0 ? 0 : GRND_RANDOM;
-
-	/*
-	 * To validate if the key generated is reasonable, the
-	 * number of bits set to 1 in the key must be greater than 
-	 * 10% and less than 90% of the total bits in the key.
-	 * min_num_set_bits and max_num_set_bits represent the lower 
-	 * and upper bound for the key.
-	 */
-	const uint16_t min_num_set_bits = sizeof(default_rss_key) * 8 * 0.1;
-	const uint16_t max_num_set_bits = sizeof(default_rss_key) * 8 * 0.9;
-
-	do {	
-		int number_of_bytes = 0;
-		uint8_t i;
-
-		/* 
-		 * When the last parameter of the system call  getrandom()
-		 * (i.e flags) is zero, getrandom() uses the /dev/urandom pool.
-		 */	
-		do {
-			int ret = syscall(SYS_getrandom,
-				default_rss_key + number_of_bytes,
-				sizeof(default_rss_key) - number_of_bytes,
-				flags);
-			if (ret < 0)
-				return -1;
-			number_of_bytes += ret;	
-		} while (number_of_bytes < (int)sizeof(default_rss_key));
-
-		final_set_count = 0;
-		for (i = 0; i < RTE_DIM(default_rss_key); i++) {
-			final_set_count +=
-				__builtin_popcount(default_rss_key[i]);
-		}
-	} while (final_set_count < min_num_set_bits ||
-			final_set_count > max_num_set_bits);
-	return 0;
-}
-
-/* To support the optimized implementation of generic RSS hash function. */
-uint8_t rss_key_be[RTE_DIM(default_rss_key)];
 
 /*
  * Add a filter that steers packets to queues based on their EtherType.
@@ -981,49 +928,76 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	const struct rte_eth_dev_info *dev_info,
 	struct rte_eth_conf *port_conf)
 {
-	uint8_t rss_hash_key[GATEKEEPER_RSS_KEY_LEN];
-	struct rte_eth_rss_conf rss_conf = {
+	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
+	struct rte_eth_rss_conf __rss_conf = {
 		.rss_key = rss_hash_key,
-		.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
+		.rss_key_len = sizeof(rss_hash_key),
 	};
 	uint64_t rss_off = dev_info->flow_type_rss_offloads;
 	int ret = rte_eth_dev_rss_hash_conf_get(
-		iface->ports[port_idx], &rss_conf);
+		iface->ports[port_idx], &__rss_conf);
 	if (ret == -ENOTSUP) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support to get RSS configuration, disable RSS\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
+		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support to get RSS configuration, disable RSS\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx]);
 		goto disable_rss;
-	} else if (ret != 0) {
-		G_LOG(WARNING, "net: failed to get RSS hash configuration at port %hu (%s) on the %s interface - ret = %d\n",
+	}
+
+	/* Do not use @rss_conf from now on. See issue #624 for details. */
+
+	if (ret < 0) {
+		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration at port %hu (%s) (errno=%i): %s\n",
+			__func__, iface->name,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name, ret);
+			-ret, rte_strerror(-ret));
 		return ret;
 	}
+	RTE_VERIFY(ret == 0);
 
 	/* This port doesn't support RSS, so disable RSS. */
 	if (rss_off == 0) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support RSS\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
+		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support RSS\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx]);
 		goto disable_rss;
 	}
 
-	if (dev_info->hash_key_size != sizeof(default_rss_key)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not provide a valid hash key size %hhu (%lu)\n",
+	/* Does Gatekeeper support the key length of @dev_info? */
+	if (dev_info->hash_key_size < GATEKEEPER_RSS_MIN_KEY_LEN ||
+			dev_info->hash_key_size > GATEKEEPER_RSS_MAX_KEY_LEN ||
+			dev_info->hash_key_size % 4 != 0) {
+		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes; Gatekeeper only supports keys of [%i, %i] bytes long that are multiple of 4\n",
+			__func__, iface->name,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name, dev_info->hash_key_size,
-			sizeof(default_rss_key));
+			dev_info->hash_key_size, GATEKEEPER_RSS_MIN_KEY_LEN,
+			GATEKEEPER_RSS_MAX_KEY_LEN);
 		goto disable_rss;
 	}
+
+	/*
+	 * Check that all RSS keys have the same length.
+	 *
+	 * @iface->rss_key_len > GATEKEEPER_RSS_MAX_KEY_LEN when it is
+	 * the first time that check_port_rss() is being called.
+	 */
+	if (iface->rss_key_len <= GATEKEEPER_RSS_MAX_KEY_LEN &&
+			iface->rss_key_len != dev_info->hash_key_size) {
+		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes, but another port requires a key of %i bytes; all ports of the same interface must have the same key length\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			dev_info->hash_key_size, iface->rss_key_len);
+		goto disable_rss;
+	}
+	iface->rss_key_len = dev_info->hash_key_size;
 
 	/* Check IPv4 RSS hashes. */
 	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV4_RSS_HF) {
 		/* No IPv4 hashes are supported, so disable RSS. */
 		if ((rss_off & GATEKEEPER_IPV4_RSS_HF) == 0) {
-			G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support any IPv4 related RSS hashes\n",
-				iface->ports[port_idx], iface->pci_addrs[port_idx],
-				iface->name);
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv4 related RSS hashes\n",
+				__func__, iface->name,
+				iface->ports[port_idx],
+				iface->pci_addrs[port_idx]);
 			goto disable_rss;
 		}
 
@@ -1032,10 +1006,10 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		 * used is not supported, so warn the user.
 		 */
 		if ((rss_off & ETH_RSS_IPV4) == 0) {
-			G_LOG(WARNING, "net: port %hu (%s) on the %s interface does not support the ETH_RSS_IPV4 hash function; the device may not hash packets to the correct queues\n",
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV4 hash function; the device may not hash packets to the correct queues\n",
+				__func__, iface->name,
 				iface->ports[port_idx],
-				iface->pci_addrs[port_idx],
-				iface->name);
+				iface->pci_addrs[port_idx]);
 		}
 	}
 
@@ -1043,9 +1017,10 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV6_RSS_HF) {
 		/* No IPv6 hashes are supported, so disable RSS. */
 		if ((rss_off & GATEKEEPER_IPV6_RSS_HF) == 0) {
-			G_LOG(NOTICE, "net: port %hu (%s) on the %s interface does not support any IPv6 related RSS hashes\n",
-				iface->ports[port_idx], iface->pci_addrs[port_idx],
-				iface->name);
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv6 related RSS hashes\n",
+				__func__, iface->name,
+				iface->ports[port_idx],
+				iface->pci_addrs[port_idx]);
 			goto disable_rss;
 		}
 
@@ -1054,10 +1029,10 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		 * used is not supported, so warn the user.
 		 */
 		if ((rss_off & ETH_RSS_IPV6) == 0) {
-			G_LOG(WARNING, "net: port %hu (%s) on the %s interface does not support the ETH_RSS_IPV6 hash function; the device may not hash packets to the correct queues\n",
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV6 hash function; the device may not hash packets to the correct queues\n",
+				__func__, iface->name,
 				iface->ports[port_idx],
-				iface->pci_addrs[port_idx],
-				iface->name);
+				iface->pci_addrs[port_idx]);
 		}
 	}
 
@@ -1069,11 +1044,10 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	 */
 	if ((rss_off & port_conf->rx_adv_conf.rss_conf.rss_hf) !=
 			port_conf->rx_adv_conf.rss_conf.rss_hf) {
-		G_LOG(NOTICE,
-			"net: port %hu (%s) on the %s interface only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
+		G_LOG(WARNING, "%s(%s): port %hu (%s) only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
+			__func__, iface->name,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name, rss_off,
-			port_conf->rx_adv_conf.rss_conf.rss_hf);
+			rss_off, port_conf->rx_adv_conf.rss_conf.rss_hf);
 	}
 
 	port_conf->rx_adv_conf.rss_conf.rss_hf &= rss_off;
@@ -1150,10 +1124,53 @@ check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
 }
 
 static int
+randomize_rss_key(struct gatekeeper_if *iface)
+{
+	uint16_t final_set_count;
+	unsigned int flags = iface->guarantee_random_entropy ? GRND_RANDOM : 0;
+
+	/*
+	 * To validate if the key generated is reasonable, the
+	 * number of bits set to 1 in the key must be greater than
+	 * 10% and less than 90% of the total bits in the key.
+	 * min_num_set_bits and max_num_set_bits represent the lower
+	 * and upper bound for the key.
+	 */
+	const uint16_t min_num_set_bits = iface->rss_key_len * 8 * 0.1;
+	const uint16_t max_num_set_bits = iface->rss_key_len * 8 * 0.9;
+
+	do {
+		int number_of_bytes = 0;
+		uint8_t i;
+
+		/*
+		 * When the last parameter of the system call getrandom()
+		 * (i.e flags) is zero, getrandom() uses the /dev/urandom pool.
+		 */
+		do {
+			int ret = getrandom(iface->rss_key + number_of_bytes,
+				iface->rss_key_len - number_of_bytes, flags);
+			if (ret < 0)
+				return ret;
+			number_of_bytes += ret;
+		} while (number_of_bytes < iface->rss_key_len);
+
+		final_set_count = 0;
+		for (i = 0; i < iface->rss_key_len; i++) {
+			final_set_count +=
+				__builtin_popcount(iface->rss_key[i]);
+		}
+	} while (final_set_count < min_num_set_bits ||
+			final_set_count > max_num_set_bits);
+	return 0;
+}
+
+static int
 check_port_offloads(struct gatekeeper_if *iface,
 	struct rte_eth_conf *port_conf)
 {
 	unsigned int i;
+	int ret;
 
 	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF | GATEKEEPER_IPV6_RSS_HF) !=
 		ETH_RSS_IP);
@@ -1169,6 +1186,11 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 * hash functions.
 	 */
 	iface->rss = true;
+	/*
+	 * The +1 makes @iface->rss_key_len invalid and helps check_port_rss()
+	 * to identify the first RSS key length.
+	 */
+	iface->rss_key_len = GATEKEEPER_RSS_MAX_KEY_LEN + 1;
 	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
 	if (ipv4_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
@@ -1225,9 +1247,15 @@ check_port_offloads(struct gatekeeper_if *iface,
 	for (i = 0; i < iface->num_ports; i++) {
 		struct rte_eth_dev_info dev_info;
 		uint16_t port_id = iface->ports[i];
-		int ret;
 
-		rte_eth_dev_info_get(port_id, &dev_info);
+		ret = rte_eth_dev_info_get(port_id, &dev_info);
+		if (ret < 0) {
+			G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (%s) (errno=%i): %s\n",
+				__func__, iface->name,
+				port_id, iface->pci_addrs[i],
+				-ret, strerror(-ret));
+			return ret;
+		}
 
 		/* Check for RSS capabilities and offloads. */
 		ret = check_port_rss(iface, i, &dev_info, port_conf);
@@ -1246,14 +1274,26 @@ check_port_offloads(struct gatekeeper_if *iface,
 	}
 
 	if (iface->rss) {
+		ret = randomize_rss_key(iface);
+		if (ret < 0) {
+			G_LOG(ERR, "%s(%s): failed to initialize RSS key (errno=%i): %s\n",
+				__func__, iface->name, -ret, strerror(-ret));
+			return ret;
+		}
+
+		/* Convert RSS key. */
+		RTE_VERIFY(iface->rss_key_len % 4 == 0);
+		rte_convert_rss_key((uint32_t *)iface->rss_key,
+			(uint32_t *)iface->rss_key_be, iface->rss_key_len);
+
 		port_conf->rxmode.mq_mode = ETH_MQ_RX_RSS;
-		port_conf->rx_adv_conf.rss_conf.rss_key = default_rss_key;
+		port_conf->rx_adv_conf.rss_conf.rss_key = iface->rss_key;
 		port_conf->rx_adv_conf.rss_conf.rss_key_len =
-			GATEKEEPER_RSS_KEY_LEN;
+			iface->rss_key_len;
 	} else {
 		/* Configured hash functions are not supported. */
-		G_LOG(WARNING, "net: the %s interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
-			iface->name);
+		G_LOG(WARNING, "%s(%s): the interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
+			__func__, iface->name);
 		iface->num_rx_queues = 1;
 	}
 
@@ -1269,8 +1309,12 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 	struct rte_eth_rss_reta_entry64 reta_conf[GATEKEEPER_RETA_MAX_SIZE];
 
 	/* Get RSS redirection table (RETA) information. */
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, port_id, -ret, strerror(-ret));
+		goto out;
+	}
 	if (dev_info.reta_size == 0) {
 		G_LOG(ERR,
 			"net: failed to setup RSS at port %hhu (invalid RETA size = 0)\n",
@@ -1340,13 +1384,16 @@ int
 gatekeeper_get_rss_config(uint16_t port_id,
 	struct gatekeeper_rss_config *rss_conf)
 {
-	int ret = 0;
 	uint16_t i;
 	struct rte_eth_dev_info dev_info;
 
 	/* Get RSS redirection table (RETA) information. */
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(port_id, &dev_info);
+	int ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, port_id, -ret, strerror(-ret));
+		goto out;
+	}
 	rss_conf->reta_size = dev_info.reta_size;
 	if (rss_conf->reta_size == 0 ||
 			rss_conf->reta_size > ETH_RSS_RETA_SIZE_512) {
@@ -1450,10 +1497,10 @@ init_iface(struct gatekeeper_if *iface)
 	iface->ports = rte_calloc("ports", iface->num_ports,
 		sizeof(*iface->ports), 0);
 	if (iface->ports == NULL) {
-		G_LOG(ERR, "net: %s: out of memory for %s ports\n",
+		G_LOG(ERR, "%s(%s): out of memory for ports\n",
 			__func__, iface->name);
 		destroy_iface(iface, IFACE_DESTROY_LUA);
-		return -1;
+		return -ENOMEM;
 	}
 
 	/* Initialize all ports on this interface. */
@@ -1461,9 +1508,9 @@ init_iface(struct gatekeeper_if *iface)
 		ret = rte_eth_dev_get_port_by_name(iface->pci_addrs[i],
 			&iface->ports[i]);
 		if (ret < 0) {
-			G_LOG(ERR,
-				"net: failed to map PCI %s to a port on the %s interface (err=%d)\n",
-				iface->pci_addrs[i], iface->name, ret);
+			G_LOG(ERR, "%s(%s): failed to map PCI %s to a port (errno=%i): %s\n",
+				__func__, iface->name, iface->pci_addrs[i],
+				-ret, rte_strerror(-ret));
 			goto free_ports;
 		}
 	}
@@ -1471,9 +1518,8 @@ init_iface(struct gatekeeper_if *iface)
 	/* Make sure the ports support hardware offloads. */
 	ret = check_port_offloads(iface, &port_conf);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"net: %s interface doesn't support a critical hardware capability\n",
-			iface->name);
+		G_LOG(ERR, "%s(%s): interface doesn't support a critical hardware capability\n",
+			__func__, iface->name);
 		goto free_ports;
 	}
 
@@ -1496,9 +1542,9 @@ init_iface(struct gatekeeper_if *iface)
 		RTE_VERIFY(ret > 0 && ret < (int)sizeof(dev_name));
 		ret = rte_eth_bond_create(dev_name, iface->bonding_mode, 0);
 		if (ret < 0) {
-			G_LOG(ERR,
-				"net: failed to create bonded port on the %s interface (err=%d)\n",
-				iface->name, ret);
+			G_LOG(ERR, "%s(%s): failed to create bonded port (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
 			goto close_partial;
 		}
 
@@ -1529,8 +1575,10 @@ init_iface(struct gatekeeper_if *iface)
 			ret = rte_eth_bond_slave_add(iface->id,
 				iface->ports[i]);
 			if (ret < 0) {
-				G_LOG(ERR, "net: failed to add slave port %hhu to bonded port %hhu (err=%d)\n",
-					iface->ports[i], iface->id, ret);
+				G_LOG(ERR, "%s(%s): failed to add slave port %hhu to bonded port %hhu (errno=%i): %s\n",
+					__func__, iface->name,
+					iface->ports[i], iface->id,
+					-ret, rte_strerror(-ret));
 				rm_slave_ports(iface, num_slaves_added);
 				goto close_ports;
 			}
@@ -1693,50 +1741,57 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 static int
 check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 {
-	uint8_t rss_hash_key[GATEKEEPER_RSS_KEY_LEN];
+	struct rte_eth_dev_info dev_info;
+	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
 	struct rte_eth_rss_conf rss_conf = {
 		.rss_key = rss_hash_key,
-		.rss_key_len = GATEKEEPER_RSS_KEY_LEN,
+		.rss_key_len = sizeof(rss_hash_key),
 	};
 	int ret;
 
 	if (!iface->rss)
 		return 0;
 
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, iface->name, port_id,
+			-ret, strerror(-ret));
+		return ret;
+	}
+
 	ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
-		G_LOG(WARNING,
-			"net: failed to get RSS hash configuration at port %d on the %s interface - port identifier is invalid\n",
-			port_id, iface->name);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: port identifier is invalid\n",
+			__func__, iface->name, port_id);
 		return ret;
 	case -EIO:
-		G_LOG(WARNING,
-			"net: failed to get RSS hash configuration at port %d on the %s interface - device is removed\n",
-			port_id, iface->name);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: device is removed\n",
+			__func__, iface->name, port_id);
 		return ret;
 	case -ENOTSUP:
-		G_LOG(WARNING,
-			"net: failed to get RSS hash configuration at port %d on the %s interface - hardware doesn't support\n",
-			port_id, iface->name);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: hardware does not support RSS\n",
+			__func__, iface->name, port_id);
 		return ret;
 	default:
-		G_LOG(WARNING,
-			"net: failed to get RSS hash configuration at port %d on the %s interface - ret = %d\n",
-			port_id, iface->name, ret);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d (errno=%i): %s\n",
+			__func__, iface->name, port_id,
+			-ret, rte_strerror(-ret));
 		return ret;
 	}
 
-	if ((rss_conf.rss_key_len !=
-			sizeof(default_rss_key) ||
-			memcmp(rss_conf.rss_key,
-				default_rss_key,
-				rss_conf.rss_key_len) != 0)) {
-		G_LOG(WARNING,
-			"net: the RSS hash configuration obtained at port %d on the %s interface doesn't match the expected RSS configuration\n",
-			port_id, iface->name);
+	/*
+	 * XXX #624 Use @dev_info.hash_key_size instead of
+	 * @rss_conf.rss_key_len to avoid a bug in DPDK.
+	 */
+	if (unlikely(dev_info.hash_key_size != iface->rss_key_len ||
+			memcmp(rss_conf.rss_key, iface->rss_key,
+				iface->rss_key_len) != 0)) {
+		G_LOG(WARNING, "%s(%s): the RSS hash configuration obtained at port %d does not match the expected RSS configuration\n",
+			__func__, iface->name, port_id);
 		return -EINVAL;
 	}
 
@@ -1757,9 +1812,8 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 	 */
 	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"net: cannot set the MTU on the %s iface (error %d)\n",
-			iface->name, -ret);
+		G_LOG(ERR, "%s(%s): cannot set the MTU (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
 		goto destroy_init;
 	}
 
@@ -1782,11 +1836,10 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 		 * Only after the NICs start, we can check whether the RSS hash
 		 * is configured correctly or not.
 		 */
-		if (check_port_rss_key_update(iface, iface->ports[i])) {
-			G_LOG(ERR,
-				"net: port %hu (%s) on the %s interface does get the RSS hash key updated correctly\n",
-				iface->ports[i], iface->pci_addrs[i],
-				iface->name);
+		if (check_port_rss_key_update(iface, iface->ports[i]) != 0) {
+			G_LOG(ERR, "%s(%s): port %hu (%s) does not have the correct RSS hash key\n",
+				__func__, iface->name,
+				iface->ports[i], iface->pci_addrs[i]);
 			ret = -1;
 			goto stop_partial;
 		}
@@ -2296,18 +2349,6 @@ gatekeeper_init_network(struct net_config *net_conf)
 		return -1;
 	}
 
-	if (randomize_rss_key(net_conf->guarantee_random_entropy) < 0) {
-		G_LOG(ERR, "net: failed to initialize RSS key.\n");
-		ret = -1;
-		goto numa;
-	}
-
-	RTE_BUILD_BUG_ON(sizeof(default_rss_key) % 4 != 0);
-
-	/* Convert RSS key. */
-	rte_convert_rss_key((uint32_t *)default_rss_key,
-		(uint32_t *)rss_key_be, sizeof(default_rss_key));
-
 	/* Check port limits. */
 	num_ports = net_conf->front.num_ports +
 		(net_conf->back_iface_enabled ? net_conf->back.num_ports : 0);
@@ -2422,4 +2463,76 @@ send_pkts(uint8_t port, uint16_t tx_queue,
 		for (i = num_tx_succ; i < num_pkts; i++)
 			drop_packet(bufs[i]);
 	}
+}
+
+/*
+ * Optimized generic implementation of RSS hash function.
+ * If you want the calculated hash value matches NIC RSS value,
+ * you have to use special converted key with rte_convert_rss_key() fn.
+ * @param input_tuple
+ *   Pointer to input tuple with network order.
+ * @param input_len
+ *   Length of input_tuple in 4-bytes chunks.
+ * @param *rss_key
+ *   Pointer to RSS hash key.
+ * @return
+ *   Calculated hash value.
+ */
+static inline uint32_t
+gk_softrss_be(const uint32_t *input_tuple, uint32_t input_len,
+		const uint8_t *rss_key)
+{
+	uint32_t i;
+	uint32_t j;
+	uint32_t ret = 0;
+
+	for (j = 0; j < input_len; j++) {
+		/*
+		 * Need to use little endian,
+		 * since it takes ordering as little endian in both bytes and bits.
+		 */
+		uint32_t val = rte_be_to_cpu_32(input_tuple[j]);
+		for (i = 0; i < 32; i++)
+			if (val & (1 << (31 - i))) {
+				/*
+				 * The cast (uint64_t) is needed because when
+				 * @i == 0, the expression requires a 32-bit
+				 * shift of a 32-bit unsigned integer,
+				 * what is undefined.
+				 * The C standard only defines bit shifting
+				 * up to the bit-size of the integer minus one.
+				 * Finally, the cast (uint32_t) avoid promoting
+				 * the expression before the bit-or (i.e. `|`)
+				 * to uint64_t.
+				 */
+				ret ^= ((const uint32_t *)rss_key)[j] << i |
+					(uint32_t)((uint64_t)
+						(((const uint32_t *)rss_key)
+							[j + 1])
+						>> (32 - i));
+			}
+	}
+
+	return ret;
+}
+
+uint32_t
+rss_flow_hash(const struct gatekeeper_if *iface, const struct ip_flow *flow)
+{
+	if (flow->proto == RTE_ETHER_TYPE_IPV4) {
+		RTE_BUILD_BUG_ON(sizeof(flow->f.v4) % sizeof(uint32_t) != 0);
+		return gk_softrss_be((uint32_t *)&flow->f,
+			(sizeof(flow->f.v4)/sizeof(uint32_t)),
+			iface->rss_key_be);
+	}
+
+	if (likely(flow->proto == RTE_ETHER_TYPE_IPV6)) {
+		RTE_BUILD_BUG_ON(sizeof(flow->f.v6) % sizeof(uint32_t) != 0);
+		return gk_softrss_be((uint32_t *)&flow->f,
+			(sizeof(flow->f.v6)/sizeof(uint32_t)),
+			iface->rss_key_be);
+	}
+
+	rte_panic("%s(): unknown protocol: %i\n", __func__, flow->proto);
+	return 0;
 }
