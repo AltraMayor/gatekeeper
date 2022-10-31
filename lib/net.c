@@ -1812,9 +1812,8 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 	 */
 	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
 	if (ret < 0) {
-		G_LOG(ERR,
-			"net: cannot set the MTU on the %s iface (error %d)\n",
-			iface->name, -ret);
+		G_LOG(ERR, "%s(%s): cannot set the MTU (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
 		goto destroy_init;
 	}
 
@@ -1837,11 +1836,10 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 		 * Only after the NICs start, we can check whether the RSS hash
 		 * is configured correctly or not.
 		 */
-		if (check_port_rss_key_update(iface, iface->ports[i])) {
-			G_LOG(ERR,
-				"net: port %hu (%s) on the %s interface does get the RSS hash key updated correctly\n",
-				iface->ports[i], iface->pci_addrs[i],
-				iface->name);
+		if (check_port_rss_key_update(iface, iface->ports[i]) != 0) {
+			G_LOG(ERR, "%s(%s): port %hu (%s) does not have the correct RSS hash key\n",
+				__func__, iface->name,
+				iface->ports[i], iface->pci_addrs[i]);
 			ret = -1;
 			goto stop_partial;
 		}
