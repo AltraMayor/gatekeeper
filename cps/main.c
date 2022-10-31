@@ -745,9 +745,21 @@ kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
 	memset(&ops, 0, sizeof(ops));
 	ops.port_id = conf.group_id;
 	ops.change_mtu = kni_disable_change_mtu;
-	ops.config_network_if = kni_change_if;
+	/*
+	 * The physical interfaces should not be affected by what is going on
+	 * with the KNI interfaces.
+	 */
+	ops.config_network_if = kni_ignore_change;
 	ops.config_mac_address = kni_disable_change_mac_address;
-	ops.config_promiscusity = kni_disable_change_promiscusity;
+	/*
+	 * Only specific classes of packets that arrive at
+	 * the physical interfaces are forwarded to the KNI interfaces.
+	 * Thus, there is no point in enabling promiscuous or allmulticast
+	 * modes on the physical interfaces since the extra packets are
+	 * going to be discarded.
+	 */
+	ops.config_promiscusity = kni_ignore_change;
+	ops.config_allmulticast = kni_ignore_change;
 
 	*kni = rte_kni_alloc(mp, &conf, &ops);
 	if (*kni == NULL) {
