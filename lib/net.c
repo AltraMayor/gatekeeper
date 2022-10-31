@@ -1245,7 +1245,14 @@ check_port_offloads(struct gatekeeper_if *iface,
 		struct rte_eth_dev_info dev_info;
 		uint16_t port_id = iface->ports[i];
 
-		rte_eth_dev_info_get(port_id, &dev_info);
+		ret = rte_eth_dev_info_get(port_id, &dev_info);
+		if (ret < 0) {
+			G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (%s) (errno=%i): %s\n",
+				__func__, iface->name,
+				port_id, iface->pci_addrs[i],
+				-ret, strerror(-ret));
+			return ret;
+		}
 
 		/* Check for RSS capabilities and offloads. */
 		ret = check_port_rss(iface, i, &dev_info, port_conf);
@@ -1299,8 +1306,12 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 	struct rte_eth_rss_reta_entry64 reta_conf[GATEKEEPER_RETA_MAX_SIZE];
 
 	/* Get RSS redirection table (RETA) information. */
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(port_id, &dev_info);
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, port_id, -ret, strerror(-ret));
+		goto out;
+	}
 	if (dev_info.reta_size == 0) {
 		G_LOG(ERR,
 			"net: failed to setup RSS at port %hhu (invalid RETA size = 0)\n",
@@ -1370,13 +1381,16 @@ int
 gatekeeper_get_rss_config(uint16_t port_id,
 	struct gatekeeper_rss_config *rss_conf)
 {
-	int ret = 0;
 	uint16_t i;
 	struct rte_eth_dev_info dev_info;
 
 	/* Get RSS redirection table (RETA) information. */
-	memset(&dev_info, 0, sizeof(dev_info));
-	rte_eth_dev_info_get(port_id, &dev_info);
+	int ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, port_id, -ret, strerror(-ret));
+		goto out;
+	}
 	rss_conf->reta_size = dev_info.reta_size;
 	if (rss_conf->reta_size == 0 ||
 			rss_conf->reta_size > ETH_RSS_RETA_SIZE_512) {
