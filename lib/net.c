@@ -929,19 +929,22 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	struct rte_eth_conf *port_conf)
 {
 	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
-	struct rte_eth_rss_conf rss_conf = {
+	struct rte_eth_rss_conf __rss_conf = {
 		.rss_key = rss_hash_key,
 		.rss_key_len = sizeof(rss_hash_key),
 	};
 	uint64_t rss_off = dev_info->flow_type_rss_offloads;
 	int ret = rte_eth_dev_rss_hash_conf_get(
-		iface->ports[port_idx], &rss_conf);
+		iface->ports[port_idx], &__rss_conf);
 	if (ret == -ENOTSUP) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support to get RSS configuration, disable RSS\n",
 			__func__, iface->name,
 			iface->ports[port_idx], iface->pci_addrs[port_idx]);
 		goto disable_rss;
 	}
+
+	/* Do not use @rss_conf from now on. See issue #624 for details. */
+
 	if (ret < 0) {
 		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration at port %hu (%s) (errno=%i): %s\n",
 			__func__, iface->name,
@@ -1738,6 +1741,7 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 static int
 check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 {
+	struct rte_eth_dev_info dev_info;
 	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
 	struct rte_eth_rss_conf rss_conf = {
 		.rss_key = rss_hash_key,
@@ -1747,6 +1751,14 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 
 	if (!iface->rss)
 		return 0;
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (ret < 0) {
+		G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (errno=%i): %s\n",
+			__func__, iface->name, port_id,
+			-ret, strerror(-ret));
+		return ret;
+	}
 
 	ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
 	switch (ret) {
@@ -1771,7 +1783,11 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 		return ret;
 	}
 
-	if (unlikely(rss_conf.rss_key_len != iface->rss_key_len ||
+	/*
+	 * XXX #624 Use @dev_info.hash_key_size instead of
+	 * @rss_conf.rss_key_len to avoid a bug in DPDK.
+	 */
+	if (unlikely(dev_info.hash_key_size != iface->rss_key_len ||
 			memcmp(rss_conf.rss_key, iface->rss_key,
 				iface->rss_key_len) != 0)) {
 		G_LOG(WARNING, "%s(%s): the RSS hash configuration obtained at port %d does not match the expected RSS configuration\n",
