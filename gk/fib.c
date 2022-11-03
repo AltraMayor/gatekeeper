@@ -48,8 +48,11 @@ gk_lpm_add_ipv4_route(uint32_t ip, uint8_t depth, uint32_t nexthop,
 	struct gk_lpm *ltbl)
 {
 	int ret = rib_add(&ltbl->rib, (uint8_t *)&ip, depth, nexthop);
-	if (ret < 0)
+	if (unlikely(ret < 0)) {
+		if (ret == -ENOMEM)
+			G_LOG(WARNING, "%s(): RIB is out of space\n", __func__);
 		return ret;
+	}
 
 	ret = lpm_add(ltbl->lpm, ip, depth, nexthop);
 	if (unlikely(ret < 0)) {
@@ -58,6 +61,8 @@ gk_lpm_add_ipv4_route(uint32_t ip, uint8_t depth, uint32_t nexthop,
 			G_LOG(CRIT, "%s(): bug: failed to remove a prefix just added (errno=%i): %s\n",
 				__func__, -ret2, strerror(-ret2));
 		}
+		if (ret == -ENOSPC)
+			G_LOG(WARNING, "%s(): FIB is out of space\n", __func__);
 		return ret;
 	}
 
@@ -69,8 +74,11 @@ gk_lpm_add_ipv6_route(const uint8_t *ip, uint8_t depth, uint32_t nexthop,
 	struct gk_lpm *ltbl)
 {
 	int ret = rib_add(&ltbl->rib6, ip, depth, nexthop);
-	if (ret < 0)
+	if (unlikely(ret < 0)) {
+		if (ret == -ENOMEM)
+			G_LOG(WARNING, "%s(): RIB is out of space\n", __func__);
 		return ret;
+	}
 
 	ret = lpm6_add(ltbl->lpm6, ip, depth, nexthop);
 	if (unlikely(ret < 0)) {
@@ -79,6 +87,8 @@ gk_lpm_add_ipv6_route(const uint8_t *ip, uint8_t depth, uint32_t nexthop,
 			G_LOG(CRIT, "%s(): bug: failed to remove a prefix just added (errno=%i): %s\n",
 				__func__, -ret2, strerror(-ret2));
 		}
+		if (ret == -ENOSPC)
+			G_LOG(WARNING, "%s(): FIB is out of space\n", __func__);
 		return ret;
 	}
 
@@ -361,7 +371,7 @@ __get_empty_fib_id(struct gk_fib *fib_tbl, uint32_t *plast_index,
 			return i;
 		}
 	} while (likely(i != last_index));
-	return -ENOENT;
+	return -ENOSPC;
 }
 
 /* This function will return an empty FIB entry. */
@@ -1218,7 +1228,7 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	else {
 		G_LOG(ERR, "%s(%s): failed to initialize a fib entry for gateway because it has invalid action %d\n",
 			__func__, ip_prefix->str, action);
-		return -1;
+		return -EINVAL;
 	}
 
 	/* Find the neighbor FIB entry for this gateway. */
@@ -1227,7 +1237,7 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	if (neigh_fib == NULL) {
 		G_LOG(ERR, "%s(%s): invalid gateway entry; could not find neighbor FIB\n",
 			__func__, ip_prefix->str);
-		return -1;
+		return -EINVAL;
 	}
 
 	/* Find the Ethernet cached header entry for this gateway. */
@@ -1235,12 +1245,14 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	eth_cache = neigh_get_ether_cache_locked(
 		neigh_ht, gw_addr, iface, gk_conf->lcores[0]);
 	if (eth_cache == NULL)
-		return -1;
+		return -EINVAL;
 
 	/* Find an empty FIB entry for the Gateway. */
 	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf, &gw_fib);
-	if (fib_id < 0)
+	if (fib_id < 0) {
+		ret = fib_id;
 		goto put_ether_cache;
+	}
 
 	/* Fills up the Gateway FIB entry for the IP prefix. */
 	gw_fib->action = action;
@@ -1257,7 +1269,7 @@ init_fib:
 	initialize_fib_entry(gw_fib);
 put_ether_cache:
 	ether_cache_put(neigh_fib, action, eth_cache, gk_conf);
-	return -1;
+	return ret;
 }
 
 #define MAX_NUM_GRANTORS_PER_ENTRY \
