@@ -247,6 +247,25 @@ struct gatekeeper_if {
 	bool            guarantee_random_entropy;
 
 	/*
+	 * Some NICs do not support the RSS hash functions
+	 * ETH_RSS_IPV4 amd ETH_RSS_IPV6 (i.e. RSS hash for IPv4 or IPv6
+	 * non-fragmented packets).  But they may support the hash functions
+	 * ETH_RSS_NONFRAG_IPV4_TCP, ETH_RSS_NONFRAG_IPV4_UDP,
+	 * ETH_RSS_NONFRAG_IPV6_TCP, and ETH_RSS_NONFRAG_IPV6_UDP, and
+	 * setting the input set of the hash these hash functions.
+	 * An example of this behavior is the PMD i40e.
+	 *
+	 * Enabling the parameter below, Gatekeeper will try the alternative
+	 * RSS hash.
+	 *
+	 * Currently, this parameter only works for PMD i40e.
+	 *
+	 * If the interface is bonded, all ports in the bond must either
+	 * need this parameter disabled or enabled.
+	 */
+	bool            alternative_rss_hash;
+
+	/*
 	 * The fields below are for internal use.
 	 * Configuration files should not refer to them.
 	 */

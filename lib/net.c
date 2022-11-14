@@ -32,6 +32,7 @@
 #include <rte_ethdev.h>
 #include <rte_eth_bond.h>
 #include <rte_malloc.h>
+#include <rte_pmd_i40e.h>
 
 #include "gatekeeper_acl.h"
 #include "gatekeeper_main.h"
@@ -902,6 +903,105 @@ get_if_back(struct net_config *net_conf)
 	return net_conf->back_iface_enabled ? &net_conf->back : NULL;
 }
 
+static int
+i40e_clear_inset_field(struct rte_pmd_i40e_inset *inset, uint8_t field_idx)
+{
+	int ret = rte_pmd_i40e_inset_field_clear(&inset->inset, field_idx);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): cannot clear field %i\n",
+			__func__, field_idx);
+	}
+	return ret;
+}
+
+static int
+i40e_disable_ports_from_inset(uint16_t port_id,
+	uint8_t pctype_id)
+{
+	struct rte_pmd_i40e_inset inset;
+
+	/* Obtain the current RSS hash inset for @pctype_id. */
+	int ret = rte_pmd_i40e_inset_get(port_id, pctype_id, &inset,
+		INSET_HASH);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(port_id=%i, pctype=%i): cannot get inset (errno=%i): %s\n",
+			__func__, port_id, pctype_id, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	/*
+	 * Remove source port (i.e. first two bytes) of @pctype_id.
+	 *
+	 * Field index obtained at "Table 7-12. Default field vector table"
+	 * of "Intel Ethernet Controller X710/XXV710/XL710 Datasheet".
+	 *
+	 * The field index below works for @pctype_id equals to TCP or UDP.
+	 */
+	ret = i40e_clear_inset_field(&inset, 29);
+	if (unlikely(ret < 0))
+		return ret;
+
+	/*
+	 * Remove destination port (i.e. third and forth bytes) of
+	 * @pctype_id.
+	 */
+	ret = i40e_clear_inset_field(&inset, 30);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = rte_pmd_i40e_inset_set(port_id, pctype_id, &inset, INSET_HASH);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(port_id=%i, pctype=%i): cannot set inset (errno=%i): %s\n",
+			__func__, port_id, pctype_id, -ret, rte_strerror(-ret));
+	}
+	return ret;
+}
+
+static int
+i40e_disable_pctypes_ports_from_inset(uint16_t port_id, uint8_t *pctypes,
+	uint8_t n)
+{
+	int i;
+	for (i = 0; i < n; i++) {
+		int ret = i40e_disable_ports_from_inset(port_id, pctypes[i]);
+		if (unlikely(ret < 0))
+			return ret;
+	}
+	return 0;
+}
+
+static int
+i40e_disable_ipv4_tcp_udp_ports_from_inset(uint16_t port_id)
+{
+	/*
+	 * PCTYPES obtained at "Table 7-5. Packet classifier types and
+	 * its input sets" of "Intel Ethernet Controller X710/XXV710/XL710
+	 * Datasheet".
+	 */
+	uint8_t pctypes[] = {
+		31, /* Non-fragmented IPv4, UDP. */
+		33, /* Non-fragmented IPv4, TCP. */
+	};
+	return i40e_disable_pctypes_ports_from_inset(port_id, pctypes,
+		RTE_DIM(pctypes));
+}
+
+static int
+i40e_disable_ipv6_tcp_udp_ports_from_inset(uint16_t port_id)
+{
+	/*
+	 * PCTYPES obtained at "Table 7-5. Packet classifier types and
+	 * its input sets" of "Intel Ethernet Controller X710/XXV710/XL710
+	 * Datasheet".
+	 */
+	uint8_t pctypes[] = {
+		41, /* Non-fragmented IPv6, UDP. */
+		43, /* Non-fragmented IPv6, TCP. */
+	};
+	return i40e_disable_pctypes_ports_from_inset(port_id, pctypes,
+		RTE_DIM(pctypes));
+}
+
 /*
  * Split up ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
  * For each type of IP being used in Gatekeeper, check the supported
@@ -934,21 +1034,21 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		.rss_key_len = sizeof(rss_hash_key),
 	};
 	uint64_t rss_off = dev_info->flow_type_rss_offloads;
-	int ret = rte_eth_dev_rss_hash_conf_get(
-		iface->ports[port_idx], &__rss_conf);
+	uint16_t port_id = iface->ports[port_idx];
+	int ret = rte_eth_dev_rss_hash_conf_get(port_id, &__rss_conf);
 	if (ret == -ENOTSUP) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support to get RSS configuration, disable RSS\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx]);
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx]);
 		goto disable_rss;
 	}
 
-	/* Do not use @rss_conf from now on. See issue #624 for details. */
+	/* Do not use @__rss_conf from now on. See issue #624 for details. */
 
 	if (ret < 0) {
 		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration at port %hu (%s) (errno=%i): %s\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx],
 			-ret, rte_strerror(-ret));
 		return ret;
 	}
@@ -957,8 +1057,8 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	/* This port doesn't support RSS, so disable RSS. */
 	if (rss_off == 0) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support RSS\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx]);
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx]);
 		goto disable_rss;
 	}
 
@@ -967,8 +1067,8 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 			dev_info->hash_key_size > GATEKEEPER_RSS_MAX_KEY_LEN ||
 			dev_info->hash_key_size % 4 != 0) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes; Gatekeeper only supports keys of [%i, %i] bytes long that are multiple of 4\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx],
 			dev_info->hash_key_size, GATEKEEPER_RSS_MIN_KEY_LEN,
 			GATEKEEPER_RSS_MAX_KEY_LEN);
 		goto disable_rss;
@@ -983,8 +1083,8 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	if (iface->rss_key_len <= GATEKEEPER_RSS_MAX_KEY_LEN &&
 			iface->rss_key_len != dev_info->hash_key_size) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes, but another port requires a key of %i bytes; all ports of the same interface must have the same key length\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx],
 			dev_info->hash_key_size, iface->rss_key_len);
 		goto disable_rss;
 	}
@@ -995,20 +1095,23 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		/* No IPv4 hashes are supported, so disable RSS. */
 		if ((rss_off & GATEKEEPER_IPV4_RSS_HF) == 0) {
 			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv4 related RSS hashes\n",
-				__func__, iface->name,
-				iface->ports[port_idx],
+				__func__, iface->name, port_id,
 				iface->pci_addrs[port_idx]);
 			goto disable_rss;
 		}
 
-		/*
-		 * The IPv4 hash that we think is typically
-		 * used is not supported, so warn the user.
-		 */
-		if ((rss_off & ETH_RSS_IPV4) == 0) {
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV4 hash function; the device may not hash packets to the correct queues\n",
-				__func__, iface->name,
-				iface->ports[port_idx],
+		if (iface->alternative_rss_hash) {
+			ret = i40e_disable_ipv4_tcp_udp_ports_from_inset(
+				port_id);
+			if (ret < 0)
+				goto disable_rss;
+		} else if ((rss_off & ETH_RSS_IPV4) == 0) {
+			/*
+			 * The IPv4 hash that we think is typically
+			 * used is not supported, so warn the user.
+			 */
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV4 hash function. The device may not hash packets to the correct queues. You may try parameter alternative_rss_hash.\n",
+				__func__, iface->name, port_id,
 				iface->pci_addrs[port_idx]);
 		}
 	}
@@ -1018,20 +1121,23 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 		/* No IPv6 hashes are supported, so disable RSS. */
 		if ((rss_off & GATEKEEPER_IPV6_RSS_HF) == 0) {
 			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv6 related RSS hashes\n",
-				__func__, iface->name,
-				iface->ports[port_idx],
+				__func__, iface->name, port_id,
 				iface->pci_addrs[port_idx]);
 			goto disable_rss;
 		}
 
-		/*
-		 * The IPv6 hash that we think is typically
-		 * used is not supported, so warn the user.
-		 */
-		if ((rss_off & ETH_RSS_IPV6) == 0) {
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV6 hash function; the device may not hash packets to the correct queues\n",
-				__func__, iface->name,
-				iface->ports[port_idx],
+		if (iface->alternative_rss_hash) {
+			ret = i40e_disable_ipv6_tcp_udp_ports_from_inset(
+				port_id);
+			if (ret < 0)
+				goto disable_rss;
+		} else if ((rss_off & ETH_RSS_IPV6) == 0) {
+			/*
+			 * The IPv6 hash that we think is typically
+			 * used is not supported, so warn the user.
+			 */
+			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV6 hash function. The device may not hash packets to the correct queues. You may try parameter alternative_rss_hash.\n",
+				__func__, iface->name, port_id,
 				iface->pci_addrs[port_idx]);
 		}
 	}
@@ -1045,9 +1151,9 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 	if ((rss_off & port_conf->rx_adv_conf.rss_conf.rss_hf) !=
 			port_conf->rx_adv_conf.rss_conf.rss_hf) {
 		G_LOG(WARNING, "%s(%s): port %hu (%s) only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			rss_off, port_conf->rx_adv_conf.rss_conf.rss_hf);
+			__func__, iface->name, port_id,
+			iface->pci_addrs[port_idx], rss_off,
+			port_conf->rx_adv_conf.rss_conf.rss_hf);
 	}
 
 	port_conf->rx_adv_conf.rss_conf.rss_hf &= rss_off;
@@ -1195,10 +1301,18 @@ check_port_offloads(struct gatekeeper_if *iface,
 	if (ipv4_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
 			GATEKEEPER_IPV4_RSS_HF;
+		if (iface->alternative_rss_hash)
+			port_conf->rx_adv_conf.rss_conf.rss_hf |=
+				ETH_RSS_NONFRAG_IPV4_TCP |
+				ETH_RSS_NONFRAG_IPV4_UDP;
 	}
 	if (ipv6_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
 			GATEKEEPER_IPV6_RSS_HF;
+		if (iface->alternative_rss_hash)
+			port_conf->rx_adv_conf.rss_conf.rss_hf |=
+				ETH_RSS_NONFRAG_IPV6_TCP |
+				ETH_RSS_NONFRAG_IPV6_UDP;
 	}
 
 	/*
