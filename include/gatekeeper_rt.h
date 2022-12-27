@@ -16,8 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _GATEKEEPER_GK_FIB_H_
-#define _GATEKEEPER_GK_FIB_H_
+#ifndef _GATEKEEPER_GK_RT_H_
+#define _GATEKEEPER_GK_RT_H_
 
 #include <lauxlib.h>
 
@@ -358,4 +358,4 @@ lookup_ether_cache(struct neighbor_hash_table *neigh_tbl, void *key)
 	return eth_cache;
 }
 
-#endif /* _GATEKEEPER_GK_FIB_H_ */
+#endif /* _GATEKEEPER_GK_RT_H_ */

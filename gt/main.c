@@ -36,7 +36,6 @@
 #include <rte_common.h>
 #include <rte_byteorder.h>
 
-#include "gatekeeper_fib.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_acl.h"
 #include "gatekeeper_ggu.h"

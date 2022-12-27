@@ -24,7 +24,6 @@
 #include "lua_lpm.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_lpm.h"
-#include "gatekeeper_fib.h"
 #include "gatekeeper_gt.h"
 
 static int

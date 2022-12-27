@@ -22,7 +22,7 @@
 #include <rte_atomic.h>
 #include <rte_bpf.h>
 
-#include "gatekeeper_fib.h"
+#include "gatekeeper_rt.h"
 #include "gatekeeper_net.h"
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_ggu.h"

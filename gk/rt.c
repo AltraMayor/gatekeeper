@@ -21,11 +21,11 @@
 #include <linux/rtnetlink.h>
 
 #include "gatekeeper_config.h"
-#include "gatekeeper_fib.h"
 #include "gatekeeper_gk.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_main.h"
+#include "gatekeeper_rt.h"
 
 void
 destroy_neigh_hash_table(struct neighbor_hash_table *neigh)
