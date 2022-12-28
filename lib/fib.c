@@ -153,8 +153,17 @@ out:
 void
 fib_free(struct fib_head *fib)
 {
-	/* TODO */
-	RTE_SET_USED(fib);
+	fib->tbl8_pool[0] = FIB_TBL8_FREE_INDEX;
+	fib->first_free_tbl8_idx = 0;
+	fib->first_free_idx = 0;
+	rte_free(fib->tbl8_pool);
+	fib->tbl8_pool = NULL;
+
+	fib->num_tbl8s = 0;
+	rte_free(fib->tbl8s);
+	fib->tbl8s = NULL;
+
+	rib_free(&fib->rib);
 }
 
 int
