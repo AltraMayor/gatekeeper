@@ -1136,11 +1136,36 @@ __fib_delete(struct fib_head *fib, const uint8_t *address, uint8_t depth,
 int fib_lookup(const struct fib_head *fib, const uint8_t *address,
 	uint32_t *pnext_hop)
 {
-	/* TODO */
-	RTE_SET_USED(fib);
-	RTE_SET_USED(address);
-	RTE_SET_USED(pnext_hop);
-	return -ENOTSUP;
+	ADDR_STR_VAR(addr_str, fib->addr_len_bytes);
+	uint32_t nh_candidate =
+		rte_atomic32_read(&fib->tbl24[get_tbl24_idx(address)]);
+	unsigned int i = 3;
+
+	while (is_nh_extended(nh_candidate)) {
+		uint32_t next_tbl8_idx = get_tbl8_idx(nh_candidate);
+		if (unlikely(next_tbl8_idx >= fib->num_tbl8s)) {
+			address_to_str(addr_str, address, fib->addr_len_bytes);
+			G_LOG(CRIT, "%s(%s): bug: next_tbl8_idx=%u >= num_tbl8s=%u\n",
+				__func__, addr_str,
+				next_tbl8_idx, fib->num_tbl8s);
+			goto bug;
+		}
+		if (unlikely(i >= fib->addr_len_bytes)) {
+			address_to_str(addr_str, address, fib->addr_len_bytes);
+			G_LOG(CRIT, "%s(%s): bug: i=%u >= addr_len_bytes=%u\n",
+				__func__, addr_str, i, fib->addr_len_bytes);
+			goto bug;
+		}
+		nh_candidate = rte_atomic32_read(
+			&fib->tbl8s[next_tbl8_idx].nh[address[i++]]);
+	}
+
+	*pnext_hop = nh_candidate;
+	return nh_candidate != FIB_NO_NH ? 0 : -ENOENT;
+
+bug:
+	*pnext_hop = FIB_NO_NH;
+	return -EFAULT;
 }
 
 void
