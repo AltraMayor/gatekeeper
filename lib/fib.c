@@ -17,6 +17,7 @@
  */
 
 #include <rte_malloc.h>
+#include <rte_prefetch.h>
 
 #include "gatekeeper_main.h"
 #include "gatekeeper_fib.h"
@@ -1168,13 +1169,97 @@ bug:
 	return -EFAULT;
 }
 
+/*
+ * fib_lookup_bulk() was implemented using the G-Opt technique.
+ *
+ * For details on the G-Opt technique, see al least Section 3.2 of
+ * the paper Raising the Bar for Using GPUs in Software Packet Processing
+ * by Anuj Kalia, Dong Zhou, Michael Kaminsky, and David G. Andersen.
+ * published on 12th USENIX Symposium on Networked Systems Design and
+ * Implementation (aka NSDI 2015).
+ */
+
+#define G_SW()				\
+	do {				\
+		i = (i + 1) % n;	\
+		goto *g_labels[i];	\
+	} while (0)
+
+/* Prefetch, Save label, and Switch lookup. */
+#define G_PSS(addr, label) 		\
+	do {				\
+		rte_prefetch0(addr);	\
+		g_labels[i] = &&label;	\
+		G_SW();			\
+	} while (0)
+
 void
 fib_lookup_bulk(const struct fib_head *fib, const uint8_t **addresses,
 	uint32_t *next_hops, unsigned int n)
 {
-	/* TODO */
-	RTE_SET_USED(fib);
-	RTE_SET_USED(addresses);
-	RTE_SET_USED(next_hops);
-	RTE_SET_USED(n);
+	/* Variables used atomically. */
+	ADDR_STR_VAR(addr_str, fib->addr_len_bytes);
+	uint32_t nh_candidate, next_tbl8_idx;
+
+	/* Lookup state. */
+	const rte_atomic32_t *atomic_nh_candidate[n];
+	uint8_t addr_idx[n];
+
+	/* G-Opt state. */
+	void *g_labels[n];
+	unsigned int i, g_count;
+
+	if (unlikely(n == 0))
+		return;
+
+	for (i = 0; i < n; i++)
+		g_labels[i] = &&g_label_0;
+	i = 0;
+	g_count = 0;
+
+g_label_0: /* Basis step: look up the 24-bit table. */
+	atomic_nh_candidate[i] = &fib->tbl24[get_tbl24_idx(addresses[i])];
+	addr_idx[i] = 3;
+	G_PSS(atomic_nh_candidate[i], g_label_1);
+
+g_label_1: /* Inductive step: look up the 8-bit tables. */
+	nh_candidate = rte_atomic32_read(atomic_nh_candidate[i]);
+	if (likely(!is_nh_extended(nh_candidate))) {
+		next_hops[i] = nh_candidate;
+		goto g_done;
+	}
+
+	next_tbl8_idx = get_tbl8_idx(nh_candidate);
+	if (unlikely(next_tbl8_idx >= fib->num_tbl8s)) {
+		address_to_str(addr_str, addresses[i], fib->addr_len_bytes);
+		G_LOG(CRIT, "%s(%s): bug: next_tbl8_idx=%u >= num_tbl8s=%u\n",
+			__func__, addr_str, next_tbl8_idx, fib->num_tbl8s);
+		goto bug;
+	}
+	if (unlikely(addr_idx[i] >= fib->addr_len_bytes)) {
+		address_to_str(addr_str, addresses[i], fib->addr_len_bytes);
+		G_LOG(CRIT, "%s(%s): bug: addr_idx=%u >= addr_len_bytes=%u\n",
+			__func__, addr_str, addr_idx[i], fib->addr_len_bytes);
+		goto bug;
+	}
+	atomic_nh_candidate[i] =
+		&fib->tbl8s[next_tbl8_idx].nh[addresses[i][addr_idx[i]++]];
+	G_PSS(atomic_nh_candidate[i], g_label_1);
+
+g_skip:
+	G_SW();
+
+bug:
+	next_hops[i] = FIB_NO_NH;
+g_done:
+	g_count++;
+	g_labels[i] = &&g_skip;
+
+	if (likely(g_count < n))
+		G_SW();
+
+	if (unlikely(g_count > n)) {
+		G_LOG(CRIT, "%s(): bug: g_count=%u > n=%u\n",
+			__func__, g_count, n);
+	}
 }
