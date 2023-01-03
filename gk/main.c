@@ -759,7 +759,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	if (unlikely(ret != -ENOENT)) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
 			"%s(): failed to delete a flow (errno=%i): %s; logging flow and dropping it...",
-			__func__, -ret, strerror(-ret));
+			__func__, -ret, rte_strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 		print_flow_state(fe, entry_idx);
@@ -796,7 +796,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	if (ret < 0) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
 			"%s(): failed to look flow up even after fixing its hash value errno=%i: %s; dropping flow entry...",
-			__func__, -ret, strerror(-ret));
+			__func__, -ret, rte_strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 		/*
@@ -822,7 +822,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	if (unlikely(ret < 0)) {
 		ret2 = snprintf(err_msg, sizeof(err_msg),
 			"%s(): failed to remove flow entry even after fixing its hash value errno=%i: %s; dropping flow entry...",
-			__func__, -ret, strerror(-ret));
+			__func__, -ret, rte_strerror(-ret));
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
 	} else if (unlikely(entry_idx != (typeof(entry_idx))ret)) {

@@ -112,7 +112,7 @@ ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 		 */
 		G_LOG(NOTICE, "%s(%s): cannot validate EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
 			__func__, iface->name, ether_type,
-			-ret, strerror(-ret),
+			-ret, rte_strerror(-ret),
 			error.type, error.message);
 		return -1;
 	}
@@ -122,7 +122,7 @@ ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
 		/* rte_errno is set to a positive errno value. */
 		G_LOG(ERR, "%s(%s): cannot create EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
 			__func__, iface->name, ether_type,
-			rte_errno, strerror(rte_errno),
+			rte_errno, rte_strerror(rte_errno),
 			error.type, error.message);
 		return -1;
 	}
@@ -258,7 +258,7 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		 */
 		G_LOG(NOTICE, "%s(%s, %s): cannot validate IPv4 flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
 			__func__, iface->name, str_flow,
-			-ret, strerror(-ret),
+			-ret, rte_strerror(-ret),
 			error.type, error.message);
 		return -1;
 	}
@@ -268,7 +268,7 @@ ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 		/* rte_errno is set to a positive errno value. */
 		G_LOG(ERR, "%s(%s, %s): cannot create IPv4 flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
 			__func__, iface->name, str_flow,
-			rte_errno, strerror(rte_errno),
+			rte_errno, rte_strerror(rte_errno),
 			error.type, error.message);
 		return -1;
 	}
@@ -462,7 +462,7 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 		if (ret < 0) {
 			G_LOG(ERR, "%s(): failed to configure RX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
 				__func__, queue_id, port_id, iface->name,
-			       -ret, strerror(-ret));
+			       -ret, rte_strerror(-ret));
 			return ret;
 		}
 		break;
@@ -472,7 +472,7 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 		if (ret < 0) {
 			G_LOG(ERR, "%s(): failed to configure TX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
 				__func__, queue_id, port_id, iface->name,
-			       -ret, strerror(-ret));
+			       -ret, rte_strerror(-ret));
 			return ret;
 		}
 		break;
@@ -1367,7 +1367,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 			G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (%s) (errno=%i): %s\n",
 				__func__, iface->name,
 				port_id, iface->pci_addrs[i],
-				-ret, strerror(-ret));
+				-ret, rte_strerror(-ret));
 			return ret;
 		}
 
@@ -1426,7 +1426,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 	ret = rte_eth_dev_info_get(port_id, &dev_info);
 	if (ret < 0) {
 		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
-			__func__, port_id, -ret, strerror(-ret));
+			__func__, port_id, -ret, rte_strerror(-ret));
 		goto out;
 	}
 	if (dev_info.reta_size == 0) {
@@ -1505,7 +1505,7 @@ gatekeeper_get_rss_config(uint16_t port_id,
 	int ret = rte_eth_dev_info_get(port_id, &dev_info);
 	if (ret < 0) {
 		G_LOG(ERR, "%s(): cannot obtain information on port %hu (errno=%i): %s\n",
-			__func__, port_id, -ret, strerror(-ret));
+			__func__, port_id, -ret, rte_strerror(-ret));
 		goto out;
 	}
 	rss_conf->reta_size = dev_info.reta_size;
@@ -1870,7 +1870,7 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 	if (ret < 0) {
 		G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (errno=%i): %s\n",
 			__func__, iface->name, port_id,
-			-ret, strerror(-ret));
+			-ret, rte_strerror(-ret));
 		return ret;
 	}
 
