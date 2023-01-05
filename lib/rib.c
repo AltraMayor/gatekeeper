@@ -833,7 +833,8 @@ scope:
 
 int
 rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
-	const struct rib_head *rib, const uint8_t *address, uint8_t depth)
+	const struct rib_head *rib, const uint8_t *address, uint8_t depth,
+	bool stop_at_children)
 {
 	int ret;
 
@@ -853,6 +854,7 @@ rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
 
 	state->rib = rib;
 	state->min_depth = depth;
+	state->stop_at_children = stop_at_children;
 	state->next_depth = depth;
 	state->has_ended = false;
 	scope_longer_iterator(state);
@@ -966,6 +968,13 @@ __rib_longer_iterator_next(struct rib_longer_iterator_state *state,
 		state->rule->depth = info.depth;
 		state->rule->next_hop = cur_node->next_hop;
 		/* Still missing the next rule after the found rule. */
+
+		/*
+		 * The test info.depth > state->min_depth is needed to
+		 * avoid only listing the parent prefix if it exists.
+		 */
+		if (state->stop_at_children && info.depth > state->min_depth)
+			return;
 	}
 
 	__rib_longer_iterator_next(state, cur_node->branch[false], info);

@@ -824,7 +824,7 @@ rd_getroute_family(const char *daemon, struct cps_config *cps_conf,
 	int ret;
 
 	spinlock_lock_with_yield(lock, cps_conf);
-	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0);
+	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0, false);
 	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(lock);
 		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",

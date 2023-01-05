@@ -1547,7 +1547,17 @@ check_longer_prefixes(const char *context, const struct rib_head *rib,
 	const char *prefix_str, enum gk_fib_action prefix_action)
 {
 	struct rib_longer_iterator_state state;
-	int ret = rib_longer_iterator_state_init(&state, rib, ip, depth);
+	/*
+	 * @stop_at_children can be true because
+	 *
+	 * (1) if a child is not GK_FWD_GRANTOR, nor GK_DROP,
+	 * 	the test will already fail;
+	 *
+	 * (2) if a child is either GK_FWD_GRANTOR, or GK_DROP,
+	 * 	the grand-children (if they exist) must be safe.
+	 * 	Otherwise, the child would not have been eadded.
+	 */
+	int ret = rib_longer_iterator_state_init(&state, rib, ip, depth, true);
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(%s): failed to initialize the %s RIB iterator (errno=%i): %s\n",
 			__func__, prefix_str, context, -ret, strerror(-ret));
@@ -2104,7 +2114,7 @@ list_fib_entries(lua_State *l, const char *context, const struct rib_head *rib,
 	int ret;
 
 	rte_spinlock_lock_tm(lock);
-	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0);
+	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0, false);
 	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(lock);
 		luaL_error(l, "%s(): failed to initialize the %s RIB iterator (errno=%d): %s",

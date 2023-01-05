@@ -20,6 +20,7 @@
 #define _GATEKEEPER_GK_RIB_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <setjmp.h>
 
 #include <rte_mempool.h>
@@ -210,6 +211,11 @@ struct rib_longer_iterator_state {
 	struct rib_node_info     start_info;
 	/* The minimum depth of prefix in field @next_address; the scope. */
 	uint8_t                  min_depth;
+	/*
+	 * If true, do not enumerate prefixes longer than the child prefixes
+	 * of the parent prefix.
+	 */
+	bool                     stop_at_children;
 
 	/*
 	 * The following fields are used in between calls of
@@ -229,8 +235,8 @@ struct rib_longer_iterator_state {
 	bool                     has_ended;
 
 	/*
-	 * The following fields are set and only valid while execution is in
-	 * rib_longer_iterator_next().
+	 * The following fields are set and only valid while the execution is
+	 * in rib_longer_iterator_next().
 	 */
 
 	/* When true, keep looking for prefixes greater than @next_address. */
@@ -252,12 +258,26 @@ struct rib_longer_iterator_state {
  * The first call of rib_longer_iterator_next() returns a rule whose prefix
  * is at least as deeper as @depth.
  *
- * Passing @address = NULL (or any other value) and @depth = 0 iterates
- * over the whole RIB; including the default rule
- * (i.e. the zero-length prefix).
+ * Rules are returned such that prefixes are in increasing order
+ * (e.g. 10.2/16 > 10.1/16). Longer prefixes are greater than
+ * shorter sub-prefixes (e.g. 10.2/16 > 10/8).
+ * Notice that 10.2/16 is greater than 10.1.255.255/32.
+ *
+ * Passing @address = NULL (or any other value) and @depth = 0 and
+ * @stop_at_children = false iterates over the whole RIB;
+ * including the default rule (i.e. the zero-length prefix).
  *
  * @address is in network order (big endian).
  * @address == NULL is equivalent to the all-zero address.
+ *
+ * When @stop_at_children is true, only the prefix @address/@depth
+ * (if it exists) and its children prefixes are enumerated.
+ * In a RIB with 10/8, 10.1/16, 10.2/16, 10.2.2/24, the longer iterator
+ * will list all prefixes when @address = 10.X.X.X and @depth = 8 and
+ * @stop_at_children = false, but will not list 10.2.2/24 when
+ * @stop_at_children = true.
+ *
+ * The parent prefix is @address/@depth.
  *
  * If the RIB changes (i.e. rules are added or deleted)
  * between the call of this function and the call of
@@ -267,7 +287,8 @@ struct rib_longer_iterator_state {
  * the initial prefix) and that are after the next rule.
  */
 int rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
-	const struct rib_head *rib, const uint8_t *address, uint8_t depth);
+	const struct rib_head *rib, const uint8_t *address, uint8_t depth,
+	bool stop_at_children);
 
 /*
  * When a rule is found, this function updates @rule and returns zero.
