@@ -113,6 +113,10 @@ static inline struct rib_head *fib_get_rib(struct fib_head *fib)
 	return &fib->rib;
 }
 
+/* DO NOT CALL THIS FUNCTION, CALL fib_add() INSTEAD. */
+int __fib_add(struct fib_head *fib, const uint8_t *address, uint8_t depth,
+	uint32_t next_hop, bool failsafe);
+
 /*
  * Add a rule to the FIB.
  *
@@ -130,8 +134,16 @@ static inline struct rib_head *fib_get_rib(struct fib_head *fib)
  * 	-EEXIST if prefix already exist in @fib.
  * 	0 if it successfully adds the new rule.
  */
-int fib_add(struct fib_head *fib, const uint8_t *address, uint8_t depth,
-	uint32_t next_hop);
+static inline int
+fib_add(struct fib_head *fib, const uint8_t *address, uint8_t depth,
+	uint32_t next_hop)
+{
+	return __fib_add(fib, address, depth, next_hop, true);
+}
+
+/* DO NOT CALL THIS FUNCTION, CALL fib_add() INSTEAD. */
+int __fib_delete(struct fib_head *fib, const uint8_t *address, uint8_t depth,
+	bool failsafe);
 
 /*
  * Delete a rule from the FIB.
@@ -143,7 +155,11 @@ int fib_add(struct fib_head *fib, const uint8_t *address, uint8_t depth,
  * 	-ENOENT if the prefix does not exist in @fib.
  * 	0 if it successfully deletes the rule.
  */
-int fib_delete(struct fib_head *fib, const uint8_t *address, uint8_t depth);
+static inline int
+fib_delete(struct fib_head *fib, const uint8_t *address, uint8_t depth)
+{
+	return __fib_delete(fib, address, depth, true);
+}
 
 /*
  * Look an address up on the FIB.

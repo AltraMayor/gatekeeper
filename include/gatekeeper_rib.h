@@ -91,6 +91,12 @@ struct rib_head {
 	struct rte_mempool *mp_nodes;
 };
 
+static inline uint8_t
+rib_get_max_length(const struct rib_head *rib)
+{
+	return rib->max_length;
+}
+
 /*
  * Create a new RIB.
  *
@@ -296,6 +302,45 @@ int rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
  */
 int rib_longer_iterator_next(struct rib_longer_iterator_state *state,
 	struct rib_iterator_rule *rule);
+
+/*
+ * Make the prefix @address/@depth the prefix that the following call of
+ * rib_longer_iterator_next() will return.
+ *
+ * If the prefix @address/@depth is not present in @rib, the following call of
+ * rib_longer_iterator_next() will return the prefix immediately following
+ * the prefix @address/@depth. If there is no prefix following the prefix
+ * @address/@depth, the following call of rib_longer_iterator_next() will
+ * return -ENOENT.
+ *
+ * The prefix @address/@depth must be within the scope of the prefix passed
+ * to rib_longer_iterator_state_init(). For example, if the iterator was
+ * initialized with 10.0.0.0/8, 11.0.0.0/8 is out of scope.
+ *
+ * This function can be successful even after rib_longer_iterator_next()
+ * has returned -ENOENT.
+ *
+ * RETURN
+ *	-EINVAL	If the prefix @address/@depth is not within scope.
+ *	0	If the call is successful.
+ */
+int rib_longer_iterator_seek(struct rib_longer_iterator_state *state,
+	const uint8_t *address, uint8_t depth);
+
+/*
+ * This function is an efficient equivalent of calling
+ * rib_longer_iterator_seek() on the prefix @address/@depth, AND skipping all
+ * prefixes within the scope of the prefix @address/@depth.
+ *
+ * The prefix @address/@depth must be within the scope of the iterator, but
+ * it does not have to be present in @rib.
+ *
+ * RETURN
+ *	-EINVAL	If the prefix @address/@depth is not within scope.
+ *	0	If the call is successful.
+ */
+int rib_longer_iterator_skip_branch(struct rib_longer_iterator_state *state,
+	const uint8_t *address, uint8_t depth);
 
 /*
  * Free all resources associated to @state but the memory pointed by it.
