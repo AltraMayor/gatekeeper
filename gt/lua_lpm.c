@@ -20,11 +20,11 @@
 #include <lauxlib.h>
 
 #include <rte_lcore.h>
+#include <rte_atomic.h>
 
-#include "lua_lpm.h"
-#include "gatekeeper_net.h"
-#include "gatekeeper_lpm.h"
+#include "gatekeeper_fib.h"
 #include "gatekeeper_gt.h"
+#include "lua_lpm.h"
 
 static int
 l_str_to_prefix(lua_State *l)
@@ -120,8 +120,10 @@ l_str_to_prefix6(lua_State *l)
 #define LUA_LPM_UD_TNAME "gt_lpm_ud"
 
 struct lpm_lua_userdata {
-	struct rte_lpm *lpm;
-	struct rte_lpm_config config;
+	struct	 fib_head fib;
+	/* Parameters of @fib. */
+	uint32_t max_rules;
+	uint32_t num_tbl8s;
 };
 
 static int
@@ -129,29 +131,39 @@ l_new_lpm(lua_State *l)
 {
 	struct lpm_lua_userdata *lpm_ud;
 	static rte_atomic32_t identifier = RTE_ATOMIC32_INIT(0);
+	char fib_name[128];
 	unsigned int lcore_id;
+	int ret;
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
 	lpm_ud = lua_newuserdata(l, sizeof(*lpm_ud));
-	memset(&lpm_ud->config, 0, sizeof(lpm_ud->config));
 	/* First argument must be a Lua number. */
-	lpm_ud->config.max_rules = luaL_checknumber(l, 1);
+	lpm_ud->max_rules = luaL_checknumber(l, 1);
 	/* Second argument must be a Lua number. */
-	lpm_ud->config.number_tbl8s = luaL_checknumber(l, 2);
+	lpm_ud->num_tbl8s = luaL_checknumber(l, 2);
 
 	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
 
-	lpm_ud->lpm = init_ipv4_lpm("gt_", &lpm_ud->config,
-		rte_lcore_to_socket_id(lcore_id), lcore_id,
+	/* Obtain unique name. */
+	ret = snprintf(fib_name, sizeof(fib_name),
+		"gt_fib_ipv4_%u_%u", lcore_id,
 		rte_atomic32_add_return(&identifier, 1));
-	if (unlikely(lpm_ud->lpm == NULL))
-		luaL_error(l, "gt: failed to initialize the IPv4 LPM table for Lua policies");
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_name));
+
+	ret = fib_create(&lpm_ud->fib, fib_name,
+		rte_lcore_to_socket_id(lcore_id), 32,
+		lpm_ud->max_rules, lpm_ud->num_tbl8s);
+	if (unlikely(ret < 0)) {
+		luaL_error(l, "%s(): failed to initialize the IPv4 LPM table for Lua policies (errno=%d): %s",
+			__func__, -ret, strerror(-ret));
+	}
 
 	luaL_getmetatable(l, LUA_LPM_UD_TNAME);
 	lua_setmetatable(l, -2);
@@ -180,14 +192,15 @@ l_lpm_add(lua_State *l)
 	/* Fourth argument must be a Lua number. */
 	uint32_t label = luaL_checknumber(l, 4);
 
-	if (lua_gettop(l) != 4)
-		luaL_error(l, "Expected four arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 4)) {
+		luaL_error(l, "%s(): expected four arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	ret = rte_lpm_add(lpm_ud->lpm, ntohl(ip), depth, label);
-	if (ret < 0) {
-		luaL_error(l, "lpm: failed to add network policy [ip: %d, depth: %d, label: %d] to the lpm table at %s(%d): %s",
-			ip, depth, label, __func__, -ret, strerror(-ret));
+	ret = fib_add(&lpm_ud->fib, (uint8_t *)&ip, depth, label);
+	if (unlikely(ret < 0)) {
+		luaL_error(l, "%s(): failed to add network policy [ip: %d, depth: %d, label: %d] (errno=%d): %s",
+			__func__, ip, depth, label, -ret, strerror(-ret));
 	}
 
 	return 0;
@@ -209,12 +222,12 @@ l_lpm_del(lua_State *l)
 	/* Third argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 3);
 
-	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 3)) {
+		luaL_error(l, "%s(): expected three arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	lua_pushinteger(l, rte_lpm_delete(lpm_ud->lpm, ntohl(ip), depth));
-
+	lua_pushinteger(l, fib_delete(&lpm_ud->fib, (uint8_t *)&ip, depth));
 	return 1;
 }
 
@@ -224,6 +237,8 @@ l_lpm_lookup(lua_State *l)
 	/* First argument must be of type struct lpm_lua_userdata *. */
 	struct lpm_lua_userdata *lpm_ud =
 		luaL_checkudata(l, 1, LUA_LPM_UD_TNAME);
+	uint32_t label;
+	int ret;
 
 	/*
 	 * Second argument must be a Lua number.
@@ -231,12 +246,15 @@ l_lpm_lookup(lua_State *l)
 	 */
 	uint32_t ip = luaL_checknumber(l, 2);
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	lua_pushinteger(l, lpm_lookup_ipv4(lpm_ud->lpm, ip));
-
+	ret = fib_lookup(&lpm_ud->fib, (uint8_t *)&ip, &label);
+	if (ret < 0)
+		lua_pushinteger(l, ret);
+	lua_pushinteger(l, label);
 	return 1;
 }
 
@@ -255,20 +273,24 @@ l_ip_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_LPM_MAX_DEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 32, however it is %d",
-			depth);
+	if (unlikely(depth > 32)) {
+		luaL_error(l, "%s(): depth=%d must be in [0, 32]",
+			__func__, depth);
+	}
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
 	ip4_prefix_mask(depth, &mask);
 	masked_ip = htonl(ntohl(ip) & rte_be_to_cpu_32(mask.s_addr));
 
-	if (inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf)) == NULL)
-		luaL_error(l, "%s: failed to convert a number to an IPv4 address (%s)\n",
-			__func__, strerror(errno));
+	if (unlikely(inet_ntop(AF_INET, &masked_ip, buf, sizeof(buf)) ==
+			NULL)) {
+		luaL_error(l, "%s(): failed to convert a number to an IPv4 address (errno=%d): %s",
+			__func__, errno, strerror(errno));
+	}
 
 	lua_pushstring(l, buf);
 	return 1;
@@ -281,20 +303,28 @@ l_lpm_get_paras(lua_State *l)
 	struct lpm_lua_userdata *lpm_ud =
 		luaL_checkudata(l, 1, LUA_LPM_UD_TNAME);
 
-	if (lua_gettop(l) != 1)
-		luaL_error(l, "Expected one argument, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 1)) {
+		luaL_error(l, "%s(): expected one argument, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	lua_pushinteger(l, lpm_ud->config.max_rules);
-	lua_pushinteger(l, lpm_ud->config.number_tbl8s);
+	lua_pushinteger(l, lpm_ud->max_rules);
+	lua_pushinteger(l, lpm_ud->num_tbl8s);
 	return 2;
 }
 
 #define LUA_LPM6_UD_TNAME "gt_lpm6_ud"
 
+/*
+ * This struct is currently identical to struct lpm_lua_userdata.
+ * These structs are kept independent of each other to enable a possible
+ * divergence in the future as have happened in the past.
+ */
 struct lpm6_lua_userdata {
-	struct rte_lpm6 *lpm6;
-	struct rte_lpm6_config config;
+	struct	 fib_head fib;
+	/* Parameters of @fib. */
+	uint32_t max_rules;
+	uint32_t num_tbl8s;
 };
 
 static int
@@ -302,29 +332,39 @@ l_new_lpm6(lua_State *l)
 {
 	struct lpm6_lua_userdata *lpm6_ud;
 	static rte_atomic32_t identifier6 = RTE_ATOMIC32_INIT(0);
+	char fib_name[128];
 	unsigned int lcore_id;
+	int ret;
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
 	lpm6_ud = lua_newuserdata(l, sizeof(*lpm6_ud));
-	memset(&lpm6_ud->config, 0, sizeof(lpm6_ud->config));
 	/* First argument must be a Lua number. */
-	lpm6_ud->config.max_rules = luaL_checknumber(l, 1);
+	lpm6_ud->max_rules = luaL_checknumber(l, 1);
 	/* Second argument must be a Lua number. */
-	lpm6_ud->config.number_tbl8s = luaL_checknumber(l, 2);
+	lpm6_ud->num_tbl8s = luaL_checknumber(l, 2);
 
 	/* Get @lcore_id. */
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
 
-	lpm6_ud->lpm6 = init_ipv6_lpm("gt", &lpm6_ud->config,
-		rte_lcore_to_socket_id(lcore_id), lcore_id,
+	/* Obtain unique name. */
+	ret = snprintf(fib_name, sizeof(fib_name),
+		"gt_fib_ipv6_%u_%u", lcore_id,
 		rte_atomic32_add_return(&identifier6, 1));
-	if (unlikely(lpm6_ud->lpm6 == NULL))
-		luaL_error(l, "gt: failed to initialize the IPv6 LPM table for Lua policies");
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_name));
+
+	ret = fib_create(&lpm6_ud->fib, fib_name,
+		rte_lcore_to_socket_id(lcore_id), 128,
+		lpm6_ud->max_rules, lpm6_ud->num_tbl8s);
+	if (unlikely(ret < 0)) {
+		luaL_error(l, "%s(): failed to initialize the IPv6 LPM table for Lua policies (errno=%d): %s",
+			__func__, -ret, strerror(-ret));
+	}
 
 	luaL_getmetatable(l, LUA_LPM6_UD_TNAME);
 	lua_setmetatable(l, -2);
@@ -350,19 +390,20 @@ l_lpm6_add(lua_State *l)
 	/* Fourth argument must be a Lua number. */
 	uint32_t label = luaL_checknumber(l, 4);
 
-	if (lua_gettop(l) != 4)
-		luaL_error(l, "Expected four arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 4)) {
+		luaL_error(l, "%s(): expected four arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	ret = rte_lpm6_add(lpm6_ud->lpm6, ipv6_addr->s6_addr, depth, label);
-	if (ret < 0) {
+	ret = fib_add(&lpm6_ud->fib, ipv6_addr->s6_addr, depth, label);
+	if (unlikely(ret < 0)) {
 		char addr_buf[INET6_ADDRSTRLEN];
 		if (unlikely(inet_ntop(AF_INET6, ipv6_addr, addr_buf,
-				INET6_ADDRSTRLEN) == NULL)) {
-			luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%d): %s",
+				sizeof(addr_buf)) == NULL)) {
+			luaL_error(l, "%s(): failed to add a network policy to the lpm6 table (errno=%d): %s",
 				__func__, -ret, strerror(-ret));
 		}
-		luaL_error(l, "lpm6: failed to add a network policy to the lpm6 table at %s(%s/%d, %d): %s",
+		luaL_error(l, "%s(%s/%d): failed to add a network policy to the lpm6 table (errno=%d): %s",
 			__func__, addr_buf, depth, -ret, strerror(-ret));
 	}
 
@@ -382,13 +423,13 @@ l_lpm6_del(lua_State *l)
 	/* Third argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 3);
 
-	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 3)) {
+		luaL_error(l, "%s(): expected three arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	lua_pushinteger(l, rte_lpm6_delete(lpm6_ud->lpm6,
-		ipv6_addr->s6_addr, depth));
-
+	lua_pushinteger(l, fib_delete(&lpm6_ud->fib, ipv6_addr->s6_addr,
+		depth));
 	return 1;
 }
 
@@ -398,16 +439,21 @@ l_lpm6_lookup(lua_State *l)
 	/* First argument must be of type struct lpm6_lua_userdata *. */
 	struct lpm6_lua_userdata *lpm6_ud =
 		luaL_checkudata(l, 1, LUA_LPM6_UD_TNAME);
+	uint32_t label;
+	int ret;
 
 	/* Second argument must be a struct in6_add. */
 	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 2);
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	lua_pushinteger(l, lpm_lookup_ipv6(lpm6_ud->lpm6, ipv6_addr));
-
+	ret = fib_lookup(&lpm6_ud->fib, ipv6_addr->s6_addr, &label);
+	if (ret < 0)
+		lua_pushinteger(l, ret);
+	lua_pushinteger(l, label);
 	return 1;
 }
 
@@ -431,13 +477,13 @@ ip6_mask_addr(uint8_t *ip, uint8_t depth)
 static inline void
 ip6_copy_addr(uint8_t *dst, const uint8_t *src)
 {
-	rte_memcpy(dst, src, RTE_LPM6_IPV6_ADDR_SIZE);
+	rte_memcpy(dst, src, sizeof(struct in6_addr));
 }
 
 static int
 l_ip6_mask_addr(lua_State *l)
 {
-	uint8_t masked_ip[RTE_LPM6_IPV6_ADDR_SIZE];
+	struct in6_addr masked_ip;
 	char buf[INET6_ADDRSTRLEN];
 
 	/* First argument must be a struct in6_add. */
@@ -445,20 +491,24 @@ l_ip6_mask_addr(lua_State *l)
 
 	/* Second argument must be a Lua number. */
 	uint8_t depth = luaL_checknumber(l, 2);
-	if ((depth == 0) || (depth > RTE_LPM6_MAX_DEPTH))
-		luaL_error(l, "Expected a depth value between 1 and 128, however it is %d",
-			depth);
+	if (unlikely(depth > 128)) {
+		luaL_error(l, "%s(): depth=%d must be in [0, 128]",
+			__func__, depth);
+	}
 
-	if (lua_gettop(l) != 2)
-		luaL_error(l, "Expected two arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
 
-	ip6_copy_addr(masked_ip, ipv6_addr->s6_addr);
-	ip6_mask_addr(masked_ip, depth);
+	ip6_copy_addr(masked_ip.s6_addr, ipv6_addr->s6_addr);
+	ip6_mask_addr(masked_ip.s6_addr, depth);
 
-	if (inet_ntop(AF_INET6, masked_ip, buf, sizeof(buf)) == NULL)
-		luaL_error(l, "net: %s: failed to convert a number to an IPv6 address (%s)\n",
-			__func__, strerror(errno));
+	if (unlikely(inet_ntop(AF_INET6, masked_ip.s6_addr, buf, sizeof(buf))
+			== NULL)) {
+		luaL_error(l, "%s(): failed to convert a number to an IPv6 address (errno=%d): %s",
+			__func__, errno, strerror(errno));
+	}
 
 	lua_pushstring(l, buf);
 	return 1;
@@ -475,8 +525,8 @@ l_lpm6_get_paras(lua_State *l)
 		luaL_error(l, "Expected one argument, however it got %d arguments",
 			lua_gettop(l));
 
-	lua_pushinteger(l, lpm6_ud->config.max_rules);
-	lua_pushinteger(l, lpm6_ud->config.number_tbl8s);
+	lua_pushinteger(l, lpm6_ud->max_rules);
+	lua_pushinteger(l, lpm6_ud->num_tbl8s);
 	return 2;
 }
 
@@ -501,14 +551,14 @@ static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 static int
 lpm_ud_gc(lua_State *l) {
 	struct lpm_lua_userdata *lpm_ud = lua_touserdata(l, 1);
-	rte_lpm_free(lpm_ud->lpm);
+	fib_free(&lpm_ud->fib);
 	return 0;
 }
 
 static int
 lpm6_ud_gc(lua_State *l) {
 	struct lpm6_lua_userdata *lpm6_ud = lua_touserdata(l, 1);
-	rte_lpm6_free(lpm6_ud->lpm6);
+	fib_free(&lpm6_ud->fib);
 	return 0;
 }
 
