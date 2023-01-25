@@ -27,8 +27,7 @@
 #include <rte_atomic.h>
 
 #include "gatekeeper_net.h"
-#include "gatekeeper_lpm.h"
-#include "gatekeeper_rib.h"
+#include "gatekeeper_fib.h"
 #include "seqlock.h"
 
 enum gk_fib_action {
@@ -202,20 +201,14 @@ struct gk_lpm {
 	/* Use a spin lock to edit the FIB table. */
 	rte_spinlock_t  lock;
 
-	/* The IPv4 RIB. */
-	struct rib_head rib;
-
-	/* The IPv4 FIB. */
-	struct rte_lpm  *lpm;
+	/* The IPv4 RIB and FIB. */
+	struct fib_head fib;
 
 	/* The IPv4 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl;
 
-	/* The IPv6 RIB. */
-	struct rib_head rib6;
-
-	/* The IPv6 FIB. */
-	struct rte_lpm6 *lpm6;
+	/* The IPv6 RIB and FIB. */
+	struct fib_head fib6;
 
 	/* The IPv6 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl6;
@@ -227,6 +220,18 @@ struct gk_lpm {
 	uint32_t        last_ipv4_index;
 	uint32_t        last_ipv6_index;
 };
+
+static inline struct rib_head *
+rib4_from_ltbl(struct gk_lpm *ltbl)
+{
+	return fib_get_rib(&ltbl->fib);
+}
+
+static inline struct rib_head *
+rib6_from_ltbl(struct gk_lpm *ltbl)
+{
+	return fib_get_rib(&ltbl->fib6);
+}
 
 struct ip_prefix {
 	const char    *str;

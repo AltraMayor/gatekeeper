@@ -27,7 +27,6 @@
 #include "gatekeeper_ipip.h"
 #include "gatekeeper_ggu.h"
 #include "gatekeeper_mailbox.h"
-#include "gatekeeper_lpm.h"
 #include "gatekeeper_sol.h"
 #include "gatekeeper_ratelimit.h"
 #include "gatekeeper_log_ratelimit.h"

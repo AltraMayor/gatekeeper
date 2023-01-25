@@ -36,7 +36,6 @@
 #include <rte_cycles.h>
 #include <rte_malloc.h>
 #include <rte_icmp.h>
-#include <rte_vect.h>
 #include <rte_common.h>
 
 #include "gatekeeper_acl.h"
@@ -1485,50 +1484,26 @@ send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
 }
 
 static void
-lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows, int num_flows,
+lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow *flows[], int num_flows,
 	struct gk_fib *fibs[])
 {
+	const uint8_t *addresses[num_flows];
+	uint32_t next_hops[num_flows];
 	int i;
-	/* The batch size for IPv4 LPM table lookup. */
-	const uint8_t FWDSTEP = 4;
-	const uint32_t default_nh = -1;
-	int k = RTE_ALIGN_FLOOR(num_flows, FWDSTEP);
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
-	if (num_flows == 0)
+	if (unlikely(num_flows == 0))
 		return;
 
-	for (i = 0; i < k; i += FWDSTEP) {
-		int j;
-		const __m128i bswap_mask = _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11,
-			4, 5, 6, 7, 0, 1, 2, 3);
-		__m128i dip = _mm_set_epi32(flows[i + 3]->f.v4.dst.s_addr,
-			flows[i + 2]->f.v4.dst.s_addr,
-			flows[i + 1]->f.v4.dst.s_addr,
-			flows[i]->f.v4.dst.s_addr);
-		rte_xmm_t dst;
+	for (i = 0; i < num_flows; i++)
+		addresses[i] = (const uint8_t *)&flows[i]->f.v4.dst.s_addr;
 
-		/* Byte swap 4 IPV4 addresses. */
-		dip = _mm_shuffle_epi8(dip, bswap_mask);
+	fib_lookup_bulk(&ltbl->fib, addresses, next_hops, num_flows);
 
-		rte_lpm_lookupx4(ltbl->lpm, dip, dst.u32, default_nh);
-
-		for (j = 0; j < FWDSTEP; j++) {
-			if (dst.u32[j] != default_nh) {
-				fibs[i + j] = &ltbl->fib_tbl[dst.u32[j]];
-				rte_prefetch0(fibs[i + j]);
-			} else
-				fibs[i + j] = NULL;
-		}
-	}
-
-	RTE_VERIFY(i == k);
-
-	for (; i < num_flows; i++) {
-		int fib_id = lpm_lookup_ipv4(ltbl->lpm,
-			flows[i]->f.v4.dst.s_addr);
-		if (fib_id >= 0) {
+	for (i = 0; i < num_flows; i++) {
+		uint32_t fib_id = next_hops[i];
+		if (fib_id != FIB_NO_NH) {
 			fibs[i] = &ltbl->fib_tbl[fib_id];
 			rte_prefetch0(fibs[i]);
 		} else
@@ -1537,29 +1512,27 @@ lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow **flows, int num_flows,
 }
 
 static void
-lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow **flows,
-	int num_flows, struct gk_fib *fibs[])
+lookup_fib6_bulk(struct gk_lpm *ltbl, struct ip_flow *flows[], int num_flows,
+	struct gk_fib *fibs[])
 {
+	const uint8_t *addresses[num_flows];
+	uint32_t next_hops[num_flows];
 	int i;
-	uint8_t dst_ip[num_flows][RTE_LPM6_IPV6_ADDR_SIZE];
-	int32_t hop[num_flows];
 
 	RTE_BUILD_BUG_ON(sizeof(*fibs[0]) > RTE_CACHE_LINE_SIZE);
 
-	if (num_flows == 0)
+	if (unlikely(num_flows == 0))
 		return;
 
-	for (i = 0; i < num_flows; i++) {
-		memcpy(&dst_ip[i][0], flows[i]->f.v6.dst.s6_addr,
-			sizeof(dst_ip[i]));
-	}
+	for (i = 0; i < num_flows; i++)
+		addresses[i] = flows[i]->f.v6.dst.s6_addr;
 
-	rte_lpm6_lookup_bulk_func(ltbl->lpm6, dst_ip, hop, num_flows);
+	fib_lookup_bulk(&ltbl->fib6, addresses, next_hops, num_flows);
 
 	for (i = 0; i < num_flows; i++) {
-		if (hop[i] != -1) {
-			fibs[i] = &ltbl->fib_tbl6[hop[i]];
-
+		uint32_t fib_id = next_hops[i];
+		if (fib_id != FIB_NO_NH) {
+			fibs[i] = &ltbl->fib_tbl6[fib_id];
 			rte_prefetch0(fibs[i]);
 		} else
 			fibs[i] = NULL;
@@ -2715,15 +2688,11 @@ alloc_gk_conf(void)
 static void
 destroy_gk_lpm(struct gk_lpm *ltbl)
 {
-	rib_free(&ltbl->rib);
-	destroy_ipv4_lpm(ltbl->lpm);
-	ltbl->lpm = NULL;
+	fib_free(&ltbl->fib);
 	rte_free(ltbl->fib_tbl);
 	ltbl->fib_tbl = NULL;
 
-	rib_free(&ltbl->rib6);
-	destroy_ipv6_lpm(ltbl->lpm6);
-	ltbl->lpm6 = NULL;
+	fib_free(&ltbl->fib6);
 	rte_free(ltbl->fib_tbl6);
 	ltbl->fib_tbl6 = NULL;
 }
