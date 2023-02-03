@@ -259,6 +259,60 @@ l_lpm_lookup(lua_State *l)
 }
 
 static int
+debug_lookup(lua_State *l, struct fib_head *fib, const uint8_t *address)
+{
+	uint32_t rib_label, fib_label;
+	int rib_ret, fib_ret;
+
+	rib_ret = rib_lookup(fib_get_rib(fib), address, &rib_label);
+	if (unlikely(rib_ret < 0 && rib_ret != -ENOENT)) {
+		luaL_error(l, "%s(): RIB lookup failed (errno=%d): %s",
+			__func__, -rib_ret, strerror(-rib_ret));
+	}
+
+	fib_ret = fib_lookup(fib, address, &fib_label);
+	if (unlikely(fib_ret < 0 && fib_ret != -ENOENT)) {
+		luaL_error(l, "%s(): RIB lookup (ret=%d, label=%d); FIB lookup failed (errno=%d): %s",
+			__func__, rib_ret, rib_label,
+			-fib_ret, strerror(-fib_ret));
+	}
+
+	if (rib_ret == 0) {
+		if (likely(fib_ret == 0 && rib_label == fib_label))
+			return 0;
+	} else {
+		if (likely(rib_ret == -ENOENT && fib_ret == -ENOENT))
+			return 0;
+	}
+
+	luaL_error(l, "%s(): RIB lookup (ret=%d, label=%d) != FIB lookup (ret=%d, label=%d)",
+		__func__, rib_ret, rib_label, fib_ret, fib_label);
+	return -EFAULT;
+}
+
+static int
+l_lpm_debug_lookup(lua_State *l)
+{
+	/* First argument must be of type struct lpm_lua_userdata *. */
+	struct lpm_lua_userdata *lpm_ud =
+		luaL_checkudata(l, 1, LUA_LPM_UD_TNAME);
+
+	/*
+	 * Second argument must be a Lua number.
+	 * @ip must be in network order.
+	 */
+	uint32_t ip = luaL_checknumber(l, 2);
+
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
+
+	lua_pushinteger(l, debug_lookup(l, &lpm_ud->fib, (uint8_t *)&ip));
+	return 1;
+}
+
+static int
 l_ip_mask_addr(lua_State *l)
 {
 	uint32_t masked_ip;
@@ -457,6 +511,25 @@ l_lpm6_lookup(lua_State *l)
 	return 1;
 }
 
+static int
+l_lpm6_debug_lookup(lua_State *l)
+{
+	/* First argument must be of type struct lpm6_lua_userdata *. */
+	struct lpm6_lua_userdata *lpm6_ud =
+		luaL_checkudata(l, 1, LUA_LPM6_UD_TNAME);
+
+	/* Second argument must be a struct in6_add. */
+	struct in6_addr *ipv6_addr = get_ipv6_addr(l, 2);
+
+	if (unlikely(lua_gettop(l) != 2)) {
+		luaL_error(l, "%s(): expected two arguments, however it got %d arguments",
+			__func__, lua_gettop(l));
+	}
+
+	lua_pushinteger(l, debug_lookup(l, &lpm6_ud->fib, ipv6_addr->s6_addr));
+	return 1;
+}
+
 /*
  * Takes an array of uint8_t (IPv6 address) and masks it using the depth.
  */
@@ -531,20 +604,22 @@ l_lpm6_get_paras(lua_State *l)
 }
 
 static const struct luaL_reg lpmlib_lua_c_funcs [] = {
-	{"str_to_prefix",  l_str_to_prefix},
-	{"new_lpm",        l_new_lpm},
-	{"lpm_add",        l_lpm_add},
-	{"lpm_del",        l_lpm_del},
-	{"lpm_lookup",     l_lpm_lookup},
-	{"ip_mask_addr",   l_ip_mask_addr},
-	{"lpm_get_paras",  l_lpm_get_paras},
-	{"str_to_prefix6", l_str_to_prefix6},
-	{"new_lpm6",       l_new_lpm6},
-	{"lpm6_add",       l_lpm6_add},
-	{"lpm6_del",       l_lpm6_del},
-	{"lpm6_lookup",    l_lpm6_lookup},
-	{"ip6_mask_addr",  l_ip6_mask_addr},
-	{"lpm6_get_paras", l_lpm6_get_paras},
+	{"str_to_prefix",     l_str_to_prefix},
+	{"new_lpm",           l_new_lpm},
+	{"lpm_add",           l_lpm_add},
+	{"lpm_del",           l_lpm_del},
+	{"lpm_lookup",        l_lpm_lookup},
+	{"ip_mask_addr",      l_ip_mask_addr},
+	{"lpm_get_paras",     l_lpm_get_paras},
+	{"lpm_debug_lookup",  l_lpm_debug_lookup},
+	{"str_to_prefix6",    l_str_to_prefix6},
+	{"new_lpm6",          l_new_lpm6},
+	{"lpm6_add",          l_lpm6_add},
+	{"lpm6_del",          l_lpm6_del},
+	{"lpm6_lookup",       l_lpm6_lookup},
+	{"ip6_mask_addr",     l_ip6_mask_addr},
+	{"lpm6_get_paras",    l_lpm6_get_paras},
+	{"lpm6_debug_lookup", l_lpm6_debug_lookup},
 	{NULL,             NULL}	/* Sentinel. */
 };
 
