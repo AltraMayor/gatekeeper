@@ -23,14 +23,14 @@ SRCS-y := main/main.c
 SRCS-y += config/static.c config/dynamic.c
 SRCS-y += cps/main.c cps/kni.c cps/elf.c cps/rd.c
 SRCS-y += ggu/main.c
-SRCS-y += gk/main.c gk/fib.c gk/bpf.c
+SRCS-y += gk/main.c gk/rt.c gk/bpf.c
 SRCS-y += gt/main.c gt/lua_lpm.c
 SRCS-y += lls/main.c lls/cache.c lls/arp.c lls/nd.c
 SRCS-y += sol/main.c
 
 # Libraries.
 SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
-	lib/launch.c lib/lpm.c lib/rib.c lib/acl.c lib/varip.c \
+	lib/launch.c lib/rib.c lib/fib.c lib/acl.c lib/varip.c \
 	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c lib/coro.c
 
 BUILD_DIR := build

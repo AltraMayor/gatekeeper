@@ -27,7 +27,6 @@
 #include <rte_atomic.h>
 #include <rte_ip_frag.h>
 
-#include "gatekeeper_fib.h"
 #include "gatekeeper_config.h"
 
 #define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"

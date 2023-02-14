@@ -115,7 +115,7 @@ get_prefix_fib_locked(struct route_update *update, struct gk_lpm *ltbl,
 	int ret;
 
 	if (update->family == AF_INET) {
-		ret = rib_is_rule_present(&ltbl->rib,
+		ret = rib_is_rule_present(rib4_from_ltbl(ltbl),
 			(uint8_t *)&update->prefix_info.addr.ip.v4.s_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
@@ -129,7 +129,7 @@ get_prefix_fib_locked(struct route_update *update, struct gk_lpm *ltbl,
 			return 0;
 		}
 	} else if (likely(update->family == AF_INET6)) {
-		ret = rib_is_rule_present(&ltbl->rib6,
+		ret = rib_is_rule_present(rib6_from_ltbl(ltbl),
 			update->prefix_info.addr.ip.v6.s6_addr,
 			update->prefix_info.len, &fib_id);
 		if (ret < 0) {
@@ -249,7 +249,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		 * Obtain @gw_fib.
 		 */
 		if (update->family == AF_INET) {
-			ret = rib_lookup(&ltbl->rib,
+			ret = rib_lookup(rib4_from_ltbl(ltbl),
 				(uint8_t *)&update->gw.ip.v4.s_addr, &next_hop);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
@@ -261,7 +261,7 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 			}
 			gw_fib = &ltbl->fib_tbl[next_hop];
 		} else if (likely(update->family == AF_INET6)) {
-			ret = rib_lookup(&ltbl->rib6,
+			ret = rib_lookup(rib6_from_ltbl(ltbl),
 				update->gw.ip.v6.s6_addr, &next_hop);
 			if (ret < 0) {
 				if (ret == -ENOENT) {
@@ -824,7 +824,7 @@ rd_getroute_family(const char *daemon, struct cps_config *cps_conf,
 	int ret;
 
 	spinlock_lock_with_yield(lock, cps_conf);
-	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0);
+	ret = rib_longer_iterator_state_init(&state, rib, NULL, 0, false);
 	if (unlikely(ret < 0)) {
 		rte_spinlock_unlock_tm(lock);
 		G_LOG(ERR, "%s(): failed to initialize the %s RIB iterator (errno=%i): %s\n",
@@ -955,8 +955,9 @@ rd_getroute(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 			}
 		}
 
-		*err = rd_getroute_family("IPv4", cps_conf, &ltbl->rib,
-			ltbl->fib_tbl, &ltbl->lock, AF_INET, batch, req);
+		*err = rd_getroute_family("IPv4", cps_conf,
+			rib4_from_ltbl(ltbl), ltbl->fib_tbl, &ltbl->lock,
+			AF_INET, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}
@@ -971,8 +972,9 @@ ipv6:
 			}
 		}
 
-		*err = rd_getroute_family("IPv6", cps_conf, &ltbl->rib6,
-			ltbl->fib_tbl6, &ltbl->lock, AF_INET6, batch, req);
+		*err = rd_getroute_family("IPv6", cps_conf,
+			rib6_from_ltbl(ltbl), ltbl->fib_tbl6, &ltbl->lock,
+			AF_INET6, batch, req);
 		if (*err < 0)
 			goto free_batch;
 	}

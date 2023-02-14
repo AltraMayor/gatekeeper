@@ -833,7 +833,8 @@ scope:
 
 int
 rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
-	const struct rib_head *rib, const uint8_t *address, uint8_t depth)
+	const struct rib_head *rib, const uint8_t *address, uint8_t depth,
+	bool stop_at_children)
 {
 	int ret;
 
@@ -853,6 +854,7 @@ rib_longer_iterator_state_init(struct rib_longer_iterator_state *state,
 
 	state->rib = rib;
 	state->min_depth = depth;
+	state->stop_at_children = stop_at_children;
 	state->next_depth = depth;
 	state->has_ended = false;
 	scope_longer_iterator(state);
@@ -966,6 +968,13 @@ __rib_longer_iterator_next(struct rib_longer_iterator_state *state,
 		state->rule->depth = info.depth;
 		state->rule->next_hop = cur_node->next_hop;
 		/* Still missing the next rule after the found rule. */
+
+		/*
+		 * The test info.depth > state->min_depth is needed to
+		 * avoid only listing the parent prefix if it exists.
+		 */
+		if (state->stop_at_children && info.depth > state->min_depth)
+			return;
 	}
 
 	__rib_longer_iterator_next(state, cur_node->branch[false], info);
@@ -1003,6 +1012,129 @@ rib_longer_iterator_next(struct rib_longer_iterator_state *state,
 found:
 	/* A rule was found. */
 	return 0;
+}
+
+static inline bool
+is_within_scope(const struct rib_head *rib, rib_address_t haddr, uint8_t depth,
+	rib_address_t test_haddr)
+{
+	return !((haddr ^ test_haddr) &
+		lshift(n_one_bits(depth), rib->max_length - depth));
+}
+
+int
+__rib_longer_iterator_seek(struct rib_longer_iterator_state *state,
+	rib_address_t haddr, uint8_t depth)
+{
+	if (unlikely(depth > state->rib->max_length))
+		return -EINVAL;
+
+	if (unlikely(depth < state->min_depth))
+		return -EINVAL;
+
+	if (unlikely(!is_within_scope(state->rib, state->next_address,
+			state->min_depth, haddr)))
+		return -EINVAL;
+
+	/*
+	 * It is necessary to mask @state->next_address because
+	 * the iterator compares it with the prefixes of the branches of
+	 * the RIB to avoid previously visited prefixes. And these comparisons
+	 * are done without masking.
+	 */
+	mask_haddr(state->rib, &haddr, depth);
+
+	state->next_address = haddr;
+	state->next_depth = depth;
+	state->has_ended = false;
+	return 0;
+}
+
+int
+rib_longer_iterator_seek(struct rib_longer_iterator_state *state,
+	const uint8_t *address, uint8_t depth)
+{
+	rib_address_t haddr;
+	int ret = read_addr(state->rib, &haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+
+	return __rib_longer_iterator_seek(state, haddr, depth);
+}
+
+int
+rib_longer_iterator_skip_branch(struct rib_longer_iterator_state *state,
+	const uint8_t *address, uint8_t depth)
+{
+	rib_address_t haddr, haddr2, backup_next_address;
+	uint8_t backup_next_depth;
+	bool backup_has_ended;
+	struct rib_iterator_rule rule;
+	int ret;
+
+	if (unlikely(depth > state->rib->max_length))
+		return -EINVAL;
+
+	ret = read_addr(state->rib, &haddr, address);
+	if (unlikely(ret < 0))
+		return ret;
+	/* Obtain the last possible prefix of the branch. */
+	haddr |= n_one_bits(state->rib->max_length - depth);
+
+	backup_next_address = state->next_address;
+	backup_next_depth = state->next_depth;
+	backup_has_ended = state->has_ended;
+
+	ret = __rib_longer_iterator_seek(state, haddr, state->rib->max_length);
+	if (unlikely(ret < 0)) {
+		G_LOG(CRIT, "%s(): bug: failed to seek (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		return -EFAULT;
+	}
+
+	ret = rib_longer_iterator_next(state, &rule);
+	if (ret == -ENOENT) {
+		/*
+		 * There's no more rules after the prefix @haddr/@depth, so
+		 * there is nothing else to do.
+		 */
+		return 0;
+	}
+	if (unlikely(ret < 0)) {
+		G_LOG(CRIT, "%s(): bug: failed to iterate forward (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		goto restore;
+	}
+
+	ret = read_addr(state->rib, &haddr2, (uint8_t *)&rule.address_no);
+	if (unlikely(ret < 0)) {
+		G_LOG(CRIT, "%s(): bug: cannot read rule (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		goto restore;
+	}
+
+	if (unlikely(rule.depth == state->rib->max_length && haddr == haddr2)) {
+		/*
+		 * The last possible prefix of the branch is present in @rib.
+		 * Therefore, the iterator has already skipped the branch.
+		 */
+		return 0;
+	}
+
+	/* @rule has the first rule after the branch, so go back to it. */
+	ret = __rib_longer_iterator_seek(state, haddr2, rule.depth);
+	if (unlikely(ret < 0)) {
+		G_LOG(CRIT, "%s(): bug: cannot go back (errno=%i): %s\n",
+			__func__, -ret, strerror(-ret));
+		goto restore;
+	}
+	return 0;
+
+restore:
+	state->next_address = backup_next_address;
+	state->next_depth = backup_next_depth;
+	state->has_ended = backup_has_ended;
+	return -EFAULT;
 }
 
 int
