@@ -1087,6 +1087,13 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	struct neighbor_hash_table *neigh_ht;
 	struct gatekeeper_if *iface;
 
+	if (unlikely(ip_prefix->addr.proto != gw_addr->proto)) {
+		G_LOG(ERR, "%s(%s): IP prefix protocol (%hu) does not match the gateway address protocol (%hu)\n",
+			__func__, ip_prefix->str, ip_prefix->addr.proto,
+			gw_addr->proto);
+		return -EINVAL;
+	}
+
 	if (action == GK_FWD_GATEWAY_FRONT_NET)
 		iface = &gk_conf->net->front;
 	else if (likely(action == GK_FWD_GATEWAY_BACK_NET))
@@ -1138,6 +1145,56 @@ put_ether_cache:
 	return ret;
 }
 
+/*
+ * Return 0 when @gw_addr is not included in @prefix.
+ * If not, or if there is an error, return a negative number.
+ */
+static int
+check_gateway_prefix(const struct ip_prefix *prefix, struct ipaddr *gw_addr)
+{
+	if (unlikely(prefix->addr.proto != gw_addr->proto)) {
+		G_LOG(ERR, "%s(%s): IP prefix protocol (%hu) does not match the gateway address protocol (%hu)\n",
+			__func__, prefix->str, prefix->addr.proto,
+			gw_addr->proto);
+		return -EINVAL;
+	}
+
+	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4) {
+		uint32_t ip4_mask =
+			rte_cpu_to_be_32(~0ULL << (32 - prefix->len));
+		if ((prefix->addr.ip.v4.s_addr ^
+				gw_addr->ip.v4.s_addr) & ip4_mask)
+			return 0;
+	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)) {
+		uint64_t ip6_mask;
+		uint64_t *pf = (uint64_t *)prefix->addr.ip.v6.s6_addr;
+		uint64_t *gw = (uint64_t *)gw_addr->ip.v6.s6_addr;
+
+		if (prefix->len == 0) {
+			/* Do nothing. */
+		} else if (prefix->len <= 64) {
+			ip6_mask = rte_cpu_to_be_64(
+				~0ULL << (64 - prefix->len));
+			if ((pf[0] ^ gw[0]) & ip6_mask)
+				return 0;
+		} else {
+			ip6_mask = rte_cpu_to_be_64(
+				~0ULL << (128 - prefix->len));
+			if ((pf[0] != gw[0]) ||
+					((pf[1] ^ gw[1]) & ip6_mask))
+				return 0;
+		}
+	} else {
+		G_LOG(CRIT, "%s(%s): bug: unknown IP type %hu\n",
+			__func__, prefix->str, gw_addr->proto);
+		return -EINVAL;
+	}
+
+	G_LOG(ERR, "%s(%s): the gateway address is included in the prefix, but gateways of Grantor entries cannot be neighbors of Gatekeeper servers (see issue #267 for details)\n",
+		__func__, prefix->str);
+	return -EPERM;
+}
+
 #define MAX_NUM_GRANTORS_PER_ENTRY \
 	((1 << (RTE_SIZEOF_FIELD(struct gk_fib, u.grantor.set->num_entries) * 8)) - 1)
 
@@ -1176,12 +1233,32 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 	for (i = 0; i < num_addrs; i++) {
 		struct neighbor_hash_table *neigh_ht;
 
-		if (unlikely(gt_addrs[i].proto != ip_prefix->addr.proto)) {
-			G_LOG(ERR, "%s(%s): failed to initialize a Grantor FIB entry, since the Grantor IP and the given IP prefix have different IP versions\n",
-				__func__, ip_prefix->str);
+		if (unlikely(ip_prefix->addr.proto != gt_addrs[i].proto)) {
+			G_LOG(ERR, "%s(%s): IP prefix protocol (%hu) does not match the Grantor address protocol (%hu)\n",
+				__func__, ip_prefix->str,
+				ip_prefix->addr.proto, gt_addrs[i].proto);
 			ret = -EINVAL;
 			goto put_ether_cache;
 		}
+
+		/*
+		 * Verify that the gateway IP address @gw_addrs[i] is NOT
+		 * included in the prefix.
+		 *
+		 * This verification is needed because when a Gatekeeper
+		 * server forwards a packet directly to a protected
+		 * destination, it always forwards the packet to
+		 * the gateway of the associated Grantor server
+		 * (see gk_process_bpf() for details).  Thus, the gateway
+		 * cannot be a neighbor, otherwise the packets are not sent
+		 * directly to the protected destination.
+		 *
+		 * Issue #267 discusses the assumptions behind this
+		 * verification.
+		 */
+		ret = check_gateway_prefix(ip_prefix, &gw_addrs[i]);
+		if (unlikely(ret < 0))
+			goto put_ether_cache;
 
 		/* Find the neighbor FIB entry for this gateway. */
 		neigh_fibs[i] = find_fib_entry_for_neighbor_locked(
@@ -1345,77 +1422,6 @@ add_fib_entry_locked(const struct ip_prefix *prefix,
 		G_LOG(ERR, "%s(%s): invalid FIB action %u\n",
 			__func__, prefix->str, action);
 		return -EINVAL;
-	}
-
-	return 0;
-}
-
-/*
- * Return 0 when @gw_addr is not included in @prefix.
- * If not, or if there is an error, return a negative number.
- *
- * Issue #267 discusses the assumptions behind this verification.
- */
-static int
-check_gateway_prefix(const struct ip_prefix *prefix, struct ipaddr *gw_addr)
-{
-	if (unlikely(prefix->addr.proto != gw_addr->proto)) {
-		G_LOG(ERR, "%s(%s): IP prefix protocol (%hu) does not match the gateway address protocol (%hu)\n",
-			__func__, prefix->str, prefix->addr.proto,
-			gw_addr->proto);
-		return -EINVAL;
-	}
-
-	if (gw_addr->proto == RTE_ETHER_TYPE_IPV4) {
-		uint32_t ip4_mask =
-			rte_cpu_to_be_32(~0ULL << (32 - prefix->len));
-		if ((prefix->addr.ip.v4.s_addr ^
-				gw_addr->ip.v4.s_addr) & ip4_mask)
-			return 0;
-	} else if (likely(gw_addr->proto == RTE_ETHER_TYPE_IPV6)) {
-		uint64_t ip6_mask;
-		uint64_t *pf = (uint64_t *)prefix->addr.ip.v6.s6_addr;
-		uint64_t *gw = (uint64_t *)gw_addr->ip.v6.s6_addr;
-
-		if (prefix->len == 0) {
-			/* Do nothing. */
-		} else if (prefix->len <= 64) {
-			ip6_mask = rte_cpu_to_be_64(
-				~0ULL << (64 - prefix->len));
-			if ((pf[0] ^ gw[0]) & ip6_mask)
-				return 0;
-		} else {
-			ip6_mask = rte_cpu_to_be_64(
-				~0ULL << (128 - prefix->len));
-			if ((pf[0] != gw[0]) ||
-					((pf[1] ^ gw[1]) & ip6_mask))
-				return 0;
-		}
-	} else {
-		G_LOG(CRIT, "%s(%s): bug: unknown IP type %hu\n",
-			__func__, prefix->str, gw_addr->proto);
-		return -EINVAL;
-	}
-
-	G_LOG(ERR, "%s(%s): gateway address is in prefix, so gateway is not a neighbor\n",
-		__func__, prefix->str);
-	return -EPERM;
-}
-
-/*
- * Verify that the IP addresses of gateway FIB entries are not included in
- * the prefix.
- */
-static int
-check_gateway_prefixes(const struct ip_prefix *prefix_info,
-	struct ipaddr *gw_addrs, unsigned int num_addrs)
-{
-	unsigned int i;
-
-	for (i = 0; i < num_addrs; i++) {
-		int ret = check_gateway_prefix(prefix_info, &gw_addrs[i]);
-		if (unlikely(ret < 0))
-			return ret;
 	}
 
 	return 0;
@@ -1625,10 +1631,6 @@ add_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 			__func__, prefix_info->str);
 	}
 
-	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
-	if (unlikely(ret < 0))
-		return ret;
-
 	ret = check_prefix_exists_locked(prefix_info, gk_conf, NULL);
 	if (ret != -ENOENT) {
 		G_LOG(ERR, "%s(%s): prefix already exists or error occurred\n",
@@ -1670,12 +1672,8 @@ update_fib_entry_numerical(const struct ip_prefix *prefix_info,
 {
 	int fib_id;
 	struct gk_fib *cur_fib;
+
 	int ret = check_prefix(prefix_info);
-
-	if (unlikely(ret < 0))
-		return ret;
-
-	ret = check_gateway_prefixes(prefix_info, gw_addrs, num_addrs);
 	if (unlikely(ret < 0))
 		return ret;
 
@@ -1691,7 +1689,6 @@ update_fib_entry_numerical(const struct ip_prefix *prefix_info,
 	ret = add_fib_entry_locked(prefix_info, gt_addrs, gw_addrs, num_addrs,
 		action, props, gk_conf, cur_fib);
 	rte_spinlock_unlock_tm(&gk_conf->lpm_tbl.lock);
-
 	return ret;
 }
 
