@@ -90,31 +90,55 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	return integer_log_base_2(delta_time);
 }
 
-static int
-extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
+static inline bool
+is_addr6_mc(const struct in6_addr *addr6)
 {
-	int ret = 0;
+	/*
+	 * @addr6 is multicast.
+	 * See RFC 4291 section "2.7. Multicast Addresses".
+	 */
+	return addr6->s6_addr[0] == 0xFF;
+}
+
+static inline bool
+is_addr6_ll(const struct in6_addr *addr6)
+{
+	const uint8_t ll_prefix[] = {0xFE, 0x80, 0, 0, 0, 0, 0, 0};
+	const uint64_t *pa64 = (const uint64_t *)addr6->s6_addr;
+	const uint64_t *pb64 = (const uint64_t *)ll_prefix;
+
+	RTE_BUILD_BUG_ON(sizeof(ll_prefix) != sizeof(uint64_t));
+
+	/*
+	 * @addr6 is link-local.
+	 * See RFC 4291 section "2.5.6. Link-Local IPv6 Unicast
+	 * Addresses".
+	 */
+	return *pa64 == *pb64;
+}
+
+static int
+extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet,
+	struct rte_mbuf **arp_bufs, uint16_t *num_arp, struct acl_search *acl6)
+{
 	uint16_t ether_type;
 	size_t ether_len;
-	struct rte_ether_hdr *eth_hdr;
-	struct rte_ipv4_hdr *ip4_hdr;
-	struct rte_ipv6_hdr *ip6_hdr;
-	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
 
-	eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
+	uint16_t pkt_len = rte_pktmbuf_data_len(pkt);
+	struct rte_ether_hdr *eth_hdr =
+		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
 	ether_type = rte_be_to_cpu_16(pkt_in_skip_l2(pkt, eth_hdr,
 		&packet->l3_hdr));
 	ether_len = pkt_in_l2_hdr_len(pkt);
 
 	switch (ether_type) {
-	case RTE_ETHER_TYPE_IPV4:
-		if (pkt_len < ether_len + sizeof(*ip4_hdr)) {
-			packet->flow.proto = 0;
-			G_LOG(NOTICE,
-				"Packet is too short to be IPv4 (%" PRIu16 ")\n",
-				pkt_len);
-			ret = -1;
-			goto out;
+	case RTE_ETHER_TYPE_IPV4: {
+		struct rte_ipv4_hdr *ip4_hdr;
+
+		if (unlikely(pkt_len < ether_len + sizeof(*ip4_hdr))) {
+			G_LOG(DEBUG, "%s(): packet is too short to be IPv4 (%i)\n",
+				__func__, pkt_len);
+			return -EINVAL;
 		}
 
 		ip4_hdr = packet->l3_hdr;
@@ -122,15 +146,15 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 		packet->flow.f.v4.src.s_addr = ip4_hdr->src_addr;
 		packet->flow.f.v4.dst.s_addr = ip4_hdr->dst_addr;
 		break;
+	}
 
-	case RTE_ETHER_TYPE_IPV6:
-		if (pkt_len < ether_len + sizeof(*ip6_hdr)) {
-			packet->flow.proto = 0;
-			G_LOG(NOTICE,
-				"Packet is too short to be IPv6 (%" PRIu16 ")\n",
-				pkt_len);
-			ret = -1;
-			goto out;
+	case RTE_ETHER_TYPE_IPV6: {
+		struct rte_ipv6_hdr *ip6_hdr;
+
+		if (unlikely(pkt_len < ether_len + sizeof(*ip6_hdr))) {
+			G_LOG(DEBUG, "%s(): packet is too short to be IPv6 (%i)\n",
+				__func__, pkt_len);
+			return -EINVAL;
 		}
 
 		ip6_hdr = packet->l3_hdr;
@@ -139,22 +163,26 @@ extract_packet_info(struct rte_mbuf *pkt, struct ipacket *packet)
 			sizeof(packet->flow.f.v6.src.s6_addr));
 		rte_memcpy(packet->flow.f.v6.dst.s6_addr, ip6_hdr->dst_addr,
 			sizeof(packet->flow.f.v6.dst.s6_addr));
-		break;
 
-	case RTE_ETHER_TYPE_ARP:
-		packet->flow.proto = RTE_ETHER_TYPE_ARP;
-		ret = -1;
-		break;
-
-	default:
-		packet->flow.proto = 0;
-		log_unknown_l2("gk", ether_type);
-		ret = -1;
+		if (unlikely(is_addr6_mc(&packet->flow.f.v6.dst) ||
+				is_addr6_ll(&packet->flow.f.v6.dst))) {
+			add_pkt_acl(acl6, pkt);
+			return -ENOENT;
+		}
 		break;
 	}
-out:
+
+	case RTE_ETHER_TYPE_ARP:
+		arp_bufs[(*num_arp)++] = pkt;
+		return -ENOENT;
+
+	default:
+		/* Drop non-IP and non-ARP packets. */
+		log_unknown_l2("gk", ether_type);
+		return -EINVAL;
+	}
 	packet->pkt = pkt;
-	return ret;
+	return 0;
 }
 
 static inline uint64_t
@@ -1804,7 +1832,7 @@ prefetch_flow_entry(struct flow_entry *fe)
 
 static void
 parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
-	struct rte_mbuf **arp_bufs, uint16_t *num_arp,
+	struct rte_mbuf **arp_bufs, uint16_t *num_arp, struct acl_search *acl6,
 	bool ipv4_configured_front, bool ipv6_configured_front,
 	struct ip_flow **flow_arr, uint32_t *flow_hash_val_arr,
 	int *num_ip_flows, struct gatekeeper_if *front,
@@ -1815,19 +1843,12 @@ parse_packet(struct ipacket *packet, struct rte_mbuf *pkt,
 
 	stats->tot_pkts_size += rte_pktmbuf_pkt_len(pkt);
 
-	ret = extract_packet_info(pkt, packet);
-	if (ret < 0) {
-		if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
-			stats->tot_pkts_num_distributed++;
-			stats->tot_pkts_size_distributed +=
-				rte_pktmbuf_pkt_len(pkt);
-
-			arp_bufs[(*num_arp)++] = pkt;
-			return;
-		}
-
-		/* Drop non-IP and non-ARP packets. */
-		drop_packet_front(pkt, instance);
+	ret = extract_packet_info(pkt, packet, arp_bufs, num_arp, acl6);
+	if (unlikely(ret < 0)) {
+		stats->tot_pkts_num_distributed++;
+		stats->tot_pkts_size_distributed += rte_pktmbuf_pkt_len(pkt);
+		if (unlikely(ret == -EINVAL))
+			drop_packet_front(pkt, instance);
 		return;
 	}
 
@@ -1912,16 +1933,18 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		rte_prefetch0(rte_pktmbuf_mtod_offset(
 			rx_bufs[i + PREFETCH_OFFSET], void *, 0));
 
-		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
-			&num_arp, ipv4_configured_front, ipv6_configured_front,
+		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i],
+			arp_bufs, &num_arp, &acl6,
+			ipv4_configured_front, ipv6_configured_front,
 			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
 			instance);
 	}
 
 	/* Extract the rest packet and flow information. */
 	for (; i < num_rx; i++) {
-		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i], arp_bufs,
-			&num_arp, ipv4_configured_front, ipv6_configured_front,
+		parse_packet(&pkt_arr[num_ip_flows], rx_bufs[i],
+			arp_bufs, &num_arp, &acl6,
+			ipv4_configured_front, ipv6_configured_front,
 			flow_arr, flow_hash_val_arr, &num_ip_flows, front,
 			instance);
 	}
@@ -2238,15 +2261,11 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 		struct ipacket *packet = &pkt_arr[num_ip_flows];
 		struct rte_mbuf *pkt = rx_bufs[i];
 
-		ret = extract_packet_info(pkt, packet);
-		if (ret < 0) {
-			if (likely(packet->flow.proto == RTE_ETHER_TYPE_ARP)) {
-				arp_bufs[num_arp++] = pkt;
-				continue;
-			}
-
-			/* Drop non-IP and non-ARP packets. */
-			drop_packet(pkt);
+		ret = extract_packet_info(pkt, packet,
+			arp_bufs, &num_arp, &acl6);
+		if (unlikely(ret < 0)) {
+			if (unlikely(ret == -EINVAL))
+				drop_packet(pkt);
 			continue;
 		}
 
