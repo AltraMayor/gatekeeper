@@ -511,7 +511,6 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
 	struct ggu_request *req = mb_alloc_entry(&ggu_conf->mailbox);
-	unsigned int i;
 	int ret;
 
 	RTE_VERIFY(num_pkts <= ggu_conf->mailbox_max_pkt_burst);
@@ -538,8 +537,7 @@ submit_ggu(struct rte_mbuf **pkts, unsigned int num_pkts,
 	return 0;
 
 free_pkts:
-	for (i = 0; i < num_pkts; i++)
-		rte_pktmbuf_free(pkts[i]);
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
 	return ret;
 }
 
