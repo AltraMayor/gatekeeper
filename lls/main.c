@@ -200,11 +200,8 @@ submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	rte_memcpy(arp_req->pkts, pkts, sizeof(*arp_req->pkts) * num_pkts);
 
 	ret = lls_req(LLS_REQ_ARP, arp_req);
-	if (unlikely(ret < 0)) {
-		unsigned int i;
-		for (i = 0; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
-	}
+	if (unlikely(ret < 0))
+		rte_pktmbuf_free_bulk(pkts, num_pkts);
 }
 
 #define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
@@ -226,9 +223,7 @@ submit_icmp(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	ret = lls_req(LLS_REQ_ICMP, icmp_req);
 	if (unlikely(ret < 0)) {
-		unsigned int i;
-		for (i = 0; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
+		rte_pktmbuf_free_bulk(pkts, num_pkts);
 		return ret;
 	}
 	return 0;
@@ -295,9 +290,7 @@ submit_icmp6(struct rte_mbuf **pkts, unsigned int num_pkts,
 
 	ret = lls_req(LLS_REQ_ICMP6, icmp6_req);
 	if (unlikely(ret < 0)) {
-		unsigned int i;
-		for (i = 0; i < num_pkts; i++)
-			rte_pktmbuf_free(pkts[i]);
+		rte_pktmbuf_free_bulk(pkts, num_pkts);
 		return ret;
 	}
 	return 0;
