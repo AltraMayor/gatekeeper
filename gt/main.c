@@ -1692,8 +1692,8 @@ gt_proc(void *arg)
 		 * For now, free any unsent packets.
 		 */
 		if (unlikely(num_tx_succ < num_tx)) {
-			for (i = num_tx_succ; i < num_tx; i++)
-				rte_pktmbuf_free(tx_bufs[i]);
+			rte_pktmbuf_free_bulk(&tx_bufs[num_tx_succ],
+				num_tx - num_tx_succ);
 		}
 
 		if (num_arp > 0)
