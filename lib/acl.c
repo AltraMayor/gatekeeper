@@ -32,24 +32,24 @@ static int
 drop_unmatched_pkts(struct rte_mbuf **pkts, unsigned int num_pkts,
 	__attribute__((unused)) struct gatekeeper_if *iface)
 {
-	unsigned int i;
-	for (i = 0; i < num_pkts; i++) {
-		/*
-		 * WARNING
-		 *   A packet has reached a Gatekeeper server,
-		 *   and Gatekeeper doesn't know what to do with
-		 *   this packet. If attackers are able to send
-		 *   these packets, they may be able to slow
-		 *   Gatekeeper down since Gatekeeper does a lot of
-		 *   processing to eventually discard these packets.
-		 */
-		if (unlikely(G_LOG_CHECK(DEBUG))) {
+	/*
+	 * WARNING
+	 *   A packet has reached a Gatekeeper server,
+	 *   and Gatekeeper doesn't know what to do with
+	 *   this packet. If attackers are able to send
+	 *   these packets, they may be able to slow
+	 *   Gatekeeper down since Gatekeeper does a lot of
+	 *   processing to eventually discard these packets.
+	 */
+	if (unlikely(G_LOG_CHECK(DEBUG))) {
+		unsigned int i;
+		for (i = 0; i < num_pkts; i++) {
 			G_LOG(DEBUG,
 				"acl: a packet failed to match any ACL rules, the whole packet is dumped below:\n");
 			rte_pktmbuf_dump(log_file, pkts[i], pkts[i]->pkt_len);
 		}
-		rte_pktmbuf_free(pkts[i]);
 	}
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
 
 	return 0;
 }
@@ -128,9 +128,7 @@ process_acl(struct gatekeeper_if *iface, unsigned int lcore_id,
 	goto out;
 
 drop_acl_pkts:
-
-	for (i = 0; i < acl->num; i++)
-		rte_pktmbuf_free(acl->mbufs[i]);
+	rte_pktmbuf_free_bulk(acl->mbufs, acl->num);
 
 out:
 	acl->num = 0;
