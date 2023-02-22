@@ -356,13 +356,11 @@ submit_icmp_packets(struct rte_mbuf **pkts, unsigned int num_pkts,
 			? &lls_conf->front_icmp_rs
 			: &lls_conf->back_icmp_rs;
 	unsigned int num_granted_pkts = tb_ratelimit_allow_n(num_pkts, rs);
-	unsigned int i;
 
 	cps_submit_direct(pkts, num_granted_pkts, iface);
 
-	/* XXX #435: Adopt rte_pktmbuf_free_bulk() when DPDK is updated. */
-	for (i = num_granted_pkts; i < num_pkts; i++)
-		rte_pktmbuf_free(pkts[i]);
+	rte_pktmbuf_free_bulk(&pkts[num_granted_pkts],
+		num_pkts - num_granted_pkts);
 }
 
 static void
