@@ -281,10 +281,8 @@ to_kni:
 
 kni_tx:
 	num_tx = rte_kni_tx_burst(kni, pkts, num_kni);
-	if (unlikely(num_tx < num_kni)) {
-		for (i = num_tx; i < num_kni; i++)
-			rte_pktmbuf_free(pkts[i]);
-	}
+	if (unlikely(num_tx < num_kni))
+		rte_pktmbuf_free_bulk(&pkts[num_tx], num_kni - num_tx);
 }
 
 static void
@@ -474,10 +472,8 @@ to_eth:
 
 	num_tx = rte_eth_tx_burst(iface->id, tx_queue,
 		forward_bufs, num_forward);
-	if (unlikely(num_tx < num_forward)) {
-		for (i = num_tx; i < num_forward; i++)
-			rte_pktmbuf_free(forward_bufs[i]);
-	}
+	if (unlikely(num_tx < num_forward))
+		rte_pktmbuf_free_bulk(&forward_bufs[num_tx], num_forward - num_tx);
 }
 
 static int
@@ -565,7 +561,6 @@ cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct cps_config *cps_conf = get_cps_conf();
 	struct cps_request *req = mb_alloc_entry(&cps_conf->mailbox);
 	int ret;
-	unsigned int i;
 
 	RTE_VERIFY(num_pkts <= cps_conf->mailbox_max_pkt_burst);
 
@@ -592,8 +587,7 @@ cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 	return 0;
 
 free_pkts:
-	for (i = 0; i < num_pkts; i++)
-		rte_pktmbuf_free(pkts[i]);
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
 	return ret;
 }
 
