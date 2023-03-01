@@ -252,9 +252,7 @@ l_lpm_lookup(lua_State *l)
 	}
 
 	ret = fib_lookup(&lpm_ud->fib, (uint8_t *)&ip, &label);
-	if (ret < 0)
-		lua_pushinteger(l, ret);
-	lua_pushinteger(l, label);
+	lua_pushinteger(l, ret >= 0 ? (lua_Integer)label : ret);
 	return 1;
 }
 
@@ -505,9 +503,7 @@ l_lpm6_lookup(lua_State *l)
 	}
 
 	ret = fib_lookup(&lpm6_ud->fib, ipv6_addr->s6_addr, &label);
-	if (ret < 0)
-		lua_pushinteger(l, ret);
-	lua_pushinteger(l, label);
+	lua_pushinteger(l, ret >= 0 ? (lua_Integer)label : ret);
 	return 1;
 }
 
