@@ -41,14 +41,26 @@ memblock_align(size_t size)
 	return unlikely(size & mask) ? (size & ~mask) + alignment : size;
 }
 
-#define MEMBLOCK_DEF_INIT(name, size)				\
-	struct {						\
-		struct memblock_head	head;			\
-		char			block[size];		\
-	} name = {						\
-		.head.next = name.block,			\
-		.head.end  = name.block + memblock_align(size)	\
-	}
+/*
+ * Favor calling memblock_sinit() or memblock_alloc_block() instead of
+ * calling this function directly.
+ */
+static inline void
+memblock_set_head(void *ptr, size_t payload_size)
+{
+	struct memblock_head *block = ptr;
+	block->next = RTE_PTR_ADD(block, sizeof(struct memblock_head));
+	block->end  = RTE_PTR_ADD(block->next, payload_size);
+}
+
+#define MEMBLOCK_DEF(name, size)					\
+	struct {							\
+		struct memblock_head	head;				\
+		char			block[memblock_align(size)];	\
+	} name
+
+#define memblock_sinit(memblock)	\
+	memblock_set_head((memblock), sizeof((memblock)->block))
 
 #define memblock_from_stack(memblock)	(&(memblock).head)
 
@@ -59,12 +71,9 @@ memblock_align(size_t size)
 	memblock_calloc(memblock_from_stack(memblock), num, size)
 
 #define memblock_sfree_all(memblock)			\
-	do {						\
-		typeof(memblock) *b = &(memblock);	\
-		b->head.next = b->block;		\
-	} while (0)
+	memblock_free_all(memblock_from_stack(memblock))
 
-struct memblock_head *memblock_alloc_block(size_t size);
+struct memblock_head *memblock_alloc_block(size_t size, int socket);
 
 static inline void memblock_free_block(struct memblock_head *head)
 {

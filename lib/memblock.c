@@ -20,28 +20,26 @@
 #include <memblock.h>
 
 struct memblock_head *
-memblock_alloc_block(size_t size)
+memblock_alloc_block(size_t size, int socket)
 {
-	const size_t head_length = memblock_align(sizeof(struct memblock_head));
 	struct memblock_head *block;
 
 	/* Avoid wasting bytes that wouldn't be used due to misalignment. */
 	size = memblock_align(size);
 
-	block = rte_malloc("memblock", head_length + size, 0);
+	block = rte_malloc_socket(__func__,
+		sizeof(struct memblock_head) + size, 0, socket);
 	if (unlikely(block == NULL))
 		return NULL;
 
-	block->next = ((char *)block) + head_length;
-	block->end  = block->next + size;
+	memblock_set_head(block, size);
 	return block;
 }
 
 void
 memblock_free_all(struct memblock_head *head)
 {
-	const size_t head_length = memblock_align(sizeof(struct memblock_head));
-	head->next = ((char *)head) + head_length;
+	head->next = RTE_PTR_ADD(head, sizeof(struct memblock_head));
 }
 
 void *
@@ -55,7 +53,7 @@ memblock_alloc(struct memblock_head *head, size_t size)
 	size = memblock_align(size);
 
 	block = head->next;
-	next = block + size;
+	next = RTE_PTR_ADD(block, size);
 	if (unlikely(next > head->end))
 		return NULL;
 
