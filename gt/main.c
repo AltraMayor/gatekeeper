@@ -229,17 +229,68 @@ gt_reassemble_incoming_pkt(struct rte_mbuf *pkt,
 #define CTYPE_STRUCT_GT_PACKET_HEADERS_PTR "struct gt_packet_headers *"
 #define CTYPE_STRUCT_GGU_POLICY_PTR "struct ggu_policy *"
 
+struct lua_lookup_arg {
+	struct gt_packet_headers *pkt_info;
+	struct ggu_policy        *policy;
+	bool                     result;
+};
+
+/*
+ * ATTENTION
+ * ALL Lua calls, including the lua_call(), may raise an exception,
+ * so this function must be called with lua_cpcall().
+ */
+static int
+l_lookup_policy_decision(lua_State *l)
+{
+	struct lua_lookup_arg *arg = lua_touserdata(l, 1);
+	uint32_t correct_ctypeid_gt_packet_headers;
+	uint32_t correct_ctypeid_ggu_policy;
+	void *gt_pkt_hdr_cdata;
+	void *ggu_policy_cdata;
+
+	lua_getglobal(l, "lookup_policy");
+
+	correct_ctypeid_gt_packet_headers = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GT_PACKET_HEADERS_PTR);
+	gt_pkt_hdr_cdata = luaL_pushcdata(l, correct_ctypeid_gt_packet_headers,
+		sizeof(struct gt_packet_headers *));
+	*(struct gt_packet_headers **)gt_pkt_hdr_cdata = arg->pkt_info;
+
+	correct_ctypeid_ggu_policy = luaL_get_ctypeid(l,
+		CTYPE_STRUCT_GGU_POLICY_PTR);
+	ggu_policy_cdata = luaL_pushcdata(l, correct_ctypeid_ggu_policy,
+		sizeof(struct ggu_policy *));
+	*(struct ggu_policy **)ggu_policy_cdata = arg->policy;
+
+	lua_call(l, 2, 1);
+	arg->result = lua_toboolean(l, -1);
+	return 0;
+}
+
+static uint64_t
+lua_mem(lua_State *l)
+{
+	return (uint64_t)lua_gc(l, LUA_GCCOUNT, 0) * 1024 +
+		lua_gc(l, LUA_GCCOUNTB, 0);
+}
+
 static int
 lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	struct ggu_policy *policy, struct gt_instance *instance)
 {
-	void *gt_pkt_hdr_cdata;
-	void *ggu_policy_cdata;
-	uint32_t correct_ctypeid_gt_packet_headers = luaL_get_ctypeid(
-		instance->lua_state, CTYPE_STRUCT_GT_PACKET_HEADERS_PTR);
-	uint32_t correct_ctypeid_ggu_policy = luaL_get_ctypeid(
-		instance->lua_state, CTYPE_STRUCT_GGU_POLICY_PTR);
-	int ret;
+	struct lua_lookup_arg arg = {
+		.pkt_info = pkt_info,
+		.policy   = policy,
+		.result   = false,
+	};
+	bool first_time_running = true;
+
+	/*
+	 * Make @policy invalid, so caller can identify when @policy has not
+	 * been filled in.
+	 */
+	policy->state = -1;
 
 	policy->flow.proto = pkt_info->inner_ip_ver;
 	if (pkt_info->inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
@@ -257,27 +308,54 @@ lookup_policy_decision(struct gt_packet_headers *pkt_info,
 	} else {
 		G_LOG(CRIT, "%s(): unexpected condition: non-IP packet with Ethernet type: %i\n",
 			__func__, pkt_info->inner_ip_ver);
-		return -1;
+		return -EINVAL;
 	}
 
-	lua_getglobal(instance->lua_state, "lookup_policy");
-	gt_pkt_hdr_cdata = luaL_pushcdata(instance->lua_state,
-		correct_ctypeid_gt_packet_headers,
-		sizeof(struct gt_packet_headers *));
-	*(struct gt_packet_headers **)gt_pkt_hdr_cdata = pkt_info;
-	ggu_policy_cdata = luaL_pushcdata(instance->lua_state,
-		correct_ctypeid_ggu_policy, sizeof(struct ggu_policy *));
-	*(struct ggu_policy **)ggu_policy_cdata = policy;
+	memset(&policy->params, 0, sizeof(policy->params));
 
-	if (lua_pcall(instance->lua_state, 2, 1, 0) != 0) {
-		G_LOG(ERR, "Error running Lua function lookup_policy(): %s\n",
-			lua_tostring(instance->lua_state, -1));
-		return -1;
+	while (true) {
+		uint64_t mem_before, mem_after;
+		int ret = lua_cpcall(instance->lua_state,
+			l_lookup_policy_decision, &arg);
+		if (likely(ret == 0))
+			break;
+
+		mem_before = lua_mem(instance->lua_state);
+		G_LOG(ERR, "%s(): Lua function lookup_policy() failed%s: %s. Memory allocated in Lua: %" PRIu64 " bytes\n",
+			__func__, first_time_running ? "" : " AGAIN",
+			lua_tostring(instance->lua_state, -1), mem_before);
+
+		/*
+		 * Do not test for (ret != LUA_ERRMEM) because the policy
+		 * may have tried to catch the exception.  If so, the error
+		 * code LUA_ERRMEM may have been lost.  For example,
+		 * the error code goes from LUA_ERRMEM to LUA_ERRRUN if
+		 * the policy produces another error while handling the
+		 * original out-of-memory error.
+		 */
+		if (unlikely(!first_time_running))
+			return -EFAULT;
+
+		first_time_running = false;
+		lua_gc(instance->lua_state, LUA_GCCOLLECT, 0);
+		mem_after = lua_mem(instance->lua_state);
+		if (mem_after >= mem_before) {
+			G_LOG(ERR, "%s(): cannot retry Lua function lookup_policy() because there is no memory to release. There was %" PRIu64 " bytes before running Lua's garbage collector, and there is %" PRIu64 " bytes afterwards\n",
+				__func__, mem_before, mem_after);
+			return -ENOMEM;
+		}
+
+		/*
+		 * Although the next log entry is not an error per se,
+		 * it has the log level ERR instead of WARNING to guarantee
+		 * that it follows the previous log entry.
+		 */
+		G_LOG(ERR, "%s(): retrying Lua function lookup_policy()... There was %" PRIu64 " bytes before running Lua's garbage collector, and there is %" PRIu64 " bytes afterwards\n",
+			__func__, mem_before, mem_after);
 	}
 
-	ret = lua_toboolean(instance->lua_state, -1);
 	lua_settop(instance->lua_state, 0);
-	return ret;
+	return arg.result;
 }
 
 static int
