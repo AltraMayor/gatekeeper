@@ -120,7 +120,7 @@ l_str_to_prefix6(lua_State *l)
 #define LUA_LPM_UD_TNAME "gt_lpm_ud"
 
 struct lpm_lua_userdata {
-	struct	 fib_head fib;
+	struct fib_head *fib;
 	/* Parameters of @fib. */
 	uint32_t max_rules;
 	uint32_t num_tbl8s;
@@ -129,10 +129,11 @@ struct lpm_lua_userdata {
 static int
 l_new_lpm(lua_State *l)
 {
-	struct lpm_lua_userdata *lpm_ud;
 	static rte_atomic32_t identifier = RTE_ATOMIC32_INIT(0);
-	char fib_name[128];
-	unsigned int lcore_id;
+	struct lpm_lua_userdata *lpm_ud;
+	unsigned int lcore_id, socket_id;
+	int32_t instance_id;
+	char fib_head_name[128], fib_name[128];
 	int ret;
 
 	if (unlikely(lua_gettop(l) != 2)) {
@@ -150,18 +151,37 @@ l_new_lpm(lua_State *l)
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
+	socket_id = rte_lcore_to_socket_id(lcore_id);
 
-	/* Obtain unique name. */
+	/*
+	 * Obtain unique names.
+	 */
+
+	instance_id = rte_atomic32_add_return(&identifier, 1);
+	ret = snprintf(fib_head_name, sizeof(fib_head_name),
+		"gt_fib_ipv4_head_%u_%u", lcore_id, instance_id);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_head_name));
+
 	ret = snprintf(fib_name, sizeof(fib_name),
-		"gt_fib_ipv4_%u_%u", lcore_id,
-		rte_atomic32_add_return(&identifier, 1));
+		"gt_fib_ipv4_%u_%u", lcore_id, instance_id);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_name));
 
-	ret = fib_create(&lpm_ud->fib, fib_name,
-		rte_lcore_to_socket_id(lcore_id), 32,
+	/*
+	 * Alloc FIB.
+	 */
+
+	lpm_ud->fib = rte_malloc_socket(fib_head_name, sizeof(*lpm_ud->fib), 0,
+		socket_id);
+	if (unlikely(lpm_ud->fib == NULL)) {
+		luaL_error(l, "%s(): not enough memory for a FIB head",
+			__func__);
+	}
+	ret = fib_create(lpm_ud->fib, fib_name, socket_id, 32,
 		lpm_ud->max_rules, lpm_ud->num_tbl8s);
 	if (unlikely(ret < 0)) {
-		luaL_error(l, "%s(): failed to initialize the IPv4 LPM table for Lua policies (errno=%d): %s",
+		rte_free(lpm_ud->fib);
+		lpm_ud->fib = NULL;
+		luaL_error(l, "%s(): failed to initialize an IPv4 LPM table (errno=%d): %s",
 			__func__, -ret, strerror(-ret));
 	}
 
@@ -197,7 +217,7 @@ l_lpm_add(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	ret = fib_add(&lpm_ud->fib, (uint8_t *)&ip, depth, label);
+	ret = fib_add(lpm_ud->fib, (uint8_t *)&ip, depth, label);
 	if (unlikely(ret < 0)) {
 		luaL_error(l, "%s(): failed to add network policy [ip: %d, depth: %d, label: %d] (errno=%d): %s",
 			__func__, ip, depth, label, -ret, strerror(-ret));
@@ -227,7 +247,7 @@ l_lpm_del(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	lua_pushinteger(l, fib_delete(&lpm_ud->fib, (uint8_t *)&ip, depth));
+	lua_pushinteger(l, fib_delete(lpm_ud->fib, (uint8_t *)&ip, depth));
 	return 1;
 }
 
@@ -251,7 +271,7 @@ l_lpm_lookup(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	ret = fib_lookup(&lpm_ud->fib, (uint8_t *)&ip, &label);
+	ret = fib_lookup(lpm_ud->fib, (uint8_t *)&ip, &label);
 	lua_pushinteger(l, ret >= 0 ? (lua_Integer)label : ret);
 	return 1;
 }
@@ -306,7 +326,7 @@ l_lpm_debug_lookup(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	lua_pushinteger(l, debug_lookup(l, &lpm_ud->fib, (uint8_t *)&ip));
+	lua_pushinteger(l, debug_lookup(l, lpm_ud->fib, (uint8_t *)&ip));
 	return 1;
 }
 
@@ -373,7 +393,7 @@ l_lpm_get_paras(lua_State *l)
  * divergence in the future as have happened in the past.
  */
 struct lpm6_lua_userdata {
-	struct	 fib_head fib;
+	struct fib_head *fib;
 	/* Parameters of @fib. */
 	uint32_t max_rules;
 	uint32_t num_tbl8s;
@@ -382,10 +402,11 @@ struct lpm6_lua_userdata {
 static int
 l_new_lpm6(lua_State *l)
 {
-	struct lpm6_lua_userdata *lpm6_ud;
 	static rte_atomic32_t identifier6 = RTE_ATOMIC32_INIT(0);
-	char fib_name[128];
-	unsigned int lcore_id;
+	struct lpm6_lua_userdata *lpm6_ud;
+	unsigned int lcore_id, socket_id;
+	int32_t instance_id;
+	char fib_head_name[128], fib_name[128];
 	int ret;
 
 	if (unlikely(lua_gettop(l) != 2)) {
@@ -403,18 +424,37 @@ l_new_lpm6(lua_State *l)
 	lua_getfield(l, LUA_REGISTRYINDEX, GT_LUA_LCORE_ID_NAME);
 	lcore_id = lua_tonumber(l, -1);
 	lua_pop(l, 1);
+	socket_id = rte_lcore_to_socket_id(lcore_id);
 
-	/* Obtain unique name. */
+	/*
+	 * Obtain unique names.
+	 */
+
+	instance_id = rte_atomic32_add_return(&identifier6, 1);
+	ret = snprintf(fib_head_name, sizeof(fib_head_name),
+		"gt_fib_ipv6_head_%u_%u", lcore_id, instance_id);
+	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_head_name));
+
 	ret = snprintf(fib_name, sizeof(fib_name),
-		"gt_fib_ipv6_%u_%u", lcore_id,
-		rte_atomic32_add_return(&identifier6, 1));
+		"gt_fib_ipv6_%u_%u", lcore_id, instance_id);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(fib_name));
 
-	ret = fib_create(&lpm6_ud->fib, fib_name,
-		rte_lcore_to_socket_id(lcore_id), 128,
+	/*
+	 * Alloc FIB.
+	 */
+
+	lpm6_ud->fib = rte_malloc_socket(fib_head_name, sizeof(*lpm6_ud->fib),
+		0, socket_id);
+	if (unlikely(lpm6_ud->fib == NULL)) {
+		luaL_error(l, "%s(): not enough memory for a FIB head",
+			__func__);
+	}
+	ret = fib_create(lpm6_ud->fib, fib_name, socket_id, 128,
 		lpm6_ud->max_rules, lpm6_ud->num_tbl8s);
 	if (unlikely(ret < 0)) {
-		luaL_error(l, "%s(): failed to initialize the IPv6 LPM table for Lua policies (errno=%d): %s",
+		rte_free(lpm6_ud->fib);
+		lpm6_ud->fib = NULL;
+		luaL_error(l, "%s(): failed to initialize a IPv6 LPM table (errno=%d): %s",
 			__func__, -ret, strerror(-ret));
 	}
 
@@ -447,7 +487,7 @@ l_lpm6_add(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	ret = fib_add(&lpm6_ud->fib, ipv6_addr->s6_addr, depth, label);
+	ret = fib_add(lpm6_ud->fib, ipv6_addr->s6_addr, depth, label);
 	if (unlikely(ret < 0)) {
 		char addr_buf[INET6_ADDRSTRLEN];
 		if (unlikely(inet_ntop(AF_INET6, ipv6_addr, addr_buf,
@@ -480,7 +520,7 @@ l_lpm6_del(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	lua_pushinteger(l, fib_delete(&lpm6_ud->fib, ipv6_addr->s6_addr,
+	lua_pushinteger(l, fib_delete(lpm6_ud->fib, ipv6_addr->s6_addr,
 		depth));
 	return 1;
 }
@@ -502,7 +542,7 @@ l_lpm6_lookup(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	ret = fib_lookup(&lpm6_ud->fib, ipv6_addr->s6_addr, &label);
+	ret = fib_lookup(lpm6_ud->fib, ipv6_addr->s6_addr, &label);
 	lua_pushinteger(l, ret >= 0 ? (lua_Integer)label : ret);
 	return 1;
 }
@@ -522,7 +562,7 @@ l_lpm6_debug_lookup(lua_State *l)
 			__func__, lua_gettop(l));
 	}
 
-	lua_pushinteger(l, debug_lookup(l, &lpm6_ud->fib, ipv6_addr->s6_addr));
+	lua_pushinteger(l, debug_lookup(l, lpm6_ud->fib, ipv6_addr->s6_addr));
 	return 1;
 }
 
@@ -622,14 +662,16 @@ static const struct luaL_reg lpmlib_lua_c_funcs [] = {
 static int
 lpm_ud_gc(lua_State *l) {
 	struct lpm_lua_userdata *lpm_ud = lua_touserdata(l, 1);
-	fib_free(&lpm_ud->fib);
+	fib_free(lpm_ud->fib);
+	rte_free(lpm_ud->fib);
 	return 0;
 }
 
 static int
 lpm6_ud_gc(lua_State *l) {
 	struct lpm6_lua_userdata *lpm6_ud = lua_touserdata(l, 1);
-	fib_free(&lpm6_ud->fib);
+	fib_free(lpm6_ud->fib);
+	rte_free(lpm6_ud->fib);
 	return 0;
 }
 
