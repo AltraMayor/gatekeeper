@@ -340,14 +340,14 @@ int del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 	struct gk_config *gk_conf);
 int del_fib_entry(const char *ip_prefix, struct gk_config *gk_conf);
 
-int l_list_gk_fib4(lua_State *l);
-int l_list_gk_fib6(lua_State *l);
-int l_list_gk_neighbors4(lua_State *l);
-int l_list_gk_neighbors6(lua_State *l);
-int l_ether_format_addr(lua_State *l);
-int l_ip_format_addr(lua_State *l);
-int l_add_grantor_entry_lb(lua_State *l);
-int l_update_grantor_entry_lb(lua_State *l);
+int l_list_gk_fib4(lua_State *L);
+int l_list_gk_fib6(lua_State *L);
+int l_list_gk_neighbors4(lua_State *L);
+int l_list_gk_neighbors6(lua_State *L);
+int l_ether_format_addr(lua_State *L);
+int l_ip_format_addr(lua_State *L);
+int l_add_grantor_entry_lb(lua_State *L);
+int l_update_grantor_entry_lb(lua_State *L);
 
 #define CTYPE_STRUCT_GK_CONFIG_PTR "struct gk_config *"
 

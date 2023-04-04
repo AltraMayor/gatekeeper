@@ -411,14 +411,14 @@ fillup_lls_dump_entry(struct lls_dump_entry *dentry, struct lls_map *map)
 #define CTYPE_STRUCT_LLS_DUMP_ENTRY_PTR "struct lls_dump_entry *"
 
 static void
-list_lls(lua_State *l, struct lls_cache *cache)
+list_lls(lua_State *L, struct lls_cache *cache)
 {
 	uint32_t next = 0;
 	const void *key;
 	void *data;
 	int32_t index;
 	void *cdata;
-	uint32_t correct_ctypeid_lls_dentry = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid_lls_dentry = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_LLS_DUMP_ENTRY_PTR);
 
 	index = rte_hash_iterate(cache->hash, (void *)&key, &data, &next);
@@ -428,14 +428,14 @@ list_lls(lua_State *l, struct lls_cache *cache)
 
 		fillup_lls_dump_entry(&dentry, &record->map);
 
-		lua_pushvalue(l, 2);
-		lua_insert(l, 3);
-		cdata = luaL_pushcdata(l, correct_ctypeid_lls_dentry,
+		lua_pushvalue(L, 2);
+		lua_insert(L, 3);
+		cdata = luaL_pushcdata(L, correct_ctypeid_lls_dentry,
 			sizeof(struct lls_dump_entry *));
 		*(struct lls_dump_entry **)cdata = &dentry;
-		lua_insert(l, 4);
+		lua_insert(L, 4);
 
-		lua_call(l, 2, 1);
+		lua_call(L, 2, 1);
 
 		index = rte_hash_iterate(cache->hash,
 			(void *)&key, &data, &next);
@@ -443,67 +443,67 @@ list_lls(lua_State *l, struct lls_cache *cache)
 }
 
 static void
-list_arp(lua_State *l, struct lls_config *lls_conf)
+list_arp(lua_State *L, struct lls_config *lls_conf)
 {
 	if (!ipv4_configured(lls_conf->net))
 		return;
-	list_lls(l, &lls_conf->arp_cache);
+	list_lls(L, &lls_conf->arp_cache);
 }
 
 static void
-list_nd(lua_State *l, struct lls_config *lls_conf)
+list_nd(lua_State *L, struct lls_config *lls_conf)
 {
 	if (!ipv6_configured(lls_conf->net))
 		return;
-	list_lls(l, &lls_conf->nd_cache);
+	list_lls(L, &lls_conf->nd_cache);
 }
 
-typedef void (*list_lls_fn)(lua_State *l, struct lls_config *lls_conf);
+typedef void (*list_lls_fn)(lua_State *L, struct lls_config *lls_conf);
 
 #define CTYPE_STRUCT_LLS_CONFIG_PTR "struct lls_config *"
 
 static void
-list_lls_for_lua(lua_State *l, list_lls_fn f)
+list_lls_for_lua(lua_State *L, list_lls_fn f)
 {
 	uint32_t ctypeid;
-	uint32_t correct_ctypeid_lls_config = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid_lls_config = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_LLS_CONFIG_PTR);
 	struct lls_config *lls_conf;
 
 	/* First argument must be of type CTYPE_STRUCT_LLS_CONFIG_PTR. */
-	void *cdata = luaL_checkcdata(l, 1,
+	void *cdata = luaL_checkcdata(L, 1,
 		&ctypeid, CTYPE_STRUCT_LLS_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_lls_config)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_LLS_CONFIG_PTR);
 
 	/* Second argument must be a Lua function. */
-	luaL_checktype(l, 2, LUA_TFUNCTION);
+	luaL_checktype(L, 2, LUA_TFUNCTION);
 
 	/* Third argument should be a Lua value. */
-	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (lua_gettop(L) != 3)
+		luaL_error(L, "Expected three arguments, however it got %d arguments",
+			lua_gettop(L));
 
 	lls_conf = *(struct lls_config **)cdata;
 
-	f(l, lls_conf);
+	f(L, lls_conf);
 
-	lua_remove(l, 1);
-	lua_remove(l, 1);
+	lua_remove(L, 1);
+	lua_remove(L, 1);
 }
 
 int
-l_list_lls_arp(lua_State *l)
+l_list_lls_arp(lua_State *L)
 {
-	list_lls_for_lua(l, list_arp);
+	list_lls_for_lua(L, list_arp);
 	return 1;
 }
 
 int
-l_list_lls_nd(lua_State *l)
+l_list_lls_nd(lua_State *L)
 {
-	list_lls_for_lua(l, list_nd);
+	list_lls_for_lua(L, list_nd);
 	return 1;
 }
 

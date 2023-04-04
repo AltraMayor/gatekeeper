@@ -33,37 +33,37 @@
 
 /* Return a table with all lcore ids. Function to be called from Lua. */
 static int
-l_list_lcores(lua_State *l)
+l_list_lcores(lua_State *L)
 {
 	unsigned int i;
 	lua_Integer lua_index = 1;
 
-	lua_newtable(l);	/* Result. */
+	lua_newtable(L);	/* Result. */
 
 	RTE_LCORE_FOREACH(i) {
 		/* Push lcore id into Lua stack. */
-		lua_pushinteger(l, i);
+		lua_pushinteger(L, i);
 		/* Add lcore id to the table at @lua_index position. */
-		lua_rawseti(l, -2, lua_index++);
+		lua_rawseti(L, -2, lua_index++);
 	}
 
 	return 1;	/* Return the table. */
 }
 
 static int
-l_rte_lcore_to_socket_id(lua_State *l)
+l_rte_lcore_to_socket_id(lua_State *L)
 {
 	/* First (and only argument) must be the lcore id. */
-	lua_Integer lcore_id = luaL_checkinteger(l, 1);
+	lua_Integer lcore_id = luaL_checkinteger(L, 1);
 	if (lcore_id < 0 || lcore_id >= RTE_MAX_LCORE)
-		luaL_error(l, "The first argument of rte_lcore_to_socket_id() must be between %d and %d, inclusive\n",
+		luaL_error(L, "The first argument of rte_lcore_to_socket_id() must be between %d and %d, inclusive\n",
 			0, RTE_MAX_LCORE - 1);
-	lua_pushinteger(l, rte_lcore_to_socket_id(lcore_id));
+	lua_pushinteger(L, rte_lcore_to_socket_id(lcore_id));
 	return 1;
 }
 
 static int
-protected_gk_assign_lcores(lua_State *l)
+protected_gk_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	struct gk_config *gk_conf;
@@ -71,20 +71,20 @@ protected_gk_assign_lcores(lua_State *l)
 	unsigned int *lcores;
 
 	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
-	n = lua_objlen(l, 2);
-	lcores = *(unsigned int **)lua_touserdata(l, 3);
+		luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	n = lua_objlen(L, 2);
+	lcores = *(unsigned int **)lua_touserdata(L, 3);
 
 	for (i = 1; i <= n; i++) {
-		lua_pushinteger(l, i);	/* Push i. */
-		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+		lua_pushinteger(L, i);	/* Push i. */
+		lua_gettable(L, 2);	/* Pop i, Push t[i]. */
 
 		/* Check that t[i] is a number. */
-		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %d is not a number", i);
-		lcores[i - 1] = lua_tointeger(l, -1);
+		if (!lua_isnumber(L, -1))
+			luaL_error(L, "Index %d is not a number", i);
+		lcores[i - 1] = lua_tointeger(L, -1);
 
-		lua_pop(l, 1);		/* Pop t[i]. */
+		lua_pop(L, 1);		/* Pop t[i]. */
 	}
 
 	gk_conf->lcores = lcores;
@@ -93,47 +93,47 @@ protected_gk_assign_lcores(lua_State *l)
 }
 
 static int
-l_gk_assign_lcores(lua_State *l)
+l_gk_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *lcores, **ud;
-	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* Second argument must be a table. */
-	luaL_checktype(l, 2, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TTABLE);
 
-	n = lua_objlen(l, 2); /* Get size of the table. */
+	n = lua_objlen(L, 2); /* Get size of the table. */
 	if (n <= 0)
 		return 0; /* No results. */
 
-	ud = lua_newuserdata(l, sizeof(lcores));
+	ud = lua_newuserdata(L, sizeof(lcores));
 
-	lua_pushcfunction(l, protected_gk_assign_lcores);
-	lua_insert(l, 1);
+	lua_pushcfunction(L, protected_gk_assign_lcores);
+	lua_insert(L, 1);
 
 	lcores = rte_malloc("gk_conf.lcores", n * sizeof(*lcores), 0);
 	if (lcores == NULL)
-		luaL_error(l, "DPDK has run out memory");
+		luaL_error(L, "DPDK has run out memory");
 	*ud = lcores;
 
 	/* lua_pcall() is used here to avoid leaking @lcores. */
-	if (lua_pcall(l, 3, 0, 0)) {
+	if (lua_pcall(L, 3, 0, 0)) {
 		rte_free(lcores);
-		lua_error(l);
+		lua_error(L);
 	}
 	return 0;
 }
 
 static int
-protected_gk_assign_sol_map(lua_State *l)
+protected_gk_assign_sol_map(lua_State *L)
 {
 	uint32_t ctypeid;
 	struct gk_config *gk_conf;
@@ -141,20 +141,20 @@ protected_gk_assign_sol_map(lua_State *l)
 	unsigned int *gk_sol_map;
 
 	gk_conf = *(struct gk_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
-	n = lua_objlen(l, 2);
-	gk_sol_map = *(unsigned int **)lua_touserdata(l, 3);
+		luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	n = lua_objlen(L, 2);
+	gk_sol_map = *(unsigned int **)lua_touserdata(L, 3);
 
 	for (i = 1; i <= n; i++) {
-		lua_pushinteger(l, i);	/* Push i. */
-		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+		lua_pushinteger(L, i);	/* Push i. */
+		lua_gettable(L, 2);	/* Pop i, Push t[i]. */
 
 		/* Check that t[i] is a number. */
-		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %d is not a number", i);
-		gk_sol_map[i - 1] = lua_tointeger(l, -1) - 1;
+		if (!lua_isnumber(L, -1))
+			luaL_error(L, "Index %d is not a number", i);
+		gk_sol_map[i - 1] = lua_tointeger(L, -1) - 1;
 
-		lua_pop(l, 1);		/* Pop t[i]. */
+		lua_pop(L, 1);		/* Pop t[i]. */
 	}
 
 	gk_conf->gk_sol_map = gk_sol_map;
@@ -162,42 +162,42 @@ protected_gk_assign_sol_map(lua_State *l)
 }
 
 static int
-l_gk_assign_sol_map(lua_State *l)
+l_gk_assign_sol_map(lua_State *L)
 {
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *gk_sol_map, **ud;
-	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GK_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
+	luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GK_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GK_CONFIG_PTR);
 
 	/* Second argument must be a table. */
-	luaL_checktype(l, 2, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TTABLE);
 
-	n = lua_objlen(l, 2); /* Get size of the table. */
+	n = lua_objlen(L, 2); /* Get size of the table. */
 	if (n <= 0)
 		return 0; /* No results. */
 
-	ud = lua_newuserdata(l, sizeof(gk_sol_map));
+	ud = lua_newuserdata(L, sizeof(gk_sol_map));
 
-	lua_pushcfunction(l, protected_gk_assign_sol_map);
-	lua_insert(l, 1);
+	lua_pushcfunction(L, protected_gk_assign_sol_map);
+	lua_insert(L, 1);
 
 	gk_sol_map = rte_malloc("gk_conf.gk_sol_map",
 		n * sizeof(*gk_sol_map), 0);
 	if (gk_sol_map == NULL)
-		luaL_error(l, "DPDK has run out memory");
+		luaL_error(L, "DPDK has run out memory");
 	*ud = gk_sol_map;
 
 	/* lua_pcall() is used here to avoid leaking @gk_sol_map. */
-	if (lua_pcall(l, 3, 0, 0)) {
+	if (lua_pcall(L, 3, 0, 0)) {
 		rte_free(gk_sol_map);
-		lua_error(l);
+		lua_error(L);
 	}
 	return 0;
 }
@@ -205,7 +205,7 @@ l_gk_assign_sol_map(lua_State *l)
 #define CTYPE_STRUCT_GT_CONFIG_PTR "struct gt_config *"
 
 static int
-protected_gt_assign_lcores(lua_State *l)
+protected_gt_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	struct gt_config *gt_conf;
@@ -213,20 +213,20 @@ protected_gt_assign_lcores(lua_State *l)
 	unsigned int *lcores;
 
 	gt_conf = *(struct gt_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
-	n = lua_objlen(l, 2);
-	lcores = *(unsigned int **)lua_touserdata(l, 3);
+		luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	n = lua_objlen(L, 2);
+	lcores = *(unsigned int **)lua_touserdata(L, 3);
 
 	for (i = 1; i <= n; i++) {
-		lua_pushinteger(l, i);	/* Push i. */
-		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+		lua_pushinteger(L, i);	/* Push i. */
+		lua_gettable(L, 2);	/* Pop i, Push t[i]. */
 
 		/* Check that t[i] is a number. */
-		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %d is not a number", i);
-		lcores[i - 1] = lua_tointeger(l, -1);
+		if (!lua_isnumber(L, -1))
+			luaL_error(L, "Index %d is not a number", i);
+		lcores[i - 1] = lua_tointeger(L, -1);
 
-		lua_pop(l, 1);		/* Pop t[i]. */
+		lua_pop(L, 1);		/* Pop t[i]. */
 	}
 
 	gt_conf->lcores = lcores;
@@ -235,41 +235,41 @@ protected_gt_assign_lcores(lua_State *l)
 }
 
 static int
-l_gt_assign_lcores(lua_State *l)
+l_gt_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *lcores, **ud;
-	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
+	luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	/* Second argument must be a table. */
-	luaL_checktype(l, 2, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TTABLE);
 
-	n = lua_objlen(l, 2); /* Get size of the table. */
+	n = lua_objlen(L, 2); /* Get size of the table. */
 	if (n <= 0)
 		return 0; /* No results. */
 
-	ud = lua_newuserdata(l, sizeof(lcores));
+	ud = lua_newuserdata(L, sizeof(lcores));
 
-	lua_pushcfunction(l, protected_gt_assign_lcores);
-	lua_insert(l, 1);
+	lua_pushcfunction(L, protected_gt_assign_lcores);
+	lua_insert(L, 1);
 
 	lcores = rte_malloc("gt_conf.lcores", n * sizeof(*lcores), 0);
 	if (lcores == NULL)
-		luaL_error(l, "DPDK has run out memory");
+		luaL_error(L, "DPDK has run out memory");
 	*ud = lcores;
 
 	/* lua_pcall() is used here to avoid leaking @lcores. */
-	if (lua_pcall(l, 3, 0, 0)) {
+	if (lua_pcall(L, 3, 0, 0)) {
 		rte_free(lcores);
-		lua_error(l);
+		lua_error(L);
 	}
 	return 0;
 }
@@ -277,7 +277,7 @@ l_gt_assign_lcores(lua_State *l)
 #define CTYPE_STRUCT_SOL_CONFIG_PTR "struct sol_config *"
 
 static int
-protected_sol_assign_lcores(lua_State *l)
+protected_sol_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	struct sol_config *sol_conf;
@@ -285,20 +285,20 @@ protected_sol_assign_lcores(lua_State *l)
 	unsigned int *lcores;
 
 	sol_conf = *(struct sol_config **)
-		luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
-	n = lua_objlen(l, 2);
-	lcores = *(unsigned int **)lua_touserdata(l, 3);
+		luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
+	n = lua_objlen(L, 2);
+	lcores = *(unsigned int **)lua_touserdata(L, 3);
 
 	for (i = 1; i <= n; i++) {
-		lua_pushinteger(l, i);	/* Push i. */
-		lua_gettable(l, 2);	/* Pop i, Push t[i]. */
+		lua_pushinteger(L, i);	/* Push i. */
+		lua_gettable(L, 2);	/* Pop i, Push t[i]. */
 
 		/* Check that t[i] is a number. */
-		if (!lua_isnumber(l, -1))
-			luaL_error(l, "Index %d is not a number", i);
-		lcores[i - 1] = lua_tointeger(l, -1);
+		if (!lua_isnumber(L, -1))
+			luaL_error(L, "Index %d is not a number", i);
+		lcores[i - 1] = lua_tointeger(L, -1);
 
-		lua_pop(l, 1);		/* Pop t[i]. */
+		lua_pop(L, 1);		/* Pop t[i]. */
 	}
 
 	sol_conf->lcores = lcores;
@@ -307,41 +307,41 @@ protected_sol_assign_lcores(lua_State *l)
 }
 
 static int
-l_sol_assign_lcores(lua_State *l)
+l_sol_assign_lcores(lua_State *L)
 {
 	uint32_t ctypeid;
 	lua_Integer n;
 	unsigned int *lcores, **ud;
-	uint32_t correct_ctypeid = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_SOL_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_SOL_CONFIG_PTR. */
-	luaL_checkcdata(l, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
+	luaL_checkcdata(L, 1, &ctypeid, CTYPE_STRUCT_SOL_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_SOL_CONFIG_PTR);
 
 	/* Second argument must be a table. */
-	luaL_checktype(l, 2, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TTABLE);
 
-	n = lua_objlen(l, 2); /* Get size of the table. */
+	n = lua_objlen(L, 2); /* Get size of the table. */
 	if (n <= 0)
 		return 0; /* No results. */
 
-	ud = lua_newuserdata(l, sizeof(lcores));
+	ud = lua_newuserdata(L, sizeof(lcores));
 
-	lua_pushcfunction(l, protected_sol_assign_lcores);
-	lua_insert(l, 1);
+	lua_pushcfunction(L, protected_sol_assign_lcores);
+	lua_insert(L, 1);
 
 	lcores = rte_malloc("sol_conf.lcores", n * sizeof(*lcores), 0);
 	if (lcores == NULL)
-		luaL_error(l, "DPDK has run out memory");
+		luaL_error(L, "DPDK has run out memory");
 	*ud = lcores;
 
 	/* lua_pcall() is used here to avoid leaking @lcores. */
-	if (lua_pcall(l, 3, 0, 0)) {
+	if (lua_pcall(L, 3, 0, 0)) {
 		rte_free(lcores);
-		lua_error(l);
+		lua_error(L);
 	}
 	return 0;
 }
@@ -357,22 +357,22 @@ static const struct luaL_reg staticlib [] = {
 };
 
 int
-set_lua_path(lua_State *l, const char *path)
+set_lua_path(lua_State *L, const char *path)
 {
 	int ret;
 	char new_path[1024];
 
-	lua_getglobal(l, "package");
-	lua_getfield(l, -1, "path");
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "path");
 
 	ret = snprintf(new_path, sizeof(new_path), "%s;%s/?.lua",
-		lua_tostring(l, -1), path);
+		lua_tostring(L, -1), path);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(new_path));
 
-	lua_pop(l, 1);
-	lua_pushstring(l, new_path);
-	lua_setfield(l, -2, "path");
-	lua_pop(l, 1);
+	lua_pop(L, 1);
+	lua_pushstring(L, new_path);
+	lua_setfield(L, -2, "path");
+	lua_pop(L, 1);
 
 	return ret;
 }

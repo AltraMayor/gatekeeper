@@ -470,8 +470,8 @@ void submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);
 
-int l_list_lls_arp(lua_State *l);
-int l_list_lls_nd(lua_State *l);
+int l_list_lls_arp(lua_State *L);
+int l_list_lls_nd(lua_State *L);
 
 unsigned short icmp_cksum(void *buf, unsigned int size);
 
