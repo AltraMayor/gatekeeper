@@ -241,38 +241,38 @@ struct lua_lookup_arg {
  * so this function must be called with lua_cpcall().
  */
 static int
-l_lookup_policy_decision(lua_State *l)
+l_lookup_policy_decision(lua_State *L)
 {
-	struct lua_lookup_arg *arg = lua_touserdata(l, 1);
+	struct lua_lookup_arg *arg = lua_touserdata(L, 1);
 	uint32_t correct_ctypeid_gt_packet_headers;
 	uint32_t correct_ctypeid_ggu_policy;
 	void *gt_pkt_hdr_cdata;
 	void *ggu_policy_cdata;
 
-	lua_getglobal(l, "lookup_policy");
+	lua_getglobal(L, "lookup_policy");
 
-	correct_ctypeid_gt_packet_headers = luaL_get_ctypeid(l,
+	correct_ctypeid_gt_packet_headers = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GT_PACKET_HEADERS_PTR);
-	gt_pkt_hdr_cdata = luaL_pushcdata(l, correct_ctypeid_gt_packet_headers,
+	gt_pkt_hdr_cdata = luaL_pushcdata(L, correct_ctypeid_gt_packet_headers,
 		sizeof(struct gt_packet_headers *));
 	*(struct gt_packet_headers **)gt_pkt_hdr_cdata = arg->pkt_info;
 
-	correct_ctypeid_ggu_policy = luaL_get_ctypeid(l,
+	correct_ctypeid_ggu_policy = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GGU_POLICY_PTR);
-	ggu_policy_cdata = luaL_pushcdata(l, correct_ctypeid_ggu_policy,
+	ggu_policy_cdata = luaL_pushcdata(L, correct_ctypeid_ggu_policy,
 		sizeof(struct ggu_policy *));
 	*(struct ggu_policy **)ggu_policy_cdata = arg->policy;
 
-	lua_call(l, 2, 1);
-	arg->result = lua_toboolean(l, -1);
+	lua_call(L, 2, 1);
+	arg->result = lua_toboolean(L, -1);
 	return 0;
 }
 
 static uint64_t
-lua_mem(lua_State *l)
+lua_mem(lua_State *L)
 {
-	return (uint64_t)lua_gc(l, LUA_GCCOUNT, 0) * 1024 +
-		lua_gc(l, LUA_GCCOUNTB, 0);
+	return (uint64_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024 +
+		lua_gc(L, LUA_GCCOUNTB, 0);
 }
 
 static int
@@ -2263,19 +2263,19 @@ out:
 }
 
 int
-l_update_gt_lua_states(lua_State *l)
+l_update_gt_lua_states(lua_State *L)
 {
 	int i;
 	uint32_t ctypeid;
 	struct gt_config *gt_conf;
-	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
-	void *cdata = luaL_checkcdata(l, 1,
+	void *cdata = luaL_checkcdata(L, 1,
 		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gt_config)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	gt_conf = *(struct gt_config **)cdata;
@@ -2288,7 +2288,7 @@ l_update_gt_lua_states(lua_State *l)
 		lua_State *lua_state = alloc_and_setup_lua_state(gt_conf,
 			lcore_id);
 		if (lua_state == NULL) {
-			luaL_error(l, "gt: failed to allocate new lua state to GT block %d at lcore %d\n",
+			luaL_error(L, "gt: failed to allocate new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;
@@ -2298,7 +2298,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (entry == NULL) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to allocate a mailbox entry to send new lua state to GT block %d at lcore %d\n",
+			luaL_error(L, "gt: failed to allocate a mailbox entry to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 
 			continue;
@@ -2311,7 +2311,7 @@ l_update_gt_lua_states(lua_State *l)
 		if (ret != 0) {
 			lua_close(lua_state);
 
-			luaL_error(l, "gt: failed to send new lua state to GT block %d at lcore %d\n",
+			luaL_error(L, "gt: failed to send new lua state to GT block %d at lcore %d\n",
 				i, lcore_id);
 		}
 	}

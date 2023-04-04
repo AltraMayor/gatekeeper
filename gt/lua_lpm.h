@@ -21,6 +21,6 @@
 
 #include <lualib.h>
 
-void lualpm_openlib(lua_State *l);
+void lualpm_openlib(lua_State *L);
 
 #endif /* _GATEKEEPER_GT_LUA_LPM_H_ */

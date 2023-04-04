@@ -114,7 +114,7 @@ reply_client_message(int conn_fd, const char *reply_msg, uint16_t reply_len)
 
 static int
 process_client_message(int conn_fd,
-	const char *msg, int msg_len, lua_State *lua_state)
+	const char *msg, int msg_len, lua_State *L)
 {
 	int ret;
 	size_t reply_len;
@@ -131,10 +131,10 @@ process_client_message(int conn_fd,
 	}
 
 	/* Load the client's Lua chunk, and run it. */
-	ret = luaL_loadbuffer(lua_state, msg, msg_len, "message")
-		|| lua_pcall(lua_state, 0, 1, 0);
+	ret = luaL_loadbuffer(L, msg, msg_len, "message")
+		|| lua_pcall(L, 0, 1, 0);
 
-	reply_msg = lua_tolstring(lua_state, -1, &reply_len);
+	reply_msg = lua_tolstring(L, -1, &reply_len);
 	if (reply_msg == NULL) {
 		/*
 		 * luaL_loadbuffer() and lua_pcall() must have
@@ -144,7 +144,7 @@ process_client_message(int conn_fd,
 
 		G_LOG(ERR,
 			"The client request script returns a NULL string\n");
-		lua_pop(lua_state, 1);
+		lua_pop(L, 1);
 		return reply_client_message(conn_fd,
 			CLIENT_PROC_ERROR, strlen(CLIENT_PROC_ERROR));
 	}
@@ -157,7 +157,7 @@ process_client_message(int conn_fd,
 	}
 
 	ret = reply_client_message(conn_fd, reply_msg, reply_len);
-	lua_pop(lua_state, 1);
+	lua_pop(L, 1);
 	return ret;
 }
 
@@ -205,7 +205,7 @@ read_nbytes(int conn_fd, char *msg_buff, int nbytes)
  * 	0: Command successfully processed, may need to process further commands.
  */
 static int
-process_single_cmd(int conn_fd, lua_State *lua_state)
+process_single_cmd(int conn_fd, lua_State *L)
 {
 	int ret;
 	uint16_t msg_len;
@@ -229,7 +229,7 @@ process_single_cmd(int conn_fd, lua_State *lua_state)
 		return -1;
 
 	ret = process_client_message(
-		conn_fd, msg_buff, msg_len, lua_state);
+		conn_fd, msg_buff, msg_len, L);
 	if (ret < 0)
 		return -1;
 
@@ -282,7 +282,7 @@ cleanup_dy(struct dynamic_config *dy_conf)
 }
 
 static void
-process_return_message(lua_State *l, struct dynamic_config *dy_conf,
+process_return_message(lua_State *L, struct dynamic_config *dy_conf,
 	int num_succ_sent_inst)
 {
 	int num_gt_messages = 0;
@@ -351,16 +351,16 @@ process_return_message(lua_State *l, struct dynamic_config *dy_conf,
 			__func__, num_gt_messages, dy_conf->gt->num_lcores);
 	}
 
-	lua_pushlstring(l, reply_msg, reply_len);
+	lua_pushlstring(L, reply_msg, reply_len);
 }
 
 static int
-l_update_gt_lua_states_incrementally(lua_State *l)
+l_update_gt_lua_states_incrementally(lua_State *L)
 {
 	int i;
 	uint32_t ctypeid;
 	struct gt_config *gt_conf;
-	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(l,
+	uint32_t correct_ctypeid_gt_config = luaL_get_ctypeid(L,
 		CTYPE_STRUCT_GT_CONFIG_PTR);
 	size_t len;
 	const char *lua_bytecode;
@@ -369,25 +369,25 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 	struct dynamic_config *dy_conf = get_dy_conf();
 
 	/* First argument must be of type CTYPE_STRUCT_GT_CONFIG_PTR. */
-	void *cdata = luaL_checkcdata(l, 1,
+	void *cdata = luaL_checkcdata(L, 1,
 		&ctypeid, CTYPE_STRUCT_GT_CONFIG_PTR);
 	if (ctypeid != correct_ctypeid_gt_config)
-		luaL_error(l, "Expected `%s' as first argument",
+		luaL_error(L, "Expected `%s' as first argument",
 			CTYPE_STRUCT_GT_CONFIG_PTR);
 
 	gt_conf = *(struct gt_config **)cdata;
 
 	/* Second argument must be a Lua bytecode. */
-	lua_bytecode = lua_tolstring(l, 2, &len);
+	lua_bytecode = lua_tolstring(L, 2, &len);
 	if (lua_bytecode == NULL || len == 0)
-		luaL_error(l, "gt: invalid lua bytecode\n");
+		luaL_error(L, "gt: invalid lua bytecode\n");
 
 	/* Third argument should be a boolean. */
-	is_returned = lua_toboolean(l, 3);
+	is_returned = lua_toboolean(L, 3);
 
-	if (lua_gettop(l) != 3)
-		luaL_error(l, "Expected three arguments, however it got %d arguments",
-			lua_gettop(l));
+	if (lua_gettop(L) != 3)
+		luaL_error(L, "Expected three arguments, however it got %d arguments",
+			lua_gettop(L));
 
 	if (is_returned)
 		rte_atomic16_init(&dy_conf->num_returned_instances);
@@ -405,7 +405,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 					i, lcore_id);
 				continue;
 			} else {
-				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
+				luaL_error(L, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d due to failure of allocating memory\n",
 					i, lcore_id);
 			}
 		}
@@ -419,7 +419,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 					i, lcore_id);
 				continue;
 			} else {
-				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+				luaL_error(L, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
 					i, lcore_id);
 			}
 		}
@@ -439,7 +439,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 					i, lcore_id);
 				continue;
 			} else {
-				luaL_error(l, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
+				luaL_error(L, "gt: failed to send new lua update chunk bytecode to GT block %d at lcore %d\n",
 					i, lcore_id);
 			}
 		}
@@ -448,7 +448,7 @@ l_update_gt_lua_states_incrementally(lua_State *l)
 	}
 
 	if (is_returned)
-		process_return_message(l, dy_conf, num_succ_sent_inst);
+		process_return_message(L, dy_conf, num_succ_sent_inst);
 
 	return !!is_returned;
 }
@@ -471,7 +471,7 @@ const struct luaL_reg dylib_lua_c_funcs [] = {
 };
 
 static int 
-setup_dy_lua(lua_State *lua_state, struct dynamic_config *dy_conf)
+setup_dy_lua(lua_State *L, struct dynamic_config *dy_conf)
 {
 	int ret;
 	char lua_entry_path[128];
@@ -480,18 +480,18 @@ setup_dy_lua(lua_State *lua_state, struct dynamic_config *dy_conf)
 		dy_conf->lua_dy_base_dir, dy_conf->dynamic_config_file);
 	RTE_VERIFY(ret > 0 && ret < (int)sizeof(lua_entry_path));
 
-	luaL_openlibs(lua_state);
-	luaL_register(lua_state, "dylib", dylib_lua_c_funcs);
-	set_lua_path(lua_state, dy_conf->lua_dy_base_dir);
-	ret = luaL_loadfile(lua_state, lua_entry_path);
+	luaL_openlibs(L);
+	luaL_register(L, "dylib", dylib_lua_c_funcs);
+	set_lua_path(L, dy_conf->lua_dy_base_dir);
+	ret = luaL_loadfile(L, lua_entry_path);
 	if (ret != 0) {
-		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(L, -1));
 		return -1;
 	}
 
-	ret = lua_pcall(lua_state, 0, 0, 0);
+	ret = lua_pcall(L, 0, 0, 0);
 	if (ret != 0) {
-		G_LOG(ERR, "%s\n", lua_tostring(lua_state, -1));
+		G_LOG(ERR, "%s\n", lua_tostring(L, -1));
 		return -1;
 	}
 
