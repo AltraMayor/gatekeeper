@@ -629,6 +629,10 @@ nd_pkt_valid(struct rte_ipv6_hdr *ipv6_hdr, struct icmpv6_hdr *icmpv6_hdr,
 		rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr) == 0;
 }
 
+/* TODO
+ * - Pass @info instead of @pkt.
+ * - Review error codes.
+ */
 int
 process_nd(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 	struct rte_mbuf *buf)

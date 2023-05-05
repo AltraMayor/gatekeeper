@@ -40,12 +40,11 @@ enum lls_req_ty {
 	 * be invoked again.
 	 */
 	LLS_REQ_PUT,
-	/* Request to handle ARP packets received from another block. */
-	LLS_REQ_ARP,
-	/* Request to handle ICMP packets received from another block. */
-	LLS_REQ_ICMP,
-	/* Request to handle ICMPv6 packets received from another block. */
-	LLS_REQ_ICMP6,
+	/*
+	 * Receive packets for the LLS functional block that
+	 * the hardware cannot steer directly to LLS' queue.
+	 */
+	LLS_REQ_PACKETS,
 };
 
 /* Replies that come from the LLS block. */
@@ -234,9 +233,10 @@ struct lls_config {
 	uint16_t           rx_queue_back;
 	uint16_t           tx_queue_back;
 
-	/* RX methods for both interfaces. */
-	uint8_t            rx_method_front;
-	uint8_t            rx_method_back;
+	/* Flow execution for both interfaces. */
+	/* TODO Initialize these fields. */
+	struct absflow_execution front_exec;
+	struct absflow_execution back_exec;
 
 	unsigned int       total_pkt_burst;
 	/* The packet mbuf pool for the LLS block. */
@@ -365,23 +365,6 @@ struct nd_opt_lladdr {
 #define ND_NEIGH_PKT_LLADDR_MIN_LEN(l2_len) (ND_NEIGH_PKT_MIN_LEN(l2_len) + \
 	sizeof(struct nd_opt_lladdr))
 
-/*
- * Minimum size of an IPv4 ICMP packet.
- *
- * Note that the minimum ICMP header size is 8 bytes (RFC 792),
- * but DPDK's struct rte_icmp_hdr includes other fields.
- */
-#define ICMP_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv4_hdr) + 8)
-
-/*
- * Minimum size of an ICMPv6 packet.
- *
- * Note that the minimum ICMPv6 header size is the four bytes
- * defined in struct icmpv6_hdr (RFC 4443).
- */
-#define ICMPV6_PKT_MIN_LEN(l2_len) (l2_len + sizeof(struct rte_ipv6_hdr) + \
-	sizeof(struct icmpv6_hdr))
-
 /* Flags for Neighbor Advertisements. */
 #define LLS_ND_NA_SOLICITED 0x40000000
 #define LLS_ND_NA_OVERRIDE  0x20000000
@@ -462,10 +445,6 @@ ipv6_addrs_equal(const uint8_t *addr1, const uint8_t *addr2)
 	const uint64_t *paddr2 = (const uint64_t *)addr2;
 	return (paddr1[0] == paddr2[0]) && (paddr1[1] == paddr2[1]);
 }
-
-/* Submit ARP packets to the LLS block (hardware filtering is not available). */
-void submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
-	struct gatekeeper_if *iface);
 
 struct lls_config *get_lls_conf(void);
 int run_lls(struct net_config *net_conf, struct lls_config *lls_conf);

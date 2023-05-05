@@ -45,52 +45,16 @@ struct lls_put_req {
 	unsigned int     lcore_id;
 };
 
-/* Information needed to submit ARP packets to the LLS block. */
-struct lls_arp_req {
+/* Information needed to submit packets to the LLS block. */
+struct lls_packets_req {
 	/* Number of packets stored in @pkts. */
-	int                  num_pkts;
+	unsigned int         num_pkts;
 
-	/* Interface that received @pkt. */
+	/* Interface that received the packets. */
 	struct gatekeeper_if *iface;
 
-	/* ARP neighbor packets. */
-	struct rte_mbuf      *pkts[0];
-};
-
-/* Information needed to submit ND packets to the LLS block. */
-struct lls_nd_req {
-	/* Number of packets stored in @pkts. */
-	int                  num_pkts;
-
-	/* Interface that received @pkt. */
-	struct gatekeeper_if *iface;
-
-	/* ND neighbor packets. */
-	struct rte_mbuf      *pkts[0];
-};
-
-/* Information needed to submit ICMP packets to the LLS block. */
-struct lls_icmp_req {
-	/* Number of packets stored in @pkts. */
-	int                  num_pkts;
-
-	/* Interface that received @pkt. */
-	struct gatekeeper_if *iface;
-
-	/* ICMP packets. */
-	struct rte_mbuf      *pkts[0];
-};
-
-/* Information needed to submit ICMPv6 packets to the LLS block. */
-struct lls_icmp6_req {
-	/* Number of packets stored in @pkts. */
-	int                  num_pkts;
-
-	/* Interface that received @pkt. */
-	struct gatekeeper_if *iface;
-
-	/* ICMPv6 packets. */
-	struct rte_mbuf      *pkts[0];
+	/* The packets already classified. */
+	struct absflow_packet infos[0];
 };
 
 /* A modification to an LLS map. */
@@ -126,15 +90,11 @@ struct lls_request {
 
 	union {
 		/* If @ty is LLS_REQ_HOLD, use @hold. */
-		struct lls_hold_req  hold;
+		struct lls_hold_req    hold;
 		/* If @ty is LLS_REQ_PUT, use @put. */
-		struct lls_put_req   put;
-		/* If @ty is LLS_REQ_ARP, use @arp. */
-		struct lls_arp_req   arp;
-		/* If @ty is LLS_REQ_ICMP, use @icmp. */
-		struct lls_icmp_req  icmp;
-		/* If @ty is LLS_REQ_ICMP6, use @icmp6. */
-		struct lls_icmp6_req icmp6;
+		struct lls_put_req     put;
+		/* If @ty is LLS_REQ_PACKETS, use @packets. */
+		struct lls_packets_req packets;
 	} u;
 };
 

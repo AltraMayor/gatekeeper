@@ -21,16 +21,19 @@
 
 #include <stdbool.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 #include <rte_cycles.h>
 #include <rte_ethdev.h>
 #include <rte_icmp.h>
 
+#include "gatekeeper_cps.h"
 #include "gatekeeper_config.h"
 #include "gatekeeper_l2.h"
 #include "gatekeeper_launch.h"
 #include "gatekeeper_lls.h"
 #include "gatekeeper_varip.h"
+#include "gatekeeper_absflow.h"
 #include "arp.h"
 #include "cache.h"
 #include "nd.h"
@@ -221,222 +224,44 @@ put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 	return mb_send_entry(&lls_conf.requests, req);
 }
 
-void
-submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
-	struct gatekeeper_if *iface)
+/* Submit packets to the LLS block when hardware filtering is not available. */
+static void
+submit_packets(struct absflow_packet **infos, uint16_t n,
+	struct gatekeeper_if *iface, void *director_arg)
 {
 	struct lls_request *req;
+	unsigned int i;
 	int ret;
 
-	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
-		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
-			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
-		goto free_pkts;
+	RTE_SET_USED(director_arg);
+
+	if (unlikely(n > lls_conf.mailbox_max_pkt_sub)) {
+		G_LOG(ERR, "%s(): too many packets: n=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
+			__func__, n, lls_conf.mailbox_max_pkt_sub);
+		goto free_infos;
 	}
 
 	req = mb_alloc_entry(&lls_conf.requests);
 	if (unlikely(req == NULL))
-		goto free_pkts;
+		goto free_infos;
 
 	*req = (typeof(*req)) {
-		.ty = LLS_REQ_ARP,
-		.u.arp = {
-			.num_pkts = num_pkts,
+		.ty = LLS_REQ_PACKETS,
+		.u.packets = {
+			.num_pkts = n,
 			.iface = iface,
 		},
 	};
-	rte_memcpy(req->u.arp.pkts, pkts,
-		sizeof(req->u.arp.pkts[0]) * num_pkts);
+	for (i = 0; i < n; i++)
+		absflow_copy_info(&req->u.packets.infos[i], infos[i]);
 
 	ret = mb_send_entry(&lls_conf.requests, req);
 	if (unlikely(ret < 0))
-		goto free_pkts;
+		goto free_infos;
 	return;
 
-free_pkts:
-	rte_pktmbuf_free_bulk(pkts, num_pkts);
-}
-
-static int
-submit_icmp(struct rte_mbuf **pkts, unsigned int num_pkts,
-	struct gatekeeper_if *iface)
-{
-	struct lls_request *req;
-	int ret;
-
-	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
-		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
-			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
-		ret = -EINVAL;
-		goto free_pkts;
-	}
-
-	req = mb_alloc_entry(&lls_conf.requests);
-	if (unlikely(req == NULL)) {
-		ret = -ENOENT;
-		goto free_pkts;
-	}
-
-	*req = (typeof(*req)) {
-		.ty = LLS_REQ_ICMP,
-		.u.icmp = {
-			.num_pkts = num_pkts,
-			.iface = iface,
-		},
-	};
-	rte_memcpy(req->u.icmp.pkts, pkts,
-		sizeof(req->u.icmp.pkts[0]) * num_pkts);
-
-	ret = mb_send_entry(&lls_conf.requests, req);
-	if (unlikely(ret < 0))
-		goto free_pkts;
-	return 0;
-
-free_pkts:
-	rte_pktmbuf_free_bulk(pkts, num_pkts);
-	return ret;
-}
-
-/*
- * Match the packet if it fails to be classifed by ACL rules.
- *
- * Return values: 0 for successful match, and -ENOENT for no matching.
- */
-static int
-match_icmp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
-{
-	const uint16_t BE_ETHER_TYPE_IPv4 =
-		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
-	struct rte_ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
-	struct rte_ipv4_hdr *ip4hdr;
-	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip4hdr);
-	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-
-	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv4))
-		return -ENOENT;
-
-	if (pkt->data_len < ICMP_PKT_MIN_LEN(l2_len))
-		return -ENOENT;
-
-	if (ip4hdr->dst_addr != iface->ip4_addr.s_addr)
-		return -ENOENT;
-
-	if (ip4hdr->next_proto_id != IPPROTO_ICMP)
-		return -ENOENT;
-
-	if (pkt->data_len < (ICMP_PKT_MIN_LEN(l2_len) +
-			ipv4_hdr_len(ip4hdr) - sizeof(*ip4hdr)))
-		return -ENOENT;
-
-	if (rte_ipv4_frag_pkt_is_fragmented(ip4hdr)) {
-		G_LOG(WARNING,
-			"Received fragmented ICMP packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
-	return 0;
-}
-
-static int
-submit_icmp6(struct rte_mbuf **pkts, unsigned int num_pkts,
-	struct gatekeeper_if *iface)
-{
-	struct lls_request *req;
-	int ret;
-
-	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
-		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
-			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
-		ret = -EINVAL;
-		goto free_pkts;
-	}
-
-	req = mb_alloc_entry(&lls_conf.requests);
-	if (unlikely(req == NULL)) {
-		ret = -ENOENT;
-		goto free_pkts;
-	}
-
-	*req = (typeof(*req)) {
-		.ty = LLS_REQ_ICMP6,
-		.u.icmp6 = {
-			.num_pkts = num_pkts,
-			.iface = iface,
-		},
-	};
-	rte_memcpy(req->u.icmp6.pkts, pkts,
-		sizeof(req->u.icmp6.pkts[0]) * num_pkts);
-
-	ret = mb_send_entry(&lls_conf.requests, req);
-	if (unlikely(ret < 0))
-		goto free_pkts;
-	return 0;
-
-free_pkts:
-	rte_pktmbuf_free_bulk(pkts, num_pkts);
-	return ret;
-}
-
-/*
- * Match the packet if it fails to be classifed by ACL rules.
- *
- * Return values: 0 for successful match, and -ENOENT for no matching.
- */
-static int
-match_icmp6(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
-{
-	/*
-	 * The ICMPv6 header offset in terms of the
-	 * beginning of the IPv6 header.
-	 */
-	int icmpv6_offset;
-	uint8_t nexthdr;
-	const uint16_t BE_ETHER_TYPE_IPv6 =
-		rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
-	struct rte_ether_hdr *eth_hdr =
-		rte_pktmbuf_mtod(pkt, struct rte_ether_hdr *);
-	struct rte_ipv6_hdr *ip6hdr;
-	uint16_t ether_type_be = pkt_in_skip_l2(pkt, eth_hdr, (void **)&ip6hdr);
-	size_t l2_len = pkt_in_l2_hdr_len(pkt);
-
-	if (unlikely(ether_type_be != BE_ETHER_TYPE_IPv6))
-		return -ENOENT;
-
-	if (pkt->data_len < ICMPV6_PKT_MIN_LEN(l2_len))
-		return -ENOENT;
-
-	if ((memcmp(ip6hdr->dst_addr, &iface->ip6_addr,
-			sizeof(iface->ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ll_ip6_addr,
-			sizeof(iface->ll_ip6_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &iface->ip6_mc_addr,
-			sizeof(iface->ip6_mc_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr,
-			&iface->ll_ip6_mc_addr,
-			sizeof(iface->ll_ip6_mc_addr)) != 0) &&
-			(memcmp(ip6hdr->dst_addr, &ip6_allnodes_mc_addr,
-			sizeof(ip6_allnodes_mc_addr)) != 0))
-		return -ENOENT;
-
-	if (rte_ipv6_frag_get_ipv6_fragment_header(ip6hdr) != NULL) {
-		G_LOG(WARNING,
-			"Received fragmented ICMPv6 packets destined to this server at %s\n",
-			__func__);
-		return -ENOENT;
-	}
-
-	icmpv6_offset = ipv6_skip_exthdr(ip6hdr, pkt->data_len - l2_len,
-		&nexthdr);
-	if (icmpv6_offset < 0 || nexthdr != IPPROTO_ICMPV6)
-		return -ENOENT;
-
-	if (pkt->data_len < (ICMPV6_PKT_MIN_LEN(l2_len) +
-			icmpv6_offset - sizeof(*ip6hdr)))
-		return -ENOENT;
-
-	return 0;
+free_infos:
+	absflow_free_packets(infos, n);
 }
 
 static void
@@ -689,22 +514,17 @@ lls_proc(void *arg)
 	}
 
 	while (likely(!exiting)) {
-		/* Read in packets on front and back interfaces. */
-		int num_tx;
-
-		if (lls_conf->rx_method_front & RX_METHOD_NIC) {
-			num_tx = process_pkts(lls_conf, front,
-				lls_conf->rx_queue_front,
-				lls_conf->tx_queue_front,
-				lls_conf->front_max_pkt_burst);
-			if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
-				if (lacp_timer_reset(lls_conf, front) < 0)
-					G_LOG(NOTICE, "Can't reset front LACP timer to skip cycle\n");
-			}
+		/* Read packets from front and back interfaces. */
+		int num_tx = process_pkts(lls_conf, front,
+			lls_conf->rx_queue_front,
+			lls_conf->tx_queue_front,
+			lls_conf->front_max_pkt_burst);
+		if ((num_tx > 0) && lacp_enabled(net_conf, front)) {
+			if (lacp_timer_reset(lls_conf, front) < 0)
+				G_LOG(NOTICE, "Can't reset front LACP timer to skip cycle\n");
 		}
 
-		if (net_conf->back_iface_enabled &&
-				lls_conf->rx_method_back & RX_METHOD_NIC) {
+		if (net_conf->back_iface_enabled) {
 			num_tx = process_pkts(lls_conf, back,
 				lls_conf->rx_queue_back,
 				lls_conf->tx_queue_back,
@@ -759,28 +579,134 @@ lls_proc(void *arg)
 	return cleanup_lls();
 }
 
-static int
-register_icmp_filter(struct gatekeeper_if *iface, uint16_t rx_queue,
-	uint8_t *rx_method)
+static void
+submit_icmp_packets(struct rte_mbuf **pkts, unsigned int num_pkts,
+	struct gatekeeper_if *iface, struct lls_config *lls_conf)
 {
-	int ret = ipv4_pkt_filter_add(iface,
-		iface->ip4_addr.s_addr,
-		0, 0, 0, 0,
-		IPPROTO_ICMP, rx_queue,
-		submit_icmp, match_icmp,
-		rx_method);
-	if (ret < 0) {
-		G_LOG(ERR,
-			"Could not add IPv4 ICMP filter on %s iface\n",
-			iface->name);
-		return ret;
+	struct token_bucket_ratelimit_state *rs =
+		iface == &lls_conf->net->front
+			? &lls_conf->front_icmp_rs
+			: &lls_conf->back_icmp_rs;
+	unsigned int num_granted_pkts = tb_ratelimit_allow_n(num_pkts, rs);
+
+	cps_submit_direct(pkts, num_granted_pkts, iface);
+
+	rte_pktmbuf_free_bulk(&pkts[num_granted_pkts],
+		num_pkts - num_granted_pkts);
+}
+
+static void
+process_icmpv4_pkts(struct absflow_packet **infos, uint16_t n,
+	struct gatekeeper_if *iface, void *director_arg)
+{
+	struct rte_mbuf *kni_pkts[n];
+	unsigned int num_kni_pkts = 0;
+	int i;
+
+	for (i = 0; i < n; i++) {
+		struct absflow_packet *info = infos[i];
+		struct rte_icmp_hdr *icmpv4_hdr = info->l4_hdr;
+
+		if (unlikely(icmpv4_hdr->icmp_type == ICMP_DEST_UNREACHABLE_TYPE
+				&&
+				icmpv4_hdr->icmp_code == ICMP_FRAG_REQ_DF_CODE)
+				) {
+			struct rte_ipv4_hdr *ipv4_hdr = info->l3_hdr;
+			char src_ip_buf[INET_ADDRSTRLEN];
+			const char *src_ip_or_err = inet_ntop(AF_INET,
+				&ipv4_hdr->src_addr,
+				src_ip_buf, sizeof(src_ip_buf));
+			if (unlikely(src_ip_or_err == NULL)) {
+				src_ip_or_err =
+					"(could not convert IP to string)";
+			}
+			G_LOG(ERR, "%s(%s): received \"Fragmentation required, and DF flag set\" ICMPv4 packet from source address %s; check MTU along path\n",
+				__func__, iface->name, src_ip_or_err);
+		}
+
+		kni_pkts[num_kni_pkts++] = info->pkt;
 	}
-	return 0;
+
+	if (likely(num_kni_pkts > 0)) {
+		struct lls_config *lls_conf = director_arg;
+		submit_icmp_packets(kni_pkts, num_kni_pkts, iface, lls_conf);
+	}
 }
 
 static int
-register_icmp6_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
-	uint8_t *rx_method)
+register_icmpv4_filter(struct gatekeeper_if *iface, uint16_t rx_queue,
+	struct absflow_execution *exec)
+{
+	uint32_t flow_id;
+	int ret = absflow_add_ipv4_filter(iface, iface->ip4_addr.s_addr,
+		0, 0, 0, 0, IPPROTO_ICMP, rx_queue, submit_packets, true);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot add IPv4 ICMP filter (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		return ret;
+	}
+	flow_id = ret;
+
+	ret = absflow_add_submit(exec, flow_id, process_icmpv4_pkts);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot add submit (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		return ret;
+	}
+
+	return 0;
+}
+
+static void
+process_icmpv6_pkts(struct absflow_packet **infos, uint16_t n,
+	struct gatekeeper_if *iface, void *director_arg)
+{
+	struct lls_config *lls_conf = director_arg;
+	struct rte_mbuf *free_pkts[n];
+	struct rte_mbuf *kni_pkts[n];
+	unsigned int num_free_pkts = 0;
+	unsigned int num_kni_pkts = 0;
+	int i;
+
+	for (i = 0; i < n; i++) {
+		struct absflow_packet *info = infos[i];
+		struct icmpv6_hdr *icmpv6_hdr = info->l4_hdr;
+
+		if (pkt_is_nd_neighbor(icmpv6_hdr->type, icmpv6_hdr->code)) {
+			if (unlikely(process_nd(lls_conf, iface, info->pkt) < 0
+					))
+				free_pkts[num_free_pkts++] = info->pkt;
+			continue;
+		}
+
+		if (unlikely(icmpv6_hdr->type == ICMPV6_PACKET_TOO_BIG_TYPE &&
+				icmpv6_hdr->code == ICMPV6_PACKET_TOO_BIG_CODE)
+				) {
+			struct rte_ipv6_hdr *ipv6_hdr = info->l3_hdr;
+			char src_ip_buf[INET6_ADDRSTRLEN];
+			const char *src_ip_or_err = inet_ntop(AF_INET6,
+				&ipv6_hdr->src_addr,
+				src_ip_buf, sizeof(src_ip_buf));
+			if (unlikely(src_ip_or_err == NULL)) {
+				src_ip_or_err =
+					"(could not convert IP to string)";
+			}
+			G_LOG(ERR, "%s(%s): received \"Packet Too Big\" ICMPv6 packet from source address %s; check MTU along path\n",
+				__func__, iface->name, src_ip_or_err);
+		}
+
+		kni_pkts[num_kni_pkts++] = info->pkt;
+	}
+
+	if (unlikely(num_free_pkts > 0))
+		rte_pktmbuf_free_bulk(free_pkts, num_free_pkts);
+	if (likely(num_kni_pkts > 0))
+		submit_icmp_packets(kni_pkts, num_kni_pkts, iface, lls_conf);
+}
+
+static int
+register_icmpv6_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
+	struct absflow_execution *exec)
 {
 	/* All of the IPv6 addresses that a Gatekeeper interface supports. */
 	const struct in6_addr *ip6_addrs[] = {
@@ -796,19 +722,23 @@ register_icmp6_filters(struct gatekeeper_if *iface, uint16_t rx_queue,
 		&ip6_allnodes_mc_addr,
 	};
 	unsigned int i;
-	int ret;
 
 	for (i = 0; i < RTE_DIM(ip6_addrs); i++) {
-		ret = ipv6_pkt_filter_add(iface,
-			(rte_be32_t *)&ip6_addrs[i]->s6_addr,
-			0, 0, 0, 0,
-			IPPROTO_ICMPV6, rx_queue,
-			submit_icmp6, match_icmp6,
-			rx_method);
-		if (ret < 0) {
-			G_LOG(ERR,
-				"Could not add IPv6 ICMP filter on %s iface\n",
-				iface->name);
+		uint32_t flow_id;
+		int ret = absflow_add_ipv6_filter(iface, ip6_addrs[i]->s6_addr,
+			0, 0, 0, 0, IPPROTO_ICMPV6, rx_queue,
+			submit_packets, true);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot add IPv6 ICMP filter (errno=%i): %s\n",
+				__func__, iface->name, -ret, strerror(-ret));
+			return ret;
+		}
+		flow_id = ret;
+
+		ret = absflow_add_submit(exec, flow_id, process_icmpv6_pkts);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot add submit (errno=%i): %s\n",
+				__func__, iface->name, -ret, strerror(-ret));
 			return ret;
 		}
 	}
@@ -898,23 +828,17 @@ fail:
 	return ret;
 }
 
-#define ARP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts)
-
-#define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_icmp_req) + sizeof(struct rte_mbuf *) * num_pkts)
-
-#define ICMP6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) +\
-	sizeof(struct lls_icmp6_req) + sizeof(struct rte_mbuf *) * num_pkts)
+#define PACKETS_REQ_SIZE(num_pkts)					\
+	(offsetof(struct lls_request, end_of_header) +			\
+		sizeof(struct lls_packets_req) + 			\
+		sizeof(struct absflow_packet) * num_pkts)
 
 static int
 lls_stage1(void *arg)
 {
 	struct lls_config *lls_conf = arg;
 	int ele_size = RTE_MAX(sizeof(struct lls_request),
-		RTE_MAX(ARP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-		RTE_MAX(ICMP_REQ_SIZE(lls_conf->mailbox_max_pkt_sub),
-			ICMP6_REQ_SIZE(lls_conf->mailbox_max_pkt_sub))));
+		PACKETS_REQ_SIZE(lls_conf->mailbox_max_pkt_sub));
 	int ret = assign_lls_queue_ids(lls_conf);
 	if (ret < 0)
 		return ret;
@@ -944,8 +868,9 @@ lls_stage2(void *arg)
 	int ret;
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = ethertype_flow_add(&net_conf->front,
-			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front);
+		ret = absflow_add_ethertype_filter(&net_conf->front,
+			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_front,
+			submit_arp, true);
 		if (ret < 0 && net_conf->front.rss &&
 				lls_conf->rx_queue_front != 0) {
 			/*
@@ -966,6 +891,10 @@ lls_stage2(void *arg)
 			return -1;
 		}
 		if (ret >= 0) {
+			const unsigned int flow_id = ret;
+			/* TODO This function must move to lls_proc(). */
+			ret = absflow_rx_method(&net_conf->front, &flow_id, 1,
+				&lls_conf->rx_method_front);
 			/* ARP packets can be received from the NIC. */
 			lls_conf->rx_method_front |= RX_METHOD_NIC;
 		} else {
@@ -979,23 +908,24 @@ lls_stage2(void *arg)
 			lls_conf->rx_method_front |= RX_METHOD_MB;
 		}
 
-		ret = register_icmp_filter(&net_conf->front,
-			lls_conf->rx_queue_front,
-			&lls_conf->rx_method_front);
-		if (ret < 0)
+		ret = register_icmpv4_filter(&net_conf->front,
+			lls_conf->rx_queue_front, &lls_conf->front_exec);
+		if (unlikely(ret < 0))
 			return ret;
 	}
 
 	if (lls_conf->arp_cache.iface_enabled(net_conf, &net_conf->back)) {
 		/* See comments above about return values. */
-		ret = ethertype_flow_add(&net_conf->back,
-			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back);
+		ret = absflow_add_ethertype(&net_conf->back,
+			RTE_ETHER_TYPE_ARP, lls_conf->rx_queue_back,
+			submit_arp, true);
 		if (ret < 0 && net_conf->back.rss &&
 				lls_conf->rx_queue_back != 0) {
 			G_LOG(ERR, "If EtherType flows are not supported, the LLS block must listen on queue 0 on the back iface\n");
 			return -1;
 		}
 		if (ret >= 0) {
+			/* TODO This function must move to lls_proc(). */
 			/* ARP packets can be received from the NIC. */
 			lls_conf->rx_method_back |= RX_METHOD_NIC;
 		} else {
@@ -1003,26 +933,23 @@ lls_stage2(void *arg)
 			lls_conf->rx_method_back |= RX_METHOD_MB;
 		}
 
-		ret = register_icmp_filter(&net_conf->back,
-			lls_conf->rx_queue_back,
-			&lls_conf->rx_method_back);
-		if (ret < 0)
+		ret = register_icmpv4_filter(&net_conf->back,
+			lls_conf->rx_queue_back, &lls_conf->back_exec);
+		if (unlikely(ret < 0))
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->front)) {
-		ret = register_icmp6_filters(&net_conf->front,
-			lls_conf->rx_queue_front,
-			&lls_conf->rx_method_front);
-		if (ret < 0)
+		ret = register_icmpv6_filters(&net_conf->front,
+			lls_conf->rx_queue_front, &lls_conf->front_exec);
+		if (unlikely(ret < 0))
 			return ret;
 	}
 
 	if (lls_conf->nd_cache.iface_enabled(net_conf, &net_conf->back)) {
-		ret = register_icmp6_filters(&net_conf->back,
-			lls_conf->rx_queue_back,
-			&lls_conf->rx_method_back);
-		if (ret < 0)
+		ret = register_icmpv6_filters(&net_conf->back,
+			lls_conf->rx_queue_back, &lls_conf->back_exec);
+		if (unlikely(ret < 0))
 			return ret;
 	}
 

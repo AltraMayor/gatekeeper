@@ -630,8 +630,6 @@ int lua_init_iface(struct gatekeeper_if *iface, const char *iface_name,
 int get_ip_type(const char *ip_addr);
 int convert_str_to_ip(const char *ip_addr, struct ipaddr *res);
 int convert_ip_to_str(const struct ipaddr *ip_addr, char *res, int n);
-int ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
-	uint16_t queue_id);
 
 /*
  * Add a filter for IPv4 packets based on the destination IP address,

@@ -42,96 +42,6 @@
 
 static struct net_config config;
 
-/*
- * Add a filter that steers packets to queues based on their EtherType.
- *
- * Tecnically, the DPDK rte_flow API allows filters to be specified
- * on any field in an Ethernet header, but in practice, drivers implement
- * the RTE_FLOW_ITEM_TYPE_ETH using the EtherType filters available
- * in hardware. Typically, EtherType filters only support destination
- * MAC addresses and the EtherType field. We choose to only allow
- * the EtherType field to be specified, since the destination MAC
- * address may be extraneous anyway (#74).
- *
- * @ether_type should be passed in host ordering, but is converted
- * to big endian ordering before being added as a filter, as
- * required by the rte_flow API. Individual device drivers can then
- * convert it to whatever endianness is needed.
- */
-int
-ethertype_flow_add(struct gatekeeper_if *iface, uint16_t ether_type,
-	uint16_t queue_id)
-{
-	struct rte_flow_attr attr = { .ingress = 1 };
-	struct rte_flow_action_queue queue = { .index = queue_id };
-	struct rte_flow_action action[] = {
-		{
-			.type = RTE_FLOW_ACTION_TYPE_QUEUE,
-			.conf = &queue,
-	       	},
-		{
-			.type = RTE_FLOW_ACTION_TYPE_END,
-		}
-	};
-	struct rte_flow_item_eth eth_spec = {
-		.type = rte_cpu_to_be_16(ether_type),
-	};
-	struct rte_flow_item_eth eth_mask = {
-		.type = 0xFFFF,
-	};
-	struct rte_flow_item pattern[] = {
-		{
-			.type = RTE_FLOW_ITEM_TYPE_ETH,
-			.spec = &eth_spec,
-			.mask = &eth_mask,
-		},
-		{
-			.type = RTE_FLOW_ITEM_TYPE_END,
-		},
-	};
-	struct rte_flow_error error;
-	struct rte_flow *flow;
-	int ret;
-
-	if (!iface->rss) {
-		/*
-		 * If RSS is not supported, then data plane packets
-		 * could be assigned to RX queues that are serviced
-		 * by non-data plane blocks (e.g., LLS).
-		 */
-		G_LOG(NOTICE, "%s(%s): cannot use EtherType filters when RSS is not supported\n",
-			__func__, iface->name);
-		return -1;
-	}
-
-	ret = rte_flow_validate(iface->id, &attr, pattern, action, &error);
-	if (ret < 0) {
-		/*
-		 * A negative errno value was returned
-		 * (and also put in rte_errno).
-		 */
-		G_LOG(NOTICE, "%s(%s): cannot validate EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
-			__func__, iface->name, ether_type,
-			-ret, rte_strerror(-ret),
-			error.type, error.message);
-		return -1;
-	}
-
-	flow = rte_flow_create(iface->id, &attr, pattern, action, &error);
-	if (flow == NULL) {
-		/* rte_errno is set to a positive errno value. */
-		G_LOG(ERR, "%s(%s): cannot create EtherType=0x%x flow, errno=%i (%s), rte_flow_error_type=%i: %s\n",
-			__func__, iface->name, ether_type,
-			rte_errno, rte_strerror(rte_errno),
-			error.type, error.message);
-		return -1;
-	}
-
-	G_LOG(NOTICE, "%s(%s): EtherType=0x%x flow supported\n",
-		__func__, iface->name, ether_type);
-	return 0;
-}
-
 #define STR_NOIP "NO IP"
 static int
 ipv4_flow_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
@@ -303,6 +213,7 @@ ipv4_fill_acl_rule(struct ipv4_acl_rule *rule,
 		rte_be_to_cpu_16(dst_port_mask_be);
 }
 
+/* TODO Remove this function; update header file. */
 int
 ipv4_pkt_filter_add(struct gatekeeper_if *iface, rte_be32_t dst_ip_be,
 	rte_be16_t src_port_be, rte_be16_t src_port_mask_be,
