@@ -1774,8 +1774,12 @@ gt_proc(void *arg)
 				num_tx - num_tx_succ);
 		}
 
-		if (num_arp > 0)
-			submit_arp(arp_bufs, num_arp, &gt_conf->net->front);
+		/* TODO
+		if (num_arp > 0) {
+			submit_arp(arp_bufs, num_arp, &gt_conf->net->front,
+				NULL);
+		}
+		*/
 
 		process_pkts_acl(&gt_conf->net->front, lcore, &acl4,
 			RTE_ETHER_TYPE_IPV4);
