@@ -23,6 +23,7 @@
 
 #include "gatekeeper_gk.h"
 #include "gatekeeper_main.h"
+/* TODO Remove these headers. */
 #include "gatekeeper_l2.h"
 #include "gatekeeper_varip.h"
 

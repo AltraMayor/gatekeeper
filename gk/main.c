@@ -2053,8 +2053,10 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		stats->pkts_size_request += acc_size_request[ret];
 	}
 
+	/* TODO
 	if (num_arp > 0)
-		submit_arp(arp_bufs, num_arp, &gk_conf->net->front);
+		submit_arp(arp_bufs, num_arp, &gk_conf->net->front, NULL);
+	*/
 
 	process_pkts_acl(&gk_conf->net->front,
 		lcore, &acl4, RTE_ETHER_TYPE_IPV4);
@@ -2317,8 +2319,10 @@ process_pkts_back(uint16_t port_back, uint16_t rx_queue_back,
 			instance);
 	}
 
+	/* TODO
 	if (num_arp > 0)
-		submit_arp(arp_bufs, num_arp, &gk_conf->net->back);
+		submit_arp(arp_bufs, num_arp, &gk_conf->net->back, NULL);
+	*/
 
 	process_pkts_acl(&gk_conf->net->back, lcore, &acl4,
 		RTE_ETHER_TYPE_IPV4);
