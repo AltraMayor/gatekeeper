@@ -141,6 +141,130 @@ struct acl_state {
 };
 
 /*
+ * Definitions to abstract flow implementation.
+ *
+ * The priority is to offload flows to hardware if proper hardware support
+ * is available. What cannot be offloaded is implemented in software.
+ */
+
+/* Maximum number of abstract flows. */
+#define GATEKEEPER_ABSFLOW_MAX (64)
+
+/* Invalid FLow ID of abstract flows. */
+#define GATEKEEPER_ABSFLOW_INVALID_FLOWID (0xFF)
+
+/* FLow description. */
+struct absflow_desc {
+	/*
+	 * True when the associated NIC can offload this flow AND
+	 * parameter @use_hw_if_available was true when this flows
+	 * was defined.
+	 */
+	bool                   hw_supported;
+	/*
+	 * True when @hw_supported is true AND the flow is offloaded.
+	 *
+	 * A flow cannot be offloaded if a more specific flow exists AND
+	 * the more specific flow cannot be offloaded.
+	 * For example, a NIC supports offloading a flow for all UDP packets,
+	 * but cannot offload a flow for UDP packets whose destination
+	 * port is 53 (DNS).
+	 * If the flow for all UDP packets were offloaded, the software
+	 * implementation of the flow for UDP packets whose destination port is
+	 * 53 would never see its packets.
+	 */
+	bool                   hw_offloaded;
+
+	/* Parameters for rte_flow_validate() and rte_flow_create(). */
+	struct rte_flow_attr   *attr;
+	struct rte_flow_item   *pattern;
+	struct rte_flow_action *action;
+
+	/* Memory block for the flow parameters above. */
+	struct memblock_head   *memblock;
+};
+
+struct absflow_packet {
+	/* Pointer to the packet itself. */
+	struct rte_mbuf *pkt;
+
+	/* Length of the level-2 header. */
+	uint16_t        l2_len;
+	/* Length of the level-3 header. */
+	uint16_t        l3_len;
+	/*
+	 * Length of the level-4 header.
+	 * More precisely, the amount of bytes left after the level-2 and
+	 * level-3 headers.
+	 */
+	uint16_t        l4_len;
+
+	/* Ethernet type of @l3_hdr. */
+	uint16_t        l3_proto;
+
+	/*
+	 * Internet protocol type of @l4_hdr.
+	 *
+	 * A valid value for this field is 8-bit long. But it is defined as
+	 * a 16-bit to allow for (uint16_t)(-1) as an invalid protocol.
+	 * extract_packet_info() needs an invalid value for this field.
+	 */
+	uint16_t        l4_proto;
+	/* This field is only true if @l4_hdr is fragmented. */
+	bool            l4_fragmented;
+
+	/*
+	 * Flow ID of the filter that matched @pkt.
+	 * This field may be GATEKEEPER_ABSFLOW_INVALID_FLOWID when @pkt
+	 * does not match any filter.
+	 */
+	uint8_t        flow_id;
+
+	/* Beginning of the level-3 header. */
+	void            *l3_hdr;
+	/* Beginning of the level-4 header. */
+	void            *l4_hdr;
+};
+
+static inline void
+absflow_copy_info(struct absflow_packet *dest, const struct absflow_packet *src)
+{
+	*dest = *src;
+}
+
+typedef void (*absflow_submit_func)(struct absflow_packet **infos, uint16_t n,
+	struct gatekeeper_if *iface, void *director_arg);
+
+/* Useful function to define functions of the type absflow_submit_func. */
+void absflow_free_packets(struct absflow_packet **infos, uint16_t n);
+
+typedef uint64_t (*rte_bpf_jitted_func_t)(void *);
+
+struct absflow_execution {
+	/* Number of entries in @submits. */
+	unsigned int          submits_count;
+	absflow_submit_func   submits[GATEKEEPER_ABSFLOW_MAX];
+	/* Map Flow IDs to submits. */
+	uint8_t               flow_id_to_submit[GATEKEEPER_ABSFLOW_MAX];
+
+	/* BPF to classify packets from network interfaces. */
+	struct rte_bpf        *f_class;
+	rte_bpf_jitted_func_t f_class_jit;
+};
+
+struct absflow_director {
+	/* True when this struct has been initialized. */
+	bool                     dir_inited;
+	/* True when @dir_inited is true and flows have been implemented. */
+	bool                     dir_working;
+	/* Number of entries in @flow_descs. */
+	unsigned int             flow_descs_count;
+
+	struct absflow_desc      flow_descs[GATEKEEPER_ABSFLOW_MAX];
+	struct absflow_execution dir_exec;
+};
+
+/*
  * A Gatekeeper interface is specified by a set of PCI addresses
  * that map to DPDK port numbers. If multiple ports are specified,
  * then the ports are bonded.
@@ -375,6 +499,9 @@ struct gatekeeper_if {
 	/* ACLs and associated callback functions for matching packets. */
 	struct acl_state  ipv4_acls;
 	struct acl_state  ipv6_acls;
+
+	/* Abstract flows. */
+	struct absflow_director absflow_dir;
 
 	/* Whether this interface supports RSS. */
 	bool              rss;
