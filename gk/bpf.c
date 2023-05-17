@@ -397,7 +397,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	if (bpf_f_init == NULL) {
 		G_LOG(ERR,
 			"%s(): file \"%s\" does not have the BPF program \"init\"; rte_errno = %i: %s\n",
-			__func__, filename, rte_errno, strerror(rte_errno));
+			__func__, filename, rte_errno, rte_strerror(rte_errno));
 		return -1;
 	}
 
@@ -408,7 +408,7 @@ gk_load_bpf_flow_handler(struct gk_config *gk_conf, unsigned int index,
 	if (handler->f_pkt == NULL) {
 		G_LOG(ERR,
 			"%s(): file \"%s\" does not have the BPF program \"pkt\"; rte_errno = %i: %s\n",
-			__func__, filename, rte_errno, strerror(rte_errno));
+			__func__, filename, rte_errno, rte_strerror(rte_errno));
 		goto f_init;
 	}
 

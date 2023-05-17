@@ -20,6 +20,7 @@
 #include <rte_lcore.h>
 #include <rte_debug.h>
 #include <rte_malloc.h>
+#include <rte_errno.h>
 
 #include "gatekeeper_main.h"
 #include "gatekeeper_mailbox.h"
@@ -80,7 +81,7 @@ mb_alloc_entry(struct mailbox *mb)
 	int ret = rte_mempool_get(mb->pool, &obj);
 	if (ret < 0) {
 		G_LOG(ERR, "mailbox: failed to get a new entry from the mempool - %s\n",
-			strerror(-ret));
+			rte_strerror(-ret));
 		return NULL;
 	}
 

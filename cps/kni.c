@@ -815,7 +815,7 @@ kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	ret = rte_mempool_get(cps_conf->arp_mp, (void **)&arp_req);
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "Failed to get a new entry from the ARP request mempool - %s\n",
-			strerror(-ret));
+			rte_strerror(-ret));
 		goto out;
 	}
 
@@ -919,7 +919,7 @@ kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 	ret = rte_mempool_get(cps_conf->nd_mp, (void **)&nd_req);
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "Failed to get a new entry from the ND request mempool - %s\n",
-			strerror(-ret));
+			rte_strerror(-ret));
 		goto out;
 	}
 
