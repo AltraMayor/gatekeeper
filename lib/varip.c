@@ -52,14 +52,14 @@ ipv6_skip_exthdr(const struct rte_ipv6_hdr *ip6hdr,
 		const struct ipv6_opt_hdr *hp;
 
 		if (start + (int)sizeof(struct ipv6_opt_hdr) > remaining_len)
-			return -1;
+			return -EINVAL;
 
 		hp = (const struct ipv6_opt_hdr *)
 			((const uint8_t *)ip6hdr + start);
 
 		switch (nexthdr) {
 		case NEXTHDR_NONE:
-			return -1;
+			return -EINVAL;
 			break;
 
 		case NEXTHDR_FRAGMENT:
@@ -79,7 +79,7 @@ ipv6_skip_exthdr(const struct rte_ipv6_hdr *ip6hdr,
 		start += hdrlen;
 
 		if (start > remaining_len)
-			return -1;
+			return -EINVAL;
 	}
 
 	*nexthdrp = nexthdr;
