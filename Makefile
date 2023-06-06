@@ -30,9 +30,10 @@ SRCS-y += sol/main.c
 
 # Libraries.
 SRCS-y += lib/mailbox.c lib/net.c lib/flow.c lib/ipip.c \
-	lib/launch.c lib/rib.c lib/fib.c lib/acl.c lib/absflow.c lib/varip.c \
-	lib/l2.c lib/ratelimit.c lib/memblock.c lib/log_ratelimit.c \
-	lib/coro.c lib/qid.c
+	lib/launch.c lib/rib.c lib/fib.c lib/acl.c \
+	lib/absflow.c lib/absflow_fblock.c \
+	lib/varip.c lib/l2.c lib/ratelimit.c lib/memblock.c \
+	lib/log_ratelimit.c lib/coro.c lib/qid.c
 
 BUILD_DIR := build
 
