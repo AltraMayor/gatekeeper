@@ -50,7 +50,8 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 	if (lrs->suppressed > 0) {
 		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
 			G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
-			lrs->block_name, rte_lcore_id(), lrs->suppressed);
+			lrs->block_name, rte_lcore_id(), "NOTICE",
+			lrs->suppressed);
 	}
 	lrs->suppressed = 0;
 	lrs->end = now + lrs->interval_cycles;
