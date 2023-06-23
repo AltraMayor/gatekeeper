@@ -19,7 +19,6 @@
 /* For gettid(). */
 #define _GNU_SOURCE
 
-#include <alloca.h>
 #include <stdbool.h>
 #include <unistd.h>
 
@@ -131,28 +130,51 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 int
 put_arp(struct in_addr *ipv4, unsigned int lcore_id)
 {
-	if (arp_enabled(&lls_conf)) {
-		struct lls_put_req put_req = {
+	struct lls_request *req;
+
+	if (unlikely(!arp_enabled(&lls_conf))) {
+		G_LOG(ERR, "%s(lcore=%u): ARP service is not enabled\n",
+			__func__, lcore_id);
+		return -ENOTSUP;
+	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL))
+		return -ENOENT;
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_PUT,
+		.u.put = {
 			.cache = &lls_conf.arp_cache,
 			.addr = {
 				.proto = RTE_ETHER_TYPE_IPV4,
 				.ip.v4 = *ipv4,
 			},
 			.lcore_id = lcore_id,
-		};
-		return lls_req(LLS_REQ_PUT, &put_req);
-	}
+		},
+	};
 
-	G_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
-		lcore_id, __func__);
-	return -1;
+	return mb_send_entry(&lls_conf.requests, req);
 }
 
 int
 hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ipv6, unsigned int lcore_id)
 {
-	if (nd_enabled(&lls_conf)) {
-		struct lls_hold_req hold_req = {
+	struct lls_request *req;
+
+	if (unlikely(!nd_enabled(&lls_conf))) {
+		G_LOG(ERR, "%s(lcore=%u): ND service is not enabled\n",
+			__func__, lcore_id);
+		return -ENOTSUP;
+	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL))
+		return -ENOENT;
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_HOLD,
+		.u.hold = {
 			.cache = &lls_conf.nd_cache,
 			.addr = {
 				.proto = RTE_ETHER_TYPE_IPV6,
@@ -163,80 +185,116 @@ hold_nd(lls_req_cb cb, void *arg, struct in6_addr *ipv6, unsigned int lcore_id)
 				.arg = arg,
 				.lcore_id = lcore_id,
 			},
-		};
-		return lls_req(LLS_REQ_HOLD, &hold_req);
-	}
+		},
+	};
 
-	G_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
-		lcore_id, __func__);
-	return -1;
+	return mb_send_entry(&lls_conf.requests, req);
 }
 
 int
 put_nd(struct in6_addr *ipv6, unsigned int lcore_id)
 {
-	if (nd_enabled(&lls_conf)) {
-		struct lls_put_req put_req = {
+	struct lls_request *req;
+
+	if (unlikely(!nd_enabled(&lls_conf))) {
+		G_LOG(ERR, "%s(lcore=%u): ND service is not enabled\n",
+			__func__, lcore_id);
+		return -ENOTSUP;
+	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL))
+		return -ENOENT;
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_PUT,
+		.u.put = {
 			.cache = &lls_conf.nd_cache,
 			.addr = {
 				.proto = RTE_ETHER_TYPE_IPV6,
 				.ip.v6 = *ipv6,
 			},
 			.lcore_id = lcore_id,
-		};
-		return lls_req(LLS_REQ_PUT, &put_req);
-	}
+		},
+	};
 
-	G_LOG(WARNING, "lcore %u called %s but ND service is not enabled\n",
-		lcore_id, __func__);
-	return -1;
+	return mb_send_entry(&lls_conf.requests, req);
 }
-
-#define ARP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 void
 submit_arp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_arp_req *arp_req;
+	struct lls_request *req;
 	int ret;
 
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
+	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
+		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
+			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
+		goto free_pkts;
+	}
 
-	arp_req = alloca(ARP_REQ_SIZE(num_pkts));
-	arp_req->num_pkts = num_pkts;
-	arp_req->iface = iface;
-	rte_memcpy(arp_req->pkts, pkts, sizeof(*arp_req->pkts) * num_pkts);
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL))
+		goto free_pkts;
 
-	ret = lls_req(LLS_REQ_ARP, arp_req);
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_ARP,
+		.u.arp = {
+			.num_pkts = num_pkts,
+			.iface = iface,
+		},
+	};
+	rte_memcpy(req->u.arp.pkts, pkts,
+		sizeof(req->u.arp.pkts[0]) * num_pkts);
+
+	ret = mb_send_entry(&lls_conf.requests, req);
 	if (unlikely(ret < 0))
-		rte_pktmbuf_free_bulk(pkts, num_pkts);
-}
+		goto free_pkts;
+	return;
 
-#define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_icmp_req) + sizeof(struct rte_mbuf *) * num_pkts)
+free_pkts:
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
+}
 
 static int
 submit_icmp(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_icmp_req *icmp_req;
+	struct lls_request *req;
 	int ret;
 
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
-
-	icmp_req = alloca(ICMP_REQ_SIZE(num_pkts));
-	icmp_req->num_pkts = num_pkts;
-	icmp_req->iface = iface;
-	rte_memcpy(icmp_req->pkts, pkts, sizeof(*icmp_req->pkts) * num_pkts);
-
-	ret = lls_req(LLS_REQ_ICMP, icmp_req);
-	if (unlikely(ret < 0)) {
-		rte_pktmbuf_free_bulk(pkts, num_pkts);
-		return ret;
+	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
+		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
+			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
+		ret = -EINVAL;
+		goto free_pkts;
 	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL)) {
+		ret = -ENOENT;
+		goto free_pkts;
+	}
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_ICMP,
+		.u.icmp = {
+			.num_pkts = num_pkts,
+			.iface = iface,
+		},
+	};
+	rte_memcpy(req->u.icmp.pkts, pkts,
+		sizeof(req->u.icmp.pkts[0]) * num_pkts);
+
+	ret = mb_send_entry(&lls_conf.requests, req);
+	if (unlikely(ret < 0))
+		goto free_pkts;
 	return 0;
+
+free_pkts:
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
+	return ret;
 }
 
 /*
@@ -281,29 +339,44 @@ match_icmp(struct rte_mbuf *pkt, struct gatekeeper_if *iface)
 	return 0;
 }
 
-#define ICMP6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
-	sizeof(struct lls_icmp6_req) + sizeof(struct rte_mbuf *) * num_pkts)
-
 static int
 submit_icmp6(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface)
 {
-	struct lls_icmp6_req *icmp6_req;
+	struct lls_request *req;
 	int ret;
 
-	RTE_VERIFY(num_pkts <= lls_conf.mailbox_max_pkt_sub);
-
-	icmp6_req = alloca(ICMP6_REQ_SIZE(num_pkts));
-	icmp6_req->num_pkts = num_pkts;
-	icmp6_req->iface = iface;
-	rte_memcpy(icmp6_req->pkts, pkts, sizeof(*icmp6_req->pkts) * num_pkts);
-
-	ret = lls_req(LLS_REQ_ICMP6, icmp6_req);
-	if (unlikely(ret < 0)) {
-		rte_pktmbuf_free_bulk(pkts, num_pkts);
-		return ret;
+	if (unlikely(num_pkts > lls_conf.mailbox_max_pkt_sub)) {
+		G_LOG(ERR, "%s(): too many packets: num_pkts=%u > lls_conf.mailbox_max_pkt_sub=%u\n",
+			__func__, num_pkts, lls_conf.mailbox_max_pkt_sub);
+		ret = -EINVAL;
+		goto free_pkts;
 	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL)) {
+		ret = -ENOENT;
+		goto free_pkts;
+	}
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_ICMP6,
+		.u.icmp6 = {
+			.num_pkts = num_pkts,
+			.iface = iface,
+		},
+	};
+	rte_memcpy(req->u.icmp6.pkts, pkts,
+		sizeof(req->u.icmp6.pkts[0]) * num_pkts);
+
+	ret = mb_send_entry(&lls_conf.requests, req);
+	if (unlikely(ret < 0))
+		goto free_pkts;
 	return 0;
+
+free_pkts:
+	rte_pktmbuf_free_bulk(pkts, num_pkts);
+	return ret;
 }
 
 /*
@@ -824,6 +897,15 @@ fail:
 	G_LOG(ERR, "Cannot assign queues\n");
 	return ret;
 }
+
+#define ARP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_arp_req) + sizeof(struct rte_mbuf *) * num_pkts)
+
+#define ICMP_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) + \
+	sizeof(struct lls_icmp_req) + sizeof(struct rte_mbuf *) * num_pkts)
+
+#define ICMP6_REQ_SIZE(num_pkts) (offsetof(struct lls_request, end_of_header) +\
+	sizeof(struct lls_icmp6_req) + sizeof(struct rte_mbuf *) * num_pkts)
 
 static int
 lls_stage1(void *arg)

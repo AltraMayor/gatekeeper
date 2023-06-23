@@ -558,60 +558,6 @@ lls_process_reqs(struct lls_config *lls_conf)
 	return count;
 }
 
-int
-lls_req(enum lls_req_ty ty, void *req_arg)
-{
-	struct lls_config *lls_conf = get_lls_conf();
-	struct lls_request *req = mb_alloc_entry(&lls_conf->requests);
-	int ret;
-
-	if (req == NULL) {
-		G_LOG(ERR, "Allocation for request of type %d failed", ty);
-		return -1;
-	}
-
-	req->ty = ty;
-
-	switch (ty) {
-	case LLS_REQ_PUT:
-		req->u.put = *(struct lls_put_req *)req_arg;
-		break;
-	case LLS_REQ_ARP: {
-		struct lls_arp_req *arp_req = (struct lls_arp_req *)req_arg;
-		req->u.arp = *arp_req;
-		rte_memcpy(req->u.arp.pkts, arp_req->pkts,
-			sizeof(arp_req->pkts[0]) * arp_req->num_pkts);
-		break;
-	}
-	case LLS_REQ_ICMP: {
-		struct lls_icmp_req *icmp_req =
-			(struct lls_icmp_req *)req_arg;
-		req->u.icmp = *icmp_req;
-		rte_memcpy(req->u.icmp.pkts, icmp_req->pkts,
-			sizeof(icmp_req->pkts[0]) * icmp_req->num_pkts);
-		break;
-	}
-	case LLS_REQ_ICMP6: {
-		struct lls_icmp6_req *icmp6_req =
-			(struct lls_icmp6_req *)req_arg;
-		req->u.icmp6 = *icmp6_req;
-		rte_memcpy(req->u.icmp6.pkts, icmp6_req->pkts,
-			sizeof(icmp6_req->pkts[0]) * icmp6_req->num_pkts);
-		break;
-	}
-	default:
-		mb_free_entry(&lls_conf->requests, req);
-		G_LOG(ERR, "Unknown request type %d failed", ty);
-		return -1;
-	}
-
-	ret = mb_send_entry(&lls_conf->requests, req);
-	if (ret < 0)
-		return ret;
-
-	return 0;
-}
-
 struct lls_map *
 lls_cache_get(struct lls_cache *cache, const struct ipaddr *addr)
 {
