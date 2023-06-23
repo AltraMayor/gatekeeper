@@ -146,12 +146,6 @@ void lls_cache_destroy(struct lls_cache *cache);
 unsigned int lls_process_reqs(struct lls_config *lls_conf);
 
 /*
- * Submit a request to the LLS block, where @req_arg is one of the
- * the members of the union in struct lls_request that matches @ty.
- */
-int lls_req(enum lls_req_ty ty, void *req_arg);
-
-/*
  * Modify a cache entry without going through the mailbox.
  *
  * NOTE
