@@ -79,14 +79,11 @@ mb_alloc_entry(struct mailbox *mb)
 {
 	void *obj = NULL;
 	int ret = rte_mempool_get(mb->pool, &obj);
-	if (ret < 0) {
-		G_LOG(ERR, "mailbox: failed to get a new entry from the mempool - %s\n",
-			rte_strerror(-ret));
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to get a new mailbox entry (errno=%i): %s\n",
+			__func__, -ret, rte_strerror(-ret));
 		return NULL;
 	}
-
-	RTE_VERIFY(ret == 0);
-
 	return obj;
 }
 
@@ -94,16 +91,26 @@ int
 mb_send_entry(struct mailbox *mb, void *obj)
 {
 	int ret = rte_ring_mp_enqueue(mb->ring, obj);
-	if (ret == -EDQUOT) {
-		G_LOG(WARNING,
-			"mailbox: high water mark exceeded; the object has been enqueued\n");
+
+	switch (-ret) {
+	case EDQUOT:
+		G_LOG(WARNING, "%s(): high water mark exceeded; the object has been enqueued\n",
+			__func__);
 		ret = 0;
-	} else if (ret == -ENOBUFS) {
-		G_LOG(ERR,
-			"mailbox: quota exceeded; not enough room in the ring to enqueue\n");
+		break;
+	case ENOBUFS:
+		G_LOG(ERR, "%s(): quota exceeded; the object has NOT been enqueued\n",
+			__func__);
 		mb_free_entry(mb, obj);
-	} else
-		RTE_VERIFY(ret == 0);
+		break;
+	default:
+		if (likely(ret == 0))
+			break;
+		mb_free_entry(mb, obj);
+		G_LOG(CRIT, "%s(): bug: unexpected error (errno=%i): %s\n",
+			__func__, -ret, rte_strerror(-ret));
+		break;
+	}
 
 	return ret;
 }
