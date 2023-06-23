@@ -97,8 +97,21 @@ cleanup_lls(void)
 int
 hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 {
-	if (arp_enabled(&lls_conf)) {
-		struct lls_hold_req hold_req = {
+	struct lls_request *req;
+
+	if (unlikely(!arp_enabled(&lls_conf))) {
+		G_LOG(ERR, "%s(lcore=%u): ARP service is not enabled\n",
+			__func__, lcore_id);
+		return -ENOTSUP;
+	}
+
+	req = mb_alloc_entry(&lls_conf.requests);
+	if (unlikely(req == NULL))
+		return -ENOENT;
+
+	*req = (typeof(*req)) {
+		.ty = LLS_REQ_HOLD,
+		.u.hold = {
 			.cache = &lls_conf.arp_cache,
 			.addr = {
 				.proto = RTE_ETHER_TYPE_IPV4,
@@ -109,13 +122,10 @@ hold_arp(lls_req_cb cb, void *arg, struct in_addr *ipv4, unsigned int lcore_id)
 				.arg = arg,
 				.lcore_id = lcore_id,
 			},
-		};
-		return lls_req(LLS_REQ_HOLD, &hold_req);
-	}
+		},
+	};
 
-	G_LOG(WARNING, "lcore %u called %s but ARP service is not enabled\n",
-		lcore_id, __func__);
-	return -1;
+	return mb_send_entry(&lls_conf.requests, req);
 }
 
 int

@@ -573,9 +573,6 @@ lls_req(enum lls_req_ty ty, void *req_arg)
 	req->ty = ty;
 
 	switch (ty) {
-	case LLS_REQ_HOLD:
-		req->u.hold = *(struct lls_hold_req *)req_arg;
-		break;
 	case LLS_REQ_PUT:
 		req->u.put = *(struct lls_put_req *)req_arg;
 		break;
