@@ -154,11 +154,20 @@ out:
 void
 fib_free(struct fib_head *fib)
 {
-	fib->tbl8_pool[0] = FIB_TBL8_FREE_INDEX;
+	if (likely(fib->tbl8_pool != NULL)) {
+		/*
+		 * This function may be called on an uninitialized @fib.
+		 * For example, when a Gatekeeper server is set to work with
+		 * either IPv4 or IPv6 only.
+		 * In this case, this function shall follow the example of
+		 * free(3) that ignores NULL.
+		 */
+		fib->tbl8_pool[0] = FIB_TBL8_FREE_INDEX;
+		rte_free(fib->tbl8_pool);
+		fib->tbl8_pool = NULL;
+	}
 	fib->first_free_tbl8_idx = 0;
 	fib->first_free_idx = 0;
-	rte_free(fib->tbl8_pool);
-	fib->tbl8_pool = NULL;
 
 	fib->num_tbl8s = 0;
 	rte_free(fib->tbl8s);
