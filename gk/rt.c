@@ -574,12 +574,12 @@ init_fib_tbl(struct gk_config *gk_conf)
 
 	if (ltbl->fib_tbl != NULL) {
 		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++)
-			ltbl->fib_tbl[i].action = GK_FIB_MAX;
+			initialize_fib_entry(&ltbl->fib_tbl[i]);
 	}
 
 	if (ltbl->fib_tbl6 != NULL) {
 		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++)
-			ltbl->fib_tbl6[i].action = GK_FIB_MAX;
+			initialize_fib_entry(&ltbl->fib_tbl6[i]);
 	}
 
 	/* Set up the FIB entry for the front network prefixes. */
@@ -640,8 +640,12 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto out;
 		}
 
-		ltbl->fib_tbl = rte_calloc_socket("IPv4-FIB-table",
-			gk_conf->max_num_ipv4_rules, sizeof(struct gk_fib),
+		/*
+		 * Don't need to zero memory during allocation because
+		 * initialize_fib_entry() does that for us.
+		 */
+		ltbl->fib_tbl = rte_malloc_socket("IPv4-FIB-table",
+			gk_conf->max_num_ipv4_rules * sizeof(struct gk_fib),
 			0, socket_id);
 		if (unlikely(ltbl->fib_tbl == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv4 FIB table\n",
@@ -666,8 +670,12 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto free_lpm_tbl;
 		}
 
-		ltbl->fib_tbl6 = rte_calloc_socket("IPv6-FIB-table",
-			gk_conf->max_num_ipv6_rules, sizeof(struct gk_fib),
+		/*
+		 * Don't need to zero memory during allocation because
+		 * initialize_fib_entry() does that for us.
+		 */
+		ltbl->fib_tbl6 = rte_malloc_socket("IPv6-FIB-table",
+			gk_conf->max_num_ipv6_rules * sizeof(struct gk_fib),
 			0, socket_id);
 		if (unlikely(ltbl->fib_tbl6 == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv6 FIB table\n",
