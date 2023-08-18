@@ -28,6 +28,7 @@
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_fib.h"
+#include "gatekeeper_qid.h"
 #include "seqlock.h"
 
 enum gk_fib_action {
@@ -207,18 +208,17 @@ struct gk_lpm {
 	/* The IPv4 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl;
 
+	/* The data structure for managing available IPv4 FIB entries. */
+	struct qid      qid;
+
 	/* The IPv6 RIB and FIB. */
 	struct fib_head fib6;
 
 	/* The IPv6 FIB table that decides the actions on packets. */
 	struct gk_fib   *fib_tbl6;
 
-	/*
-	 * Indexes of the last FIB entries allocated at @fib_tbl and @fib_tbl6.
-	 * get_empty_fib_id() is the only function that uses these fields.
-	 */
-	uint32_t        last_ipv4_index;
-	uint32_t        last_ipv6_index;
+	/* The data structure for managing available IPv6 FIB entries. */
+	struct qid      qid6;
 };
 
 static inline struct rib_head *

@@ -257,70 +257,56 @@ parse_ip_prefix(const char *ip_prefix, struct ipaddr *res)
 	return prefix_len;
 }
 
-/* WARNING: do NOT call this function directly, call get_empty_fib_id(). */
-static int
-__get_empty_fib_id(struct gk_fib *fib_tbl, uint32_t *plast_index,
-	unsigned int num_fib_entries)
-{
-	uint32_t last_index = *plast_index;
-	unsigned int i = last_index;
-
-	/*
-	 * @gk_conf->lpm_tbl.fib_tbl or @gk_conf->lpm_tbl.fib_tbl6 is NULL
-	 * when IPv4 or IPv6 is disabled, respectively.
-	 * But @fib_tbl must not be NULL if the code reached here.
-	 */
-	RTE_VERIFY(fib_tbl != NULL);
-
-	do {
-		/* Next index. */
-		i++;
-		if (unlikely(i >= num_fib_entries))
-			i = 0;
-
-		if (likely(fib_tbl[i].action == GK_FIB_MAX)) {
-			*plast_index = i;
-			return i;
-		}
-	} while (likely(i != last_index));
-	return -ENOSPC;
-}
-
 /* This function will return an empty FIB entry. */
 static int
 get_empty_fib_id(uint16_t ip_proto, struct gk_config *gk_conf,
-	struct gk_fib **p_fib)
+	struct gk_fib **p_fib, struct qid **p_qid, uint32_t *p_id)
 {
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	int ret;
 
 	/* Find an empty FIB entry. */
 	if (ip_proto == RTE_ETHER_TYPE_IPV4) {
-		ret = __get_empty_fib_id(ltbl->fib_tbl, &ltbl->last_ipv4_index,
-			gk_conf->max_num_ipv4_rules);
+		ret = qid_pop(&ltbl->qid, p_id);
 		if (unlikely(ret < 0)) {
-			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv4 FIB table\n",
-				__func__);
+			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv4 FIB table (errno=%i): %s\n",
+				__func__, -ret, strerror(-ret));
 		} else {
-			*p_fib = &ltbl->fib_tbl[ret];
+			*p_fib = &ltbl->fib_tbl[*p_id];
+			if (unlikely((*p_fib)->action != GK_FIB_MAX)) {
+				G_LOG(CRIT, "%s(): bug: empty IPv4 FIB entry marked with action %d\n",
+					__func__, (*p_fib)->action);
+				return -EFAULT;
+			}
+			if (p_qid != NULL)
+				*p_qid = &ltbl->qid;
 		}
 		return ret;
 	}
 
 	if (likely(ip_proto == RTE_ETHER_TYPE_IPV6)) {
-		ret = __get_empty_fib_id(ltbl->fib_tbl6, &ltbl->last_ipv6_index,
-			gk_conf->max_num_ipv6_rules);
+		ret = qid_pop(&ltbl->qid6, p_id);
 		if (unlikely(ret < 0)) {
-			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv6 FIB table\n",
-				__func__);
+			G_LOG(WARNING, "%s(): cannot find an empty fib entry in the IPv6 FIB table (errno=%i): %s\n",
+				__func__, -ret, strerror(-ret));
 		} else {
-			*p_fib = &ltbl->fib_tbl6[ret];
+			*p_fib = &ltbl->fib_tbl6[*p_id];
+			if (unlikely((*p_fib)->action != GK_FIB_MAX)) {
+				G_LOG(CRIT, "%s(): bug: empty IPv6 FIB entry marked with action %d\n",
+					__func__, (*p_fib)->action);
+				return -EFAULT;
+			}
+			if (p_qid != NULL)
+				*p_qid = &ltbl->qid6;
 		}
 		return ret;
 	}
 
 	G_LOG(CRIT, "%s(): bug: unknown Ethernet type %hu\n",
 		__func__, ip_proto);
+	*p_fib = NULL;
+	if (p_qid != NULL)
+		*p_qid = NULL;
 	return -EINVAL;
 }
 
@@ -453,6 +439,44 @@ initialize_fib_entry(struct gk_fib *fib)
 	memset(&fib->u, 0, sizeof(fib->u));
 }
 
+static int
+reset_fib_entry(struct gk_fib *fib_entry, struct qid *qid, uint32_t fib_id)
+{
+	int ret = qid_push(qid, fib_id);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to push QID %"PRIu32" for FIB (errno=%i): %s\n",
+			__func__, fib_id, -ret, strerror(-ret));
+		return ret;
+	}
+	initialize_fib_entry(fib_entry);
+	return 0;
+}
+
+static inline int
+get_fib_id_from_entry(struct gk_fib *fib_tbl, struct gk_fib *fib_entry,
+	struct qid *qid, uint32_t *p_id)
+{
+	if (unlikely(fib_entry < &fib_tbl[0] ||
+			fib_entry > &fib_tbl[qid->len - 1])) {
+		G_LOG(CRIT, "%s(): bug: invalid pointers: fib_tbl=%p, fib_entry=%p\n",
+			__func__, fib_tbl, fib_entry);
+		return -EFAULT;
+	}
+	*p_id = fib_entry - fib_tbl;
+	return 0;
+}
+
+static int
+find_reset_fib_entry(struct gk_fib *fib_tbl, struct gk_fib *fib_entry,
+	struct qid *qid)
+{
+	uint32_t fib_id = qid->len; /* Invalid ID. */
+	int ret = get_fib_id_from_entry(fib_tbl, fib_entry, qid, &fib_id);
+	if (unlikely(ret < 0))
+		return ret;
+	return reset_fib_entry(fib_entry, qid, fib_id);
+}
+
 /*
  * Setup the FIB entries for the network prefixes, for which @iface
  * is responsible.
@@ -463,8 +487,8 @@ setup_net_prefix_fib(int identifier,
 	struct gk_fib **neigh_fib, struct gk_fib **neigh6_fib,
 	struct gatekeeper_if *iface, struct gk_config *gk_conf)
 {
-	int ret;
-	int fib_id;
+	int ret, ret2;
+	uint32_t fib_id, fib6_id;
 	unsigned int socket_id = rte_lcore_to_socket_id(gk_conf->lcores[0]);
 	struct net_config *net_conf = gk_conf->net;
 	struct gk_fib *neigh_fib_ipv4 = NULL;
@@ -473,12 +497,10 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv4 network prefix. */
 	if (ipv4_if_configured(iface)) {
-		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV4, gk_conf,
-			&neigh_fib_ipv4);
-		if (fib_id < 0) {
-			ret = fib_id;
+		ret = get_empty_fib_id(RTE_ETHER_TYPE_IPV4, gk_conf,
+			&neigh_fib_ipv4, NULL, &fib_id);
+		if (unlikely(ret < 0))
 			goto out;
-		}
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2),
 			RTE_ETHER_TYPE_IPV4, (1 << (32 - iface->ip4_addr_plen)),
@@ -507,12 +529,10 @@ setup_net_prefix_fib(int identifier,
 
 	/* Set up the FIB entry for the IPv6 network prefix. */
 	if (ipv6_if_configured(iface)) {
-		fib_id = get_empty_fib_id(RTE_ETHER_TYPE_IPV6, gk_conf,
-			&neigh_fib_ipv6);
-		if (fib_id < 0) {
-			ret = fib_id;
+		ret = get_empty_fib_id(RTE_ETHER_TYPE_IPV6, gk_conf,
+			&neigh_fib_ipv6, NULL, &fib6_id);
+		if (unlikely(ret < 0))
 			goto free_fib_ipv4;
-		}
 
 		ret = setup_neighbor_tbl(socket_id, (identifier * 2 + 1),
 			RTE_ETHER_TYPE_IPV6, gk_conf->max_num_ipv6_neighbors,
@@ -532,7 +552,7 @@ setup_net_prefix_fib(int identifier,
 		}
 
 		ret = fib_add(&ltbl->fib6, iface->ip6_addr.s6_addr,
-			iface->ip6_addr_plen, fib_id);
+			iface->ip6_addr_plen, fib6_id);
 		if (ret < 0)
 			goto free_fib_ipv6_ht;
 
@@ -544,10 +564,14 @@ setup_net_prefix_fib(int identifier,
 free_fib_ipv6_ht:
 	destroy_neigh_hash_table(&neigh_fib_ipv6->u.neigh);
 init_fib_ipv6:
-	initialize_fib_entry(neigh_fib_ipv6);
+	ret2 = reset_fib_entry(neigh_fib_ipv6, &ltbl->qid6, fib6_id);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(CRIT, "%s(): bug: failed to reset IPv6 FIB entry (errno=%i): %s\n",
+			__func__, -ret2, strerror(-ret2));
+	}
 free_fib_ipv4:
 	if (neigh_fib_ipv4 == NULL)
-		return -1;
+		goto out;
 
 	*neigh_fib = NULL;
 
@@ -556,7 +580,11 @@ free_fib_ipv4:
 free_fib_ipv4_ht:
 	destroy_neigh_hash_table(&neigh_fib_ipv4->u.neigh);
 init_fib_ipv4:
-	initialize_fib_entry(neigh_fib_ipv4);
+	ret2 = reset_fib_entry(neigh_fib_ipv4, &ltbl->qid, fib_id);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(CRIT, "%s(): bug: failed to reset IPv4 FIB entry (errno=%i): %s\n",
+			__func__, -ret2, strerror(-ret2));
+	}
 out:
 	return ret;
 }
@@ -574,12 +602,12 @@ init_fib_tbl(struct gk_config *gk_conf)
 
 	if (ltbl->fib_tbl != NULL) {
 		for (i = 0; i < gk_conf->max_num_ipv4_rules; i++)
-			ltbl->fib_tbl[i].action = GK_FIB_MAX;
+			initialize_fib_entry(&ltbl->fib_tbl[i]);
 	}
 
 	if (ltbl->fib_tbl6 != NULL) {
 		for (i = 0; i < gk_conf->max_num_ipv6_rules; i++)
-			ltbl->fib_tbl6[i].action = GK_FIB_MAX;
+			initialize_fib_entry(&ltbl->fib_tbl6[i]);
 	}
 
 	/* Set up the FIB entry for the front network prefixes. */
@@ -605,20 +633,32 @@ init_fib_tbl(struct gk_config *gk_conf)
 
 free_front_fibs:
 	if (neigh_fib_front != NULL) {
+		int ret2;
 		struct gatekeeper_if *iface = &gk_conf->net->front;
 		RTE_VERIFY(fib_delete(&gk_conf->lpm_tbl.fib,
 			(uint8_t *)&iface->ip4_addr.s_addr,
 			iface->ip4_addr_plen) == 0);
 		destroy_neigh_hash_table(&neigh_fib_front->u.neigh);
-		initialize_fib_entry(neigh_fib_front);
+		ret2 = find_reset_fib_entry(gk_conf->lpm_tbl.fib_tbl,
+			neigh_fib_front, &ltbl->qid);
+		if (unlikely(ret2 < 0)) {
+			G_LOG(CRIT, "%s(): bug: failed to reset IPv4 FIB entry (errno=%i): %s\n",
+				__func__, -ret2, strerror(-ret2));
+		}
 		neigh_fib_front = NULL;
 	}
 	if (neigh6_fib_front != NULL) {
+		int ret2;
 		struct gatekeeper_if *iface = &gk_conf->net->front;
 		RTE_VERIFY(fib_delete(&gk_conf->lpm_tbl.fib6,
 			iface->ip6_addr.s6_addr, iface->ip6_addr_plen) == 0);
 		destroy_neigh_hash_table(&neigh6_fib_front->u.neigh);
-		initialize_fib_entry(neigh6_fib_front);
+		ret2 = find_reset_fib_entry(gk_conf->lpm_tbl.fib_tbl6,
+			neigh6_fib_front, &ltbl->qid6);
+		if (unlikely(ret2 < 0)) {
+			G_LOG(CRIT, "%s(): bug: failed to reset IPv6 FIB entry (errno=%i): %s\n",
+				__func__, -ret2, strerror(-ret2));
+		}
 		neigh6_fib_front = NULL;
 	}
 out:
@@ -640,8 +680,12 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			goto out;
 		}
 
-		ltbl->fib_tbl = rte_calloc_socket("IPv4-FIB-table",
-			gk_conf->max_num_ipv4_rules, sizeof(struct gk_fib),
+		/*
+		 * Don't need to zero memory during allocation because
+		 * initialize_fib_entry() does that for us.
+		 */
+		ltbl->fib_tbl = rte_malloc_socket("IPv4-FIB-table",
+			gk_conf->max_num_ipv4_rules * sizeof(struct gk_fib),
 			0, socket_id);
 		if (unlikely(ltbl->fib_tbl == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv4 FIB table\n",
@@ -649,7 +693,14 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -ENOMEM;
 			goto free_fib;
 		}
-		ltbl->last_ipv4_index = gk_conf->max_num_ipv4_rules - 1;
+
+		ret = qid_init(&ltbl->qid, gk_conf->max_num_ipv4_rules,
+			"rt_qid", socket_id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(): failed to create IPv4 QID for managing FIB entries (errno=%i): %s\n",
+				__func__, -ret, strerror(-ret));
+			goto free_lpm_tbl;
+		}
 	} else if (gk_conf->max_num_ipv4_rules != 0 ||
 			gk_conf->num_ipv4_tbl8s != 0) {
 		G_LOG(WARNING, "%s(): IPv4 is not configured, but the parameters max_num_ipv4_rules=%u and num_ipv4_tbl8s=%u are not both zero\n",
@@ -663,11 +714,15 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 		if (unlikely(ret < 0)) {
 			G_LOG(ERR, "%s(): failed to create the IPv6 FIB (errno=%i): %s\n",
 				__func__, -ret, strerror(-ret));
-			goto free_lpm_tbl;
+			goto free_qid;
 		}
 
-		ltbl->fib_tbl6 = rte_calloc_socket("IPv6-FIB-table",
-			gk_conf->max_num_ipv6_rules, sizeof(struct gk_fib),
+		/*
+		 * Don't need to zero memory during allocation because
+		 * initialize_fib_entry() does that for us.
+		 */
+		ltbl->fib_tbl6 = rte_malloc_socket("IPv6-FIB-table",
+			gk_conf->max_num_ipv6_rules * sizeof(struct gk_fib),
 			0, socket_id);
 		if (unlikely(ltbl->fib_tbl6 == NULL)) {
 			G_LOG(ERR, "%s(): failed to create the IPv6 FIB table\n",
@@ -675,7 +730,14 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 			ret = -ENOMEM;
 			goto free_fib6;
 		}
-		ltbl->last_ipv6_index = gk_conf->max_num_ipv6_rules - 1;
+
+		ret = qid_init(&ltbl->qid6, gk_conf->max_num_ipv6_rules,
+			"rt_qid6", socket_id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(): failed to create IPv6 QID for managing FIB entries (errno=%i): %s\n",
+				__func__, -ret, strerror(-ret));
+			goto free_lpm_tbl6;
+		}
 	} else if (gk_conf->max_num_ipv6_rules != 0 ||
 			gk_conf->num_ipv6_tbl8s != 0) {
 		G_LOG(WARNING, "%s(): IPv6 is not configured, but the parameters max_num_ipv6_rules=%u and num_ipv6_tbl8s=%u are not both zero\n",
@@ -687,24 +749,28 @@ setup_gk_lpm(struct gk_config *gk_conf, unsigned int socket_id)
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(): failed to initialize the FIB table (errno=%i): %s\n",
 			__func__, -ret, strerror(-ret));
-		goto free_lpm_tbl6;
+		goto free_qid6;
 	}
 
 	ret = 0;
 	goto out;
 
-free_lpm_tbl6:
+free_qid6:
 	if (!ipv6_configured(gk_conf->net))
-		goto free_lpm_tbl;
+		goto free_qid;
 
+	qid_free(&ltbl->qid6);
+free_lpm_tbl6:
 	rte_free(ltbl->fib_tbl6);
 	ltbl->fib_tbl6 = NULL;
 free_fib6:
 	fib_free(&ltbl->fib6);
-free_lpm_tbl:
+free_qid:
 	if (!ipv4_configured(gk_conf->net))
 		goto out;
 
+	qid_free(&ltbl->qid);
+free_lpm_tbl:
 	rte_free(ltbl->fib_tbl);
 	ltbl->fib_tbl = NULL;
 free_fib:
@@ -974,9 +1040,11 @@ int
 del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 	struct gk_config *gk_conf)
 {
-	struct gk_fib *prefix_fib;
-	int ret = check_prefix(prefix_info);
+	struct gk_fib *fib_tbl, *prefix_fib;
+	struct qid *qid;
+	int ret, ret2;
 
+	ret = check_prefix(prefix_info);
 	if (unlikely(ret < 0))
 		return ret;
 
@@ -1007,6 +1075,19 @@ del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 		G_LOG(WARNING, "%s(%s) cannot delete a LAN prefix of Gatekeeper\n",
 			__func__, prefix_info->str);
 		return -EPERM;
+	}
+
+	if (prefix_info->addr.proto == RTE_ETHER_TYPE_IPV4) {
+		fib_tbl = gk_conf->lpm_tbl.fib_tbl;
+		qid = &gk_conf->lpm_tbl.qid;
+	} else if (likely(prefix_info->addr.proto == RTE_ETHER_TYPE_IPV6)) {
+		fib_tbl = gk_conf->lpm_tbl.fib_tbl6;
+		qid = &gk_conf->lpm_tbl.qid6;
+	} else {
+		G_LOG(WARNING,
+			"%s(%s, %"PRIu16"): prefix with unknown IP protocol when deleting a FIB entry\n",
+			__func__, prefix_info->str, prefix_info->addr.proto);
+		return -EINVAL;
 	}
 
 	ret = lpm_del_route(&prefix_info->addr, prefix_info->len,
@@ -1060,8 +1141,12 @@ del_fib_entry_numerical_locked(const struct ip_prefix *prefix_info,
 		break;
 	}
 
-	/* Reset the fields of the deleted FIB entry. */
-	initialize_fib_entry(prefix_fib);
+	ret2 = find_reset_fib_entry(fib_tbl, prefix_fib, qid);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(CRIT, "%s(ipproto=%"PRIu16"): bug: failed to reset FIB entry (errno=%i): %s\n",
+			__func__, prefix_info->addr.proto,
+			-ret2, strerror(-ret2));
+	}
 
 	return ret;
 }
@@ -1080,9 +1165,11 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	enum gk_fib_action action, const struct route_properties *props,
 	struct ipaddr *gw_addr, struct gk_config *gk_conf)
 {
-	int ret, fib_id;
+	int ret, ret2;
+	uint32_t fib_id;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
 	struct gk_fib *gw_fib, *neigh_fib;
+	struct qid *qid;
 	struct ether_cache *eth_cache;
 	struct neighbor_hash_table *neigh_ht;
 	struct gatekeeper_if *iface;
@@ -1121,11 +1208,10 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 		return -EINVAL;
 
 	/* Find an empty FIB entry for the Gateway. */
-	fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf, &gw_fib);
-	if (fib_id < 0) {
-		ret = fib_id;
+	ret = get_empty_fib_id(ip_prefix->addr.proto,
+		gk_conf, &gw_fib, &qid, &fib_id);
+	if (unlikely(ret < 0))
 		goto put_ether_cache;
-	}
 
 	/* Fills up the Gateway FIB entry for the IP prefix. */
 	gw_fib->action = action;
@@ -1139,7 +1225,12 @@ init_gateway_fib_locked(const struct ip_prefix *ip_prefix,
 	return 0;
 
 init_fib:
-	initialize_fib_entry(gw_fib);
+	ret2 = reset_fib_entry(gw_fib, qid, fib_id);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(CRIT, "%s(ipproto=%"PRIu16"): bug: failed to reset FIB entry (errno=%i): %s\n",
+			__func__, ip_prefix->addr.proto,
+			-ret2, strerror(-ret2));
+	}
 put_ether_cache:
 	ether_cache_put(neigh_fib, action, eth_cache, gk_conf);
 	return ret;
@@ -1214,14 +1305,16 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 	unsigned int num_addrs, struct gk_config *gk_conf,
 	struct gk_fib *gt_fib)
 {
-	int ret;
+	int ret, ret2;
 	struct gk_fib *neigh_fibs[num_addrs];
 	struct ether_cache *eth_caches[num_addrs];
 	struct gatekeeper_if *iface = &gk_conf->net->back;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	struct qid *qid;
 	struct grantor_set *new_set;
 	unsigned int i, num_cache_holds = 0;
-	int fib_id = -1;
+	uint32_t fib_id;
+	bool replace_gt = true;
 
 	if (unlikely(num_addrs > MAX_NUM_GRANTORS_PER_ENTRY)) {
 		G_LOG(ERR, "%s(%s): number of Grantor/gateway address pairs (%u) is greater than the max number of entries allowed (%d)\n",
@@ -1282,12 +1375,11 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 	}
 
 	if (gt_fib == NULL) {
-		fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
-			&gt_fib);
-		if (fib_id < 0) {
-			ret = fib_id;
+		ret = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
+			&gt_fib, &qid, &fib_id);
+		if (unlikely(ret < 0))
 			goto put_ether_cache;
-		}
+		replace_gt = false;
 	}
 
 	new_set = rte_malloc_socket("gk_fib.grantor.set",
@@ -1297,7 +1389,7 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 		G_LOG(ERR, "%s(%s): could not allocate set of Grantor entries\n",
 			__func__, ip_prefix->str);
 		ret = -ENOMEM;
-		goto put_ether_cache;
+		goto init_fib;
 	}
 	new_set->proto = ip_prefix->addr.proto;
 	new_set->num_entries = num_addrs;
@@ -1306,7 +1398,7 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 		new_set->entries[i].eth_cache = eth_caches[i];
 	}
 
-	if (fib_id < 0) {
+	if (replace_gt) {
 		/* Replace old set of Grantors in existing entry. */
 		struct grantor_set *old_set = gt_fib->u.grantor.set;
 		gt_fib->u.grantor.set = new_set;
@@ -1325,7 +1417,15 @@ init_grantor_fib_locked(const struct ip_prefix *ip_prefix,
 	return 0;
 
 init_fib:
-	initialize_fib_entry(gt_fib);
+	if (replace_gt)
+		goto put_ether_cache; /* Next label. */
+
+	ret2 = reset_fib_entry(gt_fib, qid, fib_id);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(CRIT, "%s(ipproto=%"PRIu16"): bug: failed to reset FIB entry (errno=%i): %s\n",
+			__func__, ip_prefix->addr.proto,
+			-ret2, strerror(-ret2));
+	}
 	rte_free(new_set);
 put_ether_cache:
 	for (i = 0; i < num_cache_holds; i++) {
@@ -1339,22 +1439,28 @@ static int
 init_drop_fib_locked(const struct ip_prefix *ip_prefix,
 	const struct route_properties *props, struct gk_config *gk_conf)
 {
-	int ret;
+	uint32_t fib_id;
 	struct gk_fib *ip_prefix_fib;
 	struct gk_lpm *ltbl = &gk_conf->lpm_tbl;
+	struct qid *qid;
 
 	/* Initialize the fib entry for the IP prefix. */
-	int fib_id = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
-		&ip_prefix_fib);
-	if (fib_id < 0)
-		return fib_id;
+	int ret = get_empty_fib_id(ip_prefix->addr.proto, gk_conf,
+		&ip_prefix_fib, &qid, &fib_id);
+	if (unlikely(ret < 0))
+		return ret;
 
 	ip_prefix_fib->action = GK_DROP;
 	ip_prefix_fib->u.drop.props = *props;
 
 	ret = lpm_add_route(&ip_prefix->addr, ip_prefix->len, fib_id, ltbl);
-	if (ret < 0) {
-		initialize_fib_entry(ip_prefix_fib);
+	if (unlikely(ret < 0)) {
+		int ret2 = reset_fib_entry(ip_prefix_fib, qid, fib_id);
+		if (unlikely(ret2 < 0)) {
+			G_LOG(CRIT, "%s(ipproto=%"PRIu16"): bug: failed to reset FIB entry (errno=%i): %s\n",
+				__func__, ip_prefix->addr.proto,
+				-ret2, strerror(-ret2));
+		}
 		return ret;
 	}
 
