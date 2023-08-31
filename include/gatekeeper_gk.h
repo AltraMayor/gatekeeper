@@ -30,6 +30,7 @@
 #include "gatekeeper_sol.h"
 #include "gatekeeper_ratelimit.h"
 #include "gatekeeper_log_ratelimit.h"
+#include "gatekeeper_hash.h"
 
 /* Store information about a packet. */
 struct ipacket {
@@ -89,7 +90,7 @@ struct gk_measurement_metrics {
 
 /* Structures for each GK instance. */
 struct gk_instance {
-	struct rte_hash   *ip_flow_hash_table;
+	struct hs_hash    ip_flow_hash_table;
 	struct flow_entry *ip_flow_entry_table;
 	/* RX queue on the front interface. */
 	uint16_t          rx_queue_front;
@@ -109,6 +110,8 @@ struct gk_instance {
 	/* The memory pool used for packet buffers in this instance. */
 	struct rte_mempool *mp;
 	struct sol_instance *sol_inst;
+	/* Size of @ip_flow_entry_table. */
+	uint32_t ip_flow_entry_table_size;
 	/* Number of items currently in @ip_flow_entry_table. */
 	uint32_t ip_flow_ht_num_items;
 } __rte_cache_aligned;
@@ -128,8 +131,11 @@ struct gk_bpf_flow_handler {
 
 /* Configuration for the GK functional block. */
 struct gk_config {
-	/* Specify the size of the flow hash table. */
+	/* The size of the flow hash table. */
 	unsigned int       flow_ht_size;
+
+	/* The maximum number of probes for an empty bucket in the table. */
+	unsigned int       flow_ht_max_probes;
 
 	/*
 	 * DPDK LPM library implements the DIR-24-8 algorithm
@@ -252,6 +258,16 @@ struct gk_config {
 /* A flow entry can be in one of the following states: */
 enum { GK_REQUEST, GK_GRANTED, GK_DECLINED, GK_BPF };
 
+/*
+ * A Gatekeeper flow entry.
+ *
+ * Note: it's important to keep @flow as the first entry of
+ * the struct since it is the key used for flow table lookups.
+ * When bulk lookups are performed, @flow is prefetched, which
+ * also brings into the cache the bytes after the key that
+ * complete the cache line into cache. See also the function
+ * type definition hs_hash_key_addr_t.
+ */
 struct flow_entry {
 	/* IP flow information. */
 	struct ip_flow flow;
