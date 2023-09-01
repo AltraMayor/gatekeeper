@@ -655,62 +655,15 @@ reset_fe(struct gk_instance *instance, struct flow_entry *fe)
 		instance->num_scan_del--;
 }
 
-static void gk_del_flow_entry_with_key(struct gk_instance *instance,
-	const struct ip_flow *flow_key, uint32_t entry_idx);
-
-static void
-found_corruption_in_flow_table(struct gk_instance *instance)
-{
-	if (likely(instance->scan_waiting_eoc)) {
-		/*
-		 * This condition is likely because once corruption is found,
-		 * a number of other corruptions are often found.
-		 */
-		return;
-	}
-	instance->scan_waiting_eoc = true;
-	instance->scan_end_cycle_idx = instance->scan_cur_flow_idx;
-}
-
-static inline bool
-is_flow_valid(const struct ip_flow *flow)
-{
-	/*
-	 * If @flow does not satify the following constraints,
-	 * rss_ip_flow_hf() cannot work.
-	 */
-	return flow->proto == RTE_ETHER_TYPE_IPV4 ||
-		flow->proto == RTE_ETHER_TYPE_IPV6;
-}
-
 /*
- * This function is way more complex than necessary because
- * it heals the flow table in case the table is corrupted.
- * Thus, GK blocks can recover and keep going. Moreover, this function logs
- * lots of information to hopefully enable one to identify the source of
- * corruption.
+ * Delete a flow entry at a given index and verify the deleted entry.
  *
- * While editing the code of this function, preserve the following constraints:
- *
- * 1. There should be NO significant performance impact when
- *    the flow table is not corrupted;
- *
- * 2. The code should be robust enough to handle any recoverable corruption;
- *
- * 3. The code should minimally rely on the internals of
- *    the hash table library used.
- *
- * Non-exhaustive list of possible corruptions that this function fixes:
- *
- * 1. Two flow keys pointing to the same flow entry.
- *
- * 2. A flow entry without a flow key pointing to it.
- *
- * 3. Two flow entries with the same flow key.
- *
- * 4. A flow entry with a wrong hash value.
+ * Returns:
+ *   * zero on success.
+ *   * a negative number if the given flow entry was not not able
+ *     to be deleted.
  */
-static void
+static int
 gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 {
 	struct rte_hash *h = instance->ip_flow_hash_table;
@@ -718,23 +671,6 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 	struct flow_entry *fe2;
 	int ret, ret2;
 	char err_msg[512];
-	hash_sig_t recomp_hash;
-
-	/*
-	 * Do NOT check if @fe->in_use is true to enable the code below
-	 * to identify any corruption; including flow entries that are invalid
-	 * only because @fe->in_use is false.
-	 */
-
-	if (unlikely(!is_flow_valid(&fe->flow))) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): flow key is invalid; logging and removing flow entry...",
-			__func__);
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-		print_flow_state(fe, entry_idx);
-		goto del;
-	}
 
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
@@ -743,7 +679,7 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 		if (likely(entry_idx == (typeof(entry_idx))ret)) {
 			/* This is the ONLY normal outcome of this function. */
 			reset_fe(instance, fe);
-			return;
+			return 0;
 		}
 
 		ret2 = snprintf(err_msg, sizeof(err_msg),
@@ -755,151 +691,17 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 		print_flow_state(fe2, ret);
 		reset_fe(instance, fe2);
 		print_flow_state(fe, entry_idx);
-		goto del;
-	}
-
-	if (unlikely(ret != -ENOENT)) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): failed to delete a flow (errno=%i): %s; logging flow and dropping it...",
-			__func__, -ret, rte_strerror(-ret));
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-		print_flow_state(fe, entry_idx);
-		goto del;
-	}
-
-	RTE_VERIFY(ret == -ENOENT);
-
-	/*
-	 * The flow entry cannot be found in the flow table.
-	 */
-
-	recomp_hash = rte_hash_hash(h, &fe->flow);
-
-	if (fe->flow_hash_val == recomp_hash) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): flow was not indexed; logging and dropping flow...",
-			__func__);
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-		print_flow_state(fe, entry_idx);
-		goto del;
+		reset_fe(instance, fe);
+		return 0;
 	}
 
 	ret2 = snprintf(err_msg, sizeof(err_msg),
-		"%s(): flow had wrong hash value (0x%x); fixed hash value to 0x%x; correcting and logging flow entry...",
-		__func__, fe->flow_hash_val, recomp_hash);
+		"%s(): failed to delete a key from hash table (errno=%i): %s\n",
+		__func__, -ret, strerror(-ret));
 	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 	print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-	fe->flow_hash_val = recomp_hash;
 	print_flow_state(fe, entry_idx);
-
-	ret = rte_hash_lookup_with_hash(h, &fe->flow, fe->flow_hash_val);
-	if (ret < 0) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): failed to look flow up even after fixing its hash value errno=%i: %s; dropping flow entry...",
-			__func__, -ret, rte_strerror(-ret));
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-		/*
-		 * Although the hash was wrong, the entry was not indexed.
-		 * So it is safe to release it.
-		 */
-		goto del;
-	}
-
-	if (entry_idx != (typeof(entry_idx))ret) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): there is a duplicate flow entry at %i for entry at %u; logging and releasing duplicate entry...",
-			__func__, ret, entry_idx);
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, ret, err_msg);
-		fe2 = &instance->ip_flow_entry_table[ret];
-		print_flow_state(fe2, ret);
-		gk_del_flow_entry_with_key(instance, &fe->flow, ret);
-		goto del;
-	}
-
-	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
-	if (unlikely(ret < 0)) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): failed to remove flow entry even after fixing its hash value errno=%i: %s; dropping flow entry...",
-			__func__, -ret, rte_strerror(-ret));
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-	} else if (unlikely(entry_idx != (typeof(entry_idx))ret)) {
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): there is bug in the hash table library of DPDK: a lookup for a flow returned position %u, but, while removing the flow, rte_hash_del_key_with_hash() returned position %i; logging this second flow entry and releasing both entries...",
-			__func__, entry_idx, ret);
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(&fe->flow, entry_idx, err_msg);
-		fe2 = &instance->ip_flow_entry_table[ret];
-		print_flow_state(fe2, ret);
-		reset_fe(instance, fe2);
-	}
-
-del:
-	reset_fe(instance, fe);
-	found_corruption_in_flow_table(instance);
-}
-
-/*
- * ATTENTION
- * This function should only be called when a lookup of @flow_key has
- * returned @entry_idx. If this is not the case, you may want to call
- * gk_del_flow_entry_at_pos() instead.
- */
-static void
-gk_del_flow_entry_with_key(struct gk_instance *instance,
-	const struct ip_flow *flow_key, uint32_t entry_idx)
-{
-	struct flow_entry *fe = &instance->ip_flow_entry_table[entry_idx];
-	struct ip_flow copy_flow_key;
-	/*
-	 * Use @ret2 instead of @ret to pair this function with its sister
-	 * function gk_del_flow_entry_at_pos().
-	 */
-	int ret, ret2;
-	char err_msg[256];
-
-	if (unlikely(!is_flow_valid(flow_key))) {
-		ret = rte_hash_free_key_with_position(
-			instance->ip_flow_hash_table, entry_idx);
-		ret2 = snprintf(err_msg, sizeof(err_msg),
-			"%s(): flow_key is invalid at position %u. rte_hash_free_key_with_position() returned %i (i.e. %s). Logging and removing flow entry...",
-			__func__, entry_idx, ret, rte_strerror(-ret));
-		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-		print_flow_err_msg(flow_key, entry_idx, err_msg);
-		print_flow_state(fe, entry_idx);
-		found_corruption_in_flow_table(instance);
-		return gk_del_flow_entry_at_pos(instance, entry_idx);
-	}
-
-	if (likely(flow_equal(flow_key, &fe->flow)))
-		return gk_del_flow_entry_at_pos(instance, entry_idx);
-
-	found_corruption_in_flow_table(instance);
-
-	ret2 = snprintf(err_msg, sizeof(err_msg),
-		"%s(): the flow entry does not correspond to the flow key; logging entry and releasing both flow keys...",
-		__func__);
-	RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
-	print_flow_err_msg(flow_key, entry_idx, err_msg);
-	print_flow_state(fe, entry_idx);
-
-	/*
-	 * Back up the value of @*flow_key because if it is contained in @fe,
-	 * the following call of gk_del_flow_entry_at_pos() below may modify it.
-	 */
-	copy_flow_key = *flow_key;
-	/* Remove the wrong entry. */
-	gk_del_flow_entry_at_pos(instance, entry_idx);
-
-	/* Remove the key that originated this call. */
-	fe->flow = copy_flow_key;
-	fe->flow_hash_val = rte_hash_hash(instance->ip_flow_hash_table,
-		&fe->flow);
-	gk_del_flow_entry_at_pos(instance, entry_idx);
+	return ret;
 }
 
 static uint32_t
@@ -1045,8 +847,9 @@ flush_flow_table(struct gk_instance *instance, test_flow_entry_t test,
 		struct flow_entry *fe =
 			&instance->ip_flow_entry_table[index];
 
-		if (test(arg, key, fe)) {
-			gk_del_flow_entry_with_key(instance, key, index);
+		if (test(arg, key, fe) &&
+				(gk_del_flow_entry_at_pos(instance,
+					index) == 0)) {
 			num_flushed_flows++;
 		}
 
@@ -1812,6 +1615,7 @@ process_flow_entry(struct flow_entry *fe, int32_t fe_index,
 		RTE_VERIFY(ret2 > 0 && ret2 < (int)sizeof(err_msg));
 		print_flow_err_msg(&fe->flow, fe_index, err_msg);
 		print_flow_state(fe, fe_index);
+		/* Ignore return value; nothing further to do with it. */
 		gk_del_flow_entry_at_pos(instance, fe_index);
 		break;
 	}
@@ -2507,52 +2311,9 @@ process_cmds_from_mailbox(
 	mb_free_entry_bulk(&instance->mb, (void * const *)gk_cmds, num_cmd);
 }
 
-static bool
-test_invalid_flow(__attribute__((unused)) void *arg,
-	const struct ip_flow *flow, struct flow_entry *fe)
-{
-	if (unlikely(!is_flow_valid(flow) || !is_flow_valid(&fe->flow) ||
-			!flow_equal(flow, &fe->flow) ||
-			!fe->in_use || fe->grantor_fib == NULL ||
-			fe->grantor_fib->action != GK_FWD_GRANTOR
-			))
-		return true;
-
-	switch (fe->state) {
-	case GK_REQUEST:
-	case GK_GRANTED:
-	case GK_DECLINED:
-	case GK_BPF:
-		return false;
-	default:
-		return true;
-	}
-}
-
-static uint32_t
-next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
-{
-	instance->scan_cur_flow_idx = (instance->scan_cur_flow_idx + 1)
-		% gk_conf->flow_ht_size;
-	if (likely(!instance->scan_waiting_eoc ||
-			instance->scan_cur_flow_idx !=
-			instance->scan_end_cycle_idx))
-		return instance->scan_cur_flow_idx;
-
-	/* Scan keys of the flow table. */
-	flush_flow_table(instance, test_invalid_flow, NULL, __func__);
-
-	/*
-	 * Only clear @scan_waiting_eoc after scanning the keys of
-	 * the flow table to avoid fixes of the flow table to be counted
-	 * as a newly found corruption.
-	 */
-	instance->scan_waiting_eoc = false;
-	return instance->scan_cur_flow_idx;
-}
-
-static inline void
-log_stats(const struct gk_config *gk_conf, const struct gk_instance *instance,
+static void
+log_stats(const struct gk_config *gk_conf,
+	const struct gk_instance *instance,
 	const struct gk_measurement_metrics *stats)
 {
 	G_LOG(NOTICE, "Basic measurements [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request = %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined = %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped = %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed = %"PRIu64", flow_table_occupancy = %"PRIu32"/%u=%.1f%%]\n",
@@ -2595,6 +2356,7 @@ gk_proc(void *arg)
 	struct rte_mbuf *tx_front_pkts[tx_max_num_pkts];
 	struct rte_mbuf *tx_back_pkts[tx_max_num_pkts];
 
+	uint32_t entry_idx = 0;
 	uint64_t last_measure_tsc = rte_rdtsc();
 	uint64_t basic_measurement_logging_cycles =
 		gk_conf->basic_measurement_logging_ms *
@@ -2613,13 +2375,12 @@ gk_proc(void *arg)
 
 	while (likely(!exiting)) {
 		struct flow_entry *fe = NULL;
-		uint32_t entry_idx = 0;
 
 		tx_front_num_pkts = 0;
 		tx_back_num_pkts = 0;
 
 		if (iter_count >= scan_iter) {
-			entry_idx = next_flow_index(gk_conf, instance);
+			entry_idx = (entry_idx + 1) % gk_conf->flow_ht_size;
 			fe = &instance->ip_flow_entry_table[entry_idx];
 			/*
 			 * Only one prefetch is needed here because we only
@@ -2657,8 +2418,10 @@ gk_proc(void *arg)
 
 		process_cmds_from_mailbox(instance, gk_conf);
 
-		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at)
+		if (fe != NULL && fe->in_use && rte_rdtsc() >= fe->expire_at) {
+			/* Ignore return value; nothing further to do. */
 			gk_del_flow_entry_at_pos(instance, entry_idx);
+		}
 
 		if (rte_rdtsc() - last_measure_tsc >=
 				basic_measurement_logging_cycles) {

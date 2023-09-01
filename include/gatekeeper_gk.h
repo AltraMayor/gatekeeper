@@ -109,30 +109,6 @@ struct gk_instance {
 	/* The memory pool used for packet buffers in this instance. */
 	struct rte_mempool *mp;
 	struct sol_instance *sol_inst;
-	/*
-	 * Control of expired flow entries and healing flow table.
-	 *
-	 * When corruption is identified in the flow table, @scan_waiting_eoc
-	 * becomes true, and @scan_end_cycle_idx receives the value of
-	 * @scan_cur_flow_idx.
-	 *
-	 * "eoc" in @scan_waiting_eoc stands for end of cycle.
-	 *
-	 * A cycle is a full scan of the flow entries of this instance.
-	 * That is, a scan of @ip_flow_entry_table.
-	 * A cycle is only tracked when @scan_waiting_eoc is true.
-	 *
-	 * When a cycle completes, that is @scan_cur_flow_idx becomes equal to
-	 * @scan_end_cycle_idx after being incremented, @scan_waiting_eoc
-	 * becomes false. When a cycle is completed, the keys of the flow table
-	 * (i.e. a scan of @ip_flow_hash_table) are scanned for corruption.
-	 */
-	/* When true, field @scan_end_cycle_idx has a valid value. */
-	bool     scan_waiting_eoc;
-	/* Index of the current flow entry being tested for expiration. */
-	uint32_t scan_cur_flow_idx;
-	/* Index of the end of cycle. */
-	uint32_t scan_end_cycle_idx;
 	/* Number of items currently in @ip_flow_entry_table. */
 	uint32_t ip_flow_ht_num_items;
 } __rte_cache_aligned;
