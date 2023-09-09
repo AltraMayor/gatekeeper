@@ -65,18 +65,18 @@ integer_log_base_2(uint64_t delta_time)
 #endif
 }
 
-/* 
- * It converts the difference of time between the current packet and 
- * the last seen packet into a given priority. 
+/*
+ * It converts the difference of time between the current packet and
+ * the last seen packet into a given priority.
  */
-static uint8_t 
+static uint8_t
 priority_from_delta_time(uint64_t present, uint64_t past)
 {
 	uint64_t delta_time;
 
 	if (unlikely(present < past)) {
 		/*
-		 * This should never happen, but we handle it gracefully here 
+		 * This should never happen, but we handle it gracefully here
 		 * in order to keep going.
 		 */
 		G_LOG(ERR, "The present time smaller than the past time\n");
@@ -86,7 +86,7 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	delta_time = (present - past) * picosec_per_cycle;
 	if (unlikely(delta_time < 1))
 		return 0;
-	
+
 	return integer_log_base_2(delta_time);
 }
 
@@ -301,7 +301,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 	return stale;
 }
 
-/* 
+/*
  * When a flow entry is at request state, all the GK block processing
  * that entry does is to:
  * (1) compute the priority of the packet.
@@ -327,8 +327,8 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	fe->u.request.last_packet_seen_at = now;
 
 	/*
-	 * The reason for using "<" instead of "<=" is that the equal case 
-	 * means that the source has waited enough time to have the same 
+	 * The reason for using "<" instead of "<=" is that the equal case
+	 * means that the source has waited enough time to have the same
 	 * last priority, so it should be awarded with the allowance.
 	 */
 	if (priority < fe->u.request.last_priority &&
@@ -343,7 +343,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 
 	/*
 	 * Adjust @priority for the DSCP field.
-	 * DSCP 0 for legacy packets; 1 for granted packets; 
+	 * DSCP 0 for legacy packets; 1 for granted packets;
 	 * 2 for capability renew; 3-63 for requests.
 	 */
 	priority += PRIORITY_REQ_MIN;
@@ -923,7 +923,7 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
-	int  ret;
+	int ret;
 	char ht_name[64];
 	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
