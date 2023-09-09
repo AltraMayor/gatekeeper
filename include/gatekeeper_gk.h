@@ -133,6 +133,8 @@ struct gk_instance {
 	uint32_t scan_cur_flow_idx;
 	/* Index of the end of cycle. */
 	uint32_t scan_end_cycle_idx;
+	/* Number of items currently in @ip_flow_entry_table. */
+	uint32_t ip_flow_ht_num_items;
 } __rte_cache_aligned;
 
 #define GK_MAX_BPF_FLOW_HANDLERS	(UINT8_MAX + 1)

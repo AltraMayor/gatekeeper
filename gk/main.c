@@ -738,6 +738,8 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
+		instance->ip_flow_ht_num_items--;
+
 		if (likely(entry_idx == (typeof(entry_idx))ret)) {
 			/* This is the ONLY normal outcome of this function. */
 			reset_fe(instance, fe);
@@ -981,6 +983,8 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		gk_conf->back_icmp_msgs_per_sec,
 		gk_conf->back_icmp_msgs_burst);
 
+	instance->ip_flow_ht_num_items = 0;
+
 	ret = 0;
 	goto out;
 
@@ -1010,7 +1014,9 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 
 	ret = rte_hash_add_key_with_hash(
 		instance->ip_flow_hash_table, flow, rss_hash_val);
-	if (ret == -ENOSPC)
+	if (likely(ret >= 0))
+		instance->ip_flow_ht_num_items++;
+	else if (likely(ret == -ENOSPC))
 		instance->num_scan_del = gk_conf->scan_del_thresh;
 
 	return ret;
@@ -2546,7 +2552,9 @@ next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 }
 
 static void
-log_stats(const struct gk_measurement_metrics *stats)
+log_stats(const struct gk_config *gk_conf,
+	const struct gk_instance *instance,
+	const struct gk_measurement_metrics *stats)
 {
 	time_t now = time(NULL);
 	struct tm *p_tm, time_info;
@@ -2580,7 +2588,7 @@ log_no_time:
 	strcpy(str_date_time, "NO TIME");
 log:
 	G_LOG(NOTICE,
-		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed =  %"PRIu64"]\n",
+		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request = %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined = %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped = %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed = %"PRIu64", flow_table_occupancy = %"PRIu32"/%u=%.1f%%]\n",
 		str_date_time,
 		stats->tot_pkts_num,
 		stats->tot_pkts_size,
@@ -2593,7 +2601,11 @@ log:
 		stats->tot_pkts_num_dropped,
 		stats->tot_pkts_size_dropped,
 		stats->tot_pkts_num_distributed,
-		stats->tot_pkts_size_distributed);
+		stats->tot_pkts_size_distributed,
+		instance->ip_flow_ht_num_items,
+		gk_conf->flow_ht_size,
+		100.0 * instance->ip_flow_ht_num_items /
+			gk_conf->flow_ht_size);
 }
 
 static int
@@ -2687,7 +2699,7 @@ gk_proc(void *arg)
 				basic_measurement_logging_cycles) {
 			struct gk_measurement_metrics *stats =
 				&instance->traffic_stats;
-			log_stats(stats);
+			log_stats(gk_conf, instance, stats);
 			memset(stats, 0, sizeof(*stats));
 			last_measure_tsc = rte_rdtsc();
 		}
