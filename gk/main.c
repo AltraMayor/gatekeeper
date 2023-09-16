@@ -747,6 +747,7 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		.name = ht_name,
 		.num_entries = gk_conf->flow_ht_size,
 		.max_probes = gk_conf->flow_ht_max_probes,
+		.scale_num_bucket = gk_conf->flow_ht_scale_num_bucket,
 		.socket_id = socket_id,
 		.key_len = sizeof(struct ip_flow),
 		.hash_func = rss_ip_flow_hf,

@@ -138,6 +138,14 @@ struct gk_config {
 	unsigned int       flow_ht_max_probes;
 
 	/*
+	 * Factor by which to scale the number of buckets.
+	 * This allows the number of buckets to purposely
+	 * be greater than the number of entries to allow the hash
+	 * table to more easily accommodate a higher occupancy.
+	 */
+	double             flow_ht_scale_num_bucket;
+
+	/*
 	 * DPDK LPM library implements the DIR-24-8 algorithm
 	 * using two types of tables:
 	 * (1) tbl24 is a table with 2^24 entries.

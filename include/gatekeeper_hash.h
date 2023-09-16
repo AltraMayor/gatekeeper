@@ -51,6 +51,54 @@ typedef const void *(*hs_hash_key_addr_t)(uint32_t idx, const void *data);
 typedef uint32_t (*hs_hash_function)(const void *key, uint32_t key_len,
 	uint32_t init_val, const void *data);
 
+/*
+ * The struct hs_hash_bucket defined below is so small (i.e., 64 bits) that
+ * increasing the number of buckets for the same number of entries in order
+ * to allocate 100% of the entries is more effective than implementing anything
+ * more sophisticated. For example, the paper *Hopscotch Hashing* by
+ * Maurice Herlihy, Nir Shavit, and Moran Tzafrir ("the Hopscotch paper")
+ * implemented neighborhoods as a linked list instead of as a bitmap (as here)
+ * to reach almost 100% occupancy of the buckets.
+ *
+ * Any other implementation is very likely going to add at least 32 bits to
+ * struct hs_hash_bucket due to memory alignment. Those extra 32 bits mean a
+ * 50% growth in memory consumption for the same number of buckets. This 50%
+ * increase in memory consumption means that our version of Hopscotch can have
+ * 50% more buckets for the same amount of memory.
+ *
+ * By increasing the number of buckets by only 25% relative to the number of
+ * entries, and having an occupancy of only 4/5 = 80% of the buckets, we can
+ * allocate 100% (i.e., 1.25 * 4/5 = 1) of the entries.
+ *
+ * A typical flow table of a GK instance has at least 250M entries. This means
+ * that there are at least ceiling(log_2(250M)) = 28 bits to track
+ * neighborhoods. Using Lemma 6 of the Hopscotch paper, and assuming that all
+ * 28 entries belong to the same neighborhood (the worst case), the expected
+ * occupancy of the buckets is 1 - 1 / (sqrt(2 * 28 - 1) > 86.5% which is
+ * safely greater than 80%.
+ *
+ * An upper bound for the occupancy of the buckets is to be obtained by setting
+ * field @max_probes of struct hs_hash equal to 80 (i.e., 10 cache lines of 64
+ * bytes) and assuming that all those buckets can be allocated. By Lemma 6
+ * again, the occupancy of the buckets is 1 - 1 / (sqrt(2 * 80 - 1) > 92%.
+ *
+ * Since hs_hash_create() aligns the number of buckets to the next power of 2,
+ * the number of buckets can be double the number of entries. In this extreme
+ * case -- namely, 50% occupancy of the buckets -- not only is 100% allocation
+ * of the entries virtually guaranteed (i.e., 2 * 0.5 = 1), but each
+ * neighborhood has at most 3 entries; according to Lemma 6 and assuming all
+ * entries belong to the same neighborhood (1 + (1/(1 - 50%))^2)/2 = 2.5.
+ * Therefore, even the smallest hash table with 8 entries (see hs_hash_create())
+ * has enough bits (i.e., 3 bits) to track all entries in a neighborhood.
+ * Moreover, having at most 3 entries per neighborhood implies that most
+ * neighborhoods are placed in a single cache line; the exception happens when
+ * a neighborhood falls between cache lines.
+ *
+ * As a reference for future changes to this library, it's worth noticing that
+ * one can free the most significant bit of the field @idx by removing the most
+ * significant bit from HS_HASH_MISS and adjusting the code to free the bit.
+ * This is possible because the largest index is (HS_HASH_MAX_NUM_ENTRIES - 1).
+ */
 struct hs_hash_bucket {
 	/* High bits of the hash and neighborhood. */
 	uint32_t hh_nbh;
@@ -124,6 +172,9 @@ struct hs_hash_parameters {
 
 	/* Maximum number of probes for an empty bucket. */
 	uint32_t           max_probes;
+
+	/* Factor by which to scale the number of buckets. */
+	double             scale_num_bucket;
 
 	/* NUMA socket ID for memory. */
 	int                socket_id;

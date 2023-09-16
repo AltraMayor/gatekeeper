@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <math.h>
+
 #include <rte_hash_crc.h>
 #include <rte_malloc.h>
 #include <rte_prefetch.h>
@@ -93,7 +95,7 @@ int
 hs_hash_create(struct hs_hash *h, const struct hs_hash_parameters *params)
 {
 	struct hs_hash_bucket *buckets;
-	uint32_t num_buckets;
+	uint32_t num_buckets, scaled_num_entries;
 	char hash_name[128];
 	int ret;
 
@@ -139,13 +141,29 @@ hs_hash_create(struct hs_hash *h, const struct hs_hash_parameters *params)
 		return -EINVAL;
 	}
 
-	if (unlikely(params->num_entries > HS_HASH_MAX_NUM_ENTRIES)) {
+	if (unlikely(params->scale_num_bucket <= 0)) {
+		G_LOG(ERR, "%s(%s): must be given a positive value for the number of buckets scale factor in struct hs_hash_parameters\n",
+			__func__, params->name);
+		return -EINVAL;
+	}
+
+	scaled_num_entries = round(params->num_entries *
+		params->scale_num_bucket);
+	if (unlikely(scaled_num_entries == 0)) {
+		G_LOG(ERR, "%s(%s): number of entries (%u*%f=%u) must be > 0 in struct hs_hash_parameters\n",
+			__func__, params->name, params->num_entries,
+			params->scale_num_bucket, scaled_num_entries);
+		return -EINVAL;
+
+	}
+	if (unlikely(scaled_num_entries > HS_HASH_MAX_NUM_ENTRIES)) {
 		/*
 		 * If we allow @params->num_entries to be any
 		 * greater, rte_align32pow2() could return 0.
 		 */
-		G_LOG(ERR, "%s(%s): num_entries=%u must be <= max entries=%u in struct hs_hash_parameters\n",
+		G_LOG(ERR, "%s(%s): number of entries (%u*%f=%u) must be <= max entries (%u) in struct hs_hash_parameters\n",
 			__func__, params->name, params->num_entries,
+			params->scale_num_bucket, scaled_num_entries,
 			HS_HASH_MAX_NUM_ENTRIES);
 		return -EINVAL;
 	}
@@ -159,7 +177,7 @@ hs_hash_create(struct hs_hash *h, const struct hs_hash_parameters *params)
 	 * additional buckets without having to bump the number
 	 * of entries up to the next power of 2.
 	 */
-	num_buckets = rte_align32pow2(RTE_MAX(8, params->num_entries));
+	num_buckets = rte_align32pow2(RTE_MAX(8, scaled_num_entries));
 
 	ret = snprintf(hash_name, sizeof(hash_name), "HSHT_buckets_%s",
 		params->name);
