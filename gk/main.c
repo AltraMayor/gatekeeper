@@ -65,18 +65,18 @@ integer_log_base_2(uint64_t delta_time)
 #endif
 }
 
-/* 
- * It converts the difference of time between the current packet and 
- * the last seen packet into a given priority. 
+/*
+ * It converts the difference of time between the current packet and
+ * the last seen packet into a given priority.
  */
-static uint8_t 
+static uint8_t
 priority_from_delta_time(uint64_t present, uint64_t past)
 {
 	uint64_t delta_time;
 
 	if (unlikely(present < past)) {
 		/*
-		 * This should never happen, but we handle it gracefully here 
+		 * This should never happen, but we handle it gracefully here
 		 * in order to keep going.
 		 */
 		G_LOG(ERR, "The present time smaller than the past time\n");
@@ -86,7 +86,7 @@ priority_from_delta_time(uint64_t present, uint64_t past)
 	delta_time = (present - past) * picosec_per_cycle;
 	if (unlikely(delta_time < 1))
 		return 0;
-	
+
 	return integer_log_base_2(delta_time);
 }
 
@@ -301,7 +301,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 	return stale;
 }
 
-/* 
+/*
  * When a flow entry is at request state, all the GK block processing
  * that entry does is to:
  * (1) compute the priority of the packet.
@@ -327,8 +327,8 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 	fe->u.request.last_packet_seen_at = now;
 
 	/*
-	 * The reason for using "<" instead of "<=" is that the equal case 
-	 * means that the source has waited enough time to have the same 
+	 * The reason for using "<" instead of "<=" is that the equal case
+	 * means that the source has waited enough time to have the same
 	 * last priority, so it should be awarded with the allowance.
 	 */
 	if (priority < fe->u.request.last_priority &&
@@ -343,7 +343,7 @@ gk_process_request(struct flow_entry *fe, struct ipacket *packet,
 
 	/*
 	 * Adjust @priority for the DSCP field.
-	 * DSCP 0 for legacy packets; 1 for granted packets; 
+	 * DSCP 0 for legacy packets; 1 for granted packets;
 	 * 2 for capability renew; 3-63 for requests.
 	 */
 	priority += PRIORITY_REQ_MIN;
@@ -738,6 +738,8 @@ gk_del_flow_entry_at_pos(struct gk_instance *instance, uint32_t entry_idx)
 
 	ret = rte_hash_del_key_with_hash(h, &fe->flow, fe->flow_hash_val);
 	if (likely(ret >= 0)) {
+		instance->ip_flow_ht_num_items--;
+
 		if (likely(entry_idx == (typeof(entry_idx))ret)) {
 			/* This is the ONLY normal outcome of this function. */
 			reset_fe(instance, fe);
@@ -923,7 +925,7 @@ ip_flow_cmp_eq(const void *key1, const void *key2,
 static int
 setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 {
-	int  ret;
+	int ret;
 	char ht_name[64];
 	unsigned int block_idx = get_block_idx(gk_conf, lcore_id);
 	unsigned int socket_id = rte_lcore_to_socket_id(lcore_id);
@@ -981,6 +983,8 @@ setup_gk_instance(unsigned int lcore_id, struct gk_config *gk_conf)
 		gk_conf->back_icmp_msgs_per_sec,
 		gk_conf->back_icmp_msgs_burst);
 
+	instance->ip_flow_ht_num_items = 0;
+
 	ret = 0;
 	goto out;
 
@@ -1010,7 +1014,9 @@ gk_hash_add_flow_entry(struct gk_instance *instance,
 
 	ret = rte_hash_add_key_with_hash(
 		instance->ip_flow_hash_table, flow, rss_hash_val);
-	if (ret == -ENOSPC)
+	if (likely(ret >= 0))
+		instance->ip_flow_ht_num_items++;
+	else if (likely(ret == -ENOSPC))
 		instance->num_scan_del = gk_conf->scan_del_thresh;
 
 	return ret;
@@ -2546,7 +2552,9 @@ next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 }
 
 static void
-log_stats(const struct gk_measurement_metrics *stats)
+log_stats(const struct gk_config *gk_conf,
+	const struct gk_instance *instance,
+	const struct gk_measurement_metrics *stats)
 {
 	time_t now = time(NULL);
 	struct tm *p_tm, time_info;
@@ -2580,7 +2588,7 @@ log_no_time:
 	strcpy(str_date_time, "NO TIME");
 log:
 	G_LOG(NOTICE,
-		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request =  %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined =  %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped =  %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed =  %"PRIu64"]\n",
+		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request = %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined = %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped = %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed = %"PRIu64", flow_table_occupancy = %"PRIu32"/%u=%.1f%%]\n",
 		str_date_time,
 		stats->tot_pkts_num,
 		stats->tot_pkts_size,
@@ -2593,7 +2601,11 @@ log:
 		stats->tot_pkts_num_dropped,
 		stats->tot_pkts_size_dropped,
 		stats->tot_pkts_num_distributed,
-		stats->tot_pkts_size_distributed);
+		stats->tot_pkts_size_distributed,
+		instance->ip_flow_ht_num_items,
+		gk_conf->flow_ht_size,
+		100.0 * instance->ip_flow_ht_num_items /
+			gk_conf->flow_ht_size);
 }
 
 static int
@@ -2687,7 +2699,7 @@ gk_proc(void *arg)
 				basic_measurement_logging_cycles) {
 			struct gk_measurement_metrics *stats =
 				&instance->traffic_stats;
-			log_stats(stats);
+			log_stats(gk_conf, instance, stats);
 			memset(stats, 0, sizeof(*stats));
 			last_measure_tsc = rte_rdtsc();
 		}
