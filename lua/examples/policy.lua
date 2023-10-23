@@ -1,4 +1,7 @@
-local policylib = require("gatekeeper/policylib")
+-- Make @policylib global, so incremental updates coming from
+-- the Dynamic Configuration block can use it.
+-- the script lua/examples/example_gt_lpm_params_request.lua expects it.
+policylib = require("gatekeeper/policylib")
 local ffi = require("ffi")
 
 local function dcs_default(policy)

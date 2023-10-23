@@ -1,5 +1,4 @@
 require "gatekeeper/staticlib"
-require "gatekeeper/policylib"
 
 local dyc = staticlib.c.get_dy_conf()
 
