@@ -2551,45 +2551,11 @@ next_flow_index(struct gk_config *gk_conf, struct gk_instance *instance)
 	return instance->scan_cur_flow_idx;
 }
 
-static void
-log_stats(const struct gk_config *gk_conf,
-	const struct gk_instance *instance,
+static inline void
+log_stats(const struct gk_config *gk_conf, const struct gk_instance *instance,
 	const struct gk_measurement_metrics *stats)
 {
-	time_t now = time(NULL);
-	struct tm *p_tm, time_info;
-	char str_date_time[32];
-	int ret;
-
-	if (unlikely(now == ((time_t) -1))) {
-		G_LOG(ERR, "%s(): time() failed with errno=%i: %s\n",
-			__func__, errno, strerror(errno));
-		goto log_no_time;
-	}
-
-	p_tm = localtime_r(&now, &time_info);
-	if (unlikely(p_tm == NULL)) {
-		G_LOG(ERR, "%s(): localtime_r() failed with errno=%i: %s\n",
-			__func__, errno, strerror(errno));
-		goto log_no_time;
-	}
-	RTE_VERIFY(p_tm == &time_info);
-
-	ret = strftime(str_date_time, sizeof(str_date_time),
-		"%Y-%m-%d %H:%M:%S", &time_info);
-	if (unlikely(ret == 0)) {
-		G_LOG(ERR, "%s(): strftime() failed\n", __func__);
-		goto log_no_time;
-	}
-
-	goto log;
-
-log_no_time:
-	strcpy(str_date_time, "NO TIME");
-log:
-	G_LOG(NOTICE,
-		"Basic measurements at %s [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request = %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined = %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped = %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed = %"PRIu64", flow_table_occupancy = %"PRIu32"/%u=%.1f%%]\n",
-		str_date_time,
+	G_LOG(NOTICE, "Basic measurements [tot_pkts_num = %"PRIu64", tot_pkts_size = %"PRIu64", pkts_num_granted = %"PRIu64", pkts_size_granted = %"PRIu64", pkts_num_request = %"PRIu64", pkts_size_request = %"PRIu64", pkts_num_declined = %"PRIu64", pkts_size_declined = %"PRIu64", tot_pkts_num_dropped = %"PRIu64", tot_pkts_size_dropped = %"PRIu64", tot_pkts_num_distributed = %"PRIu64", tot_pkts_size_distributed = %"PRIu64", flow_table_occupancy = %"PRIu32"/%u=%.1f%%]\n",
 		stats->tot_pkts_num,
 		stats->tot_pkts_size,
 		stats->pkts_num_granted,
@@ -2604,8 +2570,7 @@ log:
 		stats->tot_pkts_size_distributed,
 		instance->ip_flow_ht_num_items,
 		gk_conf->flow_ht_size,
-		100.0 * instance->ip_flow_ht_num_items /
-			gk_conf->flow_ht_size);
+		100.0 * instance->ip_flow_ht_num_items / gk_conf->flow_ht_size);
 }
 
 static int

@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 #include <rte_cycles.h>
 #include <rte_lcore.h>
@@ -43,15 +44,63 @@ check_log_allowed(uint32_t level)
 	return level <= (uint32_t)rte_atomic32_read(&lrs->log_level);
 }
 
-static inline void
+#define NO_TIME_STR "NO TIME"
+
+static void
+update_str_date_time(struct log_ratelimit_state *lrs, uint64_t now)
+{
+	struct timespec tp;
+	struct tm *p_tm, time_info;
+	uint64_t diff_ns;
+	int ret;
+
+	RTE_BUILD_BUG_ON(sizeof(NO_TIME_STR) > sizeof(lrs->str_date_time));
+
+	if (likely(now < lrs->update_time_at)) {
+		/* Fast path, that is, high log rate. */
+		return;
+	}
+
+	ret = clock_gettime(CLOCK_REALTIME, &tp);
+	if (unlikely(ret < 0)) {
+		/* Things are bad; fail safe. */
+		goto no_tp;
+	}
+
+	/* @tp is available from now on. */
+
+	p_tm = localtime_r(&tp.tv_sec, &time_info);
+	if (unlikely(p_tm != &time_info))
+		goto no_time;
+
+	ret = strftime(lrs->str_date_time, sizeof(lrs->str_date_time),
+		"%Y-%m-%d %H:%M:%S", &time_info);
+	if (unlikely(ret == 0))
+		goto no_time;
+
+	goto next_update;
+
+no_tp:
+	tp.tv_nsec = 0;
+no_time:
+	strcpy(lrs->str_date_time, NO_TIME_STR);
+next_update:
+	diff_ns = likely(tp.tv_nsec >= 0 && tp.tv_nsec < ONE_SEC_IN_NANO_SEC)
+		? (ONE_SEC_IN_NANO_SEC - tp.tv_nsec)
+		: ONE_SEC_IN_NANO_SEC; /* C library bug! */
+	lrs->update_time_at = now + (typeof(now))round(diff_ns * cycles_per_ns);
+}
+
+static void
 log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
+		update_str_date_time(lrs, now);
 		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
 			G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
-			lrs->block_name, rte_lcore_id(), "NOTICE",
-			lrs->suppressed);
+			lrs->block_name, rte_lcore_id(), lrs->str_date_time,
+			"NOTICE", lrs->suppressed);
 	}
 	lrs->suppressed = 0;
 	lrs->end = now + lrs->interval_cycles;
@@ -62,6 +111,7 @@ log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
 	uint32_t burst, uint32_t log_level, const char *block_name)
 {
 	struct log_ratelimit_state *lrs;
+	uint64_t now;
 
 	RTE_VERIFY(lcore_id < RTE_MAX_LCORE);
 
@@ -74,7 +124,10 @@ log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
 	lrs->suppressed = 0;
 	rte_atomic32_set(&lrs->log_level, log_level);
 	strcpy(lrs->block_name, block_name);
-	log_ratelimit_reset(lrs, rte_rdtsc());
+	lrs->str_date_time[0] = '\0';
+	now = rte_rdtsc();
+	lrs->update_time_at = now;
+	log_ratelimit_reset(lrs, now);
 }
 
 /*
@@ -85,15 +138,11 @@ log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
  * - false means callbacks will be suppressed.
  */
 static bool
-log_ratelimit_allow(struct log_ratelimit_state *lrs)
+log_ratelimit_allow(struct log_ratelimit_state *lrs, uint64_t now)
 {
-	uint64_t now;
-
 	/* unlikely() reason: all logs are rate-limited in production. */
 	if (unlikely(lrs->interval_cycles == 0))
 		return true;
-
-	now = rte_rdtsc();
 
 	/*
 	 * unlikely() reason: there is only one
@@ -115,9 +164,10 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs)
 int
 rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 {
-	struct log_ratelimit_state *lrs;
-	int ret;
+	uint64_t now = rte_rdtsc(); /* Freeze current time. */
+	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
 	va_list ap;
+	int ret;
 
 	/*
 	 * unlikely() reason: @log_ratelimit_enabled is only false during
@@ -126,14 +176,14 @@ rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 	if (unlikely(!log_ratelimit_enabled))
 		goto log;
 
-	lrs = &log_ratelimit_states[rte_lcore_id()];
 	if (level <= (uint32_t)rte_atomic32_read(&lrs->log_level) &&
-			log_ratelimit_allow(lrs))
+			log_ratelimit_allow(lrs, now))
 		goto log;
 
 	return 0;
 
 log:
+	update_str_date_time(lrs, now);
 	va_start(ap, format);
 	ret = rte_vlog(level, logtype, format, ap);
 	va_end(ap);
