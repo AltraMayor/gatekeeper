@@ -54,8 +54,11 @@
 
 extern volatile int exiting;
 
+#define ONE_SEC_IN_NANO_SEC (1000000000L)
+
 extern uint64_t cycles_per_sec;
 extern uint64_t cycles_per_ms;
+extern double   cycles_per_ns;
 extern uint64_t picosec_per_cycle;
 
 extern FILE *log_file;
