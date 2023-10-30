@@ -50,6 +50,7 @@ volatile int exiting = false;
  */
 uint64_t cycles_per_sec;
 uint64_t cycles_per_ms;
+double   cycles_per_ns;
 uint64_t picosec_per_cycle;
 
 const char *log_file_name_format;
@@ -267,23 +268,24 @@ time_resolution_init(void)
 		if (ret < 0)
 			return ret;
 
-		diff_ns = (uint64_t)(tp_now.tv_sec - tp_start.tv_sec) * 1000000000UL 
-				+ (uint64_t)(tp_now.tv_nsec - tp_start.tv_nsec);
+		diff_ns = (uint64_t)(tp_now.tv_sec - tp_start.tv_sec) *
+				ONE_SEC_IN_NANO_SEC
+			+ (tp_now.tv_nsec - tp_start.tv_nsec);
 
-		if (diff_ns >= 1000000000UL) {
+		if (diff_ns >= ONE_SEC_IN_NANO_SEC) {
 			cycles = tsc_now - tsc_start;
 			break;
 		}
 	}
 
-	cycles_per_sec = cycles * 1000000000UL / diff_ns;
-	cycles_per_ms = cycles_per_sec / 1000UL;
-	picosec_per_cycle = 1000UL * diff_ns / cycles;
+	cycles_per_sec = cycles * ONE_SEC_IN_NANO_SEC / diff_ns;
+	cycles_per_ms = cycles_per_sec / 1000;
+	cycles_per_ns = (typeof(cycles_per_ns))cycles / diff_ns;
+	picosec_per_cycle = 1000 * diff_ns / cycles;
 
-	G_LOG(NOTICE,
-		"cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", picosec/cycle = %" PRIu64 "\n",
-		cycles_per_sec, cycles_per_ms, picosec_per_cycle);
-
+	G_LOG(NOTICE, "cycles/second = %" PRIu64 ", cycles/millisecond = %" PRIu64 ", cycles/nanoseconds = %f, picosec/cycle = %" PRIu64 "\n",
+		cycles_per_sec, cycles_per_ms, cycles_per_ns,
+		picosec_per_cycle);
 	return 0;
 }
 

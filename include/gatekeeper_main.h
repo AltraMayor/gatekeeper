@@ -34,19 +34,21 @@
 #include "list.h"
 
 #define BLOCK_LOGTYPE RTE_LOGTYPE_USER1
-#define G_LOG_PREFIX "%s/%u: %s "
+#define G_LOG_PREFIX "%s/%u %s %s "
 
 #define G_LOG(level, fmt, ...)						\
 	do {								\
 		unsigned int __g_log_lcore_id = rte_lcore_id();		\
-		const char *__g_log_block_name =			\
-			likely(log_ratelimit_enabled)			\
-			? log_ratelimit_states[__g_log_lcore_id]	\
-				.block_name				\
-			: "Main";					\
+		const struct log_ratelimit_state *__g_log_lrs =		\
+			&log_ratelimit_states[__g_log_lcore_id];	\
 		rte_log_ratelimit(RTE_LOG_ ## level, BLOCK_LOGTYPE,	\
-			G_LOG_PREFIX fmt, __g_log_block_name,		\
-			__g_log_lcore_id, #level			\
+			G_LOG_PREFIX fmt,				\
+			likely(log_ratelimit_enabled)			\
+				? __g_log_lrs->block_name		\
+				: "Main",				\
+			__g_log_lcore_id,				\
+			__g_log_lrs->str_date_time,			\
+			#level						\
 			__VA_OPT__(,) __VA_ARGS__);			\
 	} while (0)
 
@@ -54,8 +56,11 @@
 
 extern volatile int exiting;
 
+#define ONE_SEC_IN_NANO_SEC (1000000000L)
+
 extern uint64_t cycles_per_sec;
 extern uint64_t cycles_per_ms;
+extern double   cycles_per_ns;
 extern uint64_t picosec_per_cycle;
 
 extern FILE *log_file;

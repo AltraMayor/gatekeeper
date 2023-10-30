@@ -97,6 +97,8 @@ struct log_ratelimit_state {
 	uint64_t       end;
 	rte_atomic32_t log_level;
 	char           block_name[16];
+	char           str_date_time[32];
+	uint64_t       update_time_at;
 } __rte_cache_aligned;
 
 /* Only use these variables in file lib/log_ratelimit.c and in macro G_LOG(). */
