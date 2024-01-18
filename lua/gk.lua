@@ -25,6 +25,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	local max_pkt_burst_back = 32
 
 	local flow_ht_size = 1024
+	local flow_ht_max_probes = 80 -- 10 cache lines
+	local flow_ht_scale_num_bucket = 1.25
 	local flow_table_scan_iter = 0
 	local scan_del_thresh = flow_ht_size * 0.1
 
@@ -54,7 +56,7 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	if gk_conf == nil then
 		error("Failed to allocate gk_conf")
 	end
-	
+
 	local num_lcores = #gk_lcores
 	staticlib.gk_assign_lcores(gk_conf, gk_lcores)
 	staticlib.gk_assign_sol_map(gk_conf, gk_sol_map)
@@ -68,6 +70,8 @@ return function (net_conf, lls_conf, sol_conf, gk_lcores, gk_sol_map)
 	gk_conf.log_ratelimit_burst = log_ratelimit_burst
 
 	gk_conf.flow_ht_size = flow_ht_size
+	gk_conf.flow_ht_max_probes = flow_ht_max_probes
+	gk_conf.flow_ht_scale_num_bucket = flow_ht_scale_num_bucket
 	gk_conf.max_num_ipv4_rules = max_num_ipv4_rules
 	gk_conf.num_ipv4_tbl8s = num_ipv4_tbl8s
 	gk_conf.max_num_ipv6_rules = max_num_ipv6_rules
