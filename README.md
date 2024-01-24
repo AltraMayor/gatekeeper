@@ -189,7 +189,7 @@ $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
     build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
     libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
     autoconf flex bison libncurses5-dev libreadline-dev python \
-    libcap-dev libcap2 meson ninja-build
+    libcap-dev libcap2 meson ninja-build pkg-config
 ```
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
@@ -208,6 +208,7 @@ build Gatekeeper Debian packages.
 `libcap-dev` is needed to compile Gatekeeper, but only `libcap2` is needed
 to run Gatekeeper.
 `meson` and `ninja-build` are needed for building DPDK.
+`pkg-config` is needed to compile Gatekeeper.
 
 To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
