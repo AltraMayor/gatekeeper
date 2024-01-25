@@ -27,7 +27,8 @@ jobs:
         libhugetlbfs-bin build-essential gcc-multilib linux-headers-`uname -r`
         libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev
         libc6-dev-i386 autoconf flex bison libncurses5-dev libreadline-dev
-        python libcap-dev libcap2 meson ninja-build pkg-config
+        python python3-pyelftools libcap-dev libcap2 meson ninja-build
+        pkg-config
 
     - name: Setup Gatekeeper
       run: sudo ./setup.sh

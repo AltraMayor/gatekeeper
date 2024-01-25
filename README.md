@@ -204,7 +204,8 @@ the folder `bpf/`.
 The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD. The `devscripts` package is used to
 build Gatekeeper Debian packages.
-`python` is needed to be able to run the `dpdk-devbind.py` script.
+The packages `python` and `python3-pyelftools` are needed to build DPDK and to
+run Python scripts such as `dpdk-devbind.py`.
 `libcap-dev` is needed to compile Gatekeeper, but only `libcap2` is needed
 to run Gatekeeper.
 `meson` and `ninja-build` are needed for building DPDK.
