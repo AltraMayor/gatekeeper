@@ -720,10 +720,10 @@ rss_ip_flow_hf(const void *key,
 }
 
 static const void *
-ip_flow_addr(uint32_t idx, const void *data)
+ip_flow_addr(uint32_t entry_idx, const void *data)
 {
 	const struct flow_entry *fe_table = data;
-	return &fe_table[idx].flow;
+	return &fe_table[entry_idx].flow;
 }
 
 static int

@@ -45,7 +45,7 @@ typedef int (*hs_hash_key_cmp_t)(const void *key1, const void *key2,
  *
  * This helps perform prefetching when doing bulk lookups.
  */
-typedef const void *(*hs_hash_key_addr_t)(uint32_t idx, const void *data);
+typedef const void *(*hs_hash_key_addr_t)(uint32_t user_idx, const void *data);
 
 /* Type of function that can be used for calculating the hash value. */
 typedef uint32_t (*hs_hash_function)(const void *key, uint32_t key_len,
@@ -104,7 +104,7 @@ struct hs_hash_bucket {
 	uint32_t hh_nbh;
 
 	/* The index of this bucket in the entries array. */
-	uint32_t idx;
+	uint32_t user_idx;
 };
 
 struct hs_hash {
@@ -209,10 +209,10 @@ int hs_hash_create(struct hs_hash *h, const struct hs_hash_parameters *params);
 void hs_hash_free(struct hs_hash *h);
 
 int hs_hash_add_key_with_hash(struct hs_hash *h,
-	const void *key, uint32_t hash, uint32_t *p_val_idx);
+	const void *key, uint32_t hash, uint32_t *p_user_idx);
 
 int hs_hash_del_key_with_hash(struct hs_hash *h,
-	const void *key, uint32_t hash, uint32_t *p_val_idx);
+	const void *key, uint32_t hash, uint32_t *p_user_idx);
 
 static inline uint32_t
 hs_hash_hash(const struct hs_hash *h, const void *key)
@@ -222,13 +222,14 @@ hs_hash_hash(const struct hs_hash *h, const void *key)
 }
 
 int hs_hash_lookup_with_hash(const struct hs_hash *h,
-	const void *key, uint32_t hash, uint32_t *p_idx);
-
-int hs_hash_iterate(const struct hs_hash *h, uint32_t *next, uint32_t *p_idx);
+	const void *key, uint32_t hash, uint32_t *p_user_idx);
 
 int hs_hash_lookup_with_hash_bulk(const struct hs_hash *h,
 	const void **keys, const uint32_t *hashes, uint32_t n,
-	uint32_t *indexes);
+	uint32_t *user_indexes);
+
+int hs_hash_iterate(const struct hs_hash *h, uint32_t *next,
+	uint32_t *p_user_idx);
 
 void hs_hash_prefetch_bucket_non_temporal(const struct hs_hash *h,
 	uint32_t hash);

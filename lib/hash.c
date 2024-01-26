@@ -30,7 +30,7 @@
 static inline bool
 is_in_use(const struct hs_hash_bucket *bucket)
 {
-	return bucket->idx != HS_HASH_MISS;
+	return bucket->user_idx != HS_HASH_MISS;
 }
 
 static inline bool
@@ -87,7 +87,7 @@ init_buckets(struct hs_hash_bucket *buckets, uint32_t num_buckets)
 	uint32_t i;
 	for (i = 0; i < num_buckets; i++) {
 		buckets[i].hh_nbh = 0;
-		buckets[i].idx = HS_HASH_MISS;
+		buckets[i].user_idx = HS_HASH_MISS;
 	}
 }
 
@@ -309,12 +309,12 @@ swap_value_into_empty_bucket(struct hs_hash *h, uint32_t neigh_idx,
 	h->buckets[empty_idx].hh_nbh &= h->neighborhood_mask;
 	h->buckets[empty_idx].hh_nbh |= h->buckets[to_swap_idx].hh_nbh &
 		h->high_hash_mask;
-	h->buckets[empty_idx].idx = h->buckets[to_swap_idx].idx;
+	h->buckets[empty_idx].user_idx = h->buckets[to_swap_idx].user_idx;
 	/* Add the previously empty bucket to this neighborhood. */
 	toggle_neighbor(h, neigh_idx, empty_neigh_bit);
 
 	h->buckets[to_swap_idx].hh_nbh &= h->neighborhood_mask;
-	h->buckets[to_swap_idx].idx = HS_HASH_MISS;
+	h->buckets[to_swap_idx].user_idx = HS_HASH_MISS;
 	/* Remove the previously used bucket from this neighborhood. */
 	toggle_neighbor(h, neigh_idx, to_swap_neigh_bit);
 }
@@ -389,7 +389,7 @@ static inline bool
 keys_equal(const struct hs_hash *h, const void *key1, uint32_t key2_hash_idx)
 {
 	return h->key_cmp_fn(key1,
-		h->key_addr_fn(h->buckets[key2_hash_idx].idx,
+		h->key_addr_fn(h->buckets[key2_hash_idx].user_idx,
 			h->key_addr_fn_data),
 		h->key_len,
 		h->key_cmp_fn_data) == 0;
@@ -431,30 +431,31 @@ find_in_neighborhood(const struct hs_hash *h, const void *key, uint32_t hash,
 
 int
 hs_hash_add_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
-	uint32_t *p_val_idx)
+	uint32_t *p_user_idx)
 {
-	uint32_t hash_idx, new_idx, empty_idx;
+	uint32_t hash_idx, val_idx, new_user_idx, empty_idx;
 	int ret, ret2;
 
-	if (unlikely(h == NULL || key == NULL || p_val_idx == NULL))
+	if (unlikely(h == NULL || key == NULL || p_user_idx == NULL))
 		return -EINVAL;
 
 	hash_idx = cycle_buckets(h, hash);
 
-	ret = find_in_neighborhood(h, key, hash, hash_idx, p_val_idx);
+	ret = find_in_neighborhood(h, key, hash, hash_idx, &val_idx);
 	if (unlikely(ret == 0)) {
 		/*
 		 * Prioritize returning the fact that the key
 		 * already exists, since this gives the client
 		 * a better opportunity to act on it than -ENOSPC.
 		 */
+		*p_user_idx = h->buckets[val_idx].user_idx;
 		return -EEXIST;
 	}
 
 	if (unlikely(is_neighborhood_full(h, &h->buckets[hash_idx])))
 		return -ENOSPC;
 
-	ret = qid_pop(&h->entry_qid, &new_idx);
+	ret = qid_pop(&h->entry_qid, &new_user_idx);
 	if (unlikely(ret < 0)) {
 		/* Likely no more room in the client's entries array. */
 		return ret;
@@ -473,9 +474,9 @@ hs_hash_add_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
 			h->buckets[empty_idx].hh_nbh &= h->neighborhood_mask;
 			h->buckets[empty_idx].hh_nbh |= hash &
 				h->high_hash_mask;
-			h->buckets[empty_idx].idx = new_idx;
+			h->buckets[empty_idx].user_idx = new_user_idx;
 			toggle_neighbor(h, hash_idx, bucket_diff);
-			*p_val_idx = new_idx;
+			*p_user_idx = new_user_idx;
 			return 0;
 		}
 
@@ -495,10 +496,10 @@ hs_hash_add_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
 	/* Couldn't swap an empty bucket close enough. */
 	ret = -ENOSPC;
 push_qid:
-	ret2 = qid_push(&h->entry_qid, new_idx);
+	ret2 = qid_push(&h->entry_qid, new_user_idx);
 	if (unlikely(ret2 < 0)) {
 		G_LOG(ERR, "%s(): failed to push QID %u (errno=%i): %s\n",
-			__func__, new_idx,
+			__func__, new_user_idx,
 			-ret2, strerror(-ret2));
 	}
 	return ret;
@@ -511,33 +512,34 @@ push_qid:
 static void
 delete_from_neighborhood(struct hs_hash *h, uint32_t nbh_idx, uint32_t val_idx)
 {
-	int ret = qid_push(&h->entry_qid, h->buckets[val_idx].idx);
+	int ret = qid_push(&h->entry_qid, h->buckets[val_idx].user_idx);
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(): failed to push QID %u (errno=%i): %s\n",
-			__func__, h->buckets[val_idx].idx,
+			__func__, h->buckets[val_idx].user_idx,
 			-ret, strerror(-ret));
 	}
-	h->buckets[val_idx].idx = HS_HASH_MISS;
+	h->buckets[val_idx].user_idx = HS_HASH_MISS;
 	h->buckets[val_idx].hh_nbh &= h->neighborhood_mask;
 	toggle_neighbor(h, nbh_idx, bucket_difference(h, nbh_idx, val_idx));
 }
 
 int
 hs_hash_del_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
-	uint32_t *p_val_idx)
+	uint32_t *p_user_idx)
 {
-	uint32_t hash_idx, neighborhood;
+	uint32_t hash_idx, val_idx, neighborhood;
 	int ret;
 
-	if (unlikely(h == NULL || key == NULL || p_val_idx == NULL))
+	if (unlikely(h == NULL || key == NULL || p_user_idx == NULL))
 		return -EINVAL;
 
 	hash_idx = cycle_buckets(h, hash);
-	ret = find_in_neighborhood(h, key, hash, hash_idx, p_val_idx);
+	ret = find_in_neighborhood(h, key, hash, hash_idx, &val_idx);
 	if (unlikely(ret < 0))
 		return ret;
+	*p_user_idx = h->buckets[val_idx].user_idx;
 
-	delete_from_neighborhood(h, hash_idx, *p_val_idx);
+	delete_from_neighborhood(h, hash_idx, val_idx);
 
 	neighborhood = h->buckets[hash_idx].hh_nbh & h->neighborhood_mask;
 	if (likely(neighborhood != 0)) {
@@ -546,10 +548,10 @@ hs_hash_del_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
 		 * to the empty spot to improve locality.
 		 */
 		uint32_t farthest_bit = rte_fls_u32(neighborhood) - 1;
-		uint32_t val_bit = bucket_difference(h, hash_idx, *p_val_idx);
+		uint32_t val_bit = bucket_difference(h, hash_idx, val_idx);
 		if (likely(farthest_bit > val_bit)) {
 			swap_value_into_empty_bucket(h, hash_idx,
-				*p_val_idx, val_bit,
+				val_idx, val_bit,
 				cycle_buckets(h, hash_idx + farthest_bit),
 				farthest_bit);
 		}
@@ -560,60 +562,20 @@ hs_hash_del_key_with_hash(struct hs_hash *h, const void *key, uint32_t hash,
 
 int
 hs_hash_lookup_with_hash(const struct hs_hash *h,
-	const void *key, uint32_t hash, uint32_t *p_val_idx)
+	const void *key, uint32_t hash, uint32_t *p_user_idx)
 {
-	uint32_t hash_idx;
+	uint32_t hash_idx, val_idx;
+	int ret;
 
-	if (unlikely(h == NULL || key == NULL || p_val_idx == NULL))
+	if (unlikely(h == NULL || key == NULL || p_user_idx == NULL))
 		return -EINVAL;
 
 	hash_idx = cycle_buckets(h, hash);
-	return find_in_neighborhood(h, key, hash, hash_idx, p_val_idx);
-}
-
-int
-hs_hash_iterate(const struct hs_hash *h, uint32_t *next, uint32_t *p_idx)
-{
-	uint32_t i;
-	int ret;
-
-	if (unlikely(p_idx == NULL)) {
-		/*
-		 * Since we can't populate @p_idx with HS_HASH_MISS,
-		 * the only thing to do is return the error.
-		 */
-		return -EINVAL;
-	}
-
-	if (unlikely(h == NULL || next == NULL)) {
-		ret = -EINVAL;
-		goto no_entry;
-	}
-
-	if (unlikely(*next >= h->num_buckets)) {
-		ret = -ENOENT;
-		goto no_entry;
-	}
-
-	i = *next;
-	while (!is_in_use(&h->buckets[i])) {
-		i++;
-		if (i >= h->num_buckets) {
-			ret = -ENOENT;
-			*next = i;
-			goto no_entry;
-		}
-	}
-
-	*p_idx = h->buckets[i].idx;
-	*next = i + 1;
-	return 0;
-
-no_entry:
-	*p_idx = HS_HASH_MISS;
+	ret = find_in_neighborhood(h, key, hash, hash_idx, &val_idx);
+	if (likely(ret == 0))
+		*p_user_idx = h->buckets[val_idx].user_idx;
 	return ret;
 }
-
 
 /*
  * Bulk lookup is implemented using the G-Opt technique. The logic
@@ -649,7 +611,7 @@ bucket_cache_line(const struct hs_hash *h, uint32_t idx)
 
 int
 hs_hash_lookup_with_hash_bulk(const struct hs_hash *h, const void **keys,
-	const uint32_t *hashes, uint32_t n, uint32_t *indexes)
+	const uint32_t *hashes, uint32_t n, uint32_t *user_indexes)
 {
 	/* Lookup state. */
 	uint32_t entry_idx[n];
@@ -666,7 +628,7 @@ hs_hash_lookup_with_hash_bulk(const struct hs_hash *h, const void **keys,
 		return 0;
 
 	if (unlikely(h == NULL || keys == NULL || hashes == NULL ||
-			indexes == NULL)) {
+			user_indexes == NULL)) {
 		return -EINVAL;
 	}
 
@@ -694,7 +656,7 @@ g_label_2:
 		 * with, or we have checked all of the entries in the
 		 * neighborhood and their hashes or keys didn't match.
 		 */
-		indexes[i] = HS_HASH_MISS;
+		user_indexes[i] = HS_HASH_MISS;
 		goto g_done;
 	}
 
@@ -723,7 +685,8 @@ g_label_3:
 	}
 
 	/* Prefetch the key of the entry to compare keys. */
-	G_PSS(h->key_addr_fn(entry_idx[i], h->key_addr_fn_data), g_label_4);
+	user_indexes[i] = h->buckets[entry_idx[i]].user_idx;
+	G_PSS(h->key_addr_fn(user_indexes[i], h->key_addr_fn_data), g_label_4);
 
 g_label_4:
 	if (unlikely(!keys_equal(h, keys[i], entry_idx[i]))) {
@@ -735,7 +698,6 @@ g_label_4:
 		goto g_label_2;
 	}
 
-	indexes[i] = entry_idx[i];
 	goto g_done;
 
 g_skip:
@@ -754,6 +716,49 @@ g_done:
 	}
 
 	return 0;
+}
+
+int
+hs_hash_iterate(const struct hs_hash *h, uint32_t *next, uint32_t *p_user_idx)
+{
+	uint32_t i;
+	int ret;
+
+	if (unlikely(p_user_idx == NULL)) {
+		/*
+		 * Since we can't populate @p_user_idx with HS_HASH_MISS,
+		 * the only thing to do is return the error.
+		 */
+		return -EINVAL;
+	}
+
+	if (unlikely(h == NULL || next == NULL)) {
+		ret = -EINVAL;
+		goto no_entry;
+	}
+
+	if (unlikely(*next >= h->num_buckets)) {
+		ret = -ENOENT;
+		goto no_entry;
+	}
+
+	i = *next;
+	while (likely(!is_in_use(&h->buckets[i]))) {
+		i++;
+		if (unlikely(i >= h->num_buckets)) {
+			ret = -ENOENT;
+			*next = i;
+			goto no_entry;
+		}
+	}
+
+	*p_user_idx = h->buckets[i].user_idx;
+	*next = i + 1;
+	return 0;
+
+no_entry:
+	*p_user_idx = HS_HASH_MISS;
+	return ret;
 }
 
 void
