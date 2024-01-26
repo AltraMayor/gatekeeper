@@ -1306,27 +1306,6 @@ update_ip_hop_count(struct gatekeeper_if *iface, struct ipacket *packet,
 	return 0;
 }
 
-/*
- * This function is only to be called on flows that
- * are not backed by a flow entry.
- */
-static void
-send_request_to_grantor(struct ipacket *packet, uint32_t flow_hash_val,
-		struct gk_fib *fib, struct rte_mbuf **req_bufs,
-		uint16_t *num_reqs, struct gk_instance *instance,
-		struct gk_config *gk_conf)
-{
-	int ret;
-	struct flow_entry temp_fe;
-
-	initialize_flow_entry(&temp_fe, &packet->flow, flow_hash_val, fib);
-
-	ret = gk_process_request(&temp_fe, packet, req_bufs,
-		num_reqs, gk_conf->sol_conf);
-	if (ret < 0)
-		drop_packet_front(packet->pkt, instance);
-}
-
 static void
 lookup_fib_bulk(struct gk_lpm *ltbl, struct ip_flow *flows[], int num_flows,
 	struct gk_fib *fibs[])
@@ -1389,7 +1368,6 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 		uint16_t *num_tx, struct rte_mbuf **tx_bufs,
 		struct acl_search *acl4, struct acl_search *acl6,
 		uint16_t *num_pkts, struct rte_mbuf **icmp_bufs,
-		struct rte_mbuf **req_bufs, uint16_t *num_reqs,
 		struct gatekeeper_if *front, struct gatekeeper_if *back,
 		struct gk_instance *instance, struct gk_config *gk_conf)
 {
@@ -1410,21 +1388,8 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 	switch (fib->action) {
 	case GK_FWD_GRANTOR: {
 		struct flow_entry *fe;
-		int ret = gk_hash_add_flow_entry(
-			instance, &packet->flow,
+		int ret = gk_hash_add_flow_entry(instance, &packet->flow,
 			ip_flow_hash_val, gk_conf, fe_index);
-		if (ret == -ENOSPC) {
-			/*
-			 * There is no room for a new
-			 * flow entry, but give this
-			 * flow a chance sending a
-			 * request to the grantor
-			 * server.
-			 */
-			send_request_to_grantor(packet, ip_flow_hash_val,
-				fib, req_bufs, num_reqs, instance, gk_conf);
-			break;
-		}
 		if (ret < 0) {
 			drop_packet_front(pkt, instance);
 			break;
@@ -1803,8 +1768,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
 			flow_hash_val_arr[fidx], fibs[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
-			tx_front_num_pkts, tx_front_pkts, req_bufs,
-			&num_reqs, front, back, instance, gk_conf);
+			tx_front_num_pkts, tx_front_pkts, front, back,
+			instance, gk_conf);
 	}
 
 	for (i = 0; i < num_lpm6_lookups; i++) {
@@ -1813,8 +1778,8 @@ process_pkts_front(uint16_t port_front, uint16_t rx_queue_front,
 		fe_arr[fidx] = lookup_fe_from_lpm(&pkt_arr[fidx],
 			flow_hash_val_arr[fidx], fibs6[i], &pos_arr[fidx],
 			tx_back_num_pkts, tx_back_pkts, &acl4, &acl6,
-			tx_front_num_pkts, tx_front_pkts, req_bufs,
-			&num_reqs, front, back, instance, gk_conf);
+			tx_front_num_pkts, tx_front_pkts, front, back,
+			instance, gk_conf);
 	}
 
 	for (i = 0; i < num_ip_flows; i++) {
