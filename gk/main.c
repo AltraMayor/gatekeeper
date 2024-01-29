@@ -1387,16 +1387,40 @@ lookup_fe_from_lpm(struct ipacket *packet, uint32_t ip_flow_hash_val,
 
 	switch (fib->action) {
 	case GK_FWD_GRANTOR: {
-		struct flow_entry *fe;
 		int ret = gk_hash_add_flow_entry(instance, &packet->flow,
 			ip_flow_hash_val, gk_conf, fe_index);
-		if (ret < 0) {
+		struct flow_entry *fe =
+			&instance->ip_flow_entry_table[*fe_index];
+		if (unlikely(ret == -EEXIST)) {
+			/*
+			 * This rare case happens when two or more packets of
+			 * a new flow are present in the same batch of packets
+			 * being processed.
+			 */
+			if (unlikely(!fe->in_use)) {
+				G_LOG(CRIT, "%s(): bug: gk_hash_add_flow_entry() returned flow entry index %u that is NOT in use but already EEXIST\n",
+					__func__, *fe_index);
+			}
+		} else if (unlikely(ret < 0)) {
+			/* @fe is NOT defined here. */
+
 			drop_packet_front(pkt, instance);
 			break;
+		} else if (unlikely(fe->in_use)) {
+			G_LOG(CRIT, "%s(): bug: gk_hash_add_flow_entry() returned flow entry index %u that is already in use\n",
+				__func__, *fe_index);
 		}
 
-		fe = &instance->ip_flow_entry_table[*fe_index];
-		initialize_flow_entry(fe, &packet->flow, ip_flow_hash_val, fib);
+		if (likely(!fe->in_use)) {
+			/*
+			 * The execution reaches here when
+			 * 1. successfully adding a new flow entry; and
+			 * 2. a flow already exists but it's not in use
+			 *    due to a bug.
+			 */
+			initialize_flow_entry(fe, &packet->flow,
+				ip_flow_hash_val, fib);
+		}
 		return fe;
 	}
 
@@ -2159,7 +2183,15 @@ update_flow_table(struct gk_fib *fib, struct ggu_policy *policy,
 
 	ret = gk_hash_add_flow_entry(instance,
 		&policy->flow, rss_hash_val, gk_conf, &fe_index);
-	if (ret < 0)
+	if (unlikely(ret == -EEXIST)) {
+		/*
+		 * This rare case happens when two or more policy updates of
+		 * a new flow are present in the same batch of policy updates
+		 * being processed.
+		 *
+		 * DO_NOTHING;
+		 */
+	} else if (unlikely(ret < 0))
 		return;
 
 	fe = &instance->ip_flow_entry_table[fe_index];
