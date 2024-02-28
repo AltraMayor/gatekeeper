@@ -388,7 +388,7 @@ struct cps_config {
 	uint32_t     log_ratelimit_burst;
 	uint16_t     front_max_pkt_burst;
 	uint16_t     back_max_pkt_burst;
-	unsigned int num_attempts_kni_link_set;
+	uint16_t     kni_queue_size;
 	unsigned int max_rt_update_pkts;
 	unsigned int scan_interval_sec;
 	unsigned int mailbox_max_entries_exp;
@@ -478,7 +478,7 @@ int run_gt(struct net_config *net_conf, struct gt_config *gt_conf,
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct gt_config *gt_conf, struct cps_config *cps_conf,
-	struct lls_config *lls_conf, const char *kni_kmod_path);
+	struct lls_config *lls_conf);
 struct dynamic_config *get_dy_conf(void);
 void set_dyc_timeout(unsigned sec, unsigned usec,
 	struct dynamic_config *dy_conf);

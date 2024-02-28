@@ -20,7 +20,7 @@ cd dependencies
 # Setup DPDK.
 cd dpdk
 
-meson -Denable_kmods=true build
+meson build
 cd build
 ninja
 sudo ninja install
@@ -28,10 +28,6 @@ sudo ninja install
 # Gatekeeper is being staticly linked with DPDK, so
 # ldconfig(8) is not needed to make DPDK's libraries available system wide.
 # sudo ldconfig
-
-# The depmod(8) below is needed, so modprobe(8) and similar tools can load
-# the kernel module rte_kni included in DPDK.
-sudo depmod -a
 
 # Install kernel modules.
 sudo modprobe vfio-pci

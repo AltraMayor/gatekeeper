@@ -22,8 +22,7 @@
 #include <net/if.h>
 #include <net/if_arp.h>
 
-#include <rte_kni.h>
-
+#include "kni.h"
 #include "rd.h"
 
 /* Defined in the kernel headers, but not included in net/if.h. */
@@ -281,11 +280,13 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		}
 		RTE_VERIFY(gw_fib != NULL);
 
-		if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET)
-			update->oif_index = cps_conf->front_kni_index;
-		else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET))
-			update->oif_index = cps_conf->back_kni_index;
-		else {
+		if (gw_fib->action == GK_FWD_NEIGHBOR_FRONT_NET) {
+			update->oif_index =
+				kni_get_ifindex(&cps_conf->front_kni);
+		} else if (likely(gw_fib->action == GK_FWD_NEIGHBOR_BACK_NET)) {
+			update->oif_index =
+				kni_get_ifindex(&cps_conf->back_kni);
+		} else {
 			G_LOG(ERR, "%s(%s): the gateway %s is NOT a neighbor\n",
 				__func__, update->ip_px_buf, update->gw_buf);
 			ret = -EINVAL;
@@ -293,14 +294,14 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 		}
 	}
 
-	if (update->oif_index == cps_conf->front_kni_index) {
+	if (update->oif_index == kni_get_ifindex(&cps_conf->front_kni)) {
 		ret = add_fib_entry_numerical_locked(&update->prefix_info,
 			NULL, &update->gw, 1, GK_FWD_GATEWAY_FRONT_NET,
 			&update->rt_props, cps_conf->gk);
 		goto out;
 	}
 
-	if (likely(update->oif_index == cps_conf->back_kni_index)) {
+	if (likely(update->oif_index == kni_get_ifindex(&cps_conf->back_kni))) {
 		ret = add_fib_entry_numerical_locked(&update->prefix_info,
 			NULL, &update->gw, 1, GK_FWD_GATEWAY_BACK_NET,
 			&update->rt_props, cps_conf->gk);
@@ -309,7 +310,8 @@ new_route(struct route_update *update, struct cps_config *cps_conf)
 
 	G_LOG(ERR, "%s(%s): interface %u is neither the KNI front (%u) or KNI back (%u) interface\n",
 		__func__, update->ip_px_buf, update->oif_index,
-		cps_conf->front_kni_index, cps_conf->back_kni_index);
+		kni_get_ifindex(&cps_conf->front_kni),
+		kni_get_ifindex(&cps_conf->back_kni));
 	ret = -EINVAL;
 
 out:
@@ -673,7 +675,8 @@ rd_fill_getroute_reply(const void *prefix, const struct cps_config *cps_conf,
 
 	switch (fib->action) {
 	case GK_FWD_GRANTOR:
-		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		mnl_attr_put_u32(reply, RTA_OIF,
+			kni_get_ifindex(&cps_conf->back_kni));
 		rm->rtm_protocol = RTPROT_STATIC;
 		rm->rtm_type = RTN_UNICAST;
 		/*
@@ -684,27 +687,31 @@ rd_fill_getroute_reply(const void *prefix, const struct cps_config *cps_conf,
 		*gw_addr = NULL;
 		break;
 	case GK_FWD_GATEWAY_FRONT_NET:
-		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
+		mnl_attr_put_u32(reply, RTA_OIF,
+			kni_get_ifindex(&cps_conf->front_kni));
 		put_priority(reply, fib->u.gateway.props.priority);
 		rm->rtm_protocol = fib->u.gateway.props.rt_proto;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_GATEWAY_BACK_NET:
-		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		mnl_attr_put_u32(reply, RTA_OIF,
+			kni_get_ifindex(&cps_conf->back_kni));
 		put_priority(reply, fib->u.gateway.props.priority);
 		rm->rtm_protocol = fib->u.gateway.props.rt_proto;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = &fib->u.gateway.eth_cache->ip_addr;
 		break;
 	case GK_FWD_NEIGHBOR_FRONT_NET:
-		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->front_kni_index);
+		mnl_attr_put_u32(reply, RTA_OIF,
+			kni_get_ifindex(&cps_conf->front_kni));
 		rm->rtm_protocol = RTPROT_STATIC;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = NULL;
 		break;
 	case GK_FWD_NEIGHBOR_BACK_NET:
-		mnl_attr_put_u32(reply, RTA_OIF, cps_conf->back_kni_index);
+		mnl_attr_put_u32(reply, RTA_OIF,
+			kni_get_ifindex(&cps_conf->back_kni));
 		rm->rtm_protocol = RTPROT_STATIC;
 		rm->rtm_type = RTN_UNICAST;
 		*gw_addr = NULL;
@@ -1029,9 +1036,9 @@ rd_getlink(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	}
 
 	rd_fill_getlink_reply(cps_conf, batch,
-		rte_kni_get_name(cps_conf->front_kni),
-		cps_conf->front_kni_index, cps_conf->net->front.mtu,
-		req->nlmsg_seq);
+		kni_get_krnname(&cps_conf->front_kni),
+		kni_get_ifindex(&cps_conf->front_kni),
+		cps_conf->net->front.mtu, req->nlmsg_seq);
 	if (!mnl_nlmsg_batch_next(batch)) {
 		/* Send whatever was in the batch, if anything. */
 		*err = rd_send_batch(cps_conf, batch, "LINK",
@@ -1042,8 +1049,8 @@ rd_getlink(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 
 	if (cps_conf->net->back_iface_enabled) {
 		rd_fill_getlink_reply(cps_conf, batch,
-			rte_kni_get_name(cps_conf->back_kni),
-			cps_conf->back_kni_index,
+			kni_get_krnname(&cps_conf->back_kni),
+			kni_get_ifindex(&cps_conf->back_kni),
 			cps_conf->net->back.mtu, req->nlmsg_seq);
 		if (!mnl_nlmsg_batch_next(batch)) {
 			*err = rd_send_batch(cps_conf, batch, "LINK",
@@ -1277,13 +1284,14 @@ rd_getaddr(const struct nlmsghdr *req, struct cps_config *cps_conf, int *err)
 	}
 
 	*err = rd_getaddr_iface(cps_conf, batch, &net_conf->front, family,
-		cps_conf->front_kni_index, req->nlmsg_seq, req->nlmsg_pid);
+		kni_get_ifindex(&cps_conf->front_kni),
+		req->nlmsg_seq, req->nlmsg_pid);
 	if (*err < 0)
 		goto free_batch;
 
 	if (net_conf->back_iface_enabled) {
 		*err = rd_getaddr_iface(cps_conf, batch, &net_conf->back,
-			family, cps_conf->back_kni_index,
+			family, kni_get_ifindex(&cps_conf->back_kni),
 			req->nlmsg_seq, req->nlmsg_pid);
 		if (*err < 0)
 			goto free_batch;
