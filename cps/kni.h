@@ -53,22 +53,4 @@ kni_get_ifindex(const struct cps_kni *kni)
 	return kni->krn_ifindex;
 }
 
-struct arp_request {
-	struct list_head list;
-	uint32_t         addr;
-	int              stale;
-};
-
-struct nd_request {
-	struct list_head list;
-	uint8_t          addr[16];
-	int              stale;
-};
-
-void kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr);
-void kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
-	uint16_t pkt_len);
-
 #endif /* _GATEKEEPER_CPS_KNI_H_ */
