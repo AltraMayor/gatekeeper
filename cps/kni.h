@@ -19,35 +19,38 @@
 #ifndef _GATEKEEPER_CPS_KNI_H_
 #define _GATEKEEPER_CPS_KNI_H_
 
-#include <rte_kni.h>
-
 #include "gatekeeper_net.h"
+#include "gatekeeper_cps.h"
 
-struct arp_request {
-	struct list_head list;
-	uint32_t         addr;
-	int              stale;
-};
+int kni_create(struct cps_kni *kni, const struct gatekeeper_if *iface,
+	struct rte_mempool *mp, uint16_t queue_size);
 
-struct nd_request {
-	struct list_head list;
-	uint8_t          addr[16];
-	int              stale;
-};
+void kni_free(struct cps_kni *kni);
 
-int kni_disable_change_mtu(uint16_t port_id, unsigned int new_mtu);
-int kni_disable_change_mac_address(uint16_t port_id, uint8_t *mac_addr);
-int kni_ignore_change(uint16_t port_id, uint8_t to_on);
-int kni_config_ip_addrs(struct rte_kni *kni, unsigned int kni_index,
-	struct gatekeeper_if *iface);
-int kni_config_link(struct rte_kni *kni);
-int init_kni(const char *kni_kmod_path, unsigned int num_kni);
-void rm_kni(void);
+static inline uint16_t
+kni_rx_burst(const struct cps_kni *kni, struct rte_mbuf **rx_pkts,
+	uint16_t nb_pkts)
+{
+	return rte_eth_rx_burst(kni->cps_portid, 0, rx_pkts, nb_pkts);
+}
 
-void kni_process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr);
-void kni_process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
-	uint16_t pkt_len);
+static inline uint16_t
+kni_tx_burst(const struct cps_kni *kni, struct rte_mbuf **tx_pkts,
+	uint16_t nb_pkts)
+{
+	return rte_eth_tx_burst(kni->cps_portid, 0, tx_pkts, nb_pkts);
+}
+
+static inline const char *
+kni_get_krnname(const struct cps_kni *kni)
+{
+	return kni->krn_name;
+}
+
+static inline unsigned int
+kni_get_ifindex(const struct cps_kni *kni)
+{
+	return kni->krn_ifindex;
+}
 
 #endif /* _GATEKEEPER_CPS_KNI_H_ */

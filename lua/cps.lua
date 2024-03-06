@@ -19,10 +19,9 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	local nd_max_entries_exp = 10
 
 	-- These variables are unlikely to need to be changed.
-	local num_attempts_kni_link_set = 5
+	local kni_queue_size = 1024
 	local max_rt_update_pkts = 8
 	local scan_interval_sec = 5
-	local kni_kmod_path
 
 	--
 	-- End configuration of CPS block.
@@ -44,8 +43,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.log_ratelimit_burst = log_ratelimit_burst
 	cps_conf.front_max_pkt_burst = front_max_pkt_burst
 	cps_conf.back_max_pkt_burst = back_max_pkt_burst
-
-	cps_conf.num_attempts_kni_link_set = num_attempts_kni_link_set
+	cps_conf.kni_queue_size = kni_queue_size
 	cps_conf.max_rt_update_pkts = max_rt_update_pkts
 	cps_conf.scan_interval_sec = scan_interval_sec
 
@@ -56,7 +54,7 @@ return function (net_conf, gk_conf, gt_conf, lls_conf, numa_table)
 	cps_conf.nd_max_entries_exp = nd_max_entries_exp
 
 	local ret = staticlib.c.run_cps(net_conf, gk_conf, gt_conf,
-		cps_conf, lls_conf, kni_kmod_path)
+		cps_conf, lls_conf)
 	if ret < 0 then
 		error("Failed to run cps block")
 	end

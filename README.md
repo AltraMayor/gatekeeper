@@ -124,12 +124,8 @@ Once the packages are downloaded, they can be installed with the commands below:
 ```console
 $ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
 $ cd gatekeeper-ubuntu-20.04-packages
-$ sudo dpkg -i dpdk-rte-kni-dkms_*_amd64.deb gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
+$ sudo dpkg -i gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
 ```
-
-The `dpdk-rte-kni-dkms` package is a DKMS (Dynamic Kernel Modules Support)
-package, which builds the `rte_kni` kernel module during installation and kernel
-upgrades.
 
 #### Configure Gatekeeper
 

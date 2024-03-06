@@ -21,7 +21,7 @@ SRCS-y := main/main.c
 
 # Functional blocks.
 SRCS-y += config/static.c config/dynamic.c
-SRCS-y += cps/main.c cps/kni.c cps/elf.c cps/rd.c
+SRCS-y += cps/main.c cps/kni.c cps/rd.c
 SRCS-y += ggu/main.c
 SRCS-y += gk/main.c gk/rt.c gk/bpf.c
 SRCS-y += gt/main.c gt/lua_lpm.c

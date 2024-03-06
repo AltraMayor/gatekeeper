@@ -19,6 +19,8 @@
 #ifndef _GATEKEEPER_CPS_H_
 #define _GATEKEEPER_CPS_H_
 
+#include <net/if.h>
+
 #include <rte_timer.h>
 
 #include "gatekeeper_gk.h"
@@ -27,6 +29,24 @@
 #include "gatekeeper_log_ratelimit.h"
 #include "list.h"
 #include "coro.h"
+
+/* KNI stands for Kernel Network Interface. */
+struct cps_kni{
+	/*
+	 * Virtio-user interface.
+	 * This is the interface that the CPS block uses to receive and
+	 * to transmit packets.
+	 */
+	char         cps_name[IF_NAMESIZE];
+	uint16_t     cps_portid;
+
+	/*
+	 * TAP interface.
+	 * This is the interface available to the kernel.
+	 */
+	char         krn_name[IF_NAMESIZE];
+	unsigned int krn_ifindex;
+};
 
 /* Configuration for the Control Plane Support functional block. */
 struct cps_config {
@@ -44,8 +64,8 @@ struct cps_config {
 	uint16_t           front_max_pkt_burst;
 	uint16_t           back_max_pkt_burst;
 
-	/* Number of times to attempt bring a KNI interface up or down. */
-	unsigned int       num_attempts_kni_link_set;
+	/* Length of the KNI queues in number of packets. */
+	uint16_t           kni_queue_size;
 
 	/* Maximum number of route update packets to serve at once. */
 	unsigned int       max_rt_update_pkts;
@@ -81,13 +101,9 @@ struct cps_config {
 	struct net_config  *net;
 	struct lls_config  *lls;
 
-	/* Kernel NIC interfaces for control plane messages */
-	struct rte_kni     *front_kni;
-	struct rte_kni     *back_kni;
-
-	/* Output interface IDs for the KNIs; used with routing daemons. */
-	unsigned int       front_kni_index;
-	unsigned int       back_kni_index;
+	/* Kernel NIC interfaces for control plane messages. */
+	struct cps_kni     front_kni;
+	struct cps_kni     back_kni;
 
 	/* Mailbox to hold requests from other blocks. */
 	struct mailbox     mailbox;
@@ -201,6 +217,6 @@ int cps_submit_direct(struct rte_mbuf **pkts, unsigned int num_pkts,
 struct cps_config *get_cps_conf(void);
 int run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct gt_config *gt_conf, struct cps_config *cps_conf,
-	struct lls_config *lls_conf, const char *kni_kmod_path);
+	struct lls_config *lls_conf);
 
 #endif /* _GATEKEEPER_CPS_H_ */

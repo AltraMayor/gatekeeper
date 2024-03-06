@@ -39,30 +39,31 @@ get_cps_conf(void)
 	return &cps_conf;
 }
 
-/*
- * In run_cps(), the KNI kernel module, mailbox and scan timer are initialized
- * before the functions cps_stage1(), cps_stage2() and cps_stage3() are
- * really called.
- *
- * In cps_stage1(), the packet mempool and KNIs are created.
- * In cps_stage2(), rd_event_sock_open() is called to open a Netlink socket.
- *
- * In the reverse order, we should (1) close the Netlink socket;
- * (2) release KNIs; (3) release the packet mempool; (4) release the reference
- * to the GT or GK configuration data structure; (5) stop the scan timer,
- * release mailbox and KNI kernel module.
- */
 static int
 cleanup_cps(void)
 {
 	/*
+	 * From cps_stage2()
+	 */
+
+	/*
 	 * rd_event_sock_close() can be called even when the netlink
-	 * socket is not open, and rte_kni_release() can be passed NULL.
+	 * socket is not open.
 	 */
 	rd_event_sock_close(&cps_conf);
-	rte_kni_release(cps_conf.back_kni);
-	rte_kni_release(cps_conf.front_kni);
+
+	kni_free(&cps_conf.back_kni);
+	kni_free(&cps_conf.front_kni);
+
+	/*
+	 * From cps_stage1() -> assign_cps_queue_ids()
+	 */
+
 	destroy_mempool(cps_conf.mp);
+
+	/*
+	 * From run_cps()
+	 */
 
 	if (cps_conf.gt != NULL)
 		gt_conf_put(cps_conf.gt);
@@ -75,11 +76,11 @@ cleanup_cps(void)
 	rte_timer_stop(&cps_conf.scan_timer);
 	rd_free_coro(&cps_conf);
 	destroy_mailbox(&cps_conf.mailbox);
-	rm_kni();
-	if (cps_conf.nd_mp)
-		rte_mempool_free(cps_conf.nd_mp);
-	if (cps_conf.arp_mp)
-		rte_mempool_free(cps_conf.arp_mp);
+	rte_mempool_free(cps_conf.nd_mp);
+	cps_conf.nd_mp = NULL;
+	rte_mempool_free(cps_conf.arp_mp);
+	cps_conf.arp_mp = NULL;
+
 	return 0;
 }
 
@@ -97,13 +98,13 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	struct rte_ether_hdr *eth_hdr;
 	struct rte_arp_hdr *arp_hdr;
 	size_t pkt_size;
-	struct rte_kni *kni;
+	struct cps_kni *kni;
 	int ret;
 
 	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
-	if (created_pkt == NULL) {
-		G_LOG(ERR, "Could not allocate an ARP reply on the %s KNI\n",
-			iface->name);
+	if (unlikely(created_pkt == NULL)) {
+		G_LOG(ERR, "%s(%s): could not allocate an ARP reply\n",
+			__func__, iface->name);
 		return;
 	}
 
@@ -134,17 +135,15 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	rte_ether_addr_copy(&iface->eth_addr, &arp_hdr->arp_data.arp_tha);
 	arp_hdr->arp_data.arp_tip = iface->ip4_addr.s_addr;
 
-	if (iface == &cps_conf->net->front)
-		kni = cps_conf->front_kni;
-	else
-		kni = cps_conf->back_kni;
+	kni = iface == &cps_conf->net->front
+		? &cps_conf->front_kni
+		: &cps_conf->back_kni;
 
-	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
-	if (ret <= 0) {
+	ret = kni_tx_burst(kni, &created_pkt, 1);
+	if (unlikely(ret != 1)) {
 		rte_pktmbuf_free(created_pkt);
-		G_LOG(ERR, "Could not transmit an ARP reply to the %s KNI\n",
-			iface->name);
-		return;
+		G_LOG(ERR, "%s(%s): could not transmit an ARP reply (ret=%i)\n",
+			__func__, iface->name, ret);
 	}
 }
 
@@ -158,14 +157,13 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	struct icmpv6_hdr *icmpv6_hdr;
 	struct nd_neigh_msg *nd_msg;
 	struct nd_opt_lladdr *nd_opt;
-	struct rte_kni *kni;
+	struct cps_kni *kni;
 	int ret;
 
 	created_pkt = rte_pktmbuf_alloc(cps_conf->mp);
-	if (created_pkt == NULL) {
-		G_LOG(ERR,
-			"Could not allocate an ND advertisement on the %s KNI\n",
-			iface->name);
+	if (unlikely(created_pkt == NULL)) {
+		G_LOG(ERR, "%s(%s): could not allocate an ND advertisement\n",
+			__func__, iface->name);
 		return;
 	}
 
@@ -216,23 +214,20 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 
 	icmpv6_hdr->cksum = rte_ipv6_icmpv6_cksum(ipv6_hdr, icmpv6_hdr);
 
-	if (iface == &cps_conf->net->front)
-		kni = cps_conf->front_kni;
-	else
-		kni = cps_conf->back_kni;
+	kni = iface == &cps_conf->net->front
+		? &cps_conf->front_kni
+		: &cps_conf->back_kni;
 
-	ret = rte_kni_tx_burst(kni, &created_pkt, 1);
-	if (ret <= 0) {
+	ret = kni_tx_burst(kni, &created_pkt, 1);
+	if (unlikely(ret != 1)) {
 		rte_pktmbuf_free(created_pkt);
-		G_LOG(ERR,
-			"Could not transmit an ND advertisement to the %s KNI\n",
-			iface->name);
-		return;
+		G_LOG(ERR, "%s(%s): could not transmit an ND advertisement (ret=%i)\n",
+			__func__, iface->name, ret);
 	}
 }
 
 static void
-kni_tx_burst(struct gatekeeper_if *iface, struct rte_kni *kni,
+tx_to_kni(struct gatekeeper_if *iface, struct cps_kni *kni,
 	struct rte_mbuf **pkts, const uint16_t num_pkts)
 {
 	uint16_t num_kni;
@@ -280,10 +275,22 @@ to_kni:
 	}
 
 kni_tx:
-	num_tx = rte_kni_tx_burst(kni, pkts, num_kni);
+	num_tx = kni_tx_burst(kni, pkts, num_kni);
 	if (unlikely(num_tx < num_kni))
 		rte_pktmbuf_free_bulk(&pkts[num_tx], num_kni - num_tx);
 }
+
+struct arp_request {
+	struct list_head list;
+	uint32_t         addr;
+	int              stale;
+};
+
+struct nd_request {
+	struct list_head list;
+	uint8_t          addr[16];
+	int              stale;
+};
 
 static void
 process_reqs(struct cps_config *cps_conf)
@@ -298,11 +305,11 @@ process_reqs(struct cps_config *cps_conf)
 		switch (reqs[i]->ty) {
 		case CPS_REQ_DIRECT: {
 			struct cps_direct_req *direct = &reqs[i]->u.direct;
-			struct rte_kni *kni =
+			struct cps_kni *kni =
 				direct->iface == &cps_conf->net->front
-					? cps_conf->front_kni
-					: cps_conf->back_kni;
-			kni_tx_burst(direct->iface, kni, direct->pkts,
+					? &cps_conf->front_kni
+					: &cps_conf->back_kni;
+			tx_to_kni(direct->iface, kni, direct->pkts,
 				direct->num_pkts);
 			break;
 		}
@@ -348,28 +355,13 @@ process_reqs(struct cps_config *cps_conf)
 }
 
 static void
-process_kni_request(struct rte_kni *kni)
-{
-	/*
-	 * Userspace requests to change the device MTU or configure the
-	 * device up/down are forwarded from the kernel back to userspace
-	 * for DPDK to handle. rte_kni_handle_request() receives those
-	 * requests and allows them to be processed.
-	 */
-	if (rte_kni_handle_request(kni) < 0)
-		G_LOG(WARNING,
-			"%s: error in handling userspace request on KNI %s\n",
-			__func__, rte_kni_get_name(kni));
-}
-
-static void
-process_ingress(struct gatekeeper_if *iface, struct rte_kni *kni,
+process_ingress(struct gatekeeper_if *iface, struct cps_kni *kni,
 	uint16_t rx_queue, uint16_t cps_max_pkt_burst)
 {
 	struct rte_mbuf *rx_bufs[cps_max_pkt_burst];
 	uint16_t num_rx = rte_eth_rx_burst(iface->id, rx_queue, rx_bufs,
 		cps_max_pkt_burst);
-	kni_tx_burst(iface, kni, rx_bufs, num_rx);
+	tx_to_kni(iface, kni, rx_bufs, num_rx);
 }
 
 static int
@@ -405,12 +397,214 @@ cps_pkt_is_nd_neighbor(struct gatekeeper_if *iface,
 }
 
 static void
+cps_arp_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused)) enum lls_reply_ty ty, int *pcall_again)
+{
+	struct cps_config *cps_conf = get_cps_conf();
+	struct cps_request *req;
+	int ret;
+
+	if (pcall_again != NULL)
+		*pcall_again = false;
+	else {
+		/*
+		 * Destination didn't reply, so this callback
+		 * is the result of a call to put_arp().
+		 */
+		return;
+	}
+	RTE_VERIFY(!map->stale);
+
+	/*
+	 * If this allocation or queueing of an entry fails, the
+	 * resolution request will time out after two iterations
+	 * of the timer and be removed in cps_scan() anyway.
+	 */
+
+	req = mb_alloc_entry(&cps_conf->mailbox);
+	if (req == NULL) {
+		G_LOG(ERR, "%s: allocation of mailbox message failed\n",
+			__func__);
+		return;
+	}
+
+	req->ty = CPS_REQ_ARP;
+	req->u.arp.ip = map->addr.ip.v4.s_addr;
+	rte_memcpy(&req->u.arp.ha, &map->ha, sizeof(req->u.arp.ha));
+	req->u.arp.iface = arg;
+
+	ret = mb_send_entry(&cps_conf->mailbox, req);
+	if (ret < 0) {
+		G_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
+			__func__);
+		return;
+	}
+}
+
+static void
+process_arp(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr)
+{
+	int ret;
+	struct rte_arp_hdr *arp_hdr;
+	uint16_t pkt_len = rte_pktmbuf_data_len(buf);
+	struct arp_request *arp_req = NULL;
+	struct arp_request *entry;
+
+	if (unlikely(!arp_enabled(cps_conf->lls))) {
+		G_LOG(NOTICE, "KNI for %s iface received ARP packet, but the interface is not configured for ARP\n",
+			iface->name);
+		goto out;
+	}
+
+	if (unlikely(pkt_len < sizeof(*eth_hdr) + sizeof(*arp_hdr))) {
+		G_LOG(ERR, "KNI received ARP packet of size %hu bytes, but it should be at least %zu bytes\n",
+			pkt_len, sizeof(*eth_hdr) + sizeof(*arp_hdr));
+		goto out;
+	}
+
+	arp_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_arp_hdr *,
+		sizeof(*eth_hdr));
+
+	/* If it's a Gratuitous ARP or reply, then no action is needed. */
+	if (unlikely(rte_be_to_cpu_16(arp_hdr->arp_opcode) !=
+			RTE_ARP_OP_REQUEST || is_garp_pkt(arp_hdr)))
+		goto out;
+
+	list_for_each_entry(entry, &cps_conf->arp_requests, list) {
+		/* There's already a resolution request for this address. */
+		if (arp_hdr->arp_data.arp_tip == entry->addr)
+			goto out;
+	}
+
+	ret = rte_mempool_get(cps_conf->arp_mp, (void **)&arp_req);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "Failed to get a new entry from the ARP request mempool - %s\n",
+			rte_strerror(-ret));
+		goto out;
+	}
+
+	arp_req->addr = arp_hdr->arp_data.arp_tip;
+	arp_req->stale = false;
+	list_add_tail(&arp_req->list, &cps_conf->arp_requests);
+
+	hold_arp(cps_arp_cb, iface,
+		(struct in_addr *)&arp_hdr->arp_data.arp_tip,
+		cps_conf->lcore_id);
+out:
+	rte_pktmbuf_free(buf);
+}
+
+static void
+cps_nd_cb(const struct lls_map *map, void *arg,
+	__attribute__((unused)) enum lls_reply_ty ty, int *pcall_again)
+{
+	struct cps_config *cps_conf = get_cps_conf();
+	struct cps_request *req;
+	int ret;
+
+	if (pcall_again != NULL)
+		*pcall_again = false;
+	else {
+		/*
+		 * Destination didn't reply, so this callback
+		 * is the result of a call to put_nd().
+		 */
+		return;
+	}
+	RTE_VERIFY(!map->stale);
+
+	/*
+	 * If this allocation or queueing of an entry fails, the
+	 * resolution request will time out after two iterations
+	 * of the timer and be removed anyway.
+	 */
+
+	req = mb_alloc_entry(&cps_conf->mailbox);
+	if (req == NULL) {
+		G_LOG(ERR, "%s: allocation of mailbox message failed\n",
+			__func__);
+		return;
+	}
+
+	req->ty = CPS_REQ_ND;
+	rte_memcpy(req->u.nd.ip, map->addr.ip.v6.s6_addr,
+		sizeof(req->u.nd.ip));
+	rte_memcpy(&req->u.nd.ha, &map->ha, sizeof(req->u.nd.ha));
+	req->u.nd.iface = arg;
+
+	ret = mb_send_entry(&cps_conf->mailbox, req);
+	if (ret < 0) {
+		G_LOG(ERR, "%s: failed to enqueue message to mailbox\n",
+			__func__);
+		return;
+	}
+}
+
+static void
+process_nd(struct cps_config *cps_conf, struct gatekeeper_if *iface,
+	struct rte_mbuf *buf, const struct rte_ether_hdr *eth_hdr,
+	uint16_t pkt_len)
+{
+	int ret;
+	struct icmpv6_hdr *icmpv6_hdr;
+	struct nd_neigh_msg *nd_msg;
+	struct nd_request *nd_req = NULL;
+	struct nd_request *entry;
+
+	if (unlikely(!nd_enabled(cps_conf->lls))) {
+		G_LOG(NOTICE, "KNI for %s iface received ND packet, but the interface is not configured for ND\n",
+			iface->name);
+		goto out;
+	}
+
+	if (pkt_len < ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr))) {
+		G_LOG(NOTICE, "ND packet received is %"PRIx16" bytes but should be at least %lu bytes\n",
+			pkt_len, ND_NEIGH_PKT_MIN_LEN(sizeof(*eth_hdr)));
+		goto out;
+	}
+
+	icmpv6_hdr = rte_pktmbuf_mtod_offset(buf, struct icmpv6_hdr *,
+		sizeof(*eth_hdr) + sizeof(struct rte_ipv6_hdr));
+	if (icmpv6_hdr->type == ND_NEIGHBOR_ADVERTISEMENT_TYPE &&
+			icmpv6_hdr->code == ND_NEIGHBOR_ADVERTISEMENT_CODE) {
+		G_LOG(NOTICE, "ND Advertisement packet received from KNI attached to %s iface\n",
+			iface->name);
+		goto out;
+	}
+
+	nd_msg = (struct nd_neigh_msg *)&icmpv6_hdr[1];
+
+	list_for_each_entry(entry, &cps_conf->nd_requests, list) {
+		/* There's already a resolution request for this address. */
+		if (ipv6_addrs_equal(nd_msg->target, entry->addr))
+			goto out;
+	}
+
+	ret = rte_mempool_get(cps_conf->nd_mp, (void **)&nd_req);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "Failed to get a new entry from the ND request mempool - %s\n",
+			rte_strerror(-ret));
+		goto out;
+	}
+
+	rte_memcpy(nd_req->addr, nd_msg->target, sizeof(nd_req->addr));
+	nd_req->stale = false;
+	list_add_tail(&nd_req->list, &cps_conf->nd_requests);
+
+	hold_nd(cps_nd_cb, iface, (struct in6_addr *)nd_msg->target,
+		cps_conf->lcore_id);
+out:
+	rte_pktmbuf_free(buf);
+}
+
+static void
 process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
-	struct rte_kni *kni, uint16_t tx_queue, uint16_t cps_max_pkt_burst)
+	struct cps_kni *kni, uint16_t tx_queue, uint16_t cps_max_pkt_burst)
 {
 	struct rte_mbuf *bufs[cps_max_pkt_burst];
 	struct rte_mbuf *forward_bufs[cps_max_pkt_burst];
-	uint16_t num_rx = rte_kni_rx_burst(kni, bufs, cps_max_pkt_burst);
+	uint16_t num_rx = kni_rx_burst(kni, bufs, cps_max_pkt_burst);
 	uint16_t num_forward = 0;
 	unsigned int num_tx;
 	unsigned int i;
@@ -426,13 +620,13 @@ process_egress(struct cps_config *cps_conf, struct gatekeeper_if *iface,
 		switch (ether_type) {
 		case RTE_ETHER_TYPE_ARP:
 			/* Intercept ARP packet and handle it. */
-			kni_process_arp(cps_conf, iface, bufs[i], eth_hdr);
+			process_arp(cps_conf, iface, bufs[i], eth_hdr);
 			break;
 		case RTE_ETHER_TYPE_IPV6: {
 			uint16_t pkt_len = rte_pktmbuf_data_len(bufs[i]);
 			if (cps_pkt_is_nd_neighbor(iface, eth_hdr, pkt_len)) {
 				/* Intercept ND packet and handle it. */
-				kni_process_nd(cps_conf, iface,
+				process_nd(cps_conf, iface,
 					bufs[i], eth_hdr, pkt_len);
 				break;
 			}
@@ -484,8 +678,8 @@ cps_proc(void *arg)
 
 	struct gatekeeper_if *front_iface = &net_conf->front;
 	struct gatekeeper_if *back_iface = &net_conf->back;
-	struct rte_kni *front_kni = cps_conf->front_kni;
-	struct rte_kni *back_kni = cps_conf->back_kni;
+	struct cps_kni *front_kni = &cps_conf->front_kni;
+	struct cps_kni *back_kni = &cps_conf->back_kni;
 
 	/*
 	 * CAP_NET_ADMIN: allow RTNetlink communication between the CPS and
@@ -511,15 +705,11 @@ cps_proc(void *arg)
 				cps_conf->rx_queue_front,
 				cps_conf->front_max_pkt_burst);
 		}
-		process_kni_request(front_kni);
-
-		if (net_conf->back_iface_enabled) {
-			if (cps_conf->rx_method_back & RX_METHOD_NIC) {
-				process_ingress(back_iface, back_kni,
-					cps_conf->rx_queue_back,
-					cps_conf->back_max_pkt_burst);
-			}
-			process_kni_request(back_kni);
+		if (net_conf->back_iface_enabled &&
+				cps_conf->rx_method_back & RX_METHOD_NIC) {
+			process_ingress(back_iface, back_kni,
+				cps_conf->rx_queue_back,
+				cps_conf->back_max_pkt_burst);
 		}
 
 		/*
@@ -591,12 +781,6 @@ free_pkts:
 	return ret;
 }
 
-/*
- * XXX #481 This define is only available in
- * dependencies/dpdk/lib/librte_kni/rte_kni.c
- */
-#define KNI_FIFO_COUNT_MAX (1024)
-
 static int
 assign_cps_queue_ids(struct cps_config *cps_conf)
 {
@@ -618,12 +802,12 @@ assign_cps_queue_ids(struct cps_config *cps_conf)
 		total_pkt_burst -= cps_conf->back_max_pkt_burst;
 
 	/*
-	 * According to the documentation of rte_kni_alloc(),
-	 * each KNI interface needs at least (2 * KNI_FIFO_COUNT_MAX) packets.
+	 * Each KNI interface needs at least (cps_conf->kni_queue_size) packets
+	 * per queue. There are two queues per interface: 1 RX and 1 TX queues.
 	 */
-	total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
+	total_pkt_burst += 2 * cps_conf->kni_queue_size;
 	if (cps_conf->net->back_iface_enabled)
-		total_pkt_burst += 2 * KNI_FIFO_COUNT_MAX;
+		total_pkt_burst += 2 * cps_conf->kni_queue_size;
 
 	num_mbuf = calculate_mempool_config_para("cps",
 		cps_conf->net, total_pkt_burst);
@@ -686,85 +870,6 @@ fail:
 	return ret;
 }
 
-/*
- * Many NIC drivers apparently do not directly support the
- * link up/link down functionality of DPDK's Ethernet library.
- * Instead, the suggested way to bring a KNI's link up (shown in
- * the KNI sample application) is to stop and start the device.
- *
- * Starting and stopping a device can make the NIC lose
- * configuration related to RSS and filters, so we need to wait
- * to do any of that configuration until after we are finished
- * restarting the devices.
- *
- * During KNI initialization, the backing device for the KNI
- * must be restarted twice: when the KNI is created and when
- * the link for the KNI is configured to be up.
- *
- * This requires creating the KNI, modifying the KNI's link to
- * be up, and starting the devices to be done in a careful
- * sequential order:
- *
- * Stage 1
- * =======
- *  - Create the KNI(s)
- *  - Modify the link status of the KNI(s) to be up
- *
- * Stage 2
- * =======
- *  - Start the port(s)
- *  - Setup IPv6 addresses
- *  - Individual blocks add IP addresses to the KNI(s),
- *    setup filters, and setup RSS
- *
- * Because of this behavior, warnings on initialization about
- * the devices already being stopped or already being started
- * are expected.
- */
-static int
-kni_create(struct rte_kni **kni, const char *kni_name, struct rte_mempool *mp,
-	struct gatekeeper_if *iface)
-{
-	struct rte_kni_conf conf;
-	struct rte_kni_ops ops;
-
-	memset(&conf, 0, sizeof(conf));
-	RTE_VERIFY(strlen(kni_name) < sizeof(conf.name));
-	strcpy(conf.name, kni_name);
-	conf.group_id = iface->id;
-	conf.mbuf_size = rte_pktmbuf_data_room_size(mp);
-	rte_eth_macaddr_get(iface->id, (struct rte_ether_addr *)conf.mac_addr);
-	conf.mtu = iface->mtu;
-
-	memset(&ops, 0, sizeof(ops));
-	ops.port_id = conf.group_id;
-	ops.change_mtu = kni_disable_change_mtu;
-	/*
-	 * The physical interfaces should not be affected by what is going on
-	 * with the KNI interfaces.
-	 */
-	ops.config_network_if = kni_ignore_change;
-	ops.config_mac_address = kni_disable_change_mac_address;
-	/*
-	 * Only specific classes of packets that arrive at
-	 * the physical interfaces are forwarded to the KNI interfaces.
-	 * Thus, there is no point in enabling promiscuous or allmulticast
-	 * modes on the physical interfaces since the extra packets are
-	 * going to be discarded.
-	 */
-	ops.config_promiscusity = kni_ignore_change;
-	ops.config_allmulticast = kni_ignore_change;
-
-	*kni = rte_kni_alloc(mp, &conf, &ops);
-	if (*kni == NULL) {
-		G_LOG(ERR, "Could not allocate KNI for %s iface\n",
-			iface->name);
-		return -1;
-	}
-
-	return 0;
-}
-
 static void
 cps_scan(__attribute__((unused)) struct rte_timer *timer, void *arg)
 {
@@ -808,84 +913,9 @@ static int
 cps_stage1(void *arg)
 {
 	struct cps_config *cps_conf = arg;
-	char name[RTE_KNI_NAMESIZE];
-	int ret;
-
-	ret = assign_cps_queue_ids(cps_conf);
-	if (ret < 0)
-		goto error;
-
-	ret = snprintf(name, sizeof(name), "kni_%s",
-		cps_conf->net->front.name);
-	RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
-
-	ret = kni_create(&cps_conf->front_kni, name,
-		cps_conf->mp, &cps_conf->net->front);
-	if (ret < 0) {
-		G_LOG(ERR, "Failed to create KNI for the front iface\n");
-		goto error;
-	}
-
-	ret = kni_config_link(cps_conf->front_kni);
-	if (ret < 0) {
-		G_LOG(ERR,
-			"Failed to configure KNI link on the front iface\n");
-		goto error;
-	}
-	ret = rte_kni_update_link(cps_conf->front_kni, true);
-	if (ret < 0) {
-		G_LOG(ERR,
-			"Failed to set KNI link up on the front iface\n");
-		goto error;
-	}
-
-	cps_conf->front_kni_index = if_nametoindex(name);
-	if (cps_conf->front_kni_index == 0) {
-		ret = -errno;
-		G_LOG(ERR, "Failed to get front KNI index: %s\n",
-			strerror(errno));
-		goto error;
-	}
-
-	if (cps_conf->net->back_iface_enabled) {
-		ret = snprintf(name, sizeof(name), "kni_%s",
-			cps_conf->net->back.name);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(name));
-
-		ret = kni_create(&cps_conf->back_kni, name,
-			cps_conf->mp, &cps_conf->net->back);
-		if (ret < 0) {
-			G_LOG(ERR,
-				"Failed to create KNI for the back iface\n");
-			goto error;
-		}
-
-		ret = kni_config_link(cps_conf->back_kni);
-		if (ret < 0) {
-			G_LOG(ERR,
-				"Failed to configure KNI link on the back iface\n");
-			goto error;
-		}
-		ret = rte_kni_update_link(cps_conf->back_kni, true);
-		if (ret < 0) {
-			G_LOG(ERR,
-				"Failed to set KNI link up on the back iface\n");
-			goto error;
-		}
-
-		cps_conf->back_kni_index = if_nametoindex(name);
-		if (cps_conf->back_kni_index == 0) {
-			ret = -errno;
-			G_LOG(ERR, "Failed to get back KNI index: %s\n",
-				strerror(errno));
-			goto error;
-		}
-	}
-
-	return 0;
-
-error:
-	cleanup_cps();
+	int ret = assign_cps_queue_ids(cps_conf);
+	if (unlikely(ret < 0))
+		cleanup_cps();
 	return ret;
 }
 
@@ -1010,10 +1040,12 @@ cps_stage2(void *arg)
 		goto error;
 	}
 
-	ret = kni_config_ip_addrs(cps_conf->front_kni,
-		cps_conf->front_kni_index, &cps_conf->net->front);
-	if (ret < 0) {
-		G_LOG(ERR, "Failed to configure KNI IP addresses on the front iface\n");
+	ret = kni_create(&cps_conf->front_kni, &cps_conf->net->front,
+		cps_conf->mp, cps_conf->kni_queue_size);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(): failed to create KNI for \"%s\" interface (errno=%i): %s\n",
+			__func__, cps_conf->net->front.name,
+			-ret, strerror(-ret));
 		goto error;
 	}
 
@@ -1025,10 +1057,12 @@ cps_stage2(void *arg)
 			goto error;
 		}
 
-		ret = kni_config_ip_addrs(cps_conf->back_kni,
-			cps_conf->back_kni_index, &cps_conf->net->back);
-		if (ret < 0) {
-			G_LOG(ERR, "Failed to configure KNI IP addresses on the back iface\n");
+		ret = kni_create(&cps_conf->back_kni, &cps_conf->net->back,
+			cps_conf->mp, cps_conf->kni_queue_size);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(): failed to create KNI for \"%s\" interface (errno=%i): %s\n",
+				__func__, cps_conf->net->back.name,
+				-ret, strerror(-ret));
 			goto error;
 		}
 	}
@@ -1049,7 +1083,7 @@ error:
 int
 run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 	struct gt_config *gt_conf, struct cps_config *cps_conf,
-	struct lls_config *lls_conf, const char *kni_kmod_path)
+	struct lls_config *lls_conf)
 {
 	int ret;
 	int ele_size;
@@ -1119,12 +1153,6 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		goto arp_mp;
 	}
 
-	ret = init_kni(kni_kmod_path, net_conf->back_iface_enabled ? 2 : 1);
-	if (ret < 0) {
-		G_LOG(ERR, "Couldn't initialize KNI\n");
-		goto nd_mp;
-	}
-
 	if (gk_conf != NULL) {
 		cps_conf->mailbox_max_pkt_burst =
 			RTE_MAX(gk_conf->front_max_pkt_burst,
@@ -1146,7 +1174,7 @@ run_cps(struct net_config *net_conf, struct gk_config *gk_conf,
 		ele_size, cps_conf->mailbox_mem_cache_size,
 		cps_conf->lcore_id, &cps_conf->mailbox);
 	if (ret < 0)
-		goto kni;
+		goto nd_mp;
 
 	ret = rd_alloc_coro(cps_conf);
 	if (ret < 0) {
@@ -1182,8 +1210,6 @@ coro:
 	rd_free_coro(cps_conf);
 mailbox:
 	destroy_mailbox(&cps_conf->mailbox);
-kni:
-	rm_kni();
 nd_mp:
 	rte_mempool_free(cps_conf->nd_mp);
 arp_mp:
