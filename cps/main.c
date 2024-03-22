@@ -118,8 +118,8 @@ send_arp_reply_kni(struct cps_config *cps_conf, struct cps_arp_req *arp)
 	 * the Ethernet and ARP headers.
 	 */
 	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
-	rte_ether_addr_copy(&arp->ha, &eth_hdr->s_addr);
-	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->dst_addr);
+	rte_ether_addr_copy(&arp->ha, &eth_hdr->src_addr);
 	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP);
 
 	/* Set-up ARP header. */
@@ -177,8 +177,8 @@ send_nd_reply_kni(struct cps_config *cps_conf, struct cps_nd_req *nd)
 	 * the Ethernet header.
 	 */
 	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
-	rte_ether_addr_copy(&nd->ha, &eth_hdr->s_addr);
-	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->d_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->dst_addr);
+	rte_ether_addr_copy(&nd->ha, &eth_hdr->src_addr);
 	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
 
 	/* Set-up IPv6 header. */

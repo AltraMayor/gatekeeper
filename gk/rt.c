@@ -82,7 +82,7 @@ gk_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
+	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.dst_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -123,7 +123,7 @@ get_new_ether_cache_locked(struct neighbor_hash_table *neigh,
 			rte_cpu_to_be_16(addr->proto);
 	}
 	rte_ether_addr_copy(&iface->eth_addr,
-		&eth_cache->l2_hdr.eth_hdr.s_addr);
+		&eth_cache->l2_hdr.eth_hdr.src_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
 	return eth_cache;
@@ -2010,7 +2010,7 @@ fillup_gk_fib_dump_entry_ether(struct fib_dump_addr_set *addr_set,
 {
 	addr_set->stale = eth_cache->stale;
 	addr_set->nexthop_ip = eth_cache->ip_addr;
-	rte_ether_addr_copy(&eth_cache->l2_hdr.eth_hdr.d_addr,
+	rte_ether_addr_copy(&eth_cache->l2_hdr.eth_hdr.dst_addr,
 		&addr_set->d_addr);
 }
 
@@ -2278,7 +2278,7 @@ fillup_gk_neighbor_dump_entry(struct gk_neighbor_dump_entry *dentry,
 	dentry->stale = eth_cache->stale;
 	rte_memcpy(&dentry->neigh_ip, &eth_cache->ip_addr,
 		sizeof(dentry->neigh_ip));
-	rte_memcpy(&dentry->d_addr, &eth_cache->l2_hdr.eth_hdr.d_addr,
+	rte_memcpy(&dentry->d_addr, &eth_cache->l2_hdr.eth_hdr.dst_addr,
 		sizeof(dentry->d_addr));
 }
 

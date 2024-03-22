@@ -389,7 +389,8 @@ iface_speed_bytes(struct gatekeeper_if *iface, uint64_t *link_speed_bytes)
 			goto err;
 		}
 
-		if (link.link_speed == ETH_SPEED_NUM_NONE) {
+		if (link.link_speed == RTE_ETH_SPEED_NUM_NONE ||
+				link.link_speed == RTE_ETH_SPEED_NUM_UNKNOWN) {
 			ret = -ENOTSUP;
 			goto err;
 		}

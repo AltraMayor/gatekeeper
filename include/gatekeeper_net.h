@@ -67,7 +67,8 @@ struct ipaddr {
  * of the table. To configure more than 64 entries supported by hardware,
  * an array of this structure is needed.
  */
-#define GATEKEEPER_RETA_MAX_SIZE (ETH_RSS_RETA_SIZE_512 / RTE_RETA_GROUP_SIZE)
+#define GATEKEEPER_RETA_MAX_SIZE \
+	(RTE_ETH_RSS_RETA_SIZE_512 / RTE_ETH_RETA_GROUP_SIZE)
 
 struct gatekeeper_rss_config {
 	uint16_t reta_size;
@@ -654,9 +655,9 @@ set_ipv4_checksum(struct gatekeeper_if *iface, struct rte_mbuf *pkt,
 	 * computing the checksum (in hardware or software).
 	 */
 	ipv4->hdr_checksum = 0;
-	pkt->ol_flags |= PKT_TX_IPV4;
+	pkt->ol_flags |= RTE_MBUF_F_TX_IPV4;
 	if (likely(iface->ipv4_hw_cksum))
-		pkt->ol_flags |=  PKT_TX_IP_CKSUM;
+		pkt->ol_flags |= RTE_MBUF_F_TX_IP_CKSUM;
 	else
 		ipv4->hdr_checksum = rte_ipv4_cksum(ipv4);
 }

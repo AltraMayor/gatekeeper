@@ -476,7 +476,7 @@ gt_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * on the nexthop entry.
 	 */
 	write_seqlock(&eth_cache->lock);
-	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.d_addr);
+	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.dst_addr);
 	eth_cache->stale = map->stale;
 	write_sequnlock(&eth_cache->lock);
 
@@ -516,7 +516,7 @@ gt_fill_up_ether_cache_locked(struct ether_cache *eth_cache,
 	}
 
 	rte_ether_addr_copy(&iface->eth_addr,
-		&eth_cache->l2_hdr.eth_hdr.s_addr);
+		&eth_cache->l2_hdr.eth_hdr.src_addr);
 	rte_atomic32_set(&eth_cache->ref_cnt, 1);
 
 	if (inner_ip_ver == RTE_ETHER_TYPE_IPV4) {
@@ -723,8 +723,8 @@ decap_and_fill_eth(struct rte_mbuf *m, struct gt_config *gt_conf,
 			rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
 		struct rte_ether_hdr *raw_eth = pkt_info->l2_hdr;
 
-		rte_ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
-		rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
+		rte_ether_addr_copy(&raw_eth->src_addr, &eth_hdr->dst_addr);
+		rte_ether_addr_copy(&raw_eth->dst_addr, &eth_hdr->src_addr);
 		m->l2_len = iface->l2_len_out;
 
 		if (iface->vlan_insert)
@@ -763,8 +763,8 @@ fill_eth_hdr_reverse(struct gatekeeper_if *iface, struct rte_ether_hdr *eth_hdr,
 {
 	struct rte_ether_hdr *raw_eth =
 		(struct rte_ether_hdr *)pkt_info->l2_hdr;
-	rte_ether_addr_copy(&raw_eth->s_addr, &eth_hdr->d_addr);
-	rte_ether_addr_copy(&raw_eth->d_addr, &eth_hdr->s_addr);
+	rte_ether_addr_copy(&raw_eth->src_addr, &eth_hdr->dst_addr);
+	rte_ether_addr_copy(&raw_eth->dst_addr, &eth_hdr->src_addr);
 	if (iface->vlan_insert) {
 		uint16_t vlan_tag_be =
 			pkt_info->outer_ethertype == RTE_ETHER_TYPE_IPV4 ?
@@ -843,7 +843,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 		notify_ipv4->dst_addr = ipv4_hdr->src_addr;
 
 		notify_pkt->l3_len = sizeof(struct rte_ipv4_hdr);
-		notify_pkt->ol_flags |= PKT_TX_IPV4;
+		notify_pkt->ol_flags |= RTE_MBUF_F_TX_IPV4;
 
 		/* IPv4 checksum set in prep_notify_pkt(). */
 	} else if (likely(ethertype == RTE_ETHER_TYPE_IPV6)) {
@@ -861,7 +861,7 @@ fill_notify_pkt_hdr(struct rte_mbuf *notify_pkt,
 			sizeof(notify_ipv6->dst_addr));
 
 		notify_pkt->l3_len = sizeof(struct rte_ipv6_hdr);
-		notify_pkt->ol_flags |= PKT_TX_IPV6;
+		notify_pkt->ol_flags |= RTE_MBUF_F_TX_IPV6;
 	}
 
 	/* Fill up the UDP header. */
@@ -1011,7 +1011,7 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 		notify_udp->dgram_len = dgram_len_be;
 		if (likely(iface->ipv4_hw_udp_cksum)) {
 			/* Offload the UDP checksum. */
-			ggu_pkt->buf->ol_flags |= PKT_TX_UDP_CKSUM;
+			ggu_pkt->buf->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
 			notify_udp->dgram_cksum =
 				rte_ipv4_phdr_cksum(notify_ipv4,
 					ggu_pkt->buf->ol_flags);
@@ -1040,7 +1040,7 @@ prep_notify_pkt(struct ggu_notify_pkt *ggu_pkt, struct gatekeeper_if *iface)
 		notify_udp->dgram_len = dgram_len_be;
 		if (likely(iface->ipv6_hw_udp_cksum)) {
 			/* Offload the UDP checksum. */
-			ggu_pkt->buf->ol_flags |= PKT_TX_UDP_CKSUM;
+			ggu_pkt->buf->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
 			notify_udp->dgram_cksum =
 				rte_ipv6_phdr_cksum(notify_ipv6,
 					ggu_pkt->buf->ol_flags);
@@ -1787,8 +1787,8 @@ gt_proc(void *arg)
 		if (reassembling_enabled && cur_tsc - last_tsc >=
 				frag_scan_timeout_cycles) {
 			RTE_VERIFY(death_row.cnt == 0);
-			rte_frag_table_del_expired_entries(instance->frag_tbl,
-				&death_row, cur_tsc);
+			rte_ip_frag_table_del_expired_entries(
+				instance->frag_tbl, &death_row, cur_tsc);
 
 			/* Process the death packets. */
 			process_death_row(true, &death_row,
