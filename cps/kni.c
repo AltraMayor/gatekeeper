@@ -22,24 +22,6 @@
 #include "gatekeeper_main.h"
 #include "kni.h"
 
-/*
- * XXX #677 Adopt RTE_ETHER_ADDR_PRT_FMT and RTE_ETHER_ADDR_BYTES
- * once DPDK is updated.
- */
-/**
- * Macro to print six-bytes of MAC address in hex format
- */
-#define RTE_ETHER_ADDR_PRT_FMT     "%02X:%02X:%02X:%02X:%02X:%02X"
-/**
- * Macro to extract the MAC address bytes from rte_ether_addr struct
- */
-#define RTE_ETHER_ADDR_BYTES(mac_addrs) ((mac_addrs)->addr_bytes[0]), \
-					 ((mac_addrs)->addr_bytes[1]), \
-					 ((mac_addrs)->addr_bytes[2]), \
-					 ((mac_addrs)->addr_bytes[3]), \
-					 ((mac_addrs)->addr_bytes[4]), \
-					 ((mac_addrs)->addr_bytes[5])
-
 #define KNI_BUS_NAME "vdev"
 
 void
