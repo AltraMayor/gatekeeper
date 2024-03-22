@@ -62,21 +62,18 @@ static int
 setup_dpdk_interface(struct cps_kni *kni, const struct gatekeeper_if *iface,
 	struct rte_mempool *mp, uint16_t queue_size)
 {
-	struct rte_eth_conf port_conf = {};
+	struct rte_eth_conf port_conf = {
+		.rxmode = {
+			.mtu = iface->mtu,
+			.offloads = RTE_ETH_RX_OFFLOAD_SCATTER,
+		},
+	};
 
 	int ret = rte_eth_dev_get_port_by_name(kni->cps_name, &kni->cps_portid);
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR,
 			"%s(%s): cannot get port ID of \"%s\" (errno=%i): %s\n",
 			__func__, iface->name, kni->cps_name,
-			-ret, rte_strerror(-ret));
-		return ret;
-	}
-
-	ret = rte_eth_dev_set_mtu(kni->cps_portid, iface->mtu);
-	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "%s(%s): cannot set the MTU=%u (errno=%i): %s\n",
-			__func__, iface->name, iface->mtu,
 			-ret, rte_strerror(-ret));
 		return ret;
 	}

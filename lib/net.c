@@ -1169,21 +1169,21 @@ static int
 check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
 	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
 {
-	if (dev_info->max_rx_pktlen < port_conf->rxmode.max_rx_pkt_len) {
-		G_LOG(ERR,
-			"net: port %hu (%s) on the %s interface only supports MTU of size %"PRIu32", but Gatekeeper is configured to be %"PRIu16"\n",
+	if (dev_info->min_mtu > port_conf->rxmode.mtu) {
+		G_LOG(ERR, "%s(%s): the minimum MTU %"PRIu32" of port %hu (%s) is larger than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->min_mtu,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name, dev_info->max_rx_pktlen,
-			port_conf->rxmode.max_rx_pkt_len);
+			port_conf->rxmode.mtu);
 		return -1;
 	}
 
-	if ((port_conf->rxmode.offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) &&
-			!(dev_info->rx_offload_capa &
-			DEV_RX_OFFLOAD_JUMBO_FRAME)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading for jumbo frames\n",
+	if (dev_info->max_mtu < port_conf->rxmode.mtu) {
+		G_LOG(ERR, "%s(%s): the maximum MTU %"PRIu32" of port %hu (%s) is smaller than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->max_mtu,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
+			port_conf->rxmode.mtu);
 		return -1;
 	}
 
@@ -1316,17 +1316,11 @@ check_port_offloads(struct gatekeeper_if *iface,
 	/*
 	 * Set up device MTU.
 	 *
-	 * If greater than the traditional MTU, then add the
-	 * jumbo frame RX offload flag. All ports must support
-	 * this offload in this case.
-	 *
 	 * If greater than the size of the mbufs, then add the
 	 * multi-segment buffer flag. This is optional and
 	 * if any ports don't support it, it will be removed.
 	 */
-	port_conf->rxmode.max_rx_pkt_len = iface->mtu;
-	if (iface->mtu > RTE_ETHER_MTU)
-		port_conf->rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+	port_conf->rxmode.mtu = iface->mtu;
 	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
 		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
 
@@ -1917,18 +1911,6 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 	uint8_t i;
 	uint8_t num_succ_ports;
 
-	/*
-	 * The MTU of the device should be changed while the device
-	 * is down. Otherwise, drivers for some NICs and in some cases
-	 * (when multiple ports are bonded) fail to set the MTU.
-	 */
-	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
-	if (ret < 0) {
-		G_LOG(ERR, "%s(%s): cannot set the MTU (errno=%i): %s\n",
-			__func__, iface->name, -ret, rte_strerror(-ret));
-		goto destroy_init;
-	}
-
 	num_succ_ports = 0;
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = start_port(iface->ports[i],
@@ -1973,7 +1955,6 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
-destroy_init:
 	destroy_iface(iface, IFACE_DESTROY_INIT);
 	return ret;
 }
