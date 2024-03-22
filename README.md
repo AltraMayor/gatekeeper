@@ -292,7 +292,7 @@ above. Gatekeeper and the submodules will be automatically compiled during the
 package build process.
 
 ```console
-$ tar --exclude-vcs -Jcvf ../gatekeeper_1.1.0.orig.tar.xz -C .. gatekeeper
+$ tar --exclude-vcs -Jcvf ../gatekeeper_1.2.0.orig.tar.xz -C .. gatekeeper
 $ debuild -uc -us
 ```
 
