@@ -1,7 +1,7 @@
 [submodule "dependencies/dpdk"]
 	path = dependencies/dpdk
 	url = https://github.com/cjdoucette/dpdk
-	branch = gkv1.2b
+	branch = gkv1.2c
 [submodule "dependencies/luajit-2.0"]
 	path = dependencies/luajit-2.0
 	url = https://github.com/AltraMayor/luajit.git

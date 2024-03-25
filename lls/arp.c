@@ -65,11 +65,11 @@ xmit_arp_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	/* Set-up Ethernet header. */
 	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
-	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->src_addr);
 	if (ha == NULL)
-		memset(&eth_hdr->d_addr, 0xFF, RTE_ETHER_ADDR_LEN);
+		memset(&eth_hdr->dst_addr, 0xFF, RTE_ETHER_ADDR_LEN);
 	else
-		rte_ether_addr_copy(ha, &eth_hdr->d_addr);
+		rte_ether_addr_copy(ha, &eth_hdr->dst_addr);
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
@@ -169,8 +169,8 @@ process_arp(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 */
 
 		/* Set-up Ethernet header. */
-		rte_ether_addr_copy(&eth_hdr->s_addr, &eth_hdr->d_addr);
-		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+		rte_ether_addr_copy(&eth_hdr->src_addr, &eth_hdr->dst_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->src_addr);
 
 		/* Set-up ARP header. */
 		arp_hdr->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);

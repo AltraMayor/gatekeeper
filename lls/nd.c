@@ -154,7 +154,7 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 
 	/* Set-up Ethernet header. */
 	eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
-	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
+	rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->src_addr);
 	if (ha == NULL) {
 		/*
 		 * Need to use IPv6 multicast Ethernet address.
@@ -168,9 +168,9 @@ xmit_nd_req(struct gatekeeper_if *iface, const struct ipaddr *addr,
 			0x33, 0x33, 0xFF,
 			ipv6_addr[13], ipv6_addr[14], ipv6_addr[15],
 		} };
-		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->dst_addr);
 	} else
-		rte_ether_addr_copy(ha, &eth_hdr->d_addr);
+		rte_ether_addr_copy(ha, &eth_hdr->dst_addr);
 
 	/* Set-up VLAN header. */
 	if (iface->vlan_insert)
@@ -417,8 +417,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		 */
 
 		/* Set-up Ethernet header. */
-		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
-		rte_ether_addr_copy(src_eth_addr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->src_addr);
+		rte_ether_addr_copy(src_eth_addr, &eth_hdr->dst_addr);
 
 		/* Set-up IPv6 header. */
 		nd_msg->flags = 0;
@@ -504,8 +504,8 @@ process_nd_neigh_solicitation(struct lls_config *lls_conf, struct rte_mbuf *buf,
 		if (src_unspec)
 			return -1;
 
-		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->s_addr);
-		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&iface->eth_addr, &eth_hdr->src_addr);
+		rte_ether_addr_copy(&eth_mc_daddr, &eth_hdr->dst_addr);
 
 		/* Set-up IPv6 header. */
 		ipv6_hdr->payload_len =

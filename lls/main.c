@@ -619,12 +619,12 @@ process_pkts(struct lls_config *lls_conf, struct gatekeeper_if *iface,
 		 * accepts the assigned MAC address, broadcast address,
 		 * and any MAC added (for example, for IPv6 Ethernet multicast).
 		 */
-		if (unlikely(!rte_is_broadcast_ether_addr(&eth_hdr->d_addr) &&
-			!rte_is_same_ether_addr(&eth_hdr->d_addr,
+		if (unlikely(!rte_is_broadcast_ether_addr(&eth_hdr->dst_addr) &&
+			!rte_is_same_ether_addr(&eth_hdr->dst_addr,
 				&iface->eth_mc_addr) &&
-			!rte_is_same_ether_addr(&eth_hdr->d_addr,
+			!rte_is_same_ether_addr(&eth_hdr->dst_addr,
 				&iface->ll_eth_mc_addr) &&
-			!rte_is_same_ether_addr(&eth_hdr->d_addr,
+			!rte_is_same_ether_addr(&eth_hdr->dst_addr,
 				&iface->eth_addr)))
 			goto free_buf;
 

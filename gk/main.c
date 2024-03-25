@@ -1144,9 +1144,9 @@ xmit_icmp(struct gatekeeper_if *iface, struct ipacket *packet,
 		}
 	}
 
-	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	rte_ether_addr_copy(&icmp_eth->src_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->dst_addr, &icmp_eth->src_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->dst_addr);
 	if (iface->vlan_insert) {
 		fill_vlan_hdr(icmp_eth, iface->ipv4_vlan_tag_be,
 			RTE_ETHER_TYPE_IPV4);
@@ -1217,9 +1217,9 @@ xmit_icmpv6(struct gatekeeper_if *iface, struct ipacket *packet,
 		}
 	}
 
-	rte_ether_addr_copy(&icmp_eth->s_addr, &eth_addr_tmp);
-	rte_ether_addr_copy(&icmp_eth->d_addr, &icmp_eth->s_addr);
-	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->d_addr);
+	rte_ether_addr_copy(&icmp_eth->src_addr, &eth_addr_tmp);
+	rte_ether_addr_copy(&icmp_eth->dst_addr, &icmp_eth->src_addr);
+	rte_ether_addr_copy(&eth_addr_tmp, &icmp_eth->dst_addr);
 	if (iface->vlan_insert) {
 		fill_vlan_hdr(icmp_eth, iface->ipv6_vlan_tag_be,
 			RTE_ETHER_TYPE_IPV6);
@@ -2739,8 +2739,8 @@ get_responsible_gk_mailbox(uint32_t flow_hash_val,
 	 * Identify which GK block is responsible for the
 	 * pair <Src, Dst> in the decision.
 	 */
-	idx = rss_hash_val / RTE_RETA_GROUP_SIZE;
-	shift = rss_hash_val % RTE_RETA_GROUP_SIZE;
+	idx = rss_hash_val / RTE_ETH_RETA_GROUP_SIZE;
+	shift = rss_hash_val % RTE_ETH_RETA_GROUP_SIZE;
 	queue_id = gk_conf->rss_conf_front.reta_conf[idx].reta[shift];
 	block_idx = gk_conf->queue_id_to_instance[queue_id];
 

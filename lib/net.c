@@ -563,7 +563,7 @@ rm_slave_ports(struct gatekeeper_if *iface, uint8_t nb_slave_ports)
 {
 	uint8_t i;
 	for (i = 0; i < nb_slave_ports; i++)
-		rte_eth_bond_slave_remove(iface->id, iface->ports[i]);
+		rte_eth_bond_member_remove(iface->id, iface->ports[i]);
 }
 
 static void
@@ -1003,25 +1003,25 @@ i40e_disable_ipv6_tcp_udp_ports_from_inset(uint16_t port_id)
 }
 
 /*
- * Split up ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
+ * Split up RTE_ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
  * For each type of IP being used in Gatekeeper, check the supported
- * hashes of the device. If none are supported, disable RSS. If
- * ETH_RSS_IPV{4,6} is not supported, issue a warning since we expect
+ * hashes of the device. If none are supported, disable RSS.
+ * If RTE_ETH_RSS_IPV{4,6} is not supported, issue a warning since we expect
  * this to be a common and critical hash function. Some devices (i40e
- * and AVF) do not support the ETH_RSS_IPV{4,6} hashes, but the hashes
+ * and AVF) do not support the RTE_ETH_RSS_IPV{4,6} hashes, but the hashes
  * they do support may be enough.
  */
 
 #define GATEKEEPER_IPV4_RSS_HF ( \
-	ETH_RSS_IPV4 | \
-	ETH_RSS_FRAG_IPV4 | \
-	ETH_RSS_NONFRAG_IPV4_OTHER)
+	RTE_ETH_RSS_IPV4 | \
+	RTE_ETH_RSS_FRAG_IPV4 | \
+	RTE_ETH_RSS_NONFRAG_IPV4_OTHER)
 
 #define GATEKEEPER_IPV6_RSS_HF ( \
-	ETH_RSS_IPV6 | \
-	ETH_RSS_FRAG_IPV6 | \
-	ETH_RSS_NONFRAG_IPV6_OTHER | \
-	ETH_RSS_IPV6_EX)
+	RTE_ETH_RSS_IPV6 | \
+	RTE_ETH_RSS_FRAG_IPV6 | \
+	RTE_ETH_RSS_NONFRAG_IPV6_OTHER | \
+	RTE_ETH_RSS_IPV6_EX)
 
 static int
 check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
@@ -1105,7 +1105,7 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 				port_id);
 			if (ret < 0)
 				goto disable_rss;
-		} else if ((rss_off & ETH_RSS_IPV4) == 0) {
+		} else if ((rss_off & RTE_ETH_RSS_IPV4) == 0) {
 			/*
 			 * The IPv4 hash that we think is typically
 			 * used is not supported, so warn the user.
@@ -1131,7 +1131,7 @@ check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
 				port_id);
 			if (ret < 0)
 				goto disable_rss;
-		} else if ((rss_off & ETH_RSS_IPV6) == 0) {
+		} else if ((rss_off & RTE_ETH_RSS_IPV6) == 0) {
 			/*
 			 * The IPv6 hash that we think is typically
 			 * used is not supported, so warn the user.
@@ -1167,34 +1167,33 @@ disable_rss:
 
 static int
 check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
-	const struct rte_eth_dev_info *dev_info,
-	struct rte_eth_conf *port_conf)
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
 {
-	if (dev_info->max_rx_pktlen < port_conf->rxmode.max_rx_pkt_len) {
-		G_LOG(ERR,
-			"net: port %hu (%s) on the %s interface only supports MTU of size %"PRIu32", but Gatekeeper is configured to be %"PRIu16"\n",
+	if (dev_info->min_mtu > port_conf->rxmode.mtu) {
+		G_LOG(ERR, "%s(%s): the minimum MTU %"PRIu32" of port %hu (%s) is larger than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->min_mtu,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name, dev_info->max_rx_pktlen,
-			port_conf->rxmode.max_rx_pkt_len);
+			port_conf->rxmode.mtu);
 		return -1;
 	}
 
-	if ((port_conf->rxmode.offloads & DEV_RX_OFFLOAD_JUMBO_FRAME) &&
-			!(dev_info->rx_offload_capa &
-			DEV_RX_OFFLOAD_JUMBO_FRAME)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading for jumbo frames\n",
+	if (dev_info->max_mtu < port_conf->rxmode.mtu) {
+		G_LOG(ERR, "%s(%s): the maximum MTU %"PRIu32" of port %hu (%s) is smaller than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->max_mtu,
 			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
+			port_conf->rxmode.mtu);
 		return -1;
 	}
 
-	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_MULTI_SEGS) &&
+	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_MULTI_SEGS) &&
 			!(dev_info->tx_offload_capa &
-			DEV_TX_OFFLOAD_MULTI_SEGS)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading multi-segment TX buffers\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
-		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_MULTI_SEGS;
+			RTE_ETH_TX_OFFLOAD_MULTI_SEGS)) {
+		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading multi-segment TX buffers\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx]);
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
 	}
 
 	return 0;
@@ -1202,26 +1201,25 @@ check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
 
 static int
 check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
-	const struct rte_eth_dev_info *dev_info,
-	struct rte_eth_conf *port_conf)
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
 {
-	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_IPV4_CKSUM) &&
+	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) &&
 			!(dev_info->tx_offload_capa &
-			DEV_TX_OFFLOAD_IPV4_CKSUM)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading IPv4 checksumming; will use software IPv4 checksums\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
-		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_IPV4_CKSUM;
+			RTE_ETH_TX_OFFLOAD_IPV4_CKSUM)) {
+		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading IPv4 checksumming; will use software IPv4 checksums\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx]);
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
 		iface->ipv4_hw_cksum = false;
 	}
 
-	if ((port_conf->txmode.offloads & DEV_TX_OFFLOAD_UDP_CKSUM) &&
+	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) &&
 			!(dev_info->tx_offload_capa &
-			DEV_TX_OFFLOAD_UDP_CKSUM)) {
-		G_LOG(NOTICE, "net: port %hu (%s) on the %s interface doesn't support offloading UDP checksumming; will use software UDP checksums\n",
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			iface->name);
-		port_conf->txmode.offloads &= ~DEV_TX_OFFLOAD_UDP_CKSUM;
+			RTE_ETH_TX_OFFLOAD_UDP_CKSUM)) {
+		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading UDP checksumming; will use software UDP checksums\n",
+			__func__, iface->name,
+			iface->ports[port_idx], iface->pci_addrs[port_idx]);
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
 		iface->ipv4_hw_udp_cksum = false;
 		iface->ipv6_hw_udp_cksum = false;
 	}
@@ -1279,7 +1277,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 	int ret;
 
 	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF | GATEKEEPER_IPV6_RSS_HF) !=
-		ETH_RSS_IP);
+		RTE_ETH_RSS_IP);
 
 	/*
 	 * Set up device RSS.
@@ -1303,34 +1301,28 @@ check_port_offloads(struct gatekeeper_if *iface,
 			GATEKEEPER_IPV4_RSS_HF;
 		if (iface->alternative_rss_hash)
 			port_conf->rx_adv_conf.rss_conf.rss_hf |=
-				ETH_RSS_NONFRAG_IPV4_TCP |
-				ETH_RSS_NONFRAG_IPV4_UDP;
+				RTE_ETH_RSS_NONFRAG_IPV4_TCP |
+				RTE_ETH_RSS_NONFRAG_IPV4_UDP;
 	}
 	if (ipv6_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
 			GATEKEEPER_IPV6_RSS_HF;
 		if (iface->alternative_rss_hash)
 			port_conf->rx_adv_conf.rss_conf.rss_hf |=
-				ETH_RSS_NONFRAG_IPV6_TCP |
-				ETH_RSS_NONFRAG_IPV6_UDP;
+				RTE_ETH_RSS_NONFRAG_IPV6_TCP |
+				RTE_ETH_RSS_NONFRAG_IPV6_UDP;
 	}
 
 	/*
 	 * Set up device MTU.
 	 *
-	 * If greater than the traditional MTU, then add the
-	 * jumbo frame RX offload flag. All ports must support
-	 * this offload in this case.
-	 *
 	 * If greater than the size of the mbufs, then add the
 	 * multi-segment buffer flag. This is optional and
 	 * if any ports don't support it, it will be removed.
 	 */
-	port_conf->rxmode.max_rx_pkt_len = iface->mtu;
-	if (iface->mtu > RTE_ETHER_MTU)
-		port_conf->rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+	port_conf->rxmode.mtu = iface->mtu;
 	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
-		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_MULTI_SEGS;
+		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
 
 	/*
 	 * Set up checksumming.
@@ -1353,10 +1345,10 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 * and can be configured as hardware or software independently.
 	 */
 	if (ipv4_if_configured(iface) && iface->ipv4_hw_cksum)
-		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
+		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
 	if (!config.back_iface_enabled &&
 			(iface->ipv4_hw_udp_cksum || iface->ipv6_hw_udp_cksum))
-		port_conf->txmode.offloads |= DEV_TX_OFFLOAD_UDP_CKSUM;
+		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
 
 	for (i = 0; i < iface->num_ports; i++) {
 		struct rte_eth_dev_info dev_info;
@@ -1400,7 +1392,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 		rte_convert_rss_key((uint32_t *)iface->rss_key,
 			(uint32_t *)iface->rss_key_be, iface->rss_key_len);
 
-		port_conf->rxmode.mq_mode = ETH_MQ_RX_RSS;
+		port_conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
 		port_conf->rx_adv_conf.rss_conf.rss_key = iface->rss_key;
 		port_conf->rx_adv_conf.rss_conf.rss_key_len =
 			iface->rss_key_len;
@@ -1437,7 +1429,7 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 		goto out;
 	}
 
-	if (dev_info.reta_size > ETH_RSS_RETA_SIZE_512) {
+	if (dev_info.reta_size > RTE_ETH_RSS_RETA_SIZE_512) {
 		G_LOG(ERR,
 			"net: failed to setup RSS at port %hhu (invalid RETA size = %u)\n",
 			port_id, dev_info.reta_size);
@@ -1449,8 +1441,8 @@ gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
 	memset(reta_conf, 0, sizeof(reta_conf));
 
 	for (i = 0; i < dev_info.reta_size; i++) {
-		uint32_t idx = i / RTE_RETA_GROUP_SIZE;
-		uint32_t shift = i % RTE_RETA_GROUP_SIZE;
+		uint32_t idx = i / RTE_ETH_RETA_GROUP_SIZE;
+		uint32_t shift = i % RTE_ETH_RETA_GROUP_SIZE;
 		uint32_t queue_idx = i % num_queues; 
 
 		/* Select all fields to set. */
@@ -1510,7 +1502,7 @@ gatekeeper_get_rss_config(uint16_t port_id,
 	}
 	rss_conf->reta_size = dev_info.reta_size;
 	if (rss_conf->reta_size == 0 ||
-			rss_conf->reta_size > ETH_RSS_RETA_SIZE_512) {
+			rss_conf->reta_size > RTE_ETH_RSS_RETA_SIZE_512) {
 		G_LOG(ERR,
 			"net: failed to setup RSS at port %hhu (invalid RETA size = %hu)\n",
 			port_id, rss_conf->reta_size);
@@ -1519,7 +1511,7 @@ gatekeeper_get_rss_config(uint16_t port_id,
 	}
 
 	for (i = 0; i < dev_info.reta_size; i++) {
-		uint32_t idx = i / RTE_RETA_GROUP_SIZE;
+		uint32_t idx = i / RTE_ETH_RETA_GROUP_SIZE;
 		/* Select all fields to query. */
 		rss_conf->reta_conf[idx].mask = ~0LL;
 	}
@@ -1590,7 +1582,7 @@ init_iface(struct gatekeeper_if *iface)
 {
 	struct rte_eth_conf port_conf = {
 		.rxmode = {
-			.mq_mode = ETH_MQ_RX_NONE,
+			.mq_mode = RTE_ETH_MQ_RX_NONE,
 		},
 		/* Other offloads configured below. */
 	};
@@ -1686,7 +1678,7 @@ init_iface(struct gatekeeper_if *iface)
 		 */
 		num_slaves_added = 0;
 		for (i = 0; i < iface->num_ports; i++) {
-			ret = rte_eth_bond_slave_add(iface->id,
+			ret = rte_eth_bond_member_add(iface->id,
 				iface->ports[i]);
 			if (ret < 0) {
 				G_LOG(ERR, "%s(%s): failed to add slave port %hhu to bonded port %hhu (errno=%i): %s\n",
@@ -1919,18 +1911,6 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 	uint8_t i;
 	uint8_t num_succ_ports;
 
-	/*
-	 * The MTU of the device should be changed while the device
-	 * is down. Otherwise, drivers for some NICs and in some cases
-	 * (when multiple ports are bonded) fail to set the MTU.
-	 */
-	ret = rte_eth_dev_set_mtu(iface->id, iface->mtu);
-	if (ret < 0) {
-		G_LOG(ERR, "%s(%s): cannot set the MTU (errno=%i): %s\n",
-			__func__, iface->name, -ret, rte_strerror(-ret));
-		goto destroy_init;
-	}
-
 	num_succ_ports = 0;
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = start_port(iface->ports[i],
@@ -1975,7 +1955,6 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 
 stop_partial:
 	stop_iface_ports(iface, num_succ_ports);
-destroy_init:
 	destroy_iface(iface, IFACE_DESTROY_INIT);
 	return ret;
 }

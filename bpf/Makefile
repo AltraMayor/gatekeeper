@@ -14,7 +14,7 @@ copy: all
 	$(INSTALL) -m660 $(TARGETS) $(DESTDIR)
 
 %.bpf: %.c
-	$(CC) $(CFLAGS) -o $@ -c $^
+	$(CC) $(CFLAGS) -o $@ -D RTE_FORCE_INTRINSICS -c $^
 
 PHONY: cscope clean
 
