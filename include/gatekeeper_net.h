@@ -481,7 +481,7 @@ struct net_config {
 
 /* Call lacp_enabled() instead this function wherever possible. */
 static inline int
-__lacp_enabled(struct gatekeeper_if *iface)
+__lacp_enabled(const struct gatekeeper_if *iface)
 {
 	return	iface->bonding_mode == BONDING_MODE_8023AD;
 }

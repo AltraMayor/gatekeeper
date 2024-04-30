@@ -489,7 +489,7 @@ configure_queue(const struct gatekeeper_if *iface, uint16_t queue_id,
 }
 
 static inline int
-iface_bonded(struct gatekeeper_if *iface)
+iface_bonded(const struct gatekeeper_if *iface)
 {
 	return iface->num_ports > 1 ||
 		iface->bonding_mode == BONDING_MODE_8023AD;
@@ -1605,6 +1605,43 @@ close_bond:
 	return ret;
 }
 
+#define MAX_LOG_IF_NAME (IF_NAMESIZE + 16)
+static void
+log_if_name(char *if_name, size_t len, const struct gatekeeper_if *iface,
+	uint16_t port_id)
+{
+	if (unlikely(len == 0)) {
+		G_LOG(CRIT, "%s(%s/%u): bug: len == 0\n",
+			__func__, iface->name, port_id);
+		return;
+	}
+
+	if (iface->id != port_id) {
+		int ret = snprintf(if_name, len, "%s/%u", iface->name, port_id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s/%u): snprintf() failed (errno=%i): %s\n",
+				__func__, iface->name, port_id,
+				-ret, strerror(-ret));
+			/* Fall back to interface name. */
+		} else if (unlikely((typeof(len))ret >= len)) {
+			G_LOG(CRIT, "%s(%s/%u): bug: len = %lu <= %i\n",
+				__func__, iface->name, port_id, len, ret);
+			/* Fall back to interface name. */
+		} else {
+			/* Success. */
+			return;
+		}
+	}
+
+	strncpy(if_name, iface->name, len);
+	if (unlikely(if_name[len - 1] != '\0')) {
+		G_LOG(CRIT, "%s(%s/%u): bug: len = %lu < strlen(iface->name) = %lu\n",
+			__func__, iface->name, port_id,
+			len, strlen(iface->name));
+		if_name[len - 1] = '\0';
+	}
+}
+
 static int
 init_iface(struct gatekeeper_if *iface)
 {
@@ -1878,6 +1915,85 @@ check_if_rss_key_update(const struct gatekeeper_if *iface)
 	return 0;
 }
 
+static uint32_t
+count_macs(const char *if_name, const struct rte_ether_addr *macaddrs,
+	uint32_t max_mac_addrs)
+{
+	bool ended = false;
+	uint32_t i, count = 0;
+
+	for (i = 0; i < max_mac_addrs; i++) {
+		if (rte_is_zero_ether_addr(&macaddrs[i])) {
+			ended = true;
+			continue;
+		}
+		if (unlikely(ended)) {
+			G_LOG(ERR, "%s(%s): MAC " RTE_ETHER_ADDR_PRT_FMT
+				" at index %" PRIu32
+				" comes after the last index; count = %"
+				PRIu32 "\n",
+				__func__, if_name,
+				RTE_ETHER_ADDR_BYTES(&macaddrs[i]), i, count);
+			break;
+		}
+		count++;
+	}
+
+	return count;
+}
+
+static void
+report_macs(const char *if_name, uint16_t port_id, uint32_t max_mac_addrs)
+{
+	struct rte_ether_addr macaddrs[max_mac_addrs];
+	uint32_t i, count;
+	int ret = rte_eth_macaddrs_get(port_id, macaddrs, max_mac_addrs);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot get MAC addresses (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return;
+	}
+
+	count = count_macs(if_name, macaddrs, max_mac_addrs);
+
+	for (i = 0; i < count; i++) {
+		G_LOG(INFO, "%s(%s): MAC [%u/%u] " RTE_ETHER_ADDR_PRT_FMT "\n",
+			__func__, if_name, i + 1, count,
+			RTE_ETHER_ADDR_BYTES(&macaddrs[i]));
+	}
+}
+
+static void
+report_port_macs(const struct gatekeeper_if *iface, uint16_t port_id)
+{
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_dev_info dev_info;
+	int ret;
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return;
+	}
+
+	report_macs(if_name, port_id, dev_info.max_mac_addrs);
+}
+
+static void
+report_if_macs(const struct gatekeeper_if *iface)
+{
+	unsigned int i;
+
+	if (iface_bonded(iface))
+		report_port_macs(iface, iface->id);
+
+	for (i = 0; i < iface->num_ports; i++)
+		report_port_macs(iface, iface->ports[i]);
+}
+
 static int
 start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 {
@@ -1916,6 +2032,7 @@ start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
 	if (ipv6_if_configured(iface))
 		setup_ipv6_addrs(iface);
 
+	report_if_macs(iface);
 	return 0;
 
 stop:
