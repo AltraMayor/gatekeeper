@@ -37,7 +37,6 @@ return function (gatekeeper_server)
 
 	-- These variables are unlikely to need to be changed.
 	local guarantee_random_entropy = false
-	local num_attempts_link_get = 5
 	local front_ipv6_default_hop_limits = 255
 	local back_ipv6_default_hop_limits = 255
 	local rotate_log_interval_sec = 60 * 60  -- (1 hour)
@@ -55,7 +54,6 @@ return function (gatekeeper_server)
 	--
 
 	local net_conf = staticlib.c.get_net_conf()
-	net_conf.num_attempts_link_get = num_attempts_link_get
 	net_conf.log_level = log_level
 	net_conf.rotate_log_interval_sec = rotate_log_interval_sec
 

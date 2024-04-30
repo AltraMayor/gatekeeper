@@ -290,7 +290,6 @@ struct gatekeeper_if {
 
 struct net_config {
 	int          back_iface_enabled;
-	unsigned int num_attempts_link_get;
 	bool         *numa_used;
 	uint32_t     log_level;
 	uint32_t     rotate_log_interval_sec;

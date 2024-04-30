@@ -1723,64 +1723,6 @@ free_ports:
 	return ret;
 }
 
-static int
-start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
-	unsigned int num_attempts_link_get)
-{
-	struct rte_eth_link link;
-	uint8_t attempts = 0;
-
-	/* Start device. */
-	int ret = rte_eth_dev_start(port_id);
-	if (ret < 0) {
-		G_LOG(ERR, "net: failed to start port %hhu (err=%d)\n",
-			port_id, ret);
-		return ret;
-	}
-	if (pnum_succ_ports != NULL)
-		(*pnum_succ_ports)++;
-
-	/*
-	 * The following code ensures that the device is ready for
-	 * full speed RX/TX.
-	 *
-	 * When the initialization is done without this,
-	 * the initial packet transmission may be blocked.
-	 *
-	 * Optionally, we can wait for the link to come up before
-	 * continuing. This is useful for bonded ports where the
-	 * slaves must be activated after starting the bonded
-	 * device in order for the link to come up. The slaves
-	 * are activated on a timer, so this can take some time.
-	 */
-	do {
-		ret = rte_eth_link_get(port_id, &link);
-		if (ret < 0) {
-			G_LOG(ERR, "net: querying port %hhu failed with err - %s\n",
-				port_id, rte_strerror(-ret));
-			return ret;
-		}
-		RTE_VERIFY(ret == 0);
-
-		/* Link is up. */
-		if (link.link_status)
-			break;
-
-		G_LOG(ERR, "net: querying port %hhu, and link is down\n",
-			port_id);
-
-		if (attempts > num_attempts_link_get) {
-			G_LOG(ERR, "net: giving up on port %hhu\n", port_id);
-			return -1;
-		}
-
-		attempts++;
-		sleep(1);
-	} while (true);
-
-	return 0;
-}
-
 static inline void
 gen_ipv6_link_local(struct gatekeeper_if *iface)
 {
@@ -1995,10 +1937,12 @@ report_if_macs(const struct gatekeeper_if *iface)
 }
 
 static int
-start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
+start_iface(struct gatekeeper_if *iface)
 {
-	int ret = start_port(iface->id, NULL, num_attempts_link_get);
+	int ret = rte_eth_dev_start(iface->id);
 	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to start interface (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
 		destroy_iface(iface, IFACE_DESTROY_INIT);
 		return ret;
 	}
@@ -2124,12 +2068,12 @@ static int
 start_network_stage2(void *arg)
 {
 	struct net_config *net = arg;
-	int ret = start_iface(&net->front, net->num_attempts_link_get);
+	int ret = start_iface(&net->front);
 	if (unlikely(ret < 0))
 		goto fail;
 
 	if (net->back_iface_enabled) {
-		ret = start_iface(&net->back, net->num_attempts_link_get);
+		ret = start_iface(&net->back);
 		if (unlikely(ret < 0))
 			goto destroy_front;
 	}
