@@ -1548,6 +1548,31 @@ create_bond(struct gatekeeper_if *iface)
 		}
 	}
 
+	if (__lacp_enabled(iface) && iface->num_ports > 1) {
+		/*
+		 * XXX #686 Ensure that all members can receive packets
+		 * destined to the MAC address of the bond.
+		 *
+		 * This must come after adding members. Otherwise,
+		 * rte_eth_dev_mac_addr_add() unfortunately does nothing.
+		 */
+		struct rte_ether_addr if_macaddr;
+		ret = rte_eth_macaddr_get(iface->id, &if_macaddr);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot get MAC address (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+		ret = rte_eth_dev_mac_addr_add(iface->id, &if_macaddr, 0);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot add interface MAC address (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
 	return 0;
 
 close_bond:
