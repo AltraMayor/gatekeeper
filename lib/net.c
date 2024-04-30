@@ -1520,6 +1520,27 @@ create_bond(struct gatekeeper_if *iface)
 	}
 	iface->id = ret;
 
+	if (iface->num_ports > 1) {
+		/*
+		 * The default balancing policy is BALANCE_XMIT_POLICY_LAYER2;
+		 * see bond_alloc() in file
+		 * dependencies/dpdk/drivers/net/bonding/rte_eth_bond_pmd.c
+		 * This mode does not fit Gatekeeper since the next hops for
+		 * Gatekeeper typically are only a couple routers.
+		 *
+		 * Use BALANCE_XMIT_POLICY_LAYER23 instead of
+		 * BALANCE_XMIT_POLICY_LAYER34 to lower the cost per packet.
+		 */
+		ret = rte_eth_bond_xmit_policy_set(iface->id,
+			BALANCE_XMIT_POLICY_LAYER23);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to set transmission policy (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
 	if (__lacp_enabled(iface)) {
 		/*
 		 * If LACP is enabled, enable multicast addresses.
