@@ -27,8 +27,8 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_log_ratelimit.h"
 
+RTE_DEFINE_PER_LCORE(struct log_thread_time, _log_thread_time);
 struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
-
 bool log_ratelimit_enabled;
 
 void
@@ -47,16 +47,17 @@ check_log_allowed(uint32_t level)
 #define NO_TIME_STR "NO TIME"
 
 static void
-update_str_date_time(struct log_ratelimit_state *lrs, uint64_t now)
+update_str_date_time(uint64_t now)
 {
+	struct log_thread_time *ttime = &RTE_PER_LCORE(_log_thread_time);
 	struct timespec tp;
 	struct tm *p_tm, time_info;
 	uint64_t diff_ns;
 	int ret;
 
-	RTE_BUILD_BUG_ON(sizeof(NO_TIME_STR) > sizeof(lrs->str_date_time));
+	RTE_BUILD_BUG_ON(sizeof(NO_TIME_STR) > sizeof(ttime->str_date_time));
 
-	if (likely(now < lrs->update_time_at)) {
+	if (likely(now < ttime->update_time_at)) {
 		/* Fast path, that is, high log rate. */
 		return;
 	}
@@ -73,7 +74,7 @@ update_str_date_time(struct log_ratelimit_state *lrs, uint64_t now)
 	if (unlikely(p_tm != &time_info))
 		goto no_time;
 
-	ret = strftime(lrs->str_date_time, sizeof(lrs->str_date_time),
+	ret = strftime(ttime->str_date_time, sizeof(ttime->str_date_time),
 		"%Y-%m-%d %H:%M:%S", &time_info);
 	if (unlikely(ret == 0))
 		goto no_time;
@@ -83,12 +84,13 @@ update_str_date_time(struct log_ratelimit_state *lrs, uint64_t now)
 no_tp:
 	tp.tv_nsec = 0;
 no_time:
-	strcpy(lrs->str_date_time, NO_TIME_STR);
+	strcpy(ttime->str_date_time, NO_TIME_STR);
 next_update:
 	diff_ns = likely(tp.tv_nsec >= 0 && tp.tv_nsec < ONE_SEC_IN_NANO_SEC)
 		? (ONE_SEC_IN_NANO_SEC - tp.tv_nsec)
 		: ONE_SEC_IN_NANO_SEC; /* C library bug! */
-	lrs->update_time_at = now + (typeof(now))round(diff_ns * cycles_per_ns);
+	ttime->update_time_at =
+		now + (typeof(now))round(diff_ns * cycles_per_ns);
 }
 
 static void
@@ -96,10 +98,11 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
-		update_str_date_time(lrs, now);
+		update_str_date_time(now);
 		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
 			G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
-			lrs->block_name, rte_lcore_id(), lrs->str_date_time,
+			lrs->block_name, rte_lcore_id(),
+			RTE_PER_LCORE(_log_thread_time).str_date_time,
 			"NOTICE", lrs->suppressed);
 	}
 	lrs->suppressed = 0;
@@ -111,7 +114,6 @@ log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
 	uint32_t burst, uint32_t log_level, const char *block_name)
 {
 	struct log_ratelimit_state *lrs;
-	uint64_t now;
 
 	RTE_VERIFY(lcore_id < RTE_MAX_LCORE);
 
@@ -124,10 +126,7 @@ log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
 	lrs->suppressed = 0;
 	rte_atomic32_set(&lrs->log_level, log_level);
 	strcpy(lrs->block_name, block_name);
-	lrs->str_date_time[0] = '\0';
-	now = rte_rdtsc();
-	lrs->update_time_at = now;
-	log_ratelimit_reset(lrs, now);
+	log_ratelimit_reset(lrs, rte_rdtsc());
 }
 
 /*
@@ -162,7 +161,8 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs, uint64_t now)
 }
 
 int
-rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
+gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
+	const char *format, ...)
 {
 	uint64_t now = rte_rdtsc(); /* Freeze current time. */
 	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
@@ -183,7 +183,20 @@ rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 	return 0;
 
 log:
-	update_str_date_time(lrs, now);
+	update_str_date_time(now);
+	va_start(ap, format);
+	ret = rte_vlog(level, logtype, format, ap);
+	va_end(ap);
+	return ret;
+}
+
+int
+gatekeeper_log_main(uint32_t level, uint32_t logtype, const char *format, ...)
+{
+	va_list ap;
+	int ret;
+
+	update_str_date_time(rte_rdtsc());
 	va_start(ap, format);
 	ret = rte_vlog(level, logtype, format, ap);
 	va_end(ap);
@@ -213,13 +226,4 @@ set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level)
 	}
 	rte_atomic32_set(&log_ratelimit_states[lcore_id].log_level, log_level);
 	return 0;
-}
-
-const char *
-get_block_name(unsigned int lcore_id)
-{
-	if (lcore_id >= RTE_MAX_LCORE) {
-		return "invalid lcore";
-	}
-	return log_ratelimit_states[lcore_id].block_name;
 }

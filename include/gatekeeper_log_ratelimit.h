@@ -74,7 +74,17 @@ void log_ratelimit_state_init(unsigned int lcore_id, uint32_t interval,
  *   - 0: Success.
  *   - Negative on error.
  */
-int rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
+int gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
+	const char *format, ...)
+#ifdef __GNUC__
+#if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 2))
+	__attribute__((cold))
+#endif
+#endif
+	__attribute__((format(printf, 3, 4)));
+
+int gatekeeper_log_main(uint32_t level, uint32_t logtype,
+	const char *format, ...)
 #ifdef __GNUC__
 #if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 2))
 	__attribute__((cold))
@@ -86,9 +96,6 @@ int rte_log_ratelimit(uint32_t level, uint32_t logtype, const char *format, ...)
 int set_log_level_per_block(const char *block_name, uint32_t log_level);
 int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
 
-/* Get the block name for the corresponding lcore. */
-const char *get_block_name(unsigned int lcore_id);
-
 struct log_ratelimit_state {
 	uint64_t       interval_cycles;
 	uint32_t       burst;
@@ -97,12 +104,27 @@ struct log_ratelimit_state {
 	uint64_t       end;
 	rte_atomic32_t log_level;
 	char           block_name[16];
-	char           str_date_time[32];
-	uint64_t       update_time_at;
 } __rte_cache_aligned;
 
-/* Only use these variables in file lib/log_ratelimit.c and in macro G_LOG(). */
+struct log_thread_time {
+	char     str_date_time[32];
+	uint64_t update_time_at;
+};
+
+/*
+ * Only use these variables in file lib/log_ratelimit.c and in macros
+ * G_LOG() and MAIN_LOG().
+ */
+RTE_DECLARE_PER_LCORE(struct log_thread_time, _log_thread_time);
 extern struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
 extern bool log_ratelimit_enabled;
+
+/* Get the block name for the corresponding lcore. */
+static inline const char *get_block_name(unsigned int lcore_id)
+{
+	return lcore_id < RTE_MAX_LCORE
+		? log_ratelimit_states[lcore_id].block_name
+		: "NO-lcore";
+}
 
 #endif /* _GATEKEEPER_LOG_RATELIMIT_H_ */

@@ -532,12 +532,44 @@ queue:
 	return queues[lcore];
 }
 
+/*
+ * Guarantee that rte_eth_dev_callback_register() and
+ * rte_eth_dev_callback_unregister() are called with the exact same parameters.
+ */
+
+static int
+lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
+	void *cb_arg, void *ret_param);
+
+static inline int
+register_callback_for_lsc(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	return rte_eth_dev_callback_register(port_id, RTE_ETH_EVENT_INTR_LSC,
+		lsc_event_callback, iface);
+}
+
+static inline int
+unregister_callback_for_lsc(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	return rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_INTR_LSC,
+		lsc_event_callback, iface);
+}
+
 static void
-close_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
+close_iface_ports(struct gatekeeper_if *iface)
 {
 	uint8_t i;
-	for (i = 0; i < nb_ports; i++)
-		rte_eth_dev_close(iface->ports[i]);
+	for (i = 0; i < iface->num_ports; i++) {
+		uint16_t port_id = iface->ports[i];
+
+		/*
+		 * It's safe to unregister a callback that hasn't been
+		 * registered before.
+		 */
+		unregister_callback_for_lsc(iface, port_id);
+
+		rte_eth_dev_close(port_id);
+	}
 }
 
 enum iface_destroy_cmd {
@@ -603,13 +635,21 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 		/* Stop and close bonded port, if needed. */
 		if (iface_bonded(iface)) {
 			char if_name[IF_NAMESIZE];
-			int ret = bonded_if_name(if_name, iface);
+			int ret;
+
+			/*
+			 * It's safe to unregister a callback that hasn't been
+			 * registered before.
+			 */
+			unregister_callback_for_lsc(iface, iface->id);
+
+			ret = bonded_if_name(if_name, iface);
 			if (likely(ret == 0))
 				rte_eth_bond_free(if_name);
 		}
 
 		/* Close and free interface ports. */
-		close_iface_ports(iface, iface->num_ports);
+		close_iface_ports(iface);
 		rte_free(iface->ports);
 		iface->ports = NULL;
 		/* FALLTHROUGH */
@@ -1323,6 +1363,20 @@ check_if_checksums(struct gatekeeper_if *iface,
 }
 
 static int
+check_if_interruption(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
+{
+	RTE_SET_USED(iface);
+	/*
+	 * Do not log the fact that an interface does not support the LSC
+	 * interruption since this is already logged in monitor_port().
+	 */
+	port_conf->intr_conf.lsc =
+		!!(*dev_info->dev_flags & RTE_ETH_DEV_INTR_LSC);
+	return 0;
+}
+
+static int
 check_if_offloads(struct gatekeeper_if *iface, struct rte_eth_conf *port_conf)
 {
 	struct rte_eth_dev_info dev_info;
@@ -1342,6 +1396,10 @@ check_if_offloads(struct gatekeeper_if *iface, struct rte_eth_conf *port_conf)
 		return ret;
 
 	ret = check_if_checksums(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_if_interruption(iface, &dev_info, port_conf);
 	if (unlikely(ret < 0))
 		return ret;
 
@@ -1642,6 +1700,191 @@ log_if_name(char *if_name, size_t len, const struct gatekeeper_if *iface,
 	}
 }
 
+/*
+ * ATTENTION: This function is called in the interrupt host thread,
+ * which is not associated to an lcore, therefore it must call MAIN_LOG()
+ * instead of G_LOG().
+ */
+static void
+get_str_members(char *str_members, size_t size, uint16_t *members,
+	uint16_t count)
+{
+	unsigned int i, total = 0;
+
+	if (unlikely(size <= 0))
+		return;
+	str_members[0] = '\0';
+
+	for (i = 0; i < count; i++) {
+		size_t remainder = size - total;
+		int ret = snprintf(str_members + total, remainder,
+			"%u%s", members[i], i + 1 < count ? ", " : "");
+		if (unlikely(ret < 0)) {
+			MAIN_LOG(ERR, "%s(): snprintf() failed (errno=%i): %s\n",
+				__func__, errno, strerror(errno));
+			return;
+		}
+		total += ret;
+		if (unlikely((size_t)ret >= remainder)) {
+			MAIN_LOG(CRIT, "%s(): bug: str_members' size must be more than %u bytes\n",
+				__func__, total + 1 /* Accounting for '\0'. */);
+			str_members[size - 1] = '\0';
+			return;
+		}
+	}
+}
+
+#define STR_ERROR_MEMBERS "ERROR"
+/*
+ * ATTENTION: This function is called in the interrupt host thread,
+ * which is not associated to an lcore, therefore it must call MAIN_LOG()
+ * instead of G_LOG().
+ */
+static int
+lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
+	void *cb_arg, void *ret_param)
+{
+	const struct gatekeeper_if *iface = cb_arg;
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_link link;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+	int ret;
+
+	RTE_SET_USED(ret_param);
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	if (unlikely(event != RTE_ETH_EVENT_INTR_LSC)) {
+		MAIN_LOG(CRIT, "%s(%s): bug: unexpected event %i\n",
+			__func__, if_name, event);
+		return -EFAULT;
+	}
+
+	ret = rte_eth_link_get_nowait(port_id, &link);
+	if (unlikely(ret < 0)) {
+		MAIN_LOG(ERR, "%s(%s): cannot get link status (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	ret = rte_eth_link_to_str(link_status_text, sizeof(link_status_text),
+		&link);
+	if (unlikely(ret < 0)) {
+		MAIN_LOG(ERR, "%s(%s): cannot get status string (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	if (iface_bonded(iface) && iface->id == port_id) {
+		uint16_t members[RTE_MAX_ETHPORTS];
+		char str_members[16 * RTE_DIM(members)];
+		ret = rte_eth_bond_active_members_get(iface->id, members,
+			RTE_DIM(members));
+		if (unlikely(ret < 0)) {
+			RTE_BUILD_BUG_ON(sizeof(STR_ERROR_MEMBERS) >
+				sizeof(str_members));
+			MAIN_LOG(ERR, "%s(%s): cannot get active members (errno=%i): %s\n",
+				__func__, if_name, -ret, rte_strerror(-ret));
+			strcpy(str_members, STR_ERROR_MEMBERS);
+		} else {
+			get_str_members(str_members, sizeof(str_members),
+				members, ret);
+		}
+		MAIN_LOG(NOTICE, "%s(%s): active members: %s; %s\n",
+			__func__, if_name, str_members, link_status_text);
+		return 0;
+	}
+
+	MAIN_LOG(NOTICE, "%s(%s): %s\n", __func__, if_name, link_status_text);
+
+	if (iface_bonded(iface)) {
+		/*
+		 * A member's link changed, but the link of the bond may not
+		 * change. Thus, force an "event" for the bonded interface.
+		 *
+		 * The following call works because this callback is added
+		 * _after_ the bonded interface is created, so
+		 * the bonded interface receives this event _before_
+		 * this callback and updates its state.
+		 */
+		lsc_event_callback(iface->id, event, cb_arg, NULL);
+	}
+
+	return 0;
+}
+
+/*
+ * RETURN
+ * 	false	@port_id does not support the LSC interruption.
+ * 		No monitoring is added.
+ * 	true	@port_id is being monitored from now on.
+ * 	<0	An errror happened.
+ */
+static int
+monitor_port(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_dev_info dev_info;
+	int ret;
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	if (unlikely(!(*dev_info.dev_flags & RTE_ETH_DEV_INTR_LSC))) {
+		G_LOG(WARNING, "%s(%s): no support for LSC interruption\n",
+			__func__, if_name);
+		return false;
+	}
+
+	ret = register_callback_for_lsc(iface, port_id);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot register LSC callback (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	return true;
+}
+
+static int
+monitor_links(struct gatekeeper_if *iface)
+{
+	bool monitoring_all_members = true;
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = monitor_port(iface, iface->ports[i]);
+		if (unlikely(ret < 0))
+			goto error;
+		monitoring_all_members = monitoring_all_members && ret;
+	}
+
+	/*
+	 * There is no need to monitor a bonded interface when all of
+	 * its members are already being monitored because each member reports
+	 * on the bonded interface.
+	 */
+	if (iface_bonded(iface) && !monitoring_all_members) {
+		ret = monitor_port(iface, iface->id);
+		if (unlikely(ret < 0))
+			goto error;
+	}
+
+	return 0;
+
+error:
+	while (i > 0)
+		unregister_callback_for_lsc(iface, iface->ports[--i]);
+	return ret;
+}
+
 static int
 init_iface(struct gatekeeper_if *iface)
 {
@@ -1708,6 +1951,13 @@ init_iface(struct gatekeeper_if *iface)
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(%s): failed to configure interface (errno=%i): %s\n",
 			__func__, iface->name, -ret, rte_strerror(-ret));
+		goto close_ports;
+	}
+
+	ret = monitor_links(iface);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot monitor links (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
 		goto close_ports;
 	}
 
