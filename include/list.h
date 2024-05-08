@@ -41,6 +41,12 @@ INIT_LIST_HEAD(struct list_head *list)
 	list->prev = list;
 }
 
+static inline int
+list_initiated(const struct list_head *head)
+{
+	return head->next != NULL && head->prev != NULL;
+}
+
 /**
  * list_entry - get the struct for this entry
  * @ptr:	the &struct list_head pointer.

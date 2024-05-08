@@ -507,23 +507,31 @@ cleanup_sol(struct sol_config *sol_conf)
 		goto free_sol_conf;
 
 	for (i = 0; i < sol_conf->num_lcores; i++) {
-		struct req_queue *req_queue = &sol_conf->instances[i].req_queue;
+		struct sol_instance *inst = &sol_conf->instances[i];
+		struct req_queue *req_queue = &inst->req_queue;
 		struct rte_mbuf *entry, *next;
 
-		list_for_each_entry_safe_m(entry, next, &req_queue->head) {
-			list_del(mbuf_to_list(entry));
-			rte_pktmbuf_free(entry);
-			req_queue->len--;
+		if (list_initiated(&req_queue->head)) {
+			list_for_each_entry_safe_m(entry, next,
+					&req_queue->head) {
+				list_del(mbuf_to_list(entry));
+				rte_pktmbuf_free(entry);
+				req_queue->len--;
+			}
+
+			if (unlikely(req_queue->len > 0)) {
+				G_LOG(CRIT, "%s(): bug: removing all requests from the priority queue on cleanup leaves the queue length at %"PRIu32" at lcore %u\n",
+					__func__, req_queue->len,
+					sol_conf->lcores[i]);
+			}
 		}
 
-		if (req_queue->len > 0)
-			G_LOG(NOTICE, "Bug: removing all requests from the priority queue on cleanup leaves the queue length at %"PRIu32" at lcore %u\n",
-				req_queue->len, sol_conf->lcores[i]);
-
-		rte_ring_free(sol_conf->instances[i].ring);
+		rte_ring_free(inst->ring);
+		inst->ring = NULL;
 	}
 
 	rte_free(sol_conf->instances);
+	sol_conf->instances = NULL;
 
 free_sol_conf:
 	rte_free(sol_conf);
