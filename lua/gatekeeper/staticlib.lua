@@ -414,7 +414,6 @@ struct dynamic_config {
 
 struct sol_config {
 	unsigned int pri_req_max_len;
-	double       req_bw_rate;
 	unsigned int enq_burst_size;
 	unsigned int deq_burst_size;
 	double       tb_rate_approx_err;
