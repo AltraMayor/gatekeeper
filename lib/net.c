@@ -2234,25 +2234,42 @@ stop:
 	return ret;
 }
 
+static inline uint32_t
+if_rx_desc(const struct gatekeeper_if *iface)
+{
+	return (uint32_t)iface->num_ports * iface->num_rx_desc;
+}
+
+static inline uint32_t
+if_tx_desc(const struct gatekeeper_if *iface)
+{
+	return (uint32_t)iface->num_ports * iface->num_tx_desc;
+}
+
 unsigned int
 calculate_mempool_config_para(const char *block_name,
 	struct net_config *net_conf, unsigned int total_pkt_burst)
 {
+	/*
+	 * The total number of receive descriptors to allocate per lcore
+	 * for the receive ring of the front interface.
+	 */
+	uint32_t total_rx_desc = if_rx_desc(&net_conf->front);
+
+	/*
+	 * The total number of transmit descriptors to allocate per lcore
+	 * for the transmit ring of the front interface.
+	 */
+	uint32_t total_tx_desc = if_tx_desc(&net_conf->front);
+
+	uint32_t max_num_pkt;
 	unsigned int num_mbuf;
 
-	/*
-	 * The total number of receive descriptors to
-	 * allocate per lcore for the receive ring over all interfaces.
-	 */
-	uint16_t total_rx_desc = net_conf->front.num_rx_desc +
-		(net_conf->back_iface_enabled ? net_conf->back.num_rx_desc : 0);
-
-	/*
-	 * The total number of transmit descriptors to
-	 * allocate per lcore for the transmit ring over all interfaces.
-	 */
-	uint16_t total_tx_desc = net_conf->front.num_tx_desc +
-		(net_conf->back_iface_enabled ? net_conf->back.num_tx_desc : 0);
+	if (net_conf->back_iface_enabled) {
+		/* Account for the back interface. */
+		total_rx_desc += if_rx_desc(&net_conf->back);
+		total_tx_desc += if_tx_desc(&net_conf->back);
+	}
 
 	/*
 	 * The number of elements in the mbuf pool.
@@ -2261,7 +2278,7 @@ calculate_mempool_config_para(const char *block_name,
 	 * It's the number of RX descriptors, the number of TX descriptors,
 	 * and the number of packet burst buffers.
 	 */
-	uint32_t max_num_pkt = total_rx_desc + total_tx_desc + total_pkt_burst;
+	max_num_pkt = total_rx_desc + total_tx_desc + total_pkt_burst;
 
 	/*
 	 * The optimum size (in terms of memory usage) for a mempool is when
@@ -2269,8 +2286,8 @@ calculate_mempool_config_para(const char *block_name,
 	 */
 	num_mbuf = rte_align32pow2(max_num_pkt) - 1;
 
-	G_LOG(NOTICE, "%s: %s: total_pkt_burst = %hu packets, total_rx_desc = %hu descriptors, total_tx_desc = %hu descriptors, max_num_pkt = %u packets, num_mbuf = %u packets.\n",
-		block_name, __func__, total_pkt_burst, total_rx_desc,
+	G_LOG(NOTICE, "%s(%s): total_pkt_burst = %u packets, total_rx_desc = %u descriptors, total_tx_desc = %u descriptors, max_num_pkt = %u packets, num_mbuf = %u packets\n",
+		__func__, block_name, total_pkt_burst, total_rx_desc,
 		total_tx_desc, max_num_pkt, num_mbuf);
 
 	return num_mbuf;
