@@ -2541,9 +2541,13 @@ gk_stage1(void *arg)
 
 	num_mbuf = calculate_mempool_config_para("gk", gk_conf->net,
 		gk_conf->front_max_pkt_burst + gk_conf->back_max_pkt_burst +
+		/*
+		 * One cannot divide the sum below per gk_conf->num_lcores
+		 * because, though unlikely, it might happen that
+		 * all packets go to a single instance.
+		 */
 		(gk_conf->net->front.total_pkt_burst +
-		gk_conf->net->back.total_pkt_burst + gk_conf->num_lcores - 1) /
-		gk_conf->num_lcores);
+		gk_conf->net->back.total_pkt_burst));
 
 	sol_conf = gk_conf->sol_conf;
 	for (i = 0; i < gk_conf->num_lcores; i++) {

@@ -2067,8 +2067,12 @@ init_gt_instances(struct gt_config *gt_conf)
 		gt_conf->net, gt_conf->max_pkt_burst +
 		gt_conf->frag_max_entries + gt_conf->max_pkt_burst +
 		gt_conf->max_ggu_notify_pkts +
-		(gt_conf->net->front.total_pkt_burst +
-		gt_conf->num_lcores - 1) / gt_conf->num_lcores);
+		/*
+		 * One cannot divide the sum below per gt_conf->num_lcores
+		 * because, though unlikely, it might happen that
+		 * all packets go to a single instance.
+		 */
+		gt_conf->net->front.total_pkt_burst);
 
 	/* Set up queue identifiers now for RSS, before instances start. */
 	for (i = 0; i < gt_conf->num_lcores; i++) {

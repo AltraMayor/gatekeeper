@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
+#include <net/if.h>
 
 #include <rte_mbuf.h>
 #include <rte_thash.h>
@@ -435,11 +436,13 @@ find_num_numa_nodes(void)
 }
 
 static int
-configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
-	uint16_t queue_id, enum queue_type ty, struct rte_mempool *mp)
+configure_queue(const struct gatekeeper_if *iface, uint16_t queue_id,
+	enum queue_type ty, struct rte_mempool *mp)
 {
+	uint16_t port_id = iface->id;
+
 	/*
-	 * Function slave_configure() of the bond driver (see file
+	 * The bonding driver (see file
 	 * dependencies/dpdk/drivers/net/bonding/rte_eth_bond_pmd.c) passes
 	 * rte_eth_dev_socket_id(port_id) for the parameter socket_id
 	 * of rte_eth_rx_queue_setup() and rte_eth_tx_queue_setup().
@@ -448,7 +451,7 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 	 * the function rte_eth_dma_zone_reserve() will fail when
 	 * when the driver of the NIC calls it.
 	 *
-	 * Although this issue is only raised while using the bond driver,
+	 * Although this issue is only raised while using the bonding driver,
 	 * it makes sense to have the RX and TX queues on the same
 	 * NUMA socket to which the underlying Ethernet device is connected.
 	 */
@@ -459,9 +462,9 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 	case QUEUE_TYPE_RX:
 		ret = rte_eth_rx_queue_setup(port_id, queue_id,
 			iface->num_rx_desc, numa_node, NULL, mp);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(): failed to configure RX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
-				__func__, queue_id, port_id, iface->name,
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to configure RX queue %u (errno=%i): %s\n",
+				__func__, iface->name, queue_id,
 			       -ret, rte_strerror(-ret));
 			return ret;
 		}
@@ -469,24 +472,24 @@ configure_queue(struct gatekeeper_if *iface, uint16_t port_id,
 	case QUEUE_TYPE_TX:
 		ret = rte_eth_tx_queue_setup(port_id, queue_id,
 			iface->num_tx_desc, numa_node, NULL);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(): failed to configure TX queue %hu of port %hhu of interface %s (errno=%d): %s\n",
-				__func__, queue_id, port_id, iface->name,
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to configure TX queue %u (errno=%d): %s\n",
+				__func__, iface->name, queue_id,
 			       -ret, rte_strerror(-ret));
 			return ret;
 		}
 		break;
 	default:
-		G_LOG(ERR, "%s(): unsupported queue type (%d)\n",
-			__func__, ty);
-		return -1;
+		G_LOG(CRIT, "%s(%s): bug: unsupported queue type (%d)\n",
+			__func__, iface->name, ty);
+		return -EINVAL;
 	}
 
 	return 0;
 }
 
 static inline int
-iface_bonded(struct gatekeeper_if *iface)
+iface_bonded(const struct gatekeeper_if *iface)
 {
 	return iface->num_ports > 1 ||
 		iface->bonding_mode == BONDING_MODE_8023AD;
@@ -500,78 +503,73 @@ int
 get_queue_id(struct gatekeeper_if *iface, enum queue_type ty,
 	unsigned int lcore, struct rte_mempool *mp)
 {
-	int16_t *queues;
+	int16_t *queues, new_queue_id;
 	int ret;
-	uint16_t port;
-	int16_t new_queue_id;
 
-	RTE_VERIFY(lcore < RTE_MAX_LCORE);
-	RTE_VERIFY(ty < QUEUE_TYPE_MAX);
+	if (unlikely(lcore >= RTE_MAX_LCORE || ty >= QUEUE_TYPE_MAX))
+		return -EINVAL;
 
 	queues = (ty == QUEUE_TYPE_RX) ? iface->rx_queues : iface->tx_queues;
-
 	if (queues[lcore] != GATEKEEPER_QUEUE_UNALLOCATED)
 		goto queue;
 
 	/* Get next queue identifier. */
 	new_queue_id = rte_atomic16_add_return(ty == QUEUE_TYPE_RX ?
 		&iface->rx_queue_id : &iface->tx_queue_id, 1);
-	if (new_queue_id == GATEKEEPER_QUEUE_UNALLOCATED) {
-		G_LOG(ERR, "net: exhausted all %s queues for the %s interface; this is likely a bug\n",
-			(ty == QUEUE_TYPE_RX) ? "RX" : "TX", iface->name);
-		return -1;
+	if (unlikely(new_queue_id == GATEKEEPER_QUEUE_UNALLOCATED)) {
+		G_LOG(ERR, "%s(%s): exhausted all %s queues; this is likely a bug\n",
+			__func__, iface->name,
+			(ty == QUEUE_TYPE_RX) ? "RX" : "TX");
+		return -ENOSPC;
 	}
 	queues[lcore] = new_queue_id;
 
-	/*
-	 * Configure this queue on all ports of this interface.
-	 *
-	 * Note that if we are using a bonded port, it is not
-	 * sufficient to only configure the queue on that bonded
-	 * port. All slave ports must be configured and started
-	 * before the bonded port can be started.
-	 */
-	for (port = 0; port < iface->num_ports; port++) {
-		ret = configure_queue(iface, iface->ports[port],
-			(uint16_t)new_queue_id, ty, mp);
-		if (ret < 0)
-			return ret;
-	}
-
-	/* If there's a bonded port, configure it too. */
-	if (iface_bonded(iface)) {
-		ret = configure_queue(iface, iface->id,
-			(uint16_t)new_queue_id, ty, mp);
-		if (ret < 0)
-			return ret;
-	}
+	ret = configure_queue(iface, new_queue_id, ty, mp);
+	if (unlikely(ret < 0))
+		return ret;
 
 queue:
 	return queues[lcore];
 }
 
-static void
-stop_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
+/*
+ * Guarantee that rte_eth_dev_callback_register() and
+ * rte_eth_dev_callback_unregister() are called with the exact same parameters.
+ */
+
+static int
+lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
+	void *cb_arg, void *ret_param);
+
+static inline int
+register_callback_for_lsc(struct gatekeeper_if *iface, uint16_t port_id)
 {
-	uint8_t i;
-	for (i = 0; i < nb_ports; i++)
-		rte_eth_dev_stop(iface->ports[i]);
+	return rte_eth_dev_callback_register(port_id, RTE_ETH_EVENT_INTR_LSC,
+		lsc_event_callback, iface);
+}
+
+static inline int
+unregister_callback_for_lsc(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	return rte_eth_dev_callback_unregister(port_id, RTE_ETH_EVENT_INTR_LSC,
+		lsc_event_callback, iface);
 }
 
 static void
-rm_slave_ports(struct gatekeeper_if *iface, uint8_t nb_slave_ports)
+close_iface_ports(struct gatekeeper_if *iface)
 {
 	uint8_t i;
-	for (i = 0; i < nb_slave_ports; i++)
-		rte_eth_bond_member_remove(iface->id, iface->ports[i]);
-}
+	for (i = 0; i < iface->num_ports; i++) {
+		uint16_t port_id = iface->ports[i];
 
-static void
-close_iface_ports(struct gatekeeper_if *iface, uint8_t nb_ports)
-{
-	uint8_t i;
-	for (i = 0; i < nb_ports; i++)
-		rte_eth_dev_close(iface->ports[i]);
+		/*
+		 * It's safe to unregister a callback that hasn't been
+		 * registered before.
+		 */
+		unregister_callback_for_lsc(iface, port_id);
+
+		rte_eth_dev_close(port_id);
+	}
 }
 
 enum iface_destroy_cmd {
@@ -586,6 +584,33 @@ enum iface_destroy_cmd {
 	/* Destroy all data for this interface. */
 	IFACE_DESTROY_ALL,
 };
+
+static int
+bonded_if_name(char *port_name, const struct gatekeeper_if *iface)
+{
+	/*
+	 * The name of the bonded device must start with the name of
+	 * the bonding driver. Otherwise, DPDK cannot identify
+	 * the correct driver.
+	 *
+	 * The ID of the first port is used instead of the name of
+	 * the interface (i.e. iface->name) because IF_NAMESIZE is
+	 * small.
+	 */
+	int ret = snprintf(port_name, IF_NAMESIZE, "net_bonding%u",
+		iface->ports[0]);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): snprintf() failed (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		return ret;
+	}
+	if (unlikely(ret >= IF_NAMESIZE)) {
+		G_LOG(ERR, "%s(%s): port name is too long (len=%i)\n",
+			__func__, iface->name, ret);
+		return -ENOSPC;
+	}
+	return 0;
+}
 
 static void
 destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
@@ -602,21 +627,29 @@ destroy_iface(struct gatekeeper_if *iface, enum iface_destroy_cmd cmd)
 			destroy_acls(&iface->ipv4_acls);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_STOP:
-		/* Stop interface ports (bonded port is stopped below). */
-		stop_iface_ports(iface, iface->num_ports);
+		rte_eth_dev_stop(iface->id);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_INIT:
-		/* Remove any slave ports added to a bonded port. */
-		if (iface_bonded(iface))
-			rm_slave_ports(iface, iface->num_ports);
 		/* FALLTHROUGH */
 	case IFACE_DESTROY_PORTS:
 		/* Stop and close bonded port, if needed. */
-		if (iface_bonded(iface))
-			rte_eth_bond_free(iface->name);
+		if (iface_bonded(iface)) {
+			char if_name[IF_NAMESIZE];
+			int ret;
+
+			/*
+			 * It's safe to unregister a callback that hasn't been
+			 * registered before.
+			 */
+			unregister_callback_for_lsc(iface, iface->id);
+
+			ret = bonded_if_name(if_name, iface);
+			if (likely(ret == 0))
+				rte_eth_bond_free(if_name);
+		}
 
 		/* Close and free interface ports. */
-		close_iface_ports(iface, iface->num_ports);
+		close_iface_ports(iface);
 		rte_free(iface->ports);
 		iface->ports = NULL;
 		/* FALLTHROUGH */
@@ -1002,231 +1035,6 @@ i40e_disable_ipv6_tcp_udp_ports_from_inset(uint16_t port_id)
 		RTE_DIM(pctypes));
 }
 
-/*
- * Split up RTE_ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
- * For each type of IP being used in Gatekeeper, check the supported
- * hashes of the device. If none are supported, disable RSS.
- * If RTE_ETH_RSS_IPV{4,6} is not supported, issue a warning since we expect
- * this to be a common and critical hash function. Some devices (i40e
- * and AVF) do not support the RTE_ETH_RSS_IPV{4,6} hashes, but the hashes
- * they do support may be enough.
- */
-
-#define GATEKEEPER_IPV4_RSS_HF ( \
-	RTE_ETH_RSS_IPV4 | \
-	RTE_ETH_RSS_FRAG_IPV4 | \
-	RTE_ETH_RSS_NONFRAG_IPV4_OTHER)
-
-#define GATEKEEPER_IPV6_RSS_HF ( \
-	RTE_ETH_RSS_IPV6 | \
-	RTE_ETH_RSS_FRAG_IPV6 | \
-	RTE_ETH_RSS_NONFRAG_IPV6_OTHER | \
-	RTE_ETH_RSS_IPV6_EX)
-
-static int
-check_port_rss(struct gatekeeper_if *iface, unsigned int port_idx,
-	const struct rte_eth_dev_info *dev_info,
-	struct rte_eth_conf *port_conf)
-{
-	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
-	struct rte_eth_rss_conf __rss_conf = {
-		.rss_key = rss_hash_key,
-		.rss_key_len = sizeof(rss_hash_key),
-	};
-	uint64_t rss_off = dev_info->flow_type_rss_offloads;
-	uint16_t port_id = iface->ports[port_idx];
-	int ret = rte_eth_dev_rss_hash_conf_get(port_id, &__rss_conf);
-	if (ret == -ENOTSUP) {
-		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support to get RSS configuration, disable RSS\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx]);
-		goto disable_rss;
-	}
-
-	/* Do not use @__rss_conf from now on. See issue #624 for details. */
-
-	if (ret < 0) {
-		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration at port %hu (%s) (errno=%i): %s\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx],
-			-ret, rte_strerror(-ret));
-		return ret;
-	}
-	RTE_VERIFY(ret == 0);
-
-	/* This port doesn't support RSS, so disable RSS. */
-	if (rss_off == 0) {
-		G_LOG(WARNING, "%s(%s): port %hu (%s) does not support RSS\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx]);
-		goto disable_rss;
-	}
-
-	/* Does Gatekeeper support the key length of @dev_info? */
-	if (dev_info->hash_key_size < GATEKEEPER_RSS_MIN_KEY_LEN ||
-			dev_info->hash_key_size > GATEKEEPER_RSS_MAX_KEY_LEN ||
-			dev_info->hash_key_size % 4 != 0) {
-		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes; Gatekeeper only supports keys of [%i, %i] bytes long that are multiple of 4\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx],
-			dev_info->hash_key_size, GATEKEEPER_RSS_MIN_KEY_LEN,
-			GATEKEEPER_RSS_MAX_KEY_LEN);
-		goto disable_rss;
-	}
-
-	/*
-	 * Check that all RSS keys have the same length.
-	 *
-	 * @iface->rss_key_len > GATEKEEPER_RSS_MAX_KEY_LEN when it is
-	 * the first time that check_port_rss() is being called.
-	 */
-	if (iface->rss_key_len <= GATEKEEPER_RSS_MAX_KEY_LEN &&
-			iface->rss_key_len != dev_info->hash_key_size) {
-		G_LOG(WARNING, "%s(%s): port %hu (%s) requires a RSS hash key of %i bytes, but another port requires a key of %i bytes; all ports of the same interface must have the same key length\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx],
-			dev_info->hash_key_size, iface->rss_key_len);
-		goto disable_rss;
-	}
-	iface->rss_key_len = dev_info->hash_key_size;
-
-	/* Check IPv4 RSS hashes. */
-	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV4_RSS_HF) {
-		/* No IPv4 hashes are supported, so disable RSS. */
-		if ((rss_off & GATEKEEPER_IPV4_RSS_HF) == 0) {
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv4 related RSS hashes\n",
-				__func__, iface->name, port_id,
-				iface->pci_addrs[port_idx]);
-			goto disable_rss;
-		}
-
-		if (iface->alternative_rss_hash) {
-			ret = i40e_disable_ipv4_tcp_udp_ports_from_inset(
-				port_id);
-			if (ret < 0)
-				goto disable_rss;
-		} else if ((rss_off & RTE_ETH_RSS_IPV4) == 0) {
-			/*
-			 * The IPv4 hash that we think is typically
-			 * used is not supported, so warn the user.
-			 */
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV4 hash function. The device may not hash packets to the correct queues. You may try parameter alternative_rss_hash.\n",
-				__func__, iface->name, port_id,
-				iface->pci_addrs[port_idx]);
-		}
-	}
-
-	/* Check IPv6 RSS hashes. */
-	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV6_RSS_HF) {
-		/* No IPv6 hashes are supported, so disable RSS. */
-		if ((rss_off & GATEKEEPER_IPV6_RSS_HF) == 0) {
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support any IPv6 related RSS hashes\n",
-				__func__, iface->name, port_id,
-				iface->pci_addrs[port_idx]);
-			goto disable_rss;
-		}
-
-		if (iface->alternative_rss_hash) {
-			ret = i40e_disable_ipv6_tcp_udp_ports_from_inset(
-				port_id);
-			if (ret < 0)
-				goto disable_rss;
-		} else if ((rss_off & RTE_ETH_RSS_IPV6) == 0) {
-			/*
-			 * The IPv6 hash that we think is typically
-			 * used is not supported, so warn the user.
-			 */
-			G_LOG(WARNING, "%s(%s): port %hu (%s) does not support the ETH_RSS_IPV6 hash function. The device may not hash packets to the correct queues. You may try parameter alternative_rss_hash.\n",
-				__func__, iface->name, port_id,
-				iface->pci_addrs[port_idx]);
-		}
-	}
-
-	/*
-	 * Any missing hashes that will cause RSS to definitely fail
-	 * or are likely to cause RSS to fail are handled above.
-	 * Here, also log if the device doesn't support any of the requested
-	 * hashes, including the hashes considered non-essential.
-	 */
-	if ((rss_off & port_conf->rx_adv_conf.rss_conf.rss_hf) !=
-			port_conf->rx_adv_conf.rss_conf.rss_hf) {
-		G_LOG(WARNING, "%s(%s): port %hu (%s) only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
-			__func__, iface->name, port_id,
-			iface->pci_addrs[port_idx], rss_off,
-			port_conf->rx_adv_conf.rss_conf.rss_hf);
-	}
-
-	port_conf->rx_adv_conf.rss_conf.rss_hf &= rss_off;
-	return 0;
-
-disable_rss:
-	iface->rss = false;
-	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
-	return 0;
-}
-
-static int
-check_port_mtu(struct gatekeeper_if *iface, unsigned int port_idx,
-	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
-{
-	if (dev_info->min_mtu > port_conf->rxmode.mtu) {
-		G_LOG(ERR, "%s(%s): the minimum MTU %"PRIu32" of port %hu (%s) is larger than the configured MTU %"PRIu32"\n",
-			__func__, iface->name,
-			dev_info->min_mtu,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			port_conf->rxmode.mtu);
-		return -1;
-	}
-
-	if (dev_info->max_mtu < port_conf->rxmode.mtu) {
-		G_LOG(ERR, "%s(%s): the maximum MTU %"PRIu32" of port %hu (%s) is smaller than the configured MTU %"PRIu32"\n",
-			__func__, iface->name,
-			dev_info->max_mtu,
-			iface->ports[port_idx], iface->pci_addrs[port_idx],
-			port_conf->rxmode.mtu);
-		return -1;
-	}
-
-	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_MULTI_SEGS) &&
-			!(dev_info->tx_offload_capa &
-			RTE_ETH_TX_OFFLOAD_MULTI_SEGS)) {
-		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading multi-segment TX buffers\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx]);
-		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
-	}
-
-	return 0;
-}
-
-static int
-check_port_cksum(struct gatekeeper_if *iface, unsigned int port_idx,
-	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
-{
-	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) &&
-			!(dev_info->tx_offload_capa &
-			RTE_ETH_TX_OFFLOAD_IPV4_CKSUM)) {
-		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading IPv4 checksumming; will use software IPv4 checksums\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx]);
-		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
-		iface->ipv4_hw_cksum = false;
-	}
-
-	if ((port_conf->txmode.offloads & RTE_ETH_TX_OFFLOAD_UDP_CKSUM) &&
-			!(dev_info->tx_offload_capa &
-			RTE_ETH_TX_OFFLOAD_UDP_CKSUM)) {
-		G_LOG(NOTICE, "%s(%s): port %hu (%s) doesn't support offloading UDP checksumming; will use software UDP checksums\n",
-			__func__, iface->name,
-			iface->ports[port_idx], iface->pci_addrs[port_idx]);
-		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
-		iface->ipv4_hw_udp_cksum = false;
-		iface->ipv6_hw_udp_cksum = false;
-	}
-
-	return 0;
-}
-
 static int
 randomize_rss_key(struct gatekeeper_if *iface)
 {
@@ -1269,11 +1077,37 @@ randomize_rss_key(struct gatekeeper_if *iface)
 	return 0;
 }
 
+/*
+ * Split up RTE_ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
+ * For each type of IP being used in Gatekeeper, check the supported
+ * hashes of the device. If none are supported, disable RSS.
+ * If RTE_ETH_RSS_IPV{4,6} is not supported, issue a warning since we expect
+ * this to be a common and critical hash function. Some devices (i40e
+ * and AVF) do not support the RTE_ETH_RSS_IPV{4,6} hashes, but the hashes
+ * they do support may be enough.
+ */
+
+#define GATEKEEPER_IPV4_RSS_HF ( \
+	RTE_ETH_RSS_IPV4 | \
+	RTE_ETH_RSS_FRAG_IPV4 | \
+	RTE_ETH_RSS_NONFRAG_IPV4_OTHER)
+
+#define GATEKEEPER_IPV6_RSS_HF ( \
+	RTE_ETH_RSS_IPV6 | \
+	RTE_ETH_RSS_FRAG_IPV6 | \
+	RTE_ETH_RSS_NONFRAG_IPV6_OTHER | \
+	RTE_ETH_RSS_IPV6_EX)
+
 static int
-check_port_offloads(struct gatekeeper_if *iface,
-	struct rte_eth_conf *port_conf)
+check_if_rss(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
 {
-	unsigned int i;
+	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
+	struct rte_eth_rss_conf __rss_conf = {
+		.rss_key = rss_hash_key,
+		.rss_key_len = sizeof(rss_hash_key),
+	};
+	uint64_t rss_off = dev_info->flow_type_rss_offloads;
 	int ret;
 
 	RTE_BUILD_BUG_ON((GATEKEEPER_IPV4_RSS_HF | GATEKEEPER_IPV6_RSS_HF) !=
@@ -1290,11 +1124,6 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 * hash functions.
 	 */
 	iface->rss = true;
-	/*
-	 * The +1 makes @iface->rss_key_len invalid and helps check_port_rss()
-	 * to identify the first RSS key length.
-	 */
-	iface->rss_key_len = GATEKEEPER_RSS_MAX_KEY_LEN + 1;
 	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
 	if (ipv4_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
@@ -1313,17 +1142,176 @@ check_port_offloads(struct gatekeeper_if *iface,
 				RTE_ETH_RSS_NONFRAG_IPV6_UDP;
 	}
 
+	ret = rte_eth_dev_rss_hash_conf_get(iface->id, &__rss_conf);
+	if (unlikely(ret == -ENOTSUP)) {
+		G_LOG(WARNING, "%s(%s): interface did not return RSS configuration\n",
+			__func__, iface->name);
+		goto disable_rss;
+	}
+
+	/* Do not use @__rss_conf from now on. See issue #624 for details. */
+
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+	RTE_VERIFY(ret == 0);
+
+	/* This interface doesn't support RSS, so disable RSS. */
+	if (unlikely(rss_off == 0)) {
+		G_LOG(WARNING, "%s(%s): interface does not support RSS\n",
+			__func__, iface->name);
+		goto disable_rss;
+	}
+
+	/* Does Gatekeeper support the key length of @dev_info? */
+	if (unlikely(dev_info->hash_key_size < GATEKEEPER_RSS_MIN_KEY_LEN ||
+			dev_info->hash_key_size > GATEKEEPER_RSS_MAX_KEY_LEN ||
+			dev_info->hash_key_size % 4 != 0)) {
+		G_LOG(WARNING, "%s(%s): interface requires an RSS hash key of %i bytes; Gatekeeper only supports keys of [%i, %i] bytes long that are multiple of 4\n",
+			__func__, iface->name, dev_info->hash_key_size,
+			GATEKEEPER_RSS_MIN_KEY_LEN, GATEKEEPER_RSS_MAX_KEY_LEN);
+		goto disable_rss;
+	}
+	iface->rss_key_len = dev_info->hash_key_size;
+
+	if (unlikely(iface->alternative_rss_hash && iface_bonded(iface))) {
+		G_LOG(ERR, "%s(%s): the parameter alternative_rss_hash cannot be true when the interface is bonded\n",
+			__func__, iface->name);
+		return -EINVAL;
+	}
+
+	/* Check IPv4 RSS hashes. */
+	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV4_RSS_HF) {
+		if (unlikely((rss_off & GATEKEEPER_IPV4_RSS_HF) == 0)) {
+			G_LOG(WARNING, "%s(%s): interface does not support any IPv4 RSS hash\n",
+				__func__, iface->name);
+			goto disable_rss;
+		}
+
+		if (iface->alternative_rss_hash) {
+			ret = i40e_disable_ipv4_tcp_udp_ports_from_inset(
+				iface->id);
+			if (unlikely(ret < 0)) {
+				G_LOG(ERR, "%s(%s): i40e_disable_ipv4_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
+					__func__, iface->name,
+					-ret, rte_strerror(-ret));
+				goto disable_rss;
+			}
+		} else if (unlikely((rss_off & RTE_ETH_RSS_IPV4) == 0)) {
+			G_LOG(WARNING, "%s(%s): interface does not support the ETH_RSS_IPV4 hash function. The device may not hash packets to the correct queues; you may try the parameter alternative_rss_hash\n",
+				__func__, iface->name);
+		}
+	}
+
+	/* Check IPv6 RSS hashes. */
+	if (port_conf->rx_adv_conf.rss_conf.rss_hf & GATEKEEPER_IPV6_RSS_HF) {
+		if (unlikely((rss_off & GATEKEEPER_IPV6_RSS_HF) == 0)) {
+			G_LOG(WARNING, "%s(%s): interface does not support any IPv6 RSS hash\n",
+				__func__, iface->name);
+			goto disable_rss;
+		}
+
+		if (iface->alternative_rss_hash) {
+			ret = i40e_disable_ipv6_tcp_udp_ports_from_inset(
+				iface->id);
+			if (unlikely(ret < 0)) {
+				G_LOG(ERR, "%s(%s): i40e_disable_ipv6_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
+					__func__, iface->name,
+					-ret, rte_strerror(-ret));
+				goto disable_rss;
+			}
+		} else if (unlikely((rss_off & RTE_ETH_RSS_IPV6) == 0)) {
+			G_LOG(WARNING, "%s(%s): interface does not support the ETH_RSS_IPV6 hash function. The device may not hash packets to the correct queues; you may try the parameter alternative_rss_hash\n",
+				__func__, iface->name);
+		}
+	}
+
+	/*
+	 * Any missing hash that will cause RSS to definitely fail
+	 * or are likely to cause RSS to fail are handled above.
+	 * Here, also log if the device doesn't support any of the requested
+	 * hashes, including the hashes considered non-essential.
+	 */
+	if ((rss_off & port_conf->rx_adv_conf.rss_conf.rss_hf) !=
+			port_conf->rx_adv_conf.rss_conf.rss_hf) {
+		G_LOG(WARNING, "%s(%s): interface only supports RSS hash functions 0x%"PRIx64", but Gatekeeper asks for 0x%"PRIx64"\n",
+			__func__, iface->name, rss_off,
+			port_conf->rx_adv_conf.rss_conf.rss_hf);
+	}
+	port_conf->rx_adv_conf.rss_conf.rss_hf &= rss_off;
+
+	ret = randomize_rss_key(iface);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to initialize RSS key (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		return ret;
+	}
+
+	/* Convert RSS key. */
+	RTE_VERIFY(iface->rss_key_len % 4 == 0);
+	rte_convert_rss_key((uint32_t *)iface->rss_key,
+		(uint32_t *)iface->rss_key_be, iface->rss_key_len);
+
+	port_conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+	port_conf->rx_adv_conf.rss_conf.rss_key = iface->rss_key;
+	port_conf->rx_adv_conf.rss_conf.rss_key_len = iface->rss_key_len;
+	return 0;
+
+disable_rss:
+	iface->rss = false;
+	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
+	iface->num_rx_queues = 1;
+	G_LOG(WARNING, "%s(%s): the interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
+		__func__, iface->name);
+	return 0;
+}
+
+static int
+check_if_mtu(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
+{
 	/*
 	 * Set up device MTU.
 	 *
 	 * If greater than the size of the mbufs, then add the
-	 * multi-segment buffer flag. This is optional and
-	 * if any ports don't support it, it will be removed.
+	 * multi-segment buffer flag.
 	 */
 	port_conf->rxmode.mtu = iface->mtu;
 	if (iface->mtu > RTE_MBUF_DEFAULT_BUF_SIZE)
 		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
 
+	if (unlikely(dev_info->min_mtu > port_conf->rxmode.mtu)) {
+		G_LOG(ERR, "%s(%s): the minimum MTU %u is larger than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->min_mtu, port_conf->rxmode.mtu);
+		return -EINVAL;
+	}
+
+	if (unlikely(dev_info->max_mtu < port_conf->rxmode.mtu)) {
+		G_LOG(ERR, "%s(%s): the maximum MTU %u is smaller than the configured MTU %"PRIu32"\n",
+			__func__, iface->name,
+			dev_info->max_mtu, port_conf->rxmode.mtu);
+		return -EINVAL;
+	}
+
+	if (unlikely((port_conf->txmode.offloads &
+				RTE_ETH_TX_OFFLOAD_MULTI_SEGS) &&
+			!(dev_info->tx_offload_capa &
+			RTE_ETH_TX_OFFLOAD_MULTI_SEGS))) {
+		G_LOG(NOTICE, "%s(%s): interface does not support offloading multi-segment TX buffers\n",
+			__func__, iface->name);
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
+	}
+
+	return 0;
+}
+
+static int
+check_if_checksums(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
+{
 	/*
 	 * Set up checksumming.
 	 *
@@ -1334,7 +1322,7 @@ check_port_offloads(struct gatekeeper_if *iface,
 	 *
 	 * In both cases, we set up the devices to assume that
 	 * IPv4 and UDP checksumming are supported unless querying
-	 * the device in check_port_cksum() shows otherwise.
+	 * the device shows otherwise.
 	 *
 	 * Note that the IPv4 checksum field is only computed over
 	 * the IPv4 header and the UDP checksum is computed over an IPv4
@@ -1350,58 +1338,70 @@ check_port_offloads(struct gatekeeper_if *iface,
 			(iface->ipv4_hw_udp_cksum || iface->ipv6_hw_udp_cksum))
 		port_conf->txmode.offloads |= RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
 
-	for (i = 0; i < iface->num_ports; i++) {
-		struct rte_eth_dev_info dev_info;
-		uint16_t port_id = iface->ports[i];
-
-		ret = rte_eth_dev_info_get(port_id, &dev_info);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (%s) (errno=%i): %s\n",
-				__func__, iface->name,
-				port_id, iface->pci_addrs[i],
-				-ret, rte_strerror(-ret));
-			return ret;
-		}
-
-		/* Check for RSS capabilities and offloads. */
-		ret = check_port_rss(iface, i, &dev_info, port_conf);
-		if (ret < 0)
-			return ret;
-
-		/* Check for MTU capability and offloads. */
-		ret = check_port_mtu(iface, i, &dev_info, port_conf);
-		if (ret < 0)
-			return ret;
-
-		/* Check for checksum capability and offloads. */
-		ret = check_port_cksum(iface, i, &dev_info, port_conf);
-		if (ret < 0)
-			return ret;
-	}
-
-	if (iface->rss) {
-		ret = randomize_rss_key(iface);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(%s): failed to initialize RSS key (errno=%i): %s\n",
-				__func__, iface->name, -ret, strerror(-ret));
-			return ret;
-		}
-
-		/* Convert RSS key. */
-		RTE_VERIFY(iface->rss_key_len % 4 == 0);
-		rte_convert_rss_key((uint32_t *)iface->rss_key,
-			(uint32_t *)iface->rss_key_be, iface->rss_key_len);
-
-		port_conf->rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
-		port_conf->rx_adv_conf.rss_conf.rss_key = iface->rss_key;
-		port_conf->rx_adv_conf.rss_conf.rss_key_len =
-			iface->rss_key_len;
-	} else {
-		/* Configured hash functions are not supported. */
-		G_LOG(WARNING, "%s(%s): the interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
+	if (unlikely((port_conf->txmode.offloads &
+				RTE_ETH_TX_OFFLOAD_IPV4_CKSUM) &&
+			!(dev_info->tx_offload_capa &
+			RTE_ETH_TX_OFFLOAD_IPV4_CKSUM))) {
+		G_LOG(NOTICE, "%s(%s): interface does not support offloading IPv4 checksumming; using software IPv4 checksums\n",
 			__func__, iface->name);
-		iface->num_rx_queues = 1;
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_IPV4_CKSUM;
+		iface->ipv4_hw_cksum = false;
 	}
+
+	if (unlikely((port_conf->txmode.offloads &
+				RTE_ETH_TX_OFFLOAD_UDP_CKSUM) &&
+			!(dev_info->tx_offload_capa &
+			RTE_ETH_TX_OFFLOAD_UDP_CKSUM))) {
+		G_LOG(NOTICE, "%s(%s): interface does not support offloading UDP checksumming; using software UDP checksums\n",
+			__func__, iface->name);
+		port_conf->txmode.offloads &= ~RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+		iface->ipv4_hw_udp_cksum = false;
+		iface->ipv6_hw_udp_cksum = false;
+	}
+
+	return 0;
+}
+
+static int
+check_if_interruption(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
+{
+	RTE_SET_USED(iface);
+	/*
+	 * Do not log the fact that an interface does not support the LSC
+	 * interruption since this is already logged in monitor_port().
+	 */
+	port_conf->intr_conf.lsc =
+		!!(*dev_info->dev_flags & RTE_ETH_DEV_INTR_LSC);
+	return 0;
+}
+
+static int
+check_if_offloads(struct gatekeeper_if *iface, struct rte_eth_conf *port_conf)
+{
+	struct rte_eth_dev_info dev_info;
+	int ret = rte_eth_dev_info_get(iface->id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	ret = check_if_rss(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_if_mtu(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_if_checksums(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
+
+	ret = check_if_interruption(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
 
 	return 0;
 }
@@ -1557,24 +1557,332 @@ gatekeeper_setup_user(struct net_config *net_conf, const char *user)
 	return 0;
 }
 
-/*
- * @port_idx represents index of port in iface->ports when it is >= 0.
- * When it is -1, @port_id is a bonded port and has no entry in iface->ports.
- */
 static int
-init_port(struct gatekeeper_if *iface, uint16_t port_id, int port_idx,
-	const struct rte_eth_conf *port_conf)
+create_bond(struct gatekeeper_if *iface)
 {
-	int ret = rte_eth_dev_configure(port_id, iface->num_rx_queues,
-		iface->num_tx_queues, port_conf);
-	if (ret < 0) {
-		G_LOG(ERR, "net: failed to configure port %hu (%s) on the %s interface (err=%d)\n",
-			port_id,
-			port_idx >= 0 ? iface->pci_addrs[port_idx] : "bonded",
-			iface->name, ret);
+	char dev_name[IF_NAMESIZE];
+	unsigned int i;
+	int ret2, ret = bonded_if_name(dev_name, iface);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot name bonded port (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
 		return ret;
 	}
+
+	ret = rte_eth_bond_create(dev_name, iface->bonding_mode,
+		rte_eth_dev_socket_id(iface->ports[0]));
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to create bonded port (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+	iface->id = ret;
+
+	if (iface->num_ports > 1) {
+		/*
+		 * The default balancing policy is BALANCE_XMIT_POLICY_LAYER2;
+		 * see bond_alloc() in file
+		 * dependencies/dpdk/drivers/net/bonding/rte_eth_bond_pmd.c
+		 * This mode does not fit Gatekeeper since the next hops for
+		 * Gatekeeper typically are only a couple routers.
+		 *
+		 * Use BALANCE_XMIT_POLICY_LAYER23 instead of
+		 * BALANCE_XMIT_POLICY_LAYER34 to lower the cost per packet.
+		 */
+		ret = rte_eth_bond_xmit_policy_set(iface->id,
+			BALANCE_XMIT_POLICY_LAYER23);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to set transmission policy (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
+	if (__lacp_enabled(iface)) {
+		/*
+		 * If LACP is enabled, enable multicast addresses.
+		 * Otherwise, rx_burst_8023ad() of DPDK's bonding driver
+		 * (see rte_eth_bond_pmd.c) is going to discard
+		 * multicast Ethernet packets such as ARP and
+		 * ND packets.
+		 */
+		ret = rte_eth_allmulticast_enable(iface->id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot enable multicast on bond device (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
+	/* Add members to bond. */
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = rte_eth_bond_member_add(iface->id, iface->ports[i]);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): failed to add member %u (errno=%i): %s\n",
+				__func__, iface->name, iface->ports[i],
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
+	if (__lacp_enabled(iface) && iface->num_ports > 1) {
+		/*
+		 * XXX #686 Ensure that all members can receive packets
+		 * destined to the MAC address of the bond.
+		 *
+		 * This must come after adding members. Otherwise,
+		 * rte_eth_dev_mac_addr_add() unfortunately does nothing.
+		 */
+		struct rte_ether_addr if_macaddr;
+		ret = rte_eth_macaddr_get(iface->id, &if_macaddr);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot get MAC address (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+		ret = rte_eth_dev_mac_addr_add(iface->id, &if_macaddr, 0);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot add interface MAC address (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_bond;
+		}
+	}
+
 	return 0;
+
+close_bond:
+	ret2 = rte_eth_bond_free(dev_name);
+	if (unlikely(ret2 < 0)) {
+		G_LOG(WARNING, "%s(%s): rte_eth_bond_free() failed (errno=%i): %s\n",
+			__func__, iface->name, -ret2, rte_strerror(-ret2));
+	}
+	return ret;
+}
+
+#define MAX_LOG_IF_NAME (IF_NAMESIZE + 16)
+static void
+log_if_name(char *if_name, size_t len, const struct gatekeeper_if *iface,
+	uint16_t port_id)
+{
+	if (unlikely(len == 0)) {
+		G_LOG(CRIT, "%s(%s/%u): bug: len == 0\n",
+			__func__, iface->name, port_id);
+		return;
+	}
+
+	if (iface->id != port_id) {
+		int ret = snprintf(if_name, len, "%s/%u", iface->name, port_id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s/%u): snprintf() failed (errno=%i): %s\n",
+				__func__, iface->name, port_id,
+				-ret, strerror(-ret));
+			/* Fall back to interface name. */
+		} else if (unlikely((typeof(len))ret >= len)) {
+			G_LOG(CRIT, "%s(%s/%u): bug: len = %lu <= %i\n",
+				__func__, iface->name, port_id, len, ret);
+			/* Fall back to interface name. */
+		} else {
+			/* Success. */
+			return;
+		}
+	}
+
+	strncpy(if_name, iface->name, len);
+	if (unlikely(if_name[len - 1] != '\0')) {
+		G_LOG(CRIT, "%s(%s/%u): bug: len = %lu < strlen(iface->name) = %lu\n",
+			__func__, iface->name, port_id,
+			len, strlen(iface->name));
+		if_name[len - 1] = '\0';
+	}
+}
+
+/*
+ * ATTENTION: This function is called in the interrupt host thread,
+ * which is not associated to an lcore, therefore it must call MAIN_LOG()
+ * instead of G_LOG().
+ */
+static void
+get_str_members(char *str_members, size_t size, uint16_t *members,
+	uint16_t count)
+{
+	unsigned int i, total = 0;
+
+	if (unlikely(size <= 0))
+		return;
+	str_members[0] = '\0';
+
+	for (i = 0; i < count; i++) {
+		size_t remainder = size - total;
+		int ret = snprintf(str_members + total, remainder,
+			"%u%s", members[i], i + 1 < count ? ", " : "");
+		if (unlikely(ret < 0)) {
+			MAIN_LOG(ERR, "%s(): snprintf() failed (errno=%i): %s\n",
+				__func__, errno, strerror(errno));
+			return;
+		}
+		total += ret;
+		if (unlikely((size_t)ret >= remainder)) {
+			MAIN_LOG(CRIT, "%s(): bug: str_members' size must be more than %u bytes\n",
+				__func__, total + 1 /* Accounting for '\0'. */);
+			str_members[size - 1] = '\0';
+			return;
+		}
+	}
+}
+
+#define STR_ERROR_MEMBERS "ERROR"
+/*
+ * ATTENTION: This function is called in the interrupt host thread,
+ * which is not associated to an lcore, therefore it must call MAIN_LOG()
+ * instead of G_LOG().
+ */
+static int
+lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
+	void *cb_arg, void *ret_param)
+{
+	const struct gatekeeper_if *iface = cb_arg;
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_link link;
+	char link_status_text[RTE_ETH_LINK_MAX_STR_LEN];
+	int ret;
+
+	RTE_SET_USED(ret_param);
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	if (unlikely(event != RTE_ETH_EVENT_INTR_LSC)) {
+		MAIN_LOG(CRIT, "%s(%s): bug: unexpected event %i\n",
+			__func__, if_name, event);
+		return -EFAULT;
+	}
+
+	ret = rte_eth_link_get_nowait(port_id, &link);
+	if (unlikely(ret < 0)) {
+		MAIN_LOG(ERR, "%s(%s): cannot get link status (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	ret = rte_eth_link_to_str(link_status_text, sizeof(link_status_text),
+		&link);
+	if (unlikely(ret < 0)) {
+		MAIN_LOG(ERR, "%s(%s): cannot get status string (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	if (iface_bonded(iface) && iface->id == port_id) {
+		uint16_t members[RTE_MAX_ETHPORTS];
+		char str_members[16 * RTE_DIM(members)];
+		ret = rte_eth_bond_active_members_get(iface->id, members,
+			RTE_DIM(members));
+		if (unlikely(ret < 0)) {
+			RTE_BUILD_BUG_ON(sizeof(STR_ERROR_MEMBERS) >
+				sizeof(str_members));
+			MAIN_LOG(ERR, "%s(%s): cannot get active members (errno=%i): %s\n",
+				__func__, if_name, -ret, rte_strerror(-ret));
+			strcpy(str_members, STR_ERROR_MEMBERS);
+		} else {
+			get_str_members(str_members, sizeof(str_members),
+				members, ret);
+		}
+		MAIN_LOG(NOTICE, "%s(%s): active members: %s; %s\n",
+			__func__, if_name, str_members, link_status_text);
+		return 0;
+	}
+
+	MAIN_LOG(NOTICE, "%s(%s): %s\n", __func__, if_name, link_status_text);
+
+	if (iface_bonded(iface)) {
+		/*
+		 * A member's link changed, but the link of the bond may not
+		 * change. Thus, force an "event" for the bonded interface.
+		 *
+		 * The following call works because this callback is added
+		 * _after_ the bonded interface is created, so
+		 * the bonded interface receives this event _before_
+		 * this callback and updates its state.
+		 */
+		lsc_event_callback(iface->id, event, cb_arg, NULL);
+	}
+
+	return 0;
+}
+
+/*
+ * RETURN
+ * 	false	@port_id does not support the LSC interruption.
+ * 		No monitoring is added.
+ * 	true	@port_id is being monitored from now on.
+ * 	<0	An errror happened.
+ */
+static int
+monitor_port(struct gatekeeper_if *iface, uint16_t port_id)
+{
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_dev_info dev_info;
+	int ret;
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	if (unlikely(!(*dev_info.dev_flags & RTE_ETH_DEV_INTR_LSC))) {
+		G_LOG(WARNING, "%s(%s): no support for LSC interruption\n",
+			__func__, if_name);
+		return false;
+	}
+
+	ret = register_callback_for_lsc(iface, port_id);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot register LSC callback (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	return true;
+}
+
+static int
+monitor_links(struct gatekeeper_if *iface)
+{
+	bool monitoring_all_members = true;
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < iface->num_ports; i++) {
+		ret = monitor_port(iface, iface->ports[i]);
+		if (unlikely(ret < 0))
+			goto error;
+		monitoring_all_members = monitoring_all_members && ret;
+	}
+
+	/*
+	 * There is no need to monitor a bonded interface when all of
+	 * its members are already being monitored because each member reports
+	 * on the bonded interface.
+	 */
+	if (iface_bonded(iface) && !monitoring_all_members) {
+		ret = monitor_port(iface, iface->id);
+		if (unlikely(ret < 0))
+			goto error;
+	}
+
+	return 0;
+
+error:
+	while (i > 0)
+		unregister_callback_for_lsc(iface, iface->ports[--i]);
+	return ret;
 }
 
 static int
@@ -1586,9 +1894,8 @@ init_iface(struct gatekeeper_if *iface)
 		},
 		/* Other offloads configured below. */
 	};
+	unsigned int i;
 	int ret;
-	uint8_t i;
-	uint8_t num_succ_ports;
 
 	iface->alive = true;
 
@@ -1602,7 +1909,7 @@ init_iface(struct gatekeeper_if *iface)
 
 	iface->ports = rte_calloc("ports", iface->num_ports,
 		sizeof(*iface->ports), 0);
-	if (iface->ports == NULL) {
+	if (unlikely(iface->ports == NULL)) {
 		G_LOG(ERR, "%s(%s): out of memory for ports\n",
 			__func__, iface->name);
 		destroy_iface(iface, IFACE_DESTROY_LUA);
@@ -1613,7 +1920,7 @@ init_iface(struct gatekeeper_if *iface)
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = rte_eth_dev_get_port_by_name(iface->pci_addrs[i],
 			&iface->ports[i]);
-		if (ret < 0) {
+		if (unlikely(ret < 0)) {
 			G_LOG(ERR, "%s(%s): failed to map PCI %s to a port (errno=%i): %s\n",
 				__func__, iface->name, iface->pci_addrs[i],
 				-ret, rte_strerror(-ret));
@@ -1621,79 +1928,37 @@ init_iface(struct gatekeeper_if *iface)
 		}
 	}
 
-	/* Make sure the ports support hardware offloads. */
-	ret = check_port_offloads(iface, &port_conf);
-	if (ret < 0) {
-		G_LOG(ERR, "%s(%s): interface doesn't support a critical hardware capability\n",
-			__func__, iface->name);
-		goto free_ports;
-	}
-
-	num_succ_ports = 0;
-	for (i = 0; i < iface->num_ports; i++) {
-		ret = init_port(iface, iface->ports[i], i, &port_conf);
-		if (ret < 0)
-			goto close_partial;
-		num_succ_ports++;
-	}
-
 	/* Initialize bonded port, if needed. */
-	if (!iface_bonded(iface))
+	if (!iface_bonded(iface)) {
+		RTE_VERIFY(iface->num_ports == 1);
 		iface->id = iface->ports[0];
-	else {
-		uint8_t num_slaves_added;
-		char dev_name[64];
-		ret = snprintf(dev_name, sizeof(dev_name), "net_bonding%s",
-			iface->name);
-		RTE_VERIFY(ret > 0 && ret < (int)sizeof(dev_name));
-		ret = rte_eth_bond_create(dev_name, iface->bonding_mode, 0);
-		if (ret < 0) {
-			G_LOG(ERR, "%s(%s): failed to create bonded port (errno=%i): %s\n",
-				__func__, iface->name,
-				-ret, rte_strerror(-ret));
-			goto close_partial;
-		}
+	} else {
+		ret = create_bond(iface);
+		if (unlikely(ret < 0))
+			goto free_ports;
+	}
 
-		iface->id = (uint8_t)ret;
+	/* Make sure the interface supports hardware offloads. */
+	ret = check_if_offloads(iface, &port_conf);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): interface doesn't support a critical hardware capability (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		goto close_ports;
+	}
 
-		/*
-		 * If LACP is enabled, enable multicast addresses.
-		 * Otherwise, rx_burst_8023ad() of DPDK's bonding driver
-		 * (see rte_eth_bond_pmd.c) is going to discard
-		 * multicast Ethernet packets such as ARP and ND packets.
-		 */
-		if (__lacp_enabled(iface)) {
-			ret = rte_eth_allmulticast_enable(iface->id);
-			if (ret < 0) {
-				G_LOG(ERR, "%s(%s): cannot enable multicast on bond device (errno=%i): %s\n",
-					__func__, iface->name,
-					-ret, rte_strerror(-ret));
-				goto close_ports;
-			}
-		}
+	ret = rte_eth_dev_configure(iface->id, iface->num_rx_queues,
+		iface->num_tx_queues, &port_conf);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to configure interface (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		goto close_ports;
+	}
 
-		/*
-		 * Bonded port inherits RSS and offload settings
-		 * from the slave ports added to it.
-		 */
-		num_slaves_added = 0;
-		for (i = 0; i < iface->num_ports; i++) {
-			ret = rte_eth_bond_member_add(iface->id,
-				iface->ports[i]);
-			if (ret < 0) {
-				G_LOG(ERR, "%s(%s): failed to add slave port %hhu to bonded port %hhu (errno=%i): %s\n",
-					__func__, iface->name,
-					iface->ports[i], iface->id,
-					-ret, rte_strerror(-ret));
-				rm_slave_ports(iface, num_slaves_added);
-				goto close_ports;
-			}
-			num_slaves_added++;
-		}
-
-		ret = init_port(iface, iface->id, -1, &port_conf);
-		if (ret < 0)
-			goto close_ports;
+	ret = monitor_links(iface);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot monitor links (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		goto close_ports;
 	}
 
 	return 0;
@@ -1701,71 +1966,11 @@ init_iface(struct gatekeeper_if *iface)
 close_ports:
 	destroy_iface(iface, IFACE_DESTROY_PORTS);
 	return ret;
-close_partial:
-	close_iface_ports(iface, num_succ_ports);
 free_ports:
 	rte_free(iface->ports);
 	iface->ports = NULL;
 	destroy_iface(iface, IFACE_DESTROY_LUA);
 	return ret;
-}
-
-static int
-start_port(uint8_t port_id, uint8_t *pnum_succ_ports,
-	unsigned int num_attempts_link_get)
-{
-	struct rte_eth_link link;
-	uint8_t attempts = 0;
-
-	/* Start device. */
-	int ret = rte_eth_dev_start(port_id);
-	if (ret < 0) {
-		G_LOG(ERR, "net: failed to start port %hhu (err=%d)\n",
-			port_id, ret);
-		return ret;
-	}
-	if (pnum_succ_ports != NULL)
-		(*pnum_succ_ports)++;
-
-	/*
-	 * The following code ensures that the device is ready for
-	 * full speed RX/TX.
-	 *
-	 * When the initialization is done without this,
-	 * the initial packet transmission may be blocked.
-	 *
-	 * Optionally, we can wait for the link to come up before
-	 * continuing. This is useful for bonded ports where the
-	 * slaves must be activated after starting the bonded
-	 * device in order for the link to come up. The slaves
-	 * are activated on a timer, so this can take some time.
-	 */
-	do {
-		ret = rte_eth_link_get(port_id, &link);
-		if (ret < 0) {
-			G_LOG(ERR, "net: querying port %hhu failed with err - %s\n",
-				port_id, rte_strerror(-ret));
-			return ret;
-		}
-		RTE_VERIFY(ret == 0);
-
-		/* Link is up. */
-		if (link.link_status)
-			break;
-
-		G_LOG(ERR, "net: querying port %hhu, and link is down\n",
-			port_id);
-
-		if (attempts > num_attempts_link_get) {
-			G_LOG(ERR, "net: giving up on port %hhu\n", port_id);
-			return -1;
-		}
-
-		attempts++;
-		sleep(1);
-	} while (true);
-
-	return 0;
 }
 
 static inline void
@@ -1845,7 +2050,7 @@ setup_ipv6_addrs(struct gatekeeper_if *iface)
 }
 
 static int
-check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
+check_if_rss_key_update(const struct gatekeeper_if *iface)
 {
 	struct rte_eth_dev_info dev_info;
 	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
@@ -1858,34 +2063,32 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 	if (!iface->rss)
 		return 0;
 
-	ret = rte_eth_dev_info_get(port_id, &dev_info);
-	if (ret < 0) {
-		G_LOG(ERR, "%s(%s): cannot obtain information on port %hu (errno=%i): %s\n",
-			__func__, iface->name, port_id,
-			-ret, rte_strerror(-ret));
+	ret = rte_eth_dev_info_get(iface->id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
 		return ret;
 	}
 
-	ret = rte_eth_dev_rss_hash_conf_get(port_id, &rss_conf);
+	ret = rte_eth_dev_rss_hash_conf_get(iface->id, &rss_conf);
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
-		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: port identifier is invalid\n",
-			__func__, iface->name, port_id);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration: interface identifier is invalid\n",
+			__func__, iface->name);
 		return ret;
 	case -EIO:
-		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: device is removed\n",
-			__func__, iface->name, port_id);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration: device is removed\n",
+			__func__, iface->name);
 		return ret;
 	case -ENOTSUP:
-		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d: hardware does not support RSS\n",
-			__func__, iface->name, port_id);
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration: hardware does not support RSS\n",
+			__func__, iface->name);
 		return ret;
 	default:
-		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration at port %d (errno=%i): %s\n",
-			__func__, iface->name, port_id,
-			-ret, rte_strerror(-ret));
+		G_LOG(WARNING, "%s(%s): failed to get RSS hash configuration (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
 		return ret;
 	}
 
@@ -1896,88 +2099,177 @@ check_port_rss_key_update(struct gatekeeper_if *iface, uint16_t port_id)
 	if (unlikely(dev_info.hash_key_size != iface->rss_key_len ||
 			memcmp(rss_conf.rss_key, iface->rss_key,
 				iface->rss_key_len) != 0)) {
-		G_LOG(WARNING, "%s(%s): the RSS hash configuration obtained at port %d does not match the expected RSS configuration\n",
-			__func__, iface->name, port_id);
+		G_LOG(WARNING, "%s(%s): the obtained RSS hash configuration does not match the expected RSS configuration\n",
+			__func__, iface->name);
 		return -EINVAL;
 	}
 
 	return 0;
 }
 
-static int
-start_iface(struct gatekeeper_if *iface, unsigned int num_attempts_link_get)
+static uint32_t
+count_macs(const char *if_name, const struct rte_ether_addr *macaddrs,
+	uint32_t max_mac_addrs)
 {
-	int ret;
-	uint8_t i;
-	uint8_t num_succ_ports;
+	bool ended = false;
+	uint32_t i, count = 0;
 
-	num_succ_ports = 0;
-	for (i = 0; i < iface->num_ports; i++) {
-		ret = start_port(iface->ports[i],
-			&num_succ_ports, num_attempts_link_get);
-		if (ret < 0)
-			goto stop_partial;
-
-		/*
-		 * If we try to update/get the RSS hash configuration before
-		 * the start of the NICs, no meaningful operations will be
-		 * done even the return values indicate no errors.
-		 *
-		 * After checking the source code of DPDK library,
-		 * it turns out that RSS is disabled in the MRQC register
-		 * before we start the NICs.
-		 *
-		 * Only after the NICs start, we can check whether the RSS hash
-		 * is configured correctly or not.
-		 */
-		if (check_port_rss_key_update(iface, iface->ports[i]) != 0) {
-			G_LOG(ERR, "%s(%s): port %hu (%s) does not have the correct RSS hash key\n",
-				__func__, iface->name,
-				iface->ports[i], iface->pci_addrs[i]);
-			ret = -1;
-			goto stop_partial;
+	for (i = 0; i < max_mac_addrs; i++) {
+		if (rte_is_zero_ether_addr(&macaddrs[i])) {
+			ended = true;
+			continue;
 		}
+		if (unlikely(ended)) {
+			G_LOG(ERR, "%s(%s): MAC " RTE_ETHER_ADDR_PRT_FMT
+				" at index %" PRIu32
+				" comes after the last index; count = %"
+				PRIu32 "\n",
+				__func__, if_name,
+				RTE_ETHER_ADDR_BYTES(&macaddrs[i]), i, count);
+			break;
+		}
+		count++;
 	}
 
-	/* Bonding port(s). */
-	if (iface_bonded(iface)) {
-		ret = start_port(iface->id, NULL, num_attempts_link_get);
-		if (ret < 0)
-			goto stop_partial;
+	return count;
+}
+
+static void
+report_macs(const char *if_name, uint16_t port_id, uint32_t max_mac_addrs)
+{
+	struct rte_ether_addr macaddrs[max_mac_addrs];
+	uint32_t i, count;
+	int ret = rte_eth_macaddrs_get(port_id, macaddrs, max_mac_addrs);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot get MAC addresses (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return;
 	}
 
-	rte_eth_macaddr_get(iface->id, &iface->eth_addr);
+	count = count_macs(if_name, macaddrs, max_mac_addrs);
+
+	for (i = 0; i < count; i++) {
+		G_LOG(INFO, "%s(%s): MAC [%u/%u] " RTE_ETHER_ADDR_PRT_FMT "\n",
+			__func__, if_name, i + 1, count,
+			RTE_ETHER_ADDR_BYTES(&macaddrs[i]));
+	}
+}
+
+static void
+report_port_macs(const struct gatekeeper_if *iface, uint16_t port_id)
+{
+	char if_name[MAX_LOG_IF_NAME];
+	struct rte_eth_dev_info dev_info;
+	int ret;
+
+	log_if_name(if_name, sizeof(if_name), iface, port_id);
+
+	ret = rte_eth_dev_info_get(port_id, &dev_info);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot obtain interface information (errno=%i): %s\n",
+			__func__, if_name, -ret, rte_strerror(-ret));
+		return;
+	}
+
+	report_macs(if_name, port_id, dev_info.max_mac_addrs);
+}
+
+static void
+report_if_macs(const struct gatekeeper_if *iface)
+{
+	unsigned int i;
+
+	if (iface_bonded(iface))
+		report_port_macs(iface, iface->id);
+
+	for (i = 0; i < iface->num_ports; i++)
+		report_port_macs(iface, iface->ports[i]);
+}
+
+static int
+start_iface(struct gatekeeper_if *iface)
+{
+	int ret = rte_eth_dev_start(iface->id);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to start interface (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		destroy_iface(iface, IFACE_DESTROY_INIT);
+		return ret;
+	}
+
+	/*
+	 * If we try to update/get the RSS hash configuration before
+	 * the start of the NICs, no meaningful operations will be
+	 * done; even the return values indicate no errors.
+	 *
+	 * After checking the source code of DPDK library,
+	 * it turns out that RSS is disabled in the MRQC register
+	 * before we start the NICs.
+	 *
+	 * Only after the NICs start, we can check whether the RSS hash
+	 * is configured correctly or not.
+	 */
+	ret = check_if_rss_key_update(iface);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): port does not have the correct RSS hash key (errno=%i): %s\n",
+			__func__, iface->name, -ret, strerror(-ret));
+		goto stop;
+	}
+
+	ret = rte_eth_macaddr_get(iface->id, &iface->eth_addr);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): cannot get MAC address (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		goto stop;
+	}
 
 	if (ipv6_if_configured(iface))
 		setup_ipv6_addrs(iface);
 
+	report_if_macs(iface);
 	return 0;
 
-stop_partial:
-	stop_iface_ports(iface, num_succ_ports);
-	destroy_iface(iface, IFACE_DESTROY_INIT);
+stop:
+	destroy_iface(iface, IFACE_DESTROY_STOP);
 	return ret;
+}
+
+static inline uint32_t
+if_rx_desc(const struct gatekeeper_if *iface)
+{
+	return (uint32_t)iface->num_ports * iface->num_rx_desc;
+}
+
+static inline uint32_t
+if_tx_desc(const struct gatekeeper_if *iface)
+{
+	return (uint32_t)iface->num_ports * iface->num_tx_desc;
 }
 
 unsigned int
 calculate_mempool_config_para(const char *block_name,
 	struct net_config *net_conf, unsigned int total_pkt_burst)
 {
+	/*
+	 * The total number of receive descriptors to allocate per lcore
+	 * for the receive ring of the front interface.
+	 */
+	uint32_t total_rx_desc = if_rx_desc(&net_conf->front);
+
+	/*
+	 * The total number of transmit descriptors to allocate per lcore
+	 * for the transmit ring of the front interface.
+	 */
+	uint32_t total_tx_desc = if_tx_desc(&net_conf->front);
+
+	uint32_t max_num_pkt;
 	unsigned int num_mbuf;
 
-	/*
-	 * The total number of receive descriptors to
-	 * allocate per lcore for the receive ring over all interfaces.
-	 */
-	uint16_t total_rx_desc = net_conf->front.num_rx_desc +
-		(net_conf->back_iface_enabled ? net_conf->back.num_rx_desc : 0);
-
-	/*
-	 * The total number of transmit descriptors to
-	 * allocate per lcore for the transmit ring over all interfaces.
-	 */
-	uint16_t total_tx_desc = net_conf->front.num_tx_desc +
-		(net_conf->back_iface_enabled ? net_conf->back.num_tx_desc : 0);
+	if (net_conf->back_iface_enabled) {
+		/* Account for the back interface. */
+		total_rx_desc += if_rx_desc(&net_conf->back);
+		total_tx_desc += if_tx_desc(&net_conf->back);
+	}
 
 	/*
 	 * The number of elements in the mbuf pool.
@@ -1986,7 +2278,7 @@ calculate_mempool_config_para(const char *block_name,
 	 * It's the number of RX descriptors, the number of TX descriptors,
 	 * and the number of packet burst buffers.
 	 */
-	uint32_t max_num_pkt = total_rx_desc + total_tx_desc + total_pkt_burst;
+	max_num_pkt = total_rx_desc + total_tx_desc + total_pkt_burst;
 
 	/*
 	 * The optimum size (in terms of memory usage) for a mempool is when
@@ -1994,8 +2286,8 @@ calculate_mempool_config_para(const char *block_name,
 	 */
 	num_mbuf = rte_align32pow2(max_num_pkt) - 1;
 
-	G_LOG(NOTICE, "%s: %s: total_pkt_burst = %hu packets, total_rx_desc = %hu descriptors, total_tx_desc = %hu descriptors, max_num_pkt = %u packets, num_mbuf = %u packets.\n",
-		block_name, __func__, total_pkt_burst, total_rx_desc,
+	G_LOG(NOTICE, "%s(%s): total_pkt_burst = %u packets, total_rx_desc = %u descriptors, total_tx_desc = %u descriptors, max_num_pkt = %u packets, num_mbuf = %u packets\n",
+		__func__, block_name, total_pkt_burst, total_rx_desc,
 		total_tx_desc, max_num_pkt, num_mbuf);
 
 	return num_mbuf;
@@ -2043,15 +2335,13 @@ static int
 start_network_stage2(void *arg)
 {
 	struct net_config *net = arg;
-	int ret;
-
-	ret = start_iface(&net->front, net->num_attempts_link_get);
-	if (ret < 0)
+	int ret = start_iface(&net->front);
+	if (unlikely(ret < 0))
 		goto fail;
 
 	if (net->back_iface_enabled) {
-		ret = start_iface(&net->back, net->num_attempts_link_get);
-		if (ret < 0)
+		ret = start_iface(&net->back);
+		if (unlikely(ret < 0))
 			goto destroy_front;
 	}
 
@@ -2060,7 +2350,7 @@ start_network_stage2(void *arg)
 destroy_front:
 	destroy_iface(&net->front, IFACE_DESTROY_STOP);
 fail:
-	G_LOG(ERR, "net: failed to start Gatekeeper network\n");
+	G_LOG(ERR, "%s(): failed to start Gatekeeper network\n", __func__);
 	return ret;
 }
 

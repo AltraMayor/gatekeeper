@@ -431,12 +431,6 @@ struct net_config {
 	int                  back_iface_enabled;
 
 	/*
-	 * Number of attempts to wait for Gatekeeper links to
-	 * come up during initialization.
-	 */
-	unsigned int         num_attempts_link_get;
-
-	/*
 	 * The NUMA nodes used in the host. Element i is true
 	 * if NUMA node i is being used; otherwise it is false.
 	 */
@@ -481,7 +475,7 @@ struct net_config {
 
 /* Call lacp_enabled() instead this function wherever possible. */
 static inline int
-__lacp_enabled(struct gatekeeper_if *iface)
+__lacp_enabled(const struct gatekeeper_if *iface)
 {
 	return	iface->bonding_mode == BONDING_MODE_8023AD;
 }

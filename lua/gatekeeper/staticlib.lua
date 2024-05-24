@@ -290,7 +290,6 @@ struct gatekeeper_if {
 
 struct net_config {
 	int          back_iface_enabled;
-	unsigned int num_attempts_link_get;
 	bool         *numa_used;
 	uint32_t     log_level;
 	uint32_t     rotate_log_interval_sec;
@@ -415,7 +414,6 @@ struct dynamic_config {
 
 struct sol_config {
 	unsigned int pri_req_max_len;
-	double       req_bw_rate;
 	unsigned int enq_burst_size;
 	unsigned int deq_burst_size;
 	double       tb_rate_approx_err;

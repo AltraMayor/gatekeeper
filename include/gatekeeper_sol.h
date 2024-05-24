@@ -102,13 +102,6 @@ struct sol_config {
 	/* Maximum number of requests to store in priority queue at once. */
 	unsigned int        pri_req_max_len;
 
-	/*
-	 * Bandwidth limit for the priority queue of requests,
-	 * as a percentage of the capacity of the link. Must
-	 * be > 0 and < 1.
-	 */
-	double              req_bw_rate;
-
 	/* Maximum request enqueue/dequeue size. */
 	unsigned int        enq_burst_size;
 	unsigned int        deq_burst_size;
