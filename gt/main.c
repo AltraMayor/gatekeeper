@@ -64,14 +64,21 @@ get_block_idx(struct gt_config *gt_conf, unsigned int lcore_id)
 static int
 gt_setup_rss(struct gt_config *gt_conf)
 {
-	int i;
-	uint16_t port_in = gt_conf->net->front.id;
-	uint16_t gt_queues[gt_conf->num_lcores];
+	struct gatekeeper_if *front = &gt_conf->net->front;
+	uint32_t queue_num = gt_conf->num_lcores;
+	uint16_t queues[queue_num];
+	unsigned int i;
+	int ret;
 
-	for (i = 0; i < gt_conf->num_lcores; i++)
-		gt_queues[i] = gt_conf->instances[i].rx_queue;
+	for (i = 0; i < queue_num; i++)
+		queues[i] = gt_conf->instances[i].rx_queue;
 
-	return gatekeeper_setup_rss(port_in, gt_queues, gt_conf->num_lcores);
+	/* Set up the global RSS. */
+	ret = gatekeeper_setup_rss(front->id, queues, queue_num);
+	if (unlikely(ret < 0))
+		return ret;
+
+	return enable_inner_rss(front, queues, queue_num);
 }
 
 static int

@@ -1407,7 +1407,8 @@ check_if_offloads(struct gatekeeper_if *iface, struct rte_eth_conf *port_conf)
 }
 
 int
-gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues, uint16_t num_queues)
+gatekeeper_setup_rss(uint16_t port_id, const uint16_t *queues,
+	uint16_t num_queues)
 {
 	int ret = 0;
 	uint32_t i;
@@ -2917,5 +2918,187 @@ rss_flow_hash(const struct gatekeeper_if *iface, const struct ip_flow *flow)
 	}
 
 	rte_panic("%s(): unknown protocol: %i\n", __func__, flow->proto);
+	return 0;
+}
+
+static int
+inner_rss_flow_create(const struct gatekeeper_if *iface, const char *str_proto,
+	const struct rte_flow_item pattern[],
+	const struct rte_flow_action actions[])
+{
+	struct rte_flow_attr attr = { .ingress = 1, };
+	struct rte_flow_error error;
+
+	struct rte_flow *flow = rte_flow_create(iface->id, &attr, pattern,
+		actions, &error);
+	if (unlikely(flow == NULL)) {
+		/* rte_errno is set to a positive errno value. */
+		int ret = -rte_errno;
+		G_LOG(NOTICE, "%s(%s): cannot enable %s inner RSS, errno=%i (%s), rte_flow_error_type=%i: %s\n",
+			__func__, iface->name, str_proto,
+			rte_errno, rte_strerror(rte_errno),
+			error.type, error.message);
+		return ret;
+	}
+
+	G_LOG(NOTICE, "%s(%s): enabled %s inner RSS\n",
+		__func__, iface->name, str_proto);
+	return 0;
+}
+
+static int
+ipv4_inner_rss(const struct gatekeeper_if *iface,
+	const struct rte_eth_rss_conf *rss_conf, const uint16_t *queues,
+	uint32_t queue_num)
+{
+	struct rte_flow_item_eth eth_spec = {
+		.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4),
+	};
+	struct rte_flow_item_eth eth_mask = {
+		.type = 0xFFFF,
+	};
+	struct rte_flow_item_ipv4 outer_ip_spec = {
+		.hdr = {
+			.next_proto_id = IPPROTO_IPIP,
+		}
+	};
+	struct rte_flow_item_ipv4 outer_ip_mask = {
+		.hdr = {
+			.next_proto_id = 0xFF,
+		}
+	};
+	struct rte_flow_item pattern[] = {
+		{
+			.type = RTE_FLOW_ITEM_TYPE_ETH,
+			.spec = &eth_spec,
+			.mask = &eth_mask,
+		},
+		{
+			.type = RTE_FLOW_ITEM_TYPE_IPV4,
+			.spec = &outer_ip_spec,
+			.mask = &outer_ip_mask,
+		},
+		{
+			.type = RTE_FLOW_ITEM_TYPE_END,
+		},
+	};
+	struct rte_flow_action_rss rss = {
+		.func = rss_conf->algorithm,
+		.level = 2,
+		.types = rss_conf->rss_hf & GATEKEEPER_IPV4_RSS_HF,
+		.key_len = iface->rss_key_len,
+		.queue_num = queue_num,
+		.key = iface->rss_key,
+		.queue = queues,
+
+	};
+	struct rte_flow_action actions[] = {
+		{
+			.type = RTE_FLOW_ACTION_TYPE_RSS,
+			.conf = &rss,
+		},
+		{
+			.type = RTE_FLOW_ACTION_TYPE_END,
+		}
+	};
+
+	return inner_rss_flow_create(iface, "IPv4", pattern, actions);
+}
+
+static int
+ipv6_inner_rss(const struct gatekeeper_if *iface,
+	const struct rte_eth_rss_conf *rss_conf, const uint16_t *queues,
+	uint32_t queue_num)
+{
+	struct rte_flow_item_eth eth_spec = {
+		.type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6),
+	};
+	struct rte_flow_item_eth eth_mask = {
+		.type = 0xFFFF,
+	};
+	struct rte_flow_item_ipv6 outer_ip_spec = {
+		.hdr = {
+			.proto = IPPROTO_IPV6,
+		}
+	};
+	struct rte_flow_item_ipv6 outer_ip_mask = {
+		.hdr = {
+			.proto = 0xFF,
+		}
+	};
+	struct rte_flow_item pattern[] = {
+		{
+			.type = RTE_FLOW_ITEM_TYPE_ETH,
+			.spec = &eth_spec,
+			.mask = &eth_mask,
+		},
+		{
+			.type = RTE_FLOW_ITEM_TYPE_IPV6,
+			.spec = &outer_ip_spec,
+			.mask = &outer_ip_mask,
+		},
+		{
+			.type = RTE_FLOW_ITEM_TYPE_END,
+		},
+	};
+	struct rte_flow_action_rss rss = {
+		.func = rss_conf->algorithm,
+		.level = 2,
+		.types = rss_conf->rss_hf & GATEKEEPER_IPV6_RSS_HF,
+		.key_len = iface->rss_key_len,
+		.queue_num = queue_num,
+		.key = iface->rss_key,
+		.queue = queues,
+
+	};
+	struct rte_flow_action actions[] = {
+		{
+			.type = RTE_FLOW_ACTION_TYPE_RSS,
+			.conf = &rss,
+		},
+		{
+			.type = RTE_FLOW_ACTION_TYPE_END,
+		}
+	};
+
+	return inner_rss_flow_create(iface, "IPv6", pattern, actions);
+}
+
+int
+enable_inner_rss(const struct gatekeeper_if *iface, const uint16_t *queues,
+	uint32_t queue_num)
+{
+	uint8_t rss_hash_key[GATEKEEPER_RSS_MAX_KEY_LEN];
+	struct rte_eth_rss_conf rss_conf = {
+		.rss_key = rss_hash_key,
+		.rss_key_len = sizeof(rss_hash_key),
+	};
+	int ret;
+
+	if (unlikely(!iface->rss)) {
+		G_LOG(NOTICE, "%s(%s): cannot enable inner RSS since RSS is not enabled or supported\n",
+			__func__, iface->name);
+		return -EINVAL;
+	}
+
+	if (unlikely(queue_num <= 1)) {
+		G_LOG(NOTICE, "%s(%s): inner RSS is not needed since queue_num = %u\n",
+			__func__, iface->name, queue_num);
+		return 0;
+	}
+
+	ret = rte_eth_dev_rss_hash_conf_get(iface->id, &rss_conf);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): failed to get RSS hash configuration (errno=%i): %s\n",
+			__func__, iface->name, -ret, rte_strerror(-ret));
+		return ret;
+	}
+
+	if (ipv4_if_configured(iface))
+		ipv4_inner_rss(iface, &rss_conf, queues, queue_num);
+
+	if (ipv6_if_configured(iface))
+		ipv6_inner_rss(iface, &rss_conf, queues, queue_num);
+
 	return 0;
 }

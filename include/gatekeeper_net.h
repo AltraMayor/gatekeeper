@@ -596,8 +596,19 @@ int needed_caps(int ncap, const cap_value_t *caps);
 struct net_config *get_net_conf(void);
 struct gatekeeper_if *get_if_front(struct net_config *net_conf);
 struct gatekeeper_if *get_if_back(struct net_config *net_conf);
-int gatekeeper_setup_rss(uint16_t port_id, uint16_t *queues,
+
+/* Set up the global RSS. */
+int gatekeeper_setup_rss(uint16_t port_id, const uint16_t *queues,
 	uint16_t num_queues);
+
+/*
+ * Enable inner **IP-in-IP** RSS for IPv4 and IPv6 if these protocols are
+ * configured in @iface and the underlying NICs support inner RSS.
+ * The same global RSS functions are set up for the inner RSS.
+ */
+int enable_inner_rss(const struct gatekeeper_if *iface, const uint16_t *queues,
+	uint32_t queue_num);
+
 int gatekeeper_get_rss_config(uint16_t port_id,
 	struct gatekeeper_rss_config *rss_conf);
 int gatekeeper_setup_user(struct net_config *net_conf,
