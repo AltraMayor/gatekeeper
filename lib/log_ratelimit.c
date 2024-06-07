@@ -27,7 +27,7 @@
 #include "gatekeeper_main.h"
 #include "gatekeeper_log_ratelimit.h"
 
-RTE_DEFINE_PER_LCORE(struct log_thread_time, _log_thread_time);
+RTE_DEFINE_PER_LCORE(struct log_thread_info, _log_thread_info);
 struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
 bool log_ratelimit_enabled;
 
@@ -40,7 +40,13 @@ log_ratelimit_enable(void)
 bool
 check_log_allowed(uint32_t level)
 {
-	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
+	unsigned int lcore = rte_lcore_id();
+	struct log_ratelimit_state *lrs;
+
+	if (unlikely(lcore >= RTE_MAX_LCORE))
+		return true;
+
+	lrs = &log_ratelimit_states[lcore];
 	return level <= (uint32_t)rte_atomic32_read(&lrs->log_level);
 }
 
@@ -49,15 +55,15 @@ check_log_allowed(uint32_t level)
 static void
 update_str_date_time(uint64_t now)
 {
-	struct log_thread_time *ttime = &RTE_PER_LCORE(_log_thread_time);
+	struct log_thread_info *tinfo = &RTE_PER_LCORE(_log_thread_info);
 	struct timespec tp;
 	struct tm *p_tm, time_info;
 	uint64_t diff_ns;
 	int ret;
 
-	RTE_BUILD_BUG_ON(sizeof(NO_TIME_STR) > sizeof(ttime->str_date_time));
+	RTE_BUILD_BUG_ON(sizeof(NO_TIME_STR) > sizeof(tinfo->str_date_time));
 
-	if (likely(now < ttime->update_time_at)) {
+	if (likely(now < tinfo->update_time_at)) {
 		/* Fast path, that is, high log rate. */
 		return;
 	}
@@ -74,7 +80,7 @@ update_str_date_time(uint64_t now)
 	if (unlikely(p_tm != &time_info))
 		goto no_time;
 
-	ret = strftime(ttime->str_date_time, sizeof(ttime->str_date_time),
+	ret = strftime(tinfo->str_date_time, sizeof(tinfo->str_date_time),
 		"%Y-%m-%d %H:%M:%S", &time_info);
 	if (unlikely(ret == 0))
 		goto no_time;
@@ -84,12 +90,12 @@ update_str_date_time(uint64_t now)
 no_tp:
 	tp.tv_nsec = 0;
 no_time:
-	strcpy(ttime->str_date_time, NO_TIME_STR);
+	strcpy(tinfo->str_date_time, NO_TIME_STR);
 next_update:
 	diff_ns = likely(tp.tv_nsec >= 0 && tp.tv_nsec < ONE_SEC_IN_NANO_SEC)
 		? (ONE_SEC_IN_NANO_SEC - tp.tv_nsec)
 		: ONE_SEC_IN_NANO_SEC; /* C library bug! */
-	ttime->update_time_at =
+	tinfo->update_time_at =
 		now + (typeof(now))round(diff_ns * cycles_per_ns);
 }
 
@@ -98,11 +104,11 @@ log_ratelimit_reset(struct log_ratelimit_state *lrs, uint64_t now)
 {
 	lrs->printed = 0;
 	if (lrs->suppressed > 0) {
+		struct log_thread_info *tinfo =
+			&RTE_PER_LCORE(_log_thread_info);
 		update_str_date_time(now);
-		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE,
-			G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
-			lrs->block_name, rte_lcore_id(),
-			RTE_PER_LCORE(_log_thread_time).str_date_time,
+		rte_log(RTE_LOG_NOTICE, BLOCK_LOGTYPE, G_LOG_PREFIX "%u log entries were suppressed during the last ratelimit interval\n",
+			tinfo->thread_name, tinfo->str_date_time,
 			"NOTICE", lrs->suppressed);
 	}
 	lrs->suppressed = 0;
@@ -160,12 +166,51 @@ log_ratelimit_allow(struct log_ratelimit_state *lrs, uint64_t now)
 	return false;
 }
 
+static void
+name_thread(bool overwrite_lcore_name)
+{
+	struct log_thread_info *tinfo = &RTE_PER_LCORE(_log_thread_info);
+	const size_t thread_name_len = sizeof(tinfo->thread_name);
+	unsigned int lcore;
+	uint32_t id;
+	const char *name;
+	int ret;
+
+	lcore = rte_lcore_id();
+	if (likely(lcore < RTE_MAX_LCORE)) {
+		id = lcore;
+		if (unlikely(overwrite_lcore_name))
+			name = "Main";
+		else if (likely(log_ratelimit_states[lcore].block_name[0] !=
+				'\0'))
+			name = log_ratelimit_states[lcore].block_name;
+		else
+			name = "lcore";
+	} else {
+		id = rte_gettid();
+		name = "thread";
+	}
+
+	ret = snprintf(tinfo->thread_name, thread_name_len, "%s/%u", name, id);
+	if (likely(ret > 0 && (typeof(thread_name_len))ret < thread_name_len))
+		return; /* Success. */
+
+	/* Failsafe. */
+	strncpy(tinfo->thread_name, name, thread_name_len);
+	if (unlikely(tinfo->thread_name[thread_name_len - 1] != '\0')) {
+		/* Failsafer. */
+		tinfo->thread_name[thread_name_len - 1] = '\0';
+	}
+}
+
 int
 gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
 	const char *format, ...)
 {
+	struct log_thread_info *tinfo = &RTE_PER_LCORE(_log_thread_info);
 	uint64_t now = rte_rdtsc(); /* Freeze current time. */
-	struct log_ratelimit_state *lrs = &log_ratelimit_states[rte_lcore_id()];
+	unsigned int lcore;
+	struct log_ratelimit_state *lrs;
 	va_list ap;
 	int ret;
 
@@ -173,9 +218,23 @@ gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
 	 * unlikely() reason: @log_ratelimit_enabled is only false during
 	 * startup.
 	 */
-	if (unlikely(!log_ratelimit_enabled))
+	if (unlikely(!log_ratelimit_enabled)) {
+		if (unlikely(tinfo->thread_name[0] == '\0'))
+			name_thread(true);
+		goto log;
+	}
+
+	if (unlikely(!tinfo->thread_name_initiated)) {
+		name_thread(false);
+		tinfo->thread_name_initiated = true;
+	}
+
+	lcore = rte_lcore_id();
+	/* unlikely() reason: most of the log comes from functional blocks. */
+	if (unlikely(lcore >= RTE_MAX_LCORE))
 		goto log;
 
+	lrs = &log_ratelimit_states[lcore];
 	if (level <= (uint32_t)rte_atomic32_read(&lrs->log_level) &&
 			log_ratelimit_allow(lrs, now))
 		goto log;
@@ -184,19 +243,6 @@ gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
 
 log:
 	update_str_date_time(now);
-	va_start(ap, format);
-	ret = rte_vlog(level, logtype, format, ap);
-	va_end(ap);
-	return ret;
-}
-
-int
-gatekeeper_log_main(uint32_t level, uint32_t logtype, const char *format, ...)
-{
-	va_list ap;
-	int ret;
-
-	update_str_date_time(rte_rdtsc());
 	va_start(ap, format);
 	ret = rte_vlog(level, logtype, format, ap);
 	va_end(ap);
@@ -222,7 +268,7 @@ int
 set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level)
 {
 	if (lcore_id >= RTE_MAX_LCORE) {
-		return -1;
+		return -EINVAL;
 	}
 	rte_atomic32_set(&log_ratelimit_states[lcore_id].log_level, log_level);
 	return 0;

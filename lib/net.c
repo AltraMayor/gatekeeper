@@ -1700,11 +1700,6 @@ log_if_name(char *if_name, size_t len, const struct gatekeeper_if *iface,
 	}
 }
 
-/*
- * ATTENTION: This function is called in the interrupt host thread,
- * which is not associated to an lcore, therefore it must call MAIN_LOG()
- * instead of G_LOG().
- */
 static void
 get_str_members(char *str_members, size_t size, uint16_t *members,
 	uint16_t count)
@@ -1720,13 +1715,13 @@ get_str_members(char *str_members, size_t size, uint16_t *members,
 		int ret = snprintf(str_members + total, remainder,
 			"%u%s", members[i], i + 1 < count ? ", " : "");
 		if (unlikely(ret < 0)) {
-			MAIN_LOG(ERR, "%s(): snprintf() failed (errno=%i): %s\n",
+			G_LOG(ERR, "%s(): snprintf() failed (errno=%i): %s\n",
 				__func__, errno, strerror(errno));
 			return;
 		}
 		total += ret;
 		if (unlikely((size_t)ret >= remainder)) {
-			MAIN_LOG(CRIT, "%s(): bug: str_members' size must be more than %u bytes\n",
+			G_LOG(CRIT, "%s(): bug: str_members' size must be more than %u bytes\n",
 				__func__, total + 1 /* Accounting for '\0'. */);
 			str_members[size - 1] = '\0';
 			return;
@@ -1737,8 +1732,7 @@ get_str_members(char *str_members, size_t size, uint16_t *members,
 #define STR_ERROR_MEMBERS "ERROR"
 /*
  * ATTENTION: This function is called in the interrupt host thread,
- * which is not associated to an lcore, therefore it must call MAIN_LOG()
- * instead of G_LOG().
+ * which is not associated to an lcore.
  */
 static int
 lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
@@ -1755,14 +1749,14 @@ lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
 	log_if_name(if_name, sizeof(if_name), iface, port_id);
 
 	if (unlikely(event != RTE_ETH_EVENT_INTR_LSC)) {
-		MAIN_LOG(CRIT, "%s(%s): bug: unexpected event %i\n",
+		G_LOG(CRIT, "%s(%s): bug: unexpected event %i\n",
 			__func__, if_name, event);
 		return -EFAULT;
 	}
 
 	ret = rte_eth_link_get_nowait(port_id, &link);
 	if (unlikely(ret < 0)) {
-		MAIN_LOG(ERR, "%s(%s): cannot get link status (errno=%i): %s\n",
+		G_LOG(ERR, "%s(%s): cannot get link status (errno=%i): %s\n",
 			__func__, if_name, -ret, rte_strerror(-ret));
 		return ret;
 	}
@@ -1770,7 +1764,7 @@ lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
 	ret = rte_eth_link_to_str(link_status_text, sizeof(link_status_text),
 		&link);
 	if (unlikely(ret < 0)) {
-		MAIN_LOG(ERR, "%s(%s): cannot get status string (errno=%i): %s\n",
+		G_LOG(ERR, "%s(%s): cannot get status string (errno=%i): %s\n",
 			__func__, if_name, -ret, rte_strerror(-ret));
 		return ret;
 	}
@@ -1783,19 +1777,19 @@ lsc_event_callback(uint16_t port_id, enum rte_eth_event_type event,
 		if (unlikely(ret < 0)) {
 			RTE_BUILD_BUG_ON(sizeof(STR_ERROR_MEMBERS) >
 				sizeof(str_members));
-			MAIN_LOG(ERR, "%s(%s): cannot get active members (errno=%i): %s\n",
+			G_LOG(ERR, "%s(%s): cannot get active members (errno=%i): %s\n",
 				__func__, if_name, -ret, rte_strerror(-ret));
 			strcpy(str_members, STR_ERROR_MEMBERS);
 		} else {
 			get_str_members(str_members, sizeof(str_members),
 				members, ret);
 		}
-		MAIN_LOG(NOTICE, "%s(%s): active members: %s; %s\n",
+		G_LOG(NOTICE, "%s(%s): active members: %s; %s\n",
 			__func__, if_name, str_members, link_status_text);
 		return 0;
 	}
 
-	MAIN_LOG(NOTICE, "%s(%s): %s\n", __func__, if_name, link_status_text);
+	G_LOG(NOTICE, "%s(%s): %s\n", __func__, if_name, link_status_text);
 
 	if (iface_bonded(iface)) {
 		/*

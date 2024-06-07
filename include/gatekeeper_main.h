@@ -34,38 +34,17 @@
 #include "list.h"
 
 #define BLOCK_LOGTYPE RTE_LOGTYPE_USER1
-#define G_LOG_PREFIX "%s/%u %s %s "
-#define G_LOG_MAIN "Main"
+#define G_LOG_PREFIX "%s %s %s "
 
 #define G_LOG(level, fmt, ...)						\
-	do {								\
-		unsigned int __g_log_lcore_id = rte_lcore_id();		\
-		gatekeeper_log_ratelimit(RTE_LOG_ ## level,		\
-			BLOCK_LOGTYPE,	G_LOG_PREFIX fmt,		\
-			likely(log_ratelimit_enabled)			\
-				? log_ratelimit_states[__g_log_lcore_id]\
-					.block_name			\
-				: G_LOG_MAIN,				\
-			__g_log_lcore_id,				\
-			RTE_PER_LCORE(_log_thread_time).str_date_time,	\
-			#level						\
-			__VA_OPT__(,) __VA_ARGS__);			\
-	} while (0)
+	gatekeeper_log_ratelimit(RTE_LOG_ ## level, BLOCK_LOGTYPE,	\
+		G_LOG_PREFIX fmt,					\
+		RTE_PER_LCORE(_log_thread_info).thread_name,		\
+		RTE_PER_LCORE(_log_thread_info).str_date_time,		\
+		#level							\
+		__VA_OPT__(,) __VA_ARGS__)				\
 
 #define G_LOG_CHECK(level) check_log_allowed(RTE_LOG_ ## level)
-
-/*
- * This macro should only be called in contexts other than logical cores
- * because it is independent of functional blocks and is not rate limited.
- *
- * From logical cores, call G_LOG().
- */
-#define MAIN_LOG(level, fmt, ...)					\
-	gatekeeper_log_main(RTE_LOG_ ## level, BLOCK_LOGTYPE,		\
-		G_LOG_PREFIX fmt, G_LOG_MAIN, rte_gettid(),		\
-		RTE_PER_LCORE(_log_thread_time).str_date_time,		\
-		#level							\
-		__VA_OPT__(,) __VA_ARGS__)
 
 extern volatile int exiting;
 

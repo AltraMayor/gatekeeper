@@ -83,18 +83,11 @@ int gatekeeper_log_ratelimit(uint32_t level, uint32_t logtype,
 #endif
 	__attribute__((format(printf, 3, 4)));
 
-int gatekeeper_log_main(uint32_t level, uint32_t logtype,
-	const char *format, ...)
-#ifdef __GNUC__
-#if (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 2))
-	__attribute__((cold))
-#endif
-#endif
-	__attribute__((format(printf, 3, 4)));
-
 /* Functions to set the log level for each functional block as well as lcore. */
 int set_log_level_per_block(const char *block_name, uint32_t log_level);
 int set_log_level_per_lcore(unsigned int lcore_id, uint32_t log_level);
+
+#define LOG_BLOCK_NAME_MAX_LEN (16)
 
 struct log_ratelimit_state {
 	uint64_t       interval_cycles;
@@ -103,28 +96,19 @@ struct log_ratelimit_state {
 	uint32_t       suppressed;
 	uint64_t       end;
 	rte_atomic32_t log_level;
-	char           block_name[16];
+	char           block_name[LOG_BLOCK_NAME_MAX_LEN];
 } __rte_cache_aligned;
 
-struct log_thread_time {
+struct log_thread_info {
+	bool     thread_name_initiated;
+	char     thread_name[2 * LOG_BLOCK_NAME_MAX_LEN];
 	char     str_date_time[32];
 	uint64_t update_time_at;
 };
 
-/*
- * Only use these variables in file lib/log_ratelimit.c and in macros
- * G_LOG() and MAIN_LOG().
- */
-RTE_DECLARE_PER_LCORE(struct log_thread_time, _log_thread_time);
+/* Only use these variables in file lib/log_ratelimit.c and in macro G_LOG(). */
+RTE_DECLARE_PER_LCORE(struct log_thread_info, _log_thread_info);
 extern struct log_ratelimit_state log_ratelimit_states[RTE_MAX_LCORE];
 extern bool log_ratelimit_enabled;
-
-/* Get the block name for the corresponding lcore. */
-static inline const char *get_block_name(unsigned int lcore_id)
-{
-	return lcore_id < RTE_MAX_LCORE
-		? log_ratelimit_states[lcore_id].block_name
-		: "NO-lcore";
-}
 
 #endif /* _GATEKEEPER_LOG_RATELIMIT_H_ */
