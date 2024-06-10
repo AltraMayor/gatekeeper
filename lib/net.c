@@ -1691,7 +1691,10 @@ log_if_name(char *if_name, size_t len, const struct gatekeeper_if *iface,
 		}
 	}
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
 	strncpy(if_name, iface->name, len);
+#pragma GCC diagnostic pop
 	if (unlikely(if_name[len - 1] != '\0')) {
 		G_LOG(CRIT, "%s(%s/%u): bug: len = %lu < strlen(iface->name) = %lu\n",
 			__func__, iface->name, port_id,

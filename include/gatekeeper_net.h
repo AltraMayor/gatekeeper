@@ -102,7 +102,7 @@ enum {
  * Need forward declaration because acl_cb_func and struct gatekeeper_if
  * are circularly defined.
  */
-struct gatekeeper_if *iface;
+struct gatekeeper_if;
 typedef int (*acl_cb_func)(struct rte_mbuf **pkts, unsigned int num_pkts,
 	struct gatekeeper_if *iface);
 /* Format of function called when no rule matches in the IPv6 ACL. */
