@@ -941,15 +941,19 @@ i40e_clear_inset_field(struct rte_pmd_i40e_inset *inset, uint8_t field_idx)
 {
 	int ret = rte_pmd_i40e_inset_field_clear(&inset->inset, field_idx);
 	if (unlikely(ret < 0)) {
-		G_LOG(ERR, "%s(): cannot clear field %i\n",
-			__func__, field_idx);
+		G_LOG(ERR, "%s(): cannot clear field %i (errno=%i): %s\n",
+			__func__, field_idx, -ret, rte_strerror(-ret));
+		/*
+		 * Don't return @ret, so callers don't have to use
+		 * rte_strerror() since this function is not part of RTE.
+		 */
+		return -EINVAL;
 	}
-	return ret;
+	return 0;
 }
 
 static int
-i40e_disable_ports_from_inset(uint16_t port_id,
-	uint8_t pctype_id)
+i40e_disable_ports_from_inset(uint16_t port_id, uint8_t pctype_id)
 {
 	struct rte_pmd_i40e_inset inset;
 
@@ -959,7 +963,11 @@ i40e_disable_ports_from_inset(uint16_t port_id,
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(port_id=%i, pctype=%i): cannot get inset (errno=%i): %s\n",
 			__func__, port_id, pctype_id, -ret, rte_strerror(-ret));
-		return ret;
+		/*
+		 * Don't return @ret, so callers don't have to use
+		 * rte_strerror() since this function is not part of RTE.
+		 */
+		return -EINVAL;
 	}
 
 	/*
@@ -986,15 +994,21 @@ i40e_disable_ports_from_inset(uint16_t port_id,
 	if (unlikely(ret < 0)) {
 		G_LOG(ERR, "%s(port_id=%i, pctype=%i): cannot set inset (errno=%i): %s\n",
 			__func__, port_id, pctype_id, -ret, rte_strerror(-ret));
+		/*
+		 * Don't return @ret, so callers don't have to use
+		 * rte_strerror() since this function is not part of RTE.
+		 */
+		return -EINVAL;
 	}
-	return ret;
+
+	return 0;
 }
 
 static int
-i40e_disable_pctypes_ports_from_inset(uint16_t port_id, uint8_t *pctypes,
+i40e_disable_pctypes_ports_from_inset(uint16_t port_id, const uint8_t *pctypes,
 	uint8_t n)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < n; i++) {
 		int ret = i40e_disable_ports_from_inset(port_id, pctypes[i]);
 		if (unlikely(ret < 0))
@@ -1011,7 +1025,7 @@ i40e_disable_ipv4_tcp_udp_ports_from_inset(uint16_t port_id)
 	 * its input sets" of "Intel Ethernet Controller X710/XXV710/XL710
 	 * Datasheet".
 	 */
-	uint8_t pctypes[] = {
+	const uint8_t pctypes[] = {
 		31, /* Non-fragmented IPv4, UDP. */
 		33, /* Non-fragmented IPv4, TCP. */
 	};
@@ -1027,12 +1041,62 @@ i40e_disable_ipv6_tcp_udp_ports_from_inset(uint16_t port_id)
 	 * its input sets" of "Intel Ethernet Controller X710/XXV710/XL710
 	 * Datasheet".
 	 */
-	uint8_t pctypes[] = {
+	const uint8_t pctypes[] = {
 		41, /* Non-fragmented IPv6, UDP. */
 		43, /* Non-fragmented IPv6, TCP. */
 	};
 	return i40e_disable_pctypes_ports_from_inset(port_id, pctypes,
 		RTE_DIM(pctypes));
+}
+
+static int
+if_i40e_then_disable_ipv4_ipv6_insets(const struct gatekeeper_if *iface)
+{
+	int ret;
+
+	if (!iface->alternative_rss_hash)
+		return 0;
+
+	if (ipv4_if_configured(iface)) {
+		ret = i40e_disable_ipv4_tcp_udp_ports_from_inset(iface->id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): i40e_disable_ipv4_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
+				__func__, iface->name, -ret, strerror(-ret));
+			return ret;
+		}
+	}
+
+	if (ipv6_if_configured(iface)) {
+		ret = i40e_disable_ipv6_tcp_udp_ports_from_inset(iface->id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): i40e_disable_ipv6_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
+				__func__, iface->name, -ret, strerror(-ret));
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static int
+if_i40e_then_disable_all_insets(const struct net_config *net)
+{
+	int ret = if_i40e_then_disable_ipv4_ipv6_insets(&net->front);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): if_i40e_then_disable_ipv4_ipv6_insets() failed (errno=%i): %s\n",
+			__func__, net->front.name, -ret, strerror(-ret));
+		return ret;
+	}
+
+	if (!net->back_iface_enabled)
+		return 0;
+
+	ret = if_i40e_then_disable_ipv4_ipv6_insets(&net->back);
+	if (unlikely(ret < 0)) {
+		G_LOG(ERR, "%s(%s): if_i40e_then_disable_ipv4_ipv6_insets() failed (errno=%i): %s\n",
+			__func__, net->back.name, -ret, strerror(-ret));
+	}
+	return ret;
 }
 
 static int
@@ -1190,16 +1254,8 @@ check_if_rss(struct gatekeeper_if *iface,
 			goto disable_rss;
 		}
 
-		if (iface->alternative_rss_hash) {
-			ret = i40e_disable_ipv4_tcp_udp_ports_from_inset(
-				iface->id);
-			if (unlikely(ret < 0)) {
-				G_LOG(ERR, "%s(%s): i40e_disable_ipv4_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
-					__func__, iface->name,
-					-ret, rte_strerror(-ret));
-				goto disable_rss;
-			}
-		} else if (unlikely((rss_off & RTE_ETH_RSS_IPV4) == 0)) {
+		if (unlikely((rss_off & RTE_ETH_RSS_IPV4) == 0 &&
+				!iface->alternative_rss_hash)) {
 			G_LOG(WARNING, "%s(%s): interface does not support the ETH_RSS_IPV4 hash function. The device may not hash packets to the correct queues; you may try the parameter alternative_rss_hash\n",
 				__func__, iface->name);
 		}
@@ -1213,16 +1269,8 @@ check_if_rss(struct gatekeeper_if *iface,
 			goto disable_rss;
 		}
 
-		if (iface->alternative_rss_hash) {
-			ret = i40e_disable_ipv6_tcp_udp_ports_from_inset(
-				iface->id);
-			if (unlikely(ret < 0)) {
-				G_LOG(ERR, "%s(%s): i40e_disable_ipv6_tcp_udp_ports_from_inset() failed (errno=%i): %s\n",
-					__func__, iface->name,
-					-ret, rte_strerror(-ret));
-				goto disable_rss;
-			}
-		} else if (unlikely((rss_off & RTE_ETH_RSS_IPV6) == 0)) {
+		if (unlikely((rss_off & RTE_ETH_RSS_IPV6) == 0 &&
+				!iface->alternative_rss_hash)) {
 			G_LOG(WARNING, "%s(%s): interface does not support the ETH_RSS_IPV6 hash function. The device may not hash packets to the correct queues; you may try the parameter alternative_rss_hash\n",
 				__func__, iface->name);
 		}
@@ -2342,8 +2390,20 @@ start_network_stage2(void *arg)
 			goto destroy_front;
 	}
 
+	/*
+	 * The following call must come after all interfaces start because
+	 * the i40e driver resets the global registers at start and
+	 * the front and back interfaces are often the same driver.
+	 */
+	ret = if_i40e_then_disable_all_insets(net);
+	if (unlikely(ret < 0))
+		goto destroy_back;
+
 	return 0;
 
+destroy_back:
+	if (net->back_iface_enabled)
+		destroy_iface(&net->back, IFACE_DESTROY_STOP);
 destroy_front:
 	destroy_iface(&net->front, IFACE_DESTROY_STOP);
 fail:
