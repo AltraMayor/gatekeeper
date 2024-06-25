@@ -1141,6 +1141,42 @@ randomize_rss_key(struct gatekeeper_if *iface)
 	return 0;
 }
 
+static int
+check_if_queues(struct gatekeeper_if *iface,
+	const struct rte_eth_dev_info *dev_info, struct rte_eth_conf *port_conf)
+{
+	const char *type_queues;
+	unsigned int requested_queues, max_queues;
+
+	/*
+	 * DPDK API quirk: rte_eth_dev_configure() receives the numbers of
+	 * RX and TX queues as parameters instead of fields in @port_conf.
+	 */
+	RTE_SET_USED(port_conf);
+
+	if (unlikely(iface->num_rx_queues > dev_info->max_rx_queues)) {
+		type_queues = "RX";
+		requested_queues = iface->num_rx_queues;
+		max_queues = dev_info->max_rx_queues;
+		goto error;
+	}
+
+	if (unlikely(iface->num_tx_queues > dev_info->max_tx_queues)) {
+		type_queues = "TX";
+		requested_queues = iface->num_tx_queues;
+		max_queues = dev_info->max_tx_queues;
+		goto error;
+	}
+
+	return 0;
+
+error:
+	G_LOG(ERR, "%s(%s): the current configuration requires %u %s queues, but the interface supports at most %u %s queues. It may be possible to reduce the number of instances of the GK or GT functional block to reduce the number of queues. If not, more capable NICs are needed.\n",
+		__func__, iface->name, requested_queues, type_queues,
+		max_queues, type_queues);
+	return -ENOSPC;
+}
+
 /*
  * Split up RTE_ETH_RSS_IP into IPv4-related and IPv6-related hash functions.
  * For each type of IP being used in Gatekeeper, check the supported
@@ -1434,6 +1470,10 @@ check_if_offloads(struct gatekeeper_if *iface, struct rte_eth_conf *port_conf)
 			__func__, iface->name, -ret, rte_strerror(-ret));
 		return ret;
 	}
+
+	ret = check_if_queues(iface, &dev_info, port_conf);
+	if (unlikely(ret < 0))
+		return ret;
 
 	ret = check_if_rss(iface, &dev_info, port_conf);
 	if (unlikely(ret < 0))
