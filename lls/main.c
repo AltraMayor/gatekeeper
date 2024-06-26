@@ -16,11 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <stdbool.h>
-#include <unistd.h>
 
 #include <rte_cycles.h>
 #include <rte_ethdev.h>
@@ -681,7 +677,7 @@ lls_proc(void *arg)
 	uint64_t timer_resolution_cycles =
 		net_conf->rotate_log_interval_sec * cycles_per_sec;
 
-	G_LOG(NOTICE, "The LLS block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The LLS block is running at tid = %u\n", rte_gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");

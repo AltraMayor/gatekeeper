@@ -16,13 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/un.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -621,8 +617,8 @@ dyn_cfg_proc(void *arg)
 	int ret = 0;
 	struct dynamic_config *dy_conf = arg;
 
-	G_LOG(NOTICE,
-		"The Dynamic Config block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The Dynamic Config block is running at tid = %u\n",
+		rte_gettid());
 
 	if (dy_conf->gt != NULL) {
 		/*

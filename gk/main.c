@@ -16,15 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
-#include <unistd.h>
 #include <time.h>
 
 #include <rte_ip.h>
@@ -2350,7 +2346,7 @@ gk_proc(void *arg)
 	uint32_t scan_iter = gk_conf->flow_table_scan_iter;
 	uint32_t iter_count = 0;
 
-	G_LOG(NOTICE, "The GK block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The GK block is running at tid = %u\n", rte_gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");

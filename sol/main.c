@@ -16,11 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <math.h>
-#include <unistd.h>
 
 #include <rte_approx.h>
 #include <rte_sched.h>
@@ -517,7 +513,8 @@ sol_proc(void *arg)
 	struct sol_instance *instance = &sol_conf->instances[block_idx];
 	uint8_t tx_port_back = sol_conf->net->back.id;
 
-	G_LOG(NOTICE, "The Solicitor block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The Solicitor block is running at tid = %u\n",
+		rte_gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");
