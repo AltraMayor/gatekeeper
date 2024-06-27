@@ -16,11 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <net/if.h>
-#include <unistd.h>
 
 #include "gatekeeper_cps.h"
 #include "gatekeeper_l2.h"
@@ -688,7 +684,7 @@ cps_proc(void *arg)
 	 */
 	cap_value_t caps[] = {CAP_NET_ADMIN, CAP_SYS_MODULE};
 
-	G_LOG(NOTICE, "The CPS block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The CPS block is running at tid = %u\n", rte_gettid());
 
 	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");

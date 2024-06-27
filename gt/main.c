@@ -16,16 +16,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <lualib.h>
 #include <lauxlib.h>
 #include <netinet/ip.h>
 #include <math.h>
-#include <unistd.h>
 
 #include <rte_log.h>
 #include <rte_ether.h>
@@ -1617,7 +1613,7 @@ gt_proc(void *arg)
 	death_row.cnt = 0;
 	gt_max_pkt_burst = gt_conf->max_pkt_burst;
 
-	G_LOG(NOTICE, "The GT block is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The GT block is running at tid = %u\n", rte_gettid());
 
 	if (needed_caps(RTE_DIM(caps), caps) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");

@@ -106,7 +106,8 @@ int
 rib_create(struct rib_head *rib, const char *name, int socket_id,
 	uint8_t max_length, uint32_t max_rules)
 {
-	rib_address_t dummy;
+	/* Initialize to avoid warning: ‘dummy’ may be used uninitialized. */
+	rib_address_t dummy = 0;
 	int ret;
 	unsigned int n;
 

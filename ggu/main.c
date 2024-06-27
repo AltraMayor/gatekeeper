@@ -16,11 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* For gettid(). */
-#define _GNU_SOURCE
-
 #include <stdbool.h>
-#include <unistd.h>
 
 #include <rte_ip.h>
 #include <rte_udp.h>
@@ -586,7 +582,7 @@ ggu_proc(void *arg)
 	uint16_t rx_queue = ggu_conf->rx_queue_back;
 	uint16_t max_pkt_burst = ggu_conf->max_pkt_burst;
 
-	G_LOG(NOTICE, "The GT-GK unit is running at tid = %u\n", gettid());
+	G_LOG(NOTICE, "The GT-GK unit is running at tid = %u\n", rte_gettid());
 
 	if (needed_caps(0, NULL) < 0) {
 		G_LOG(ERR, "Could not set needed capabilities\n");

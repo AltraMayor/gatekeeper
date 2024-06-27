@@ -1224,6 +1224,8 @@ check_if_rss(struct gatekeeper_if *iface,
 	 * hash functions.
 	 */
 	iface->rss = true;
+	port_conf->rx_adv_conf.rss_conf.algorithm =
+		RTE_ETH_HASH_FUNCTION_DEFAULT;
 	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
 	if (ipv4_if_configured(iface)) {
 		port_conf->rx_adv_conf.rss_conf.rss_hf |=
@@ -1345,6 +1347,7 @@ check_if_rss(struct gatekeeper_if *iface,
 
 disable_rss:
 	iface->rss = false;
+	port_conf->rxmode.mq_mode = RTE_ETH_MQ_RX_NONE;
 	port_conf->rx_adv_conf.rss_conf.rss_hf = 0;
 	iface->num_rx_queues = 1;
 	G_LOG(WARNING, "%s(%s): the interface does not have RSS capabilities; the GK or GT block will receive all packets and send them to the other blocks as needed. Gatekeeper or Grantor should only be run with one lcore dedicated to GK or GT in this mode; restart with only one GK or GT lcore if necessary\n",
@@ -1973,12 +1976,7 @@ error:
 static int
 init_iface(struct gatekeeper_if *iface)
 {
-	struct rte_eth_conf port_conf = {
-		.rxmode = {
-			.mq_mode = RTE_ETH_MQ_RX_NONE,
-		},
-		/* Other offloads configured below. */
-	};
+	struct rte_eth_conf port_conf = {};
 	unsigned int i;
 	int ret;
 
