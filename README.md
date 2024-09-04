@@ -118,8 +118,8 @@ page.
 Once the packages are downloaded, they can be installed with the commands below:
 
 ```console
-$ tar -zxvf gatekeeper-ubuntu-20.04-packages.tar.gz
-$ cd gatekeeper-ubuntu-20.04-packages
+$ tar -zxvf gatekeeper-ubuntu-24.04-packages.tar.gz
+$ cd gatekeeper-ubuntu-24.04-packages
 $ sudo dpkg -i gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
 ```
 
@@ -180,7 +180,7 @@ $ sudo apt-get update
 $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
     build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
     libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
-    autoconf flex bison libncurses5-dev libreadline-dev python \
+    autoconf flex bison libncurses5-dev libreadline-dev python3 \
     libcap-dev libcap2 meson ninja-build pkg-config
 ```
 
