@@ -36,11 +36,7 @@ $ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 
 ### Enable the kernel module `vfio-pci`
 
-Starting with Gatekeeper v1.1, the Linux kernel module `vfio-pci` is
-the prefered way to bind NICs to DPDK/Gatekeeper.
-In case you cannot get the kernel module `vfio-pci` running on your machine,
-you may tray an alternative to `vfio-pci` as documented on [this page](https://github.com/AltraMayor/gatekeeper/wiki/Alternatives-to-kernel-module-vfio%E2%80%90pci).
-
+The Linux kernel module `vfio-pci` is needed to bind NICs to DPDK/Gatekeeper.
 In order for `vfio-pci` to work, both the BIOS and the kernel must support it.
 BIOSes must have VT-d enabled.
 BIOSes may identify VT-d as "Intel (R) VT for Directed I/O",
@@ -113,7 +109,7 @@ Everything is all set if the outputs of the commands above are not empty.
 
 ### Option 1: Obtain Packages
 
-Gatekeeper Debian packages are available for Ubuntu 20.04 LTS at the project's
+Gatekeeper Debian packages are available for Ubuntu 24.04 LTS at the project's
 [Releases](https://github.com/AltraMayor/gatekeeper/releases)
 page.
 
