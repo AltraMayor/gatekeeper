@@ -10,7 +10,7 @@ on:
 jobs:
   build:
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Checkout repository and submodules
@@ -27,7 +27,7 @@ jobs:
         libhugetlbfs-bin build-essential gcc-multilib linux-headers-`uname -r`
         libmnl0 libmnl-dev libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev
         libc6-dev-i386 autoconf flex bison libncurses5-dev libreadline-dev
-        python python3-pyelftools libcap-dev libcap2 meson ninja-build
+        python3 python3-pyelftools libcap-dev libcap2 meson ninja-build
         pkg-config
 
     - name: Setup Gatekeeper
