@@ -15,7 +15,8 @@ Build-Depends: debhelper (>= 12),
                libmnl-dev,
                libnuma-dev,
                meson,
-               ninja-build
+               ninja-build,
+               python3-pyelftools
 Maintainer: Andre Nathan <andre@digirati.com.br>
 Standards-Version: 4.1.4
 Vcs-Browser: https://github.com/AltraMayor/gatekeeper
@@ -25,7 +26,7 @@ Package: gatekeeper
 Architecture: linux-any
 Depends: adduser,
          ucf,
-         dpdk-rte-kni-dkms,
+         python3,
          ${shlibs:Depends},
          ${misc:Depends}
 Description: Open source DDoS protection system
