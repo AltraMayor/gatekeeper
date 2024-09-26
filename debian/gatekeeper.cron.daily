@@ -4,5 +4,5 @@
   -maxdepth 1                     \
   -type f                         \
   -name gatekeeper_\*.log         \
-  -mtime 1                        \
+  -mtime +1                       \
   -delete
