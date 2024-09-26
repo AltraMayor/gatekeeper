@@ -1,3 +1,9 @@
+gatekeeper (1.2.0-0gatekeeper1) noble; urgency=medium
+
+  * Rebuild for 1.2.0
+
+ -- Andre Nathan <andre@digirati.com.br>  Tue, 26 Sep 2024 14:03:25 -0300
+
 gatekeeper (1.1.0-0gatekeeper1) focal; urgency=medium
 
   * Rebuild for 1.1.0

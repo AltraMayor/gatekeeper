@@ -26,10 +26,10 @@ build_luajit:
 	cp "$(LUA_PATH)/libluajit.a" "$(LUA_PATH)/libluajit-5.1.a"
 
 build_dpdk:
-	cd dependencies/dpdk;                        \
-		meson --prefix=$(DPDK_INSTALL_PATH) build; \
-		cd build;                                  \
-		ninja;                                     \
+	cd dependencies/dpdk;                                    \
+		meson setup --prefix=$(DPDK_INSTALL_PATH) build; \
+		cd build;                                        \
+		ninja;                                           \
 		ninja install
 
 build_gatekeeper: build_luajit build_dpdk
