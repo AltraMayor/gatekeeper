@@ -110,13 +110,13 @@ struct tcpsrv_state {
 	struct tcpsrv_ports ports;
 };
 
-static inline int64_t
+static __rte_always_inline int64_t
 reset_budget1(const struct tcpsrv_state *state)
 {
 	return (int64_t)state->tx1_rate_kib_sec * 1024; /* 1024 B/KiB */
 }
 
-static inline void
+static __rte_always_inline void
 reset_budget2(struct tcpsrv_state *state)
 {
 	state->budget2_byte = reset_budget1(state) * 5 / 100; /* 5% */
@@ -151,7 +151,7 @@ tcpsrv_init(struct gk_bpf_init_ctx *ctx)
 	return GK_BPF_INIT_RET_OK;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 tcpsrv_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 	struct tcpsrv_state *state, uint32_t pkt_len)
 {
@@ -176,7 +176,7 @@ tcpsrv_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 	return GK_BPF_PKT_RET_FORWARD;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 tcpsrv_pkt_test_2nd_limit(struct tcpsrv_state *state, uint32_t pkt_len)
 {
 	state->budget2_byte -= pkt_len;
@@ -185,7 +185,7 @@ tcpsrv_pkt_test_2nd_limit(struct tcpsrv_state *state, uint32_t pkt_len)
 	return GK_BPF_PKT_RET_FORWARD;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 tcpsrv_pkt_end(struct gk_bpf_pkt_ctx *ctx, struct tcpsrv_state *state)
 {
 	uint8_t priority = PRIORITY_GRANTED;
@@ -208,7 +208,7 @@ tcpsrv_pkt_end(struct gk_bpf_pkt_ctx *ctx, struct tcpsrv_state *state)
 			break
 #define FORWARD ports++
 
-static inline bool
+static __rte_always_inline bool
 is_port_listed_forward(const uint16_t *ports, uint8_t count, uint16_t port)
 {
 	RTE_BUILD_BUG_ON(TCPSRV_MAX_NUM_PORTS != 12);
@@ -233,7 +233,7 @@ is_port_listed_forward(const uint16_t *ports, uint8_t count, uint16_t port)
 	return *ports == port;
 }
 
-static inline bool
+static __rte_always_inline bool
 is_listening_port(struct tcpsrv_state *state, uint16_t port_be)
 {
 	return is_port_listed_forward(&state->ports.p[0],
@@ -242,7 +242,7 @@ is_listening_port(struct tcpsrv_state *state, uint16_t port_be)
 
 #define BACK ports--
 
-static inline bool
+static __rte_always_inline bool
 is_port_listed_back(const uint16_t *ports, uint8_t count, uint16_t port)
 {
 	RTE_BUILD_BUG_ON(TCPSRV_MAX_NUM_PORTS != 12);
@@ -267,7 +267,7 @@ is_port_listed_back(const uint16_t *ports, uint8_t count, uint16_t port)
 	return *ports == port;
 }
 
-static inline bool
+static __rte_always_inline bool
 is_remote_port(struct tcpsrv_state *state, uint16_t port_be)
 {
 	return is_port_listed_back(&state->ports.p[TCPSRV_MAX_NUM_PORTS - 1],

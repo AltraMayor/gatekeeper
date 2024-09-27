@@ -23,11 +23,12 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/icmp6.h>
 
+#include <rte_common.h>
 #include <rte_mbuf_core.h>
 
 #include "gatekeeper_flow_bpf.h"
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 check_icmp(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)
 {
 	struct icmphdr *icmp_hdr;
@@ -58,7 +59,7 @@ check_icmp(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)
 	return GK_BPF_PKT_RET_FORWARD;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 check_icmp6(struct gk_bpf_pkt_ctx *ctx, struct rte_mbuf *pkt)
 {
 	struct icmp6_hdr *icmp6_hdr;

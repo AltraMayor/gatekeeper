@@ -101,7 +101,7 @@ struct grantedv2_state {
 	bool direct_if_possible;
 };
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 grantedv2_init_inline(struct gk_bpf_init_ctx *ctx)
 {
 	struct gk_bpf_cookie *cookie = init_ctx_to_cookie(ctx);
@@ -124,7 +124,7 @@ grantedv2_init_inline(struct gk_bpf_init_ctx *ctx)
 	return GK_BPF_INIT_RET_OK;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 grantedv2_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 	struct grantedv2_state *state, uint32_t pkt_len)
 {
@@ -149,7 +149,7 @@ grantedv2_pkt_begin(const struct gk_bpf_pkt_ctx *ctx,
 	return GK_BPF_PKT_RET_FORWARD;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 grantedv2_pkt_test_2nd_limit(struct grantedv2_state *state, uint32_t pkt_len)
 {
 	state->budget2_byte -= pkt_len;
@@ -158,7 +158,7 @@ grantedv2_pkt_test_2nd_limit(struct grantedv2_state *state, uint32_t pkt_len)
 	return GK_BPF_PKT_RET_FORWARD;
 }
 
-static inline uint64_t
+static __rte_always_inline uint64_t
 grantedv2_pkt_end(struct gk_bpf_pkt_ctx *ctx, struct grantedv2_state *state)
 {
 	uint8_t priority = PRIORITY_GRANTED;
