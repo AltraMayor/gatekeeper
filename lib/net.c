@@ -1690,23 +1690,6 @@ create_bond(struct gatekeeper_if *iface)
 		}
 	}
 
-	if (__lacp_enabled(iface)) {
-		/*
-		 * If LACP is enabled, enable multicast addresses.
-		 * Otherwise, rx_burst_8023ad() of DPDK's bonding driver
-		 * (see rte_eth_bond_pmd.c) is going to discard
-		 * multicast Ethernet packets such as ARP and
-		 * ND packets.
-		 */
-		ret = rte_eth_allmulticast_enable(iface->id);
-		if (unlikely(ret < 0)) {
-			G_LOG(ERR, "%s(%s): cannot enable multicast on bond device (errno=%i): %s\n",
-				__func__, iface->name,
-				-ret, rte_strerror(-ret));
-			goto close_bond;
-		}
-	}
-
 	/* Add members to bond. */
 	for (i = 0; i < iface->num_ports; i++) {
 		ret = rte_eth_bond_member_add(iface->id, iface->ports[i]);
@@ -2019,6 +2002,25 @@ init_iface(struct gatekeeper_if *iface)
 		ret = create_bond(iface);
 		if (unlikely(ret < 0))
 			goto free_ports;
+	}
+
+	/*
+	 * IPv6's protocol ND requires multicast. Therefore,
+	 * if IPv6 is enabled, enable multicast addresses.
+	 *
+	 * Most DPDK's drivers have multicast enabled by default,
+	 * but a few drivers have it disabled by default.
+	 * Drivers known to have multicast disabled by default are
+	 * the bonding driver when LACP is being used and the i40e driver.
+	 */
+	if (ipv6_if_configured(iface)) {
+		ret = rte_eth_allmulticast_enable(iface->id);
+		if (unlikely(ret < 0)) {
+			G_LOG(ERR, "%s(%s): cannot enable multicast (errno=%i): %s\n",
+				__func__, iface->name,
+				-ret, rte_strerror(-ret));
+			goto close_ports;
+		}
 	}
 
 	/* Make sure the interface supports hardware offloads. */
