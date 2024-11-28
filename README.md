@@ -181,7 +181,7 @@ $ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
     build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
     libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
     autoconf flex bison libncurses5-dev libreadline-dev python3 \
-    libcap-dev libcap2 meson ninja-build pkg-config
+    python3-pyelftools libcap-dev libcap2 meson ninja-build pkg-config
 ```
 
 Note: Both `libmnl0` and `libmnl-dev` are needed to compile and run
@@ -196,7 +196,7 @@ the folder `bpf/`.
 The `autoconf`, `flex`, `bison`, `libncurses5-dev`, and
 `libreadline-dev` packages are for BIRD. The `devscripts` package is used to
 build Gatekeeper Debian packages.
-The packages `python` and `python3-pyelftools` are needed to build DPDK and to
+The packages `python3` and `python3-pyelftools` are needed to build DPDK and to
 run Python scripts such as `dpdk-devbind.py`.
 `libcap-dev` is needed to compile Gatekeeper, but only `libcap2` is needed
 to run Gatekeeper.
