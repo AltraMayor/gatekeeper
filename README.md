@@ -27,7 +27,7 @@ For more information, see the [Gatekeeper wiki](https://github.com/AltraMayor/ga
 ### Configure Hugepages
 
 DPDK requires the use of hugepages; instructions for mounting hugepages are
-available in the [requirements documentation](http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
+available in the [requirements documentation](https://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
 On many systems, the following hugepages setup is sufficient:
 
 ```sh
@@ -208,7 +208,7 @@ to run Gatekeeper.
 `meson` and `ninja-build` are needed for building DPDK.
 `pkg-config` is needed to compile Gatekeeper.
 
-To use DPDK, make sure you have all of the [environmental requirements](http://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
+To use DPDK, make sure you have all of the [environmental requirements](https://dpdk.org/doc/guides/linux_gsg/sys_reqs.html#running-dpdk-application).
 
 #### Clone Repository
 
@@ -216,7 +216,7 @@ Clone the Gatekeeper repository, including the submodules that
 contain Gatekeeper dependencies:
 
 ```sh
-git clone --recursive http://github.com/AltraMayor/gatekeeper.git
+git clone --recursive https://github.com/AltraMayor/gatekeeper.git
 ```
 
 If you do not use the `--recursive` clone option, you need to obtain the
