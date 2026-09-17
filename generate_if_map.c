@@ -122,6 +122,7 @@ main(int argc, char **argv)
 		struct ifreq ifr;
 		struct ethtool_cmd cmd;
 		struct ethtool_drvinfo drvinfo;
+		unsigned int domain, bus, dev, func;
 
 		/*
 		 * Use AF_PACKET to only get each interface once,
@@ -140,8 +141,11 @@ main(int argc, char **argv)
 		ifr.ifr_data = (void *)&drvinfo;
 		drvinfo.cmd = ETHTOOL_GDRVINFO;
 
-		if (ioctl(sock, SIOCETHTOOL, &ifr) < 0) {
-			perror("ioctl");
+		if (ioctl(sock, SIOCETHTOOL, &ifr) < 0 ||
+				sscanf(drvinfo.bus_info, "%x:%x:%x.%x",
+					&domain, &bus, &dev, &func) != 4) {
+			fprintf(stderr, "Interface %s does not have a PCI bus address\n",
+				iter->ifa_name);
 			goto next;
 		}
 
