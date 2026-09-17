@@ -30,8 +30,8 @@ DPDK requires the use of hugepages; instructions for mounting hugepages are
 available in the [requirements documentation](http://doc.dpdk.org/guides/linux_gsg/sys_reqs.html#use-of-hugepages-in-the-linux-environment).
 On many systems, the following hugepages setup is sufficient:
 
-```console
-$ echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+```sh
+echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 ```
 
 ### Enable the kernel module `vfio-pci`
@@ -50,8 +50,8 @@ enabled before VT-d can be enabled.
 To check that VT-d is enabled at the BIOS, run the following command after
 Linux boots up:
 
-```console
-$ dmesg | grep -e DMAR
+```sh
+dmesg | grep -e DMAR
 ```
 
 If the command above returns some lines, VT-d should be enabled.
@@ -65,8 +65,8 @@ Notice that one needs a kernel version greater than 3.6 to support IOMMU.
 One can verify if the running kernel has IOMMU enabled by default with
 the following command:
 
-```console
-$ grep CONFIG_INTEL_IOMMU_DEFAULT_ON /boot/config-`uname -r`
+```sh
+grep CONFIG_INTEL_IOMMU_DEFAULT_ON /boot/config-`uname -r`
 ```
 
 Most likely, the command above will output
@@ -83,8 +83,8 @@ see [this page](https://unix.stackexchange.com/questions/595353/vt-d-support-ena
 One can check if the running kernel received this parameter with
 the command below:
 
-```console
-$ cat /proc/cmdline | grep intel_iommu=on
+```sh
+cat /proc/cmdline | grep intel_iommu=on
 ```
 
 If the running kernel has not received the parameter `intel_iommu=on`,
@@ -95,14 +95,14 @@ Information on how to add a boot parameter to GRUB is found
 Once VT-d is enabled at the BIOS and the kernel supports IOMMU,
 one can verify that everything is all set with one of the following commands:
 
-```console
-$ ls /sys/kernel/iommu_groups
+```sh
+ls /sys/kernel/iommu_groups
 ```
 
 OR
 
-```console
-$ dmesg | grep -ie 'IOMMU\s\+enabled'
+```sh
+dmesg | grep -ie 'IOMMU\s\+enabled'
 ```
 
 Everything is all set if the outputs of the commands above are not empty.
@@ -117,10 +117,10 @@ page.
 
 Once the packages are downloaded, they can be installed with the commands below:
 
-```console
-$ tar -zxvf gatekeeper-ubuntu-24.04-packages.tar.gz
-$ cd gatekeeper-ubuntu-24.04-packages
-$ sudo dpkg -i gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
+```sh
+tar -zxvf gatekeeper-ubuntu-24.04-packages.tar.gz
+cd gatekeeper-ubuntu-24.04-packages
+sudo dpkg -i gatekeeper-bird_*_amd64.deb gatekeeper_*_amd64.deb
 ```
 
 #### Configure Gatekeeper
@@ -136,10 +136,15 @@ for further information on whether these need to be changed in your setup.
 
 You also need to edit the `/etc/gatekeeper/envvars` file and set the
 `GATEKEEPER_INTERFACES` variable to the PCI addresses of the network adapters
-to be bound to DPDK. These can found using the `lshw` command. For example:
+to be bound to DPDK. These can be found using the `lshw` command:
 
-```console
-# lshw -c network -businfo
+```sh
+sudo lshw -c network -businfo
+```
+
+Example output:
+
+```text
 Bus info          Device     Class          Description
 =======================================================
 pci@0000:08:00.0  eth0       network        I350 Gigabit Network Connection
@@ -164,9 +169,9 @@ in `GATEKEEPER_ARGS`.
 Run the commands below to start Gatekeeper and to ensure it is started
 automatically on reboots.
 
-```console
-$ sudo systemctl start gatekeeper
-$ sudo systemctl enable gatekeeper
+```sh
+sudo systemctl start gatekeeper
+sudo systemctl enable gatekeeper
 ```
 
 ### Option 2: Build from Source
@@ -175,9 +180,9 @@ $ sudo systemctl enable gatekeeper
 
 Install the following software dependencies:
 
-```console
-$ sudo apt-get update
-$ sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
+```sh
+sudo apt-get update
+sudo apt-get -y -q install git clang devscripts doxygen libhugetlbfs-bin \
     build-essential gcc-multilib linux-headers-`uname -r` libmnl0 libmnl-dev \
     libkmod2 libkmod-dev libnuma-dev libelf1 libelf-dev libc6-dev-i386 \
     autoconf flex bison libncurses5-dev libreadline-dev python3 \
@@ -210,17 +215,17 @@ To use DPDK, make sure you have all of the [environmental requirements](http://d
 Clone the Gatekeeper repository, including the submodules that
 contain Gatekeeper dependencies:
 
-```console
-$ git clone --recursive http://github.com/AltraMayor/gatekeeper.git
+```sh
+git clone --recursive http://github.com/AltraMayor/gatekeeper.git
 ```
 
 If you do not use the `--recursive` clone option, you need to obtain the
 submodules that contain the dependences from within the `gatekeeper`
 directory:
 
-```console
-$ git submodule init
-$ git submodule update
+```sh
+git submodule init
+git submodule update
 ```
 
 #### Compile
@@ -231,8 +236,8 @@ Debian packages, refer to the section
 
 While in the `gatekeeper` directory, run the setup script:
 
-```console
-$ . setup.sh
+```sh
+. setup.sh
 ```
 
 This script compiles DPDK, LuaJIT, and BIRD, and loads the needed
@@ -242,8 +247,8 @@ names can be used in the Gatekeeper configuration files.
 
 Once DPDK and LuaJIT are compiled, `gatekeeper` can be compiled:
 
-```console
-$ make
+```sh
+make
 ```
 
 #### Configure Network Adapters
@@ -252,8 +257,8 @@ Before `gatekeeper` can be used, the network adapters must be bound to DPDK.
 For this, you can use the script `dependencies/dpdk/usertools/dpdk-devbind.py`.
 For example:
 
-```console
-$ sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=vfio-pci enp131s0f0
+```sh
+sudo dependencies/dpdk/usertools/dpdk-devbind.py --bind=vfio-pci enp131s0f0
 ```
 
 This command binds the interface `enp131s0f0` to the `vfio-pci` driver
@@ -266,8 +271,8 @@ above so that the bound interface appears in the list of interfaces in
 
 Once `gatekeeper` is compiled and the environment is configured correctly, run:
 
-```console
-$ sudo build/gatekeeper [EAL OPTIONS] -- [GATEKEEPER OPTIONS]
+```sh
+sudo build/gatekeeper [EAL OPTIONS] -- [GATEKEEPER OPTIONS]
 ```
 
 Where `[EAL OPTIONS]` are specified before a double dash and represent the
@@ -287,9 +292,9 @@ pulled, and that the build dependencies have been installed, as instructed
 above. Gatekeeper and the submodules will be automatically compiled during the
 package build process.
 
-```console
-$ tar --exclude-vcs -Jcvf ../gatekeeper_1.2.0.orig.tar.xz -C .. gatekeeper
-$ debuild -uc -us
+```sh
+tar --exclude-vcs -Jcvf ../gatekeeper_1.2.0.orig.tar.xz -C .. gatekeeper
+debuild -uc -us
 ```
 
 The Gatekeeper package will be available in the parent directory.
