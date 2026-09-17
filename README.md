@@ -31,7 +31,7 @@ available in the [requirements documentation](https://doc.dpdk.org/guides/linux_
 On many systems, the following hugepages setup is sufficient:
 
 ```sh
-echo 256 | sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+echo 2 | sudo tee /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
 ```
 
 ### Enable the kernel module `vfio-pci`
