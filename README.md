@@ -102,10 +102,14 @@ ls /sys/kernel/iommu_groups
 OR
 
 ```sh
-dmesg | grep -ie 'IOMMU\s\+enabled'
+ls /sys/class/iommu
 ```
 
 Everything is all set if the outputs of the commands above are not empty.
+Specifically, `/sys/kernel/iommu_groups` will list numeric IOMMU group
+directories (e.g. `0`, `1`, `2`), while `/sys/class/iommu` will list
+the detected IOMMU devices (such as `dmar0`, `dmar1` on Intel systems,
+or `ivhd0` on AMD systems).
 
 ### Option 1: Obtain Packages
 
