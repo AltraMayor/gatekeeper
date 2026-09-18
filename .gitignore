@@ -3,6 +3,7 @@
 *.ko
 *.obj
 *.elf
+*.bpf
 
 # Precompiled Headers
 *.gch
@@ -31,3 +32,10 @@
 # Debug files
 *.dSYM/
 *.su
+
+# Gatekeeper
+build/
+generate_if_map
+gkctl/gkctl
+lua/bpf/
+lua/if_map.lua
