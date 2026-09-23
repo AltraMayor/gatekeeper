@@ -1,0 +1,40 @@
+[
+  // CodeLLDB configuration for Gatekeeper.
+  //
+  // Gatekeeper requires root privileges for hugepages and direct hardware access.
+  // The "gatekeeper" configuration connects to lldb-server running as root on port 12345.
+  // The pre-debug "build" task launches lldb-server in the background if not already running.
+  //
+  // Note: To allow non-interactive launch of lldb-server via sudo, configure sudoers:
+  //   <username> ALL=(ALL) NOPASSWD: /usr/lib/llvm-*/bin/lldb-server
+  // Or start it manually once per session via Zed Task: "Gatekeeper: Start lldb-server".
+  {
+    "label": "gatekeeper",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": "Gatekeeper: Start lldb-server",
+    "program": "$ZED_WORKTREE_ROOT/build/gatekeeper",
+    "args": [],
+    "initCommands": [
+      "platform select remote-linux",
+      "platform connect connect://127.0.0.1:12345",
+      // Prevent LLDB from trying to upload/install the binary across the connection,
+      // since the workspace and debugger already share the local filesystem.
+      "settings set target.auto-install-main-executable false"
+    ]
+  },
+  // "gatekeeper (attach)" connects the debugger to a Gatekeeper process that is
+  // already running locally on this host (e.g. started in a terminal with
+  // `sudo ./build/gatekeeper ...` or as a service via `sudo systemctl start gatekeeper`).
+  //
+  // Note: Attaching to an already running root process requires appropriate ptrace
+  // permissions on Linux. If attachment fails with permission denied, allow ptrace
+  // across processes by running:
+  //   echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+  {
+    "label": "gatekeeper (attach)",
+    "adapter": "CodeLLDB",
+    "request": "attach",
+    "program": "$ZED_WORKTREE_ROOT/build/gatekeeper"
+  }
+]
