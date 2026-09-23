@@ -39,3 +39,4 @@ generate_if_map
 gkctl/gkctl
 lua/bpf/
 lua/if_map.lua
+gatekeeper_*.log
