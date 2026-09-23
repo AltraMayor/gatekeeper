@@ -1,0 +1,19 @@
+// Project tasks configuration. See https://zed.dev/docs/tasks for documentation.
+
+[
+  {
+    "label": "Gatekeeper: Build",
+    "command": "make",
+    "args": ["-j"],
+    // Which edited buffers to save before running the task:
+    // * `none` — don't save any buffers (default)
+    // * `current` — save currently active buffer only
+    // * `all` — save all edited buffers
+    "save": "all"
+  },
+  {
+    "label": "Gatekeeper: Clean",
+    "command": "make",
+    "args": ["clean"]
+  },
+]
