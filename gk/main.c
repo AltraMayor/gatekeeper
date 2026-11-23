@@ -279,11 +279,11 @@ int
 pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 	size_t l2_hdr_len)
 {
-	unsigned seq;
+	uint32_t seq;
 	bool stale;
 
 	do {
-		seq = read_seqbegin(&eth_cache->lock);
+		seq = rte_seqlock_read_begin(&eth_cache->lock);
 		stale = eth_cache->stale;
 		if (!stale) {
 			struct ether_hdr *eth_hdr =
@@ -292,7 +292,7 @@ pkt_copy_cached_eth_header(struct rte_mbuf *pkt, struct ether_cache *eth_cache,
 				&eth_cache->l2_hdr, l2_hdr_len);
 			pkt->l2_len = l2_hdr_len;
 		}
-	} while (read_seqretry(&eth_cache->lock, seq));
+	} while (rte_seqlock_read_retry(&eth_cache->lock, seq));
 
 	return stale;
 }

@@ -23,13 +23,13 @@
 
 #include <rte_ether.h>
 #include <rte_hash.h>
+#include <rte_seqlock.h>
 #include <rte_spinlock.h>
 #include <rte_atomic.h>
 
 #include "gatekeeper_net.h"
 #include "gatekeeper_fib.h"
 #include "gatekeeper_qid.h"
-#include "seqlock.h"
 
 enum gk_fib_action {
 
@@ -83,7 +83,7 @@ struct ether_cache {
 	 * the @stale and @eth_hdr.d_addr fields.
 	 * Therefore, @lock only applies to these two fields.
 	 */
-	seqlock_t        lock;
+	rte_seqlock_t    lock;
 
 	/*
 	 * The count of how many times the LPM tables refer to it,
