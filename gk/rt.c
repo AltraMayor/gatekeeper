@@ -81,10 +81,10 @@ gk_arp_and_nd_req_cb(const struct lls_map *map, void *arg,
 	 * Deal with concurrency control by sequential lock
 	 * on the nexthop entry.
 	 */
-	write_seqlock(&eth_cache->lock);
+	rte_seqlock_write_lock(&eth_cache->lock);
 	rte_ether_addr_copy(&map->ha, &eth_cache->l2_hdr.eth_hdr.dst_addr);
 	eth_cache->stale = map->stale;
-	write_sequnlock(&eth_cache->lock);
+	rte_seqlock_write_unlock(&eth_cache->lock);
 
 	*pcall_again = true;
 }
@@ -411,7 +411,7 @@ setup_neighbor_tbl(unsigned int socket_id, int identifier,
 
 	/* Initialize the sequential lock for each Ethernet cache entry. */
 	for (i = 0; i < ht_size; i++)
-		seqlock_init(&neigh->cache_tbl[i].lock);
+		rte_seqlock_init(&neigh->cache_tbl[i].lock);
 
 	neigh->tbl_size = ht_size;
 
